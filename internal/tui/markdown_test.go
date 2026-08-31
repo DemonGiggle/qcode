@@ -1,0 +1,74 @@
+package tui
+
+import (
+	"bytes"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func TestMarkdownWriterRendersStreamedSyntax(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true)
+	writer.BeginResponse()
+	chunks := []string{
+		"# Head", "ing\n\n- **bo", "ld** and `code`\n",
+		"> quoted\n```go\nfmt.Println(\"hi\")\n```\n",
+		"[site](https://example.com) and ~~old~~\n",
+	}
+	for _, chunk := range chunks {
+		if _, err := writer.Write([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writer.EndResponse()
+
+	plain := ansiPattern.ReplaceAllString(output.String(), "")
+	want := strings.Join([]string{
+		"Heading",
+		"",
+		"• bold and code",
+		"│ quoted",
+		"╭─ go",
+		`fmt.Println("hi")`,
+		"╰─",
+		"site (https://example.com) and old",
+		"",
+	}, "\n")
+	if plain != want {
+		t.Fatalf("plain output:\n%q\nwant:\n%q", plain, want)
+	}
+	for name, sequence := range map[string]string{"bold": bold, "heading": cyan, "code": yellow, "link": underline, "strike": strikethrough} {
+		if !strings.Contains(output.String(), sequence) {
+			t.Errorf("output has no %s style", name)
+		}
+	}
+}
+
+func TestMarkdownWriterPassesThroughWhenDisabled(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, false)
+	writer.BeginResponse()
+	input := "# heading\n**bold** and `code`"
+	if _, err := writer.Write([]byte(input)); err != nil {
+		t.Fatal(err)
+	}
+	writer.EndResponse()
+	if output.String() != input {
+		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestMarkdownWriterNeutralizesModelEscapeSequences(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true)
+	writer.BeginResponse()
+	_, _ = writer.Write([]byte("safe \x1b[2J text"))
+	writer.EndResponse()
+	plain := ansiPattern.ReplaceAllString(output.String(), "")
+	if plain != "safe ␛[2J text" {
+		t.Fatalf("plain output = %q", plain)
+	}
+}

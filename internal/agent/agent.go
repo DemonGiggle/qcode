@@ -23,6 +23,11 @@ type Agent struct {
 	messages []llm.Message
 }
 
+type responseLifecycle interface {
+	BeginResponse()
+	EndResponse()
+}
+
 func New(provider llm.Provider, model string, registry *tools.Registry, logger *trace.Logger, out io.Writer, maxSteps int) *Agent {
 	if maxSteps <= 0 {
 		maxSteps = 32
@@ -35,16 +40,23 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 	for step := 0; step < a.maxSteps; step++ {
 		span := a.trace.Start("llm", a.provider.Name(), map[string]any{"model": a.model, "step": step + 1})
 		wroteText := false
+		lifecycle, rendersResponses := a.out.(responseLifecycle)
+		if rendersResponses {
+			lifecycle.BeginResponse()
+		}
 		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Messages: a.messages, Tools: a.tools.Schemas()}, func(text string) {
 			wroteText = true
 			fmt.Fprint(a.out, text)
 		})
+		if wroteText {
+			fmt.Fprintln(a.out)
+		}
+		if rendersResponses {
+			lifecycle.EndResponse()
+		}
 		span.End(err)
 		if err != nil {
 			return err
-		}
-		if wroteText {
-			fmt.Fprintln(a.out)
 		}
 		a.messages = append(a.messages, response.Message)
 		if len(response.Message.ToolCalls) == 0 {

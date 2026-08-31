@@ -4,10 +4,10 @@
 
 ## What is included
 
-- A terminal UI with editable input, history, streamed responses, and `/help`, `/clear`, and `/quit` commands.
+- A terminal UI with editable input, history, streamed responses, ANSI-colored Markdown, and `/help`, `/clear`, and `/quit` commands. Set `NO_COLOR=1` to disable response styling.
 - Ollama and OpenAI-compatible APIs. `openai-like` is an alias intended for services that implement `/v1/chat/completions`.
 - `read`, `write`, `edit`, `list`, `search`, and `shell` tools.
-- Visible action telemetry by default. Every LLM request and tool call prints a wall-clock start timestamp; its matching end event includes elapsed time and any error.
+- Visible action telemetry by default. Every LLM request and tool call prints the local start time as `HH:MM:SS`; its matching end event includes elapsed time and any error.
 - All text sent to an LLM is collected in [`internal/prompt/prompts.go`](internal/prompt/prompts.go).
 - Standard-library networking and file operations. The terminal helper is compiled into the executable.
 

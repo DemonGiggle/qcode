@@ -92,7 +92,8 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	promptText := strings.TrimSpace(strings.Join(flags.Args(), " "))
 	if promptText != "" {
 		logger := trace.New(stderr, opts.jsonEvents)
-		runner := agent.New(provider, opts.model, registry, logger, stdout, opts.maxSteps)
+		responseWriter := tui.NewMarkdownWriter(stdout, tui.ColorEnabled(stdout))
+		runner := agent.New(provider, opts.model, registry, logger, responseWriter, opts.maxSteps)
 		return runner.Run(ctx, promptText)
 	}
 	if stat, statErr := stdin.Stat(); statErr == nil && stat.Mode()&os.ModeCharDevice == 0 {
@@ -105,7 +106,8 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			return errors.New("stdin contained no prompt")
 		}
 		logger := trace.New(stderr, opts.jsonEvents)
-		runner := agent.New(provider, opts.model, registry, logger, stdout, opts.maxSteps)
+		responseWriter := tui.NewMarkdownWriter(stdout, tui.ColorEnabled(stdout))
+		runner := agent.New(provider, opts.model, registry, logger, responseWriter, opts.maxSteps)
 		return runner.Run(ctx, promptText)
 	}
 
@@ -113,7 +115,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	// updates do not corrupt the editable input line.
 	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
 	logger := trace.New(ui.Writer(), opts.jsonEvents)
-	runner := agent.New(provider, opts.model, registry, logger, ui.Writer(), opts.maxSteps)
+	runner := agent.New(provider, opts.model, registry, logger, ui.ResponseWriter(), opts.maxSteps)
 	ui.SetRunner(runner)
 	return ui.Run(ctx)
 }

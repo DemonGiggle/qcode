@@ -13,6 +13,23 @@ import (
 
 type fakeProvider struct{ calls int }
 
+type lifecycleWriter struct {
+	bytes.Buffer
+	begins int
+	ends   int
+}
+
+func (w *lifecycleWriter) BeginResponse() { w.begins++ }
+func (w *lifecycleWriter) EndResponse()   { w.ends++ }
+
+type responseProvider struct{}
+
+func (p *responseProvider) Name() string { return "response" }
+func (p *responseProvider) Complete(_ context.Context, _ llm.Request, onText func(string)) (llm.Response, error) {
+	onText("finished")
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "finished"}}, nil
+}
+
 func (p *fakeProvider) Name() string { return "fake" }
 func (p *fakeProvider) Complete(_ context.Context, request llm.Request, onText func(string)) (llm.Response, error) {
 	p.calls++
@@ -25,6 +42,26 @@ func (p *fakeProvider) Complete(_ context.Context, request llm.Request, onText f
 	}
 	onText("finished")
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: "finished"}}, nil
+}
+
+func TestAgentMarksResponseBoundaries(t *testing.T) {
+	registry, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &responseProvider{}
+	var output lifecycleWriter
+	var events bytes.Buffer
+	runner := New(provider, "test", registry, trace.New(&events, false), &output, 1)
+	if err := runner.Run(context.Background(), "respond"); err != nil {
+		t.Fatal(err)
+	}
+	if output.begins != 1 || output.ends != 1 {
+		t.Fatalf("boundaries = %d/%d", output.begins, output.ends)
+	}
+	if output.String() != "finished\n" {
+		t.Fatalf("output = %q", output.String())
+	}
 }
 
 func TestAgentRunsToolsUntilFinalResponse(t *testing.T) {

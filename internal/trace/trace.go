@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+const timestampLayout = "15:04:05"
+
 type Logger struct {
 	out  io.Writer
 	json bool
@@ -45,8 +47,9 @@ func (s *Span) End(err error) {
 func (l *Logger) write(event, kind, name string, at time.Time, duration time.Duration, fields map[string]any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	timestamp := formatTimestamp(at)
 	if l.json {
-		entry := map[string]any{"timestamp": at.Format(time.RFC3339Nano), "event": event, "kind": kind, "name": name}
+		entry := map[string]any{"timestamp": timestamp, "event": event, "kind": kind, "name": name}
 		if duration > 0 {
 			entry["duration_ms"] = float64(duration.Microseconds()) / 1000
 		}
@@ -58,9 +61,9 @@ func (l *Logger) write(event, kind, name string, at time.Time, duration time.Dur
 		return
 	}
 	if duration > 0 {
-		fmt.Fprintf(l.out, "[%s] %s %s %s (%s)", at.Format("2006-01-02T15:04:05.000-07:00"), event, kind, name, duration.Round(time.Millisecond))
+		fmt.Fprintf(l.out, "[%s] %s %s %s (%s)", timestamp, event, kind, name, duration.Round(time.Millisecond))
 	} else {
-		fmt.Fprintf(l.out, "[%s] %s %s %s", at.Format("2006-01-02T15:04:05.000-07:00"), event, kind, name)
+		fmt.Fprintf(l.out, "[%s] %s %s %s", timestamp, event, kind, name)
 	}
 	if value, ok := fields["arguments"]; ok {
 		fmt.Fprintf(l.out, " arguments=%v", value)
@@ -69,4 +72,8 @@ func (l *Logger) write(event, kind, name string, at time.Time, duration time.Dur
 		fmt.Fprintf(l.out, " error=%v", value)
 	}
 	fmt.Fprintln(l.out)
+}
+
+func formatTimestamp(at time.Time) string {
+	return at.In(time.Local).Format(timestampLayout)
 }

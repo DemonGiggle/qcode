@@ -30,23 +30,26 @@ type readWriter struct {
 }
 
 type UI struct {
-	terminal *term.Terminal
-	in       *os.File
-	out      *os.File
-	runner   Runner
-	provider string
-	model    string
-	root     string
+	terminal       *term.Terminal
+	responseWriter *MarkdownWriter
+	in             *os.File
+	out            *os.File
+	runner         Runner
+	provider       string
+	model          string
+	root           string
 }
 
 func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	rw := readWriter{Reader: in, Writer: out}
 	t := term.NewTerminal(rw, cyan+bold+"> "+reset)
 	t.SetSize(terminalSize(out))
-	return &UI{terminal: t, in: in, out: out, runner: runner, provider: provider, model: model, root: root}
+	return &UI{terminal: t, responseWriter: NewMarkdownWriter(t, ColorEnabled(out)), in: in, out: out, runner: runner, provider: provider, model: model, root: root}
 }
 
 func (u *UI) Writer() io.Writer { return u.terminal }
+
+func (u *UI) ResponseWriter() io.Writer { return u.responseWriter }
 
 func (u *UI) SetRunner(runner Runner) { u.runner = runner }
 
@@ -112,4 +115,8 @@ func terminalSize(out *os.File) (int, int) {
 		return 80, 24
 	}
 	return width, height
+}
+
+func ColorEnabled(out *os.File) bool {
+	return os.Getenv("NO_COLOR") == "" && term.IsTerminal(int(out.Fd()))
 }
