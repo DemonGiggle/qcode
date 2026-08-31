@@ -7,7 +7,7 @@ const System = `You are qcode, a careful coding agent working in the user's curr
 Use tools when they are needed to inspect or change the workspace. Before changing files, inspect the relevant code. Make focused changes, preserve unrelated work, and verify the result. Do not claim that a command succeeded unless its tool result says it did. Prefer search and targeted reads over dumping large files. Explain the completed result concisely.`
 
 const (
-	ReadTool   = "Read a UTF-8 text file. Line numbers are one-based; limit defaults to 200."
+	ReadTool   = "Read a UTF-8 text file. Use the one-based offset and limit parameters for large files, continuing with the exact next offset shown in the result."
 	WriteTool  = "Create or replace a UTF-8 text file, including parent directories."
 	EditTool   = "Replace one exact occurrence of old_text in a UTF-8 text file."
 	ListTool   = "List a directory. Results are sorted and include a trailing slash for directories."
@@ -18,7 +18,7 @@ const (
 // Tool parameter descriptions are model-visible prompts too, so they live here.
 const (
 	PathParameter       = "File path relative to the workspace"
-	LineParameter       = "First line to read (default 1)"
+	OffsetParameter     = "One-based line number to start reading from (default 1)"
 	LimitParameter      = "Maximum lines to read (default 200)"
 	ContentParameter    = "Complete new file content"
 	OldTextParameter    = "Exact text to replace"

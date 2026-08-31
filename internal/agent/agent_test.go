@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"qcode/internal/llm"
@@ -24,10 +27,20 @@ func (w *lifecycleWriter) EndResponse()   { w.ends++ }
 
 type responseProvider struct{}
 
+type repeatingProvider struct{ calls int }
+
 func (p *responseProvider) Name() string { return "response" }
 func (p *responseProvider) Complete(_ context.Context, _ llm.Request, onText func(string)) (llm.Response, error) {
 	onText("finished")
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: "finished"}}, nil
+}
+
+func (p *repeatingProvider) Name() string { return "repeating" }
+func (p *repeatingProvider) Complete(_ context.Context, _ llm.Request, _ func(string)) (llm.Response, error) {
+	p.calls++
+	return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{
+		ID: "repeat", Name: "read", Arguments: json.RawMessage(`{"path":"same.txt"}`),
+	}}}}, nil
 }
 
 func (p *fakeProvider) Name() string { return "fake" }
@@ -85,5 +98,29 @@ func TestAgentRunsToolsUntilFinalResponse(t *testing.T) {
 		if !bytes.Contains(events.Bytes(), []byte(expected)) {
 			t.Errorf("events missing %q:\n%s", expected, events.String())
 		}
+	}
+}
+
+func TestAgentStopsRepeatedIdenticalToolCallsEarly(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "same.txt"), []byte("same"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := tools.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &repeatingProvider{}
+	var output, events bytes.Buffer
+	runner := New(provider, "test", registry, trace.New(&events, false), &output, 32)
+	err = runner.Run(context.Background(), "repeat forever")
+	if err == nil || !strings.Contains(err.Error(), `tool "read" was requested unchanged 3 times`) {
+		t.Fatalf("error = %v", err)
+	}
+	if provider.calls != 3 {
+		t.Fatalf("provider calls = %d", provider.calls)
+	}
+	if bytes.Count(events.Bytes(), []byte("start tool read")) != 2 {
+		t.Fatalf("tool events:\n%s", events.String())
 	}
 }

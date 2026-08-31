@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -77,5 +78,50 @@ func TestShellCapturesOutput(t *testing.T) {
 	}
 	if result != "qcode" {
 		t.Fatalf("result = %q", result)
+	}
+}
+
+func TestReadAcceptsStringDecimalOffsetAndShowsContinuation(t *testing.T) {
+	root := t.TempDir()
+	lines := make([]string, 350)
+	for index := range lines {
+		lines[index] = "line " + strconv.Itoa(index+1)
+	}
+	if err := os.WriteFile(filepath.Join(root, "foo.txt"), []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := registry.Execute(context.Background(), llm.ToolCall{
+		Name: "read", Arguments: json.RawMessage(`{"limit":100,"offset":"200.0","path":"foo.txt"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "   200\tline 200") || !strings.Contains(result, "   299\tline 299") {
+		t.Fatalf("result does not contain requested range:\n%s", result)
+	}
+	if strings.Contains(result, "line 199\n") || strings.Contains(result, "line 300\n") {
+		t.Fatalf("result escaped requested range:\n%s", result)
+	}
+	if !strings.Contains(result, "use offset=300 to continue") {
+		t.Fatalf("missing continuation hint:\n%s", result)
+	}
+}
+
+func TestToolsRejectUnknownArguments(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "foo.txt"), []byte("text"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = registry.Execute(context.Background(), llm.ToolCall{Name: "read", Arguments: json.RawMessage(`{"path":"foo.txt","offest":2}`)})
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("error = %v", err)
 	}
 }

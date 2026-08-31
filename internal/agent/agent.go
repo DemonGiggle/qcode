@@ -13,6 +13,8 @@ import (
 	"qcode/internal/trace"
 )
 
+const maxIdenticalToolCalls = 3
+
 type Agent struct {
 	provider llm.Provider
 	model    string
@@ -37,6 +39,8 @@ func New(provider llm.Provider, model string, registry *tools.Registry, logger *
 
 func (a *Agent) Run(ctx context.Context, userText string) error {
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userText})
+	lastToolCall := ""
+	identicalToolCalls := 0
 	for step := 0; step < a.maxSteps; step++ {
 		span := a.trace.Start("llm", a.provider.Name(), map[string]any{"model": a.model, "step": step + 1})
 		wroteText := false
@@ -63,6 +67,16 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			return nil
 		}
 		for index, call := range response.Message.ToolCalls {
+			fingerprint := toolFingerprint(call)
+			if fingerprint == lastToolCall {
+				identicalToolCalls++
+			} else {
+				lastToolCall = fingerprint
+				identicalToolCalls = 1
+			}
+			if identicalToolCalls >= maxIdenticalToolCalls {
+				return fmt.Errorf("agent stopped after tool %q was requested unchanged %d times; arguments=%s", call.Name, identicalToolCalls, compactJSON(call.Arguments))
+			}
 			if call.ID == "" {
 				call.ID = fmt.Sprintf("call_%d_%d", step+1, index+1)
 			}
@@ -80,6 +94,16 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		}
 	}
 	return fmt.Errorf("agent stopped after %d model steps", a.maxSteps)
+}
+
+func toolFingerprint(call llm.ToolCall) string {
+	var value any
+	if json.Unmarshal(call.Arguments, &value) == nil {
+		if canonical, err := json.Marshal(value); err == nil {
+			return call.Name + "\x00" + string(canonical)
+		}
+	}
+	return call.Name + "\x00" + compactJSON(call.Arguments)
 }
 
 func compactJSON(value json.RawMessage) string {

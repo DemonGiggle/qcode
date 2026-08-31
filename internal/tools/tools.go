@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,9 +40,9 @@ func New(root string) (*Registry, error) {
 	}
 	r := &Registry{root: abs, handlers: map[string]Handler{}}
 	r.add(llm.Tool{Name: "read", Description: prompt.ReadTool, Parameters: objectSchema(map[string]any{
-		"path":  stringProperty(prompt.PathParameter),
-		"line":  integerProperty(prompt.LineParameter),
-		"limit": integerProperty(prompt.LimitParameter),
+		"path":   stringProperty(prompt.PathParameter),
+		"offset": integerProperty(prompt.OffsetParameter),
+		"limit":  integerProperty(prompt.LimitParameter),
 	}, "path")}, r.read)
 	r.add(llm.Tool{Name: "write", Description: prompt.WriteTool, Parameters: objectSchema(map[string]any{
 		"path": stringProperty(prompt.PathParameter), "content": stringProperty(prompt.ContentParameter),
@@ -93,9 +95,38 @@ func decode(arguments json.RawMessage, target any) error {
 	if len(arguments) == 0 {
 		arguments = json.RawMessage(`{}`)
 	}
-	if err := json.Unmarshal(arguments, target); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(arguments))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
 		return fmt.Errorf("invalid arguments: %w", err)
 	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("invalid arguments: expected one JSON object")
+	}
+	return nil
+}
+
+// flexibleInteger tolerates integral JSON numbers encoded as numbers, decimal
+// numbers, or strings. Some local models emit schema integers as "200.0".
+type flexibleInteger int
+
+func (value *flexibleInteger) UnmarshalJSON(data []byte) error {
+	text := strings.TrimSpace(string(data))
+	if len(text) > 0 && text[0] == '"' {
+		if err := json.Unmarshal(data, &text); err != nil {
+			return fmt.Errorf("must be an integer: %w", err)
+		}
+	}
+	number, err := strconv.ParseFloat(text, 64)
+	if err != nil || math.IsInf(number, 0) || math.IsNaN(number) || math.Trunc(number) != number {
+		return fmt.Errorf("must be an integer, got %q", text)
+	}
+	maxInt := int64(^uint(0) >> 1)
+	minInt := -maxInt - 1
+	if number < float64(minInt) || number > float64(maxInt) {
+		return fmt.Errorf("integer %q is out of range", text)
+	}
+	*value = flexibleInteger(int(number))
 	return nil
 }
 
@@ -120,9 +151,10 @@ func (r *Registry) resolve(name string) (string, error) {
 
 func (r *Registry) read(_ context.Context, arguments json.RawMessage) (string, error) {
 	var args struct {
-		Path  string `json:"path"`
-		Line  int    `json:"line"`
-		Limit int    `json:"limit"`
+		Path   string          `json:"path"`
+		Offset flexibleInteger `json:"offset"`
+		Line   flexibleInteger `json:"line"` // Backward compatibility with qcode 0.1.
+		Limit  flexibleInteger `json:"limit"`
 	}
 	if err := decode(arguments, &args); err != nil {
 		return "", err
@@ -138,29 +170,34 @@ func (r *Registry) read(_ context.Context, arguments json.RawMessage) (string, e
 	if bytes.IndexByte(data, 0) >= 0 {
 		return "", errors.New("file appears to be binary")
 	}
-	if args.Line < 1 {
-		args.Line = 1
+	offset := int(args.Offset)
+	if offset < 1 {
+		offset = int(args.Line)
 	}
-	if args.Limit <= 0 {
-		args.Limit = 200
+	if offset < 1 {
+		offset = 1
 	}
-	if args.Limit > 2000 {
-		args.Limit = 2000
+	limit := int(args.Limit)
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 2000 {
+		limit = 2000
 	}
 	lines := strings.Split(string(data), "\n")
-	if args.Line > len(lines) {
-		return fmt.Sprintf("file has %d lines", len(lines)), nil
+	if offset > len(lines) {
+		return "", fmt.Errorf("offset %d is beyond end of file (%d lines total)", offset, len(lines))
 	}
-	end := args.Line - 1 + args.Limit
+	end := offset - 1 + limit
 	if end > len(lines) {
 		end = len(lines)
 	}
 	var out strings.Builder
-	for i := args.Line - 1; i < end; i++ {
+	for i := offset - 1; i < end; i++ {
 		fmt.Fprintf(&out, "%6d\t%s\n", i+1, lines[i])
 	}
 	if end < len(lines) {
-		fmt.Fprintf(&out, "[truncated: showing lines %d-%d of %d]\n", args.Line, end, len(lines))
+		fmt.Fprintf(&out, "[showing lines %d-%d of %d; use offset=%d to continue]\n", offset, end, len(lines), end+1)
 	}
 	return truncate(out.String()), nil
 }
