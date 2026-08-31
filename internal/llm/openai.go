@@ -1,0 +1,171 @@
+package llm
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+type openAIProvider struct {
+	baseURL string
+	apiKey  string
+	client  HTTPDoer
+}
+
+func init() {
+	Register("openai", newOpenAI)
+	Register("openai-like", newOpenAI)
+}
+
+func newOpenAI(config Config) (Provider, error) {
+	baseURL := strings.TrimRight(config.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	return &openAIProvider{baseURL: baseURL, apiKey: config.APIKey, client: httpClient(config)}, nil
+}
+
+func (p *openAIProvider) Name() string { return "openai-like" }
+
+type openAITool struct {
+	Type     string `json:"type"`
+	Function Tool   `json:"function"`
+}
+
+type openAIToolCall struct {
+	Index    int    `json:"index,omitempty"`
+	ID       string `json:"id,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Function struct {
+		Name      string `json:"name,omitempty"`
+		Arguments string `json:"arguments,omitempty"`
+	} `json:"function"`
+}
+
+type openAIMessage struct {
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
+	Name       string           `json:"name,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
+}
+
+func (p *openAIProvider) Complete(ctx context.Context, input Request, onText func(string)) (Response, error) {
+	messages := make([]openAIMessage, 0, len(input.Messages))
+	for _, message := range input.Messages {
+		converted := openAIMessage{Role: message.Role, Content: message.Content, Name: message.Name, ToolCallID: message.ToolCallID}
+		for i, call := range message.ToolCalls {
+			item := openAIToolCall{Index: i, ID: call.ID, Type: "function"}
+			item.Function.Name = call.Name
+			item.Function.Arguments = string(call.Arguments)
+			converted.ToolCalls = append(converted.ToolCalls, item)
+		}
+		messages = append(messages, converted)
+	}
+	tools := make([]openAITool, 0, len(input.Tools))
+	for _, tool := range input.Tools {
+		tools = append(tools, openAITool{Type: "function", Function: tool})
+	}
+	body := map[string]any{"model": input.Model, "messages": messages, "stream": true, "temperature": input.Temperature}
+	if len(tools) > 0 {
+		body["tools"] = tools
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return Response{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		return Response{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if p.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return Response{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return Response{}, fmt.Errorf("provider returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
+	}
+	return parseOpenAIStream(resp.Body, onText)
+}
+
+func parseOpenAIStream(reader io.Reader, onText func(string)) (Response, error) {
+	result := Message{Role: "assistant"}
+	type partialCall struct{ id, name, arguments string }
+	partials := map[int]*partialCall{}
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+		var event struct {
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error,omitempty"`
+			Choices []struct {
+				Delta struct {
+					Content   string           `json:"content"`
+					ToolCalls []openAIToolCall `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			return Response{}, fmt.Errorf("decode provider stream: %w", err)
+		}
+		if event.Error != nil {
+			return Response{}, errors.New(event.Error.Message)
+		}
+		for _, choice := range event.Choices {
+			if choice.Delta.Content != "" {
+				result.Content += choice.Delta.Content
+				if onText != nil {
+					onText(choice.Delta.Content)
+				}
+			}
+			for _, delta := range choice.Delta.ToolCalls {
+				part := partials[delta.Index]
+				if part == nil {
+					part = &partialCall{}
+					partials[delta.Index] = part
+				}
+				if delta.ID != "" {
+					part.id = delta.ID
+				}
+				part.name += delta.Function.Name
+				part.arguments += delta.Function.Arguments
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return Response{}, err
+	}
+	for i := 0; i < len(partials); i++ {
+		part := partials[i]
+		if part == nil {
+			continue
+		}
+		arguments := json.RawMessage(part.arguments)
+		if len(arguments) == 0 {
+			arguments = json.RawMessage(`{}`)
+		}
+		result.ToolCalls = append(result.ToolCalls, ToolCall{ID: part.id, Name: part.name, Arguments: arguments})
+	}
+	return Response{Message: result}, nil
+}
