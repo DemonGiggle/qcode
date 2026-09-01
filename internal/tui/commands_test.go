@@ -72,3 +72,17 @@ func TestSlashCommandCompletion(t *testing.T) {
 		t.Fatalf("tab completion = %q, %d, %v", line, pos, ok)
 	}
 }
+
+func TestSlashCommandMenuCountsWrappedRows(t *testing.T) {
+	var output bytes.Buffer
+	menu := slashCommandMenu{out: &output, width: 24}
+	menu.update([]slashCommand{{name: "/verbose", description: "Toggle detailed action traces"}})
+	if menu.visible != 4 {
+		t.Fatalf("visible rows = %d; output = %q", menu.visible, output.String())
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n") {
+		if visibleWidth(line) > menu.width {
+			t.Fatalf("line width = %d: %q", visibleWidth(line), line)
+		}
+	}
+}

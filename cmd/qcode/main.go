@@ -93,7 +93,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
 		logger := newTraceLogger(stderr, opts.jsonEvents)
-		responseWriter := tui.NewMarkdownWriter(stdout, tui.ColorEnabled(stdout))
+		responseWriter := tui.NewMarkdownWriter(stdout, tui.ColorEnabled(stdout), tui.OutputWidth(stdout))
 		runner := agent.New(provider, opts.model, registry, logger, responseWriter, opts.maxSteps)
 		return runner.Run(ctx, promptText)
 	}
@@ -109,7 +109,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
 		logger := newTraceLogger(stderr, opts.jsonEvents)
-		responseWriter := tui.NewMarkdownWriter(stdout, tui.ColorEnabled(stdout))
+		responseWriter := tui.NewMarkdownWriter(stdout, tui.ColorEnabled(stdout), tui.OutputWidth(stdout))
 		runner := agent.New(provider, opts.model, registry, logger, responseWriter, opts.maxSteps)
 		return runner.Run(ctx, promptText)
 	}

@@ -23,13 +23,18 @@ const (
 type MarkdownWriter struct {
 	out     io.Writer
 	enabled bool
+	width   int
 	active  bool
 	inFence bool
 	buffer  bytes.Buffer
 }
 
-func NewMarkdownWriter(out io.Writer, enabled bool) *MarkdownWriter {
-	return &MarkdownWriter{out: out, enabled: enabled}
+func NewMarkdownWriter(out io.Writer, enabled bool, width ...int) *MarkdownWriter {
+	writer := &MarkdownWriter{out: out, enabled: enabled}
+	if len(width) > 0 {
+		writer.width = width[0]
+	}
+	return writer
 }
 
 func (w *MarkdownWriter) BeginResponse() {
@@ -42,7 +47,7 @@ func (w *MarkdownWriter) EndResponse() {
 	if !w.active {
 		return
 	}
-	if w.enabled && w.buffer.Len() > 0 {
+	if w.buffer.Len() > 0 && (w.enabled || w.width > 0) {
 		w.renderLine(strings.TrimSuffix(w.buffer.String(), "\r"))
 	}
 	w.buffer.Reset()
@@ -54,7 +59,7 @@ func (w *MarkdownWriter) EndResponse() {
 }
 
 func (w *MarkdownWriter) Write(data []byte) (int, error) {
-	if !w.active || !w.enabled {
+	if !w.active || (!w.enabled && w.width <= 0) {
 		return w.out.Write(data)
 	}
 	written := len(data)
@@ -75,10 +80,14 @@ func (w *MarkdownWriter) Write(data []byte) (int, error) {
 
 func (w *MarkdownWriter) renderLine(line string) {
 	line = strings.ReplaceAll(line, "\x1b", "␛")
+	if !w.enabled {
+		fmt.Fprint(w.out, wrapANSI(line, w.width, leadingWhitespace(line)))
+		return
+	}
 	trimmed := strings.TrimSpace(line)
 	if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
 		if w.inFence {
-			fmt.Fprint(w.out, magenta+"╰─"+reset)
+			w.writeRendered(magenta+"╰─"+reset, "")
 			w.inFence = false
 			return
 		}
@@ -87,16 +96,16 @@ func (w *MarkdownWriter) renderLine(line string) {
 		if language != "" {
 			label += " " + language
 		}
-		fmt.Fprint(w.out, magenta+label+reset)
+		w.writeRendered(magenta+label+reset, "")
 		w.inFence = true
 		return
 	}
 	if w.inFence {
-		fmt.Fprint(w.out, yellow+line+reset)
+		w.writeRendered(yellow+line+reset, leadingWhitespace(line))
 		return
 	}
 	if trimmed == "---" || trimmed == "***" || trimmed == "___" {
-		fmt.Fprint(w.out, gray+strings.Repeat("─", 40)+reset)
+		w.writeRendered(gray+strings.Repeat("─", 40)+reset, "")
 		return
 	}
 	leading := line[:len(line)-len(strings.TrimLeftFunc(line, unicode.IsSpace))]
@@ -107,19 +116,29 @@ func (w *MarkdownWriter) renderLine(line string) {
 			color = blue
 		}
 		headingStyle := bold + color
-		fmt.Fprint(w.out, leading+headingStyle+renderInline(heading, headingStyle)+reset)
+		w.writeRendered(leading+headingStyle+renderInline(heading, headingStyle)+reset, leading)
 		return
 	}
 	if strings.HasPrefix(content, "> ") || content == ">" {
 		quote := strings.TrimSpace(strings.TrimPrefix(content, ">"))
-		fmt.Fprint(w.out, leading+cyan+"│ "+reset+italic+renderInline(quote, italic)+reset)
+		continuation := leading + "  "
+		w.writeRendered(leading+cyan+"│ "+reset+italic+renderInline(quote, italic)+reset, continuation)
 		return
 	}
 	if marker, rest, ok := listItem(content); ok {
-		fmt.Fprint(w.out, leading+cyan+marker+reset+renderInline(rest))
+		continuation := leading + strings.Repeat(" ", visibleWidth(marker))
+		w.writeRendered(leading+cyan+marker+reset+renderInline(rest), continuation)
 		return
 	}
-	fmt.Fprint(w.out, renderInline(line))
+	w.writeRendered(renderInline(line), leading)
+}
+
+func (w *MarkdownWriter) writeRendered(rendered, continuation string) {
+	fmt.Fprint(w.out, wrapANSI(rendered, w.width, continuation))
+}
+
+func leadingWhitespace(line string) string {
+	return line[:len(line)-len(strings.TrimLeftFunc(line, unicode.IsSpace))]
 }
 
 func heading(line string) (int, string) {

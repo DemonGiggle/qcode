@@ -46,17 +46,19 @@ type UI struct {
 	model          string
 	root           string
 	verbose        bool
+	width          int
 }
 
 func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	input := newInterruptReader(in)
 	rw := readWriter{Reader: input, Writer: out}
 	t := term.NewTerminal(rw, cyan+bold+"> "+reset)
-	t.SetSize(terminalSize(out))
+	width, height := terminalSize(out)
+	t.SetSize(width, height)
 	u := &UI{
 		terminal:       t,
-		responseWriter: NewMarkdownWriter(t, ColorEnabled(out)),
-		commandMenu:    slashCommandMenu{out: t, color: ColorEnabled(out)},
+		responseWriter: NewMarkdownWriter(t, ColorEnabled(out), width),
+		commandMenu:    slashCommandMenu{out: t, color: ColorEnabled(out), width: width},
 		input:          input,
 		in:             in,
 		out:            out,
@@ -64,6 +66,7 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 		provider:       provider,
 		model:          model,
 		root:           root,
+		width:          width,
 	}
 	t.AutoCompleteCallback = u.completeSlashCommand
 	u.SetRunner(runner)
@@ -168,7 +171,8 @@ func (u *UI) completeSlashCommand(line string, pos int, key rune) (string, int, 
 
 func (u *UI) printCommandHelp() {
 	for _, command := range slashCommands {
-		fmt.Fprintf(u.terminal, "%s%-8s%s %s%s%s\n", cyan, command.name, reset, dim, command.description, reset)
+		line := fmt.Sprintf("%s%-8s%s %s%s%s", cyan, command.name, reset, dim, command.description, reset)
+		fmt.Fprintln(u.terminal, wrapANSI(line, u.width, "         "))
 	}
 }
 
@@ -193,4 +197,15 @@ func terminalSize(out *os.File) (int, int) {
 
 func ColorEnabled(out *os.File) bool {
 	return os.Getenv("NO_COLOR") == "" && term.IsTerminal(int(out.Fd()))
+}
+
+func OutputWidth(out *os.File) int {
+	if !term.IsTerminal(int(out.Fd())) {
+		return 0
+	}
+	width, _, err := term.GetSize(int(out.Fd()))
+	if err != nil || width <= 0 {
+		return 80
+	}
+	return width
 }

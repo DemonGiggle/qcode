@@ -36,6 +36,7 @@ type slashCommandMenu struct {
 	out     io.Writer
 	color   bool
 	visible int
+	width   int
 }
 
 func (m *slashCommandMenu) update(commands []slashCommand) {
@@ -43,17 +44,23 @@ func (m *slashCommandMenu) update(commands []slashCommand) {
 	for range m.visible {
 		output.WriteString("\x1b[1A\r\x1b[2K")
 	}
+	rows := 0
 	for _, command := range commands {
+		var line string
 		if m.color {
-			fmt.Fprintf(&output, "  %s%-8s%s %s%s%s\n", cyan, command.name, reset, dim, command.description, reset)
+			line = fmt.Sprintf("  %s%-8s%s %s%s%s", cyan, command.name, reset, dim, command.description, reset)
 		} else {
-			fmt.Fprintf(&output, "  %-8s %s\n", command.name, command.description)
+			line = fmt.Sprintf("  %-8s %s", command.name, command.description)
 		}
+		line = wrapANSI(line, m.width, "            ")
+		rows += strings.Count(line, "\n") + 1
+		output.WriteString(line)
+		output.WriteByte('\n')
 	}
 	if output.Len() > 0 {
 		_, _ = io.WriteString(m.out, output.String())
 	}
-	m.visible = len(commands)
+	m.visible = rows
 }
 
 // dismiss removes menu rows after ReadLine has advanced below the submitted

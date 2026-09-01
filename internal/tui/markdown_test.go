@@ -72,3 +72,26 @@ func TestMarkdownWriterNeutralizesModelEscapeSequences(t *testing.T) {
 		t.Fatalf("plain output = %q", plain)
 	}
 }
+
+func TestMarkdownWriterWrapsAtWordBoundaries(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true, 12)
+	writer.BeginResponse()
+	_, _ = writer.Write([]byte("one two three four"))
+	writer.EndResponse()
+	plain := ansiPattern.ReplaceAllString(output.String(), "")
+	if plain != "one two\nthree four" {
+		t.Fatalf("wrapped output = %q", plain)
+	}
+}
+
+func TestMarkdownWriterWrapsWithoutColor(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, false, 7)
+	writer.BeginResponse()
+	_, _ = writer.Write([]byte("one two three"))
+	writer.EndResponse()
+	if got := output.String(); got != "one two\nthree" {
+		t.Fatalf("wrapped output = %q", got)
+	}
+}
