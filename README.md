@@ -4,7 +4,7 @@
 
 ## What is included
 
-- A terminal UI with editable input, history, streamed responses, ANSI-colored Markdown, and live prefix-matched slash-command suggestions with descriptions. Set `NO_COLOR=1` to disable response styling.
+- A terminal UI with editable input, history, streamed responses, ANSI-colored Markdown, cancellable tasks via Ctrl+C, and live prefix-matched slash-command suggestions with descriptions. Set `NO_COLOR=1` to disable response styling.
 - Ollama and OpenAI-compatible APIs. `openai-like` is an alias intended for services that implement `/v1/chat/completions`.
 - `read`, `write`, `edit`, `list`, `search`, and `shell` tools.
 - Interactive mode shows a transient `Working` indicator while actions run. Use `/verbose` to toggle detailed telemetry, where every LLM request and tool call appears as one timestamped entry whose spinner is replaced by elapsed time when it finishes.

@@ -88,11 +88,10 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if err != nil {
 		return err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
 	promptText := strings.TrimSpace(strings.Join(flags.Args(), " "))
 	if promptText != "" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
 		logger := newTraceLogger(stderr, opts.jsonEvents)
 		responseWriter := tui.NewMarkdownWriter(stdout, tui.ColorEnabled(stdout))
 		runner := agent.New(provider, opts.model, registry, logger, responseWriter, opts.maxSteps)
@@ -107,6 +106,8 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		if promptText == "" {
 			return errors.New("stdin contained no prompt")
 		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
 		logger := newTraceLogger(stderr, opts.jsonEvents)
 		responseWriter := tui.NewMarkdownWriter(stdout, tui.ColorEnabled(stdout))
 		runner := agent.New(provider, opts.model, registry, logger, responseWriter, opts.maxSteps)
@@ -119,7 +120,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	logger := trace.NewAnimated(ui.Writer(), opts.jsonEvents)
 	runner := agent.New(provider, opts.model, registry, logger, ui.ResponseWriter(), opts.maxSteps)
 	ui.SetRunner(runner)
-	return ui.Run(ctx)
+	return ui.Run(context.Background())
 }
 
 func newTraceLogger(out *os.File, jsonOutput bool) *trace.Logger {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -37,6 +38,7 @@ type UI struct {
 	terminal       *term.Terminal
 	responseWriter *MarkdownWriter
 	commandMenu    slashCommandMenu
+	input          *interruptReader
 	in             *os.File
 	out            *os.File
 	runner         Runner
@@ -47,13 +49,15 @@ type UI struct {
 }
 
 func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
-	rw := readWriter{Reader: in, Writer: out}
+	input := newInterruptReader(in)
+	rw := readWriter{Reader: input, Writer: out}
 	t := term.NewTerminal(rw, cyan+bold+"> "+reset)
 	t.SetSize(terminalSize(out))
 	u := &UI{
 		terminal:       t,
 		responseWriter: NewMarkdownWriter(t, ColorEnabled(out)),
 		commandMenu:    slashCommandMenu{out: t, color: ColorEnabled(out)},
+		input:          input,
 		in:             in,
 		out:            out,
 		runner:         runner,
@@ -89,6 +93,7 @@ func (u *UI) Run(ctx context.Context) error {
 		return fmt.Errorf("enable terminal mode: %w", err)
 	}
 	defer term.Restore(int(u.in.Fd()), state)
+	u.input.start()
 
 	u.printHeader()
 	for {
@@ -127,7 +132,14 @@ func (u *UI) Run(ctx context.Context) error {
 			continue
 		}
 		fmt.Fprintln(u.terminal, green+bold+"assistant"+reset)
-		if err := u.runner.Run(ctx, line); err != nil {
+		taskCtx, cancel := context.WithCancel(ctx)
+		u.input.setCancel(cancel)
+		err = u.runner.Run(taskCtx, line)
+		u.input.setCancel(nil)
+		cancel()
+		if errors.Is(err, context.Canceled) {
+			fmt.Fprintln(u.terminal, yellow+"Cancelled"+reset)
+		} else if err != nil {
 			fmt.Fprintln(u.terminal, yellow+"error: "+err.Error()+reset)
 		}
 		fmt.Fprintln(u.terminal)
