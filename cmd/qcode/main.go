@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/term"
+
 	"qcode/internal/agent"
 	"qcode/internal/llm"
 	"qcode/internal/tools"
@@ -91,7 +93,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 
 	promptText := strings.TrimSpace(strings.Join(flags.Args(), " "))
 	if promptText != "" {
-		logger := trace.New(stderr, opts.jsonEvents)
+		logger := newTraceLogger(stderr, opts.jsonEvents)
 		responseWriter := tui.NewMarkdownWriter(stdout, tui.ColorEnabled(stdout))
 		runner := agent.New(provider, opts.model, registry, logger, responseWriter, opts.maxSteps)
 		return runner.Run(ctx, promptText)
@@ -105,7 +107,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		if promptText == "" {
 			return errors.New("stdin contained no prompt")
 		}
-		logger := trace.New(stderr, opts.jsonEvents)
+		logger := newTraceLogger(stderr, opts.jsonEvents)
 		responseWriter := tui.NewMarkdownWriter(stdout, tui.ColorEnabled(stdout))
 		runner := agent.New(provider, opts.model, registry, logger, responseWriter, opts.maxSteps)
 		return runner.Run(ctx, promptText)
@@ -114,10 +116,17 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	// Terminal output must go through term.Terminal so asynchronous-looking stream
 	// updates do not corrupt the editable input line.
 	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
-	logger := trace.New(ui.Writer(), opts.jsonEvents)
+	logger := trace.NewAnimated(ui.Writer(), opts.jsonEvents)
 	runner := agent.New(provider, opts.model, registry, logger, ui.ResponseWriter(), opts.maxSteps)
 	ui.SetRunner(runner)
 	return ui.Run(ctx)
+}
+
+func newTraceLogger(out *os.File, jsonOutput bool) *trace.Logger {
+	if term.IsTerminal(int(out.Fd())) {
+		return trace.NewAnimated(out, jsonOutput)
+	}
+	return trace.New(out, jsonOutput)
 }
 
 func env(name, fallback string) string {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,8 +47,29 @@ func TestTimestampUsesLocalTime(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	New(&output, false).write("start", "llm", "ollama", at, 0, nil)
-	if got := output.String(); got != "[15:40:48] start llm ollama\n" {
+	logger := New(&output, false)
+	logger.writeCompleted(&Span{kind: "llm", name: "ollama", start: at}, time.Second, nil, false)
+	if got := output.String(); got != "[15:40:48] start llm ollama (1s)\n" {
 		t.Fatalf("text event = %q", got)
+	}
+}
+
+func TestTextEventIsOneCompletedStartLine(t *testing.T) {
+	var output bytes.Buffer
+	span := New(&output, false).Start("tool", "read", map[string]any{"arguments": `{"path":"x"}`})
+	span.End(nil)
+	got := output.String()
+	if strings.Count(got, "\n") != 1 || !strings.Contains(got, "start tool read (") || strings.Contains(got, "end tool") {
+		t.Fatalf("text event = %q", got)
+	}
+}
+
+func TestAnimatedEventReplacesSpinnerWithDuration(t *testing.T) {
+	var output bytes.Buffer
+	span := NewAnimated(&output, false).Start("tool", "read", nil)
+	span.End(nil)
+	got := output.String()
+	if !strings.Contains(got, "(⠋)") || !strings.Contains(got, "\x1b[2K") || strings.Contains(got, "end tool") {
+		t.Fatalf("animated event = %q", got)
 	}
 }

@@ -94,10 +94,13 @@ func TestAgentRunsToolsUntilFinalResponse(t *testing.T) {
 	if output.String() != "finished\n" {
 		t.Fatalf("output = %q", output.String())
 	}
-	for _, expected := range []string{"start llm fake", "end llm fake", "start tool write", "end tool write"} {
+	for _, expected := range []string{"start llm fake", "start tool write"} {
 		if !bytes.Contains(events.Bytes(), []byte(expected)) {
 			t.Errorf("events missing %q:\n%s", expected, events.String())
 		}
+	}
+	if bytes.Contains(events.Bytes(), []byte("end llm")) || bytes.Contains(events.Bytes(), []byte("end tool")) {
+		t.Errorf("events contain separate end entries:\n%s", events.String())
 	}
 }
 

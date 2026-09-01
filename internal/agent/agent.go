@@ -49,6 +49,9 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			lifecycle.BeginResponse()
 		}
 		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Messages: a.messages, Tools: a.tools.Schemas()}, func(text string) {
+			if !wroteText {
+				span.Suspend()
+			}
 			wroteText = true
 			fmt.Fprint(a.out, text)
 		})
