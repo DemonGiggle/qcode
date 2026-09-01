@@ -40,6 +40,8 @@ func New(provider llm.Provider, model string, registry *tools.Registry, logger *
 func (a *Agent) SetVerbose(verbose bool) { a.trace.SetVerbose(verbose) }
 
 func (a *Agent) Run(ctx context.Context, userText string) error {
+	task := a.trace.BeginTask()
+	defer task.End()
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userText})
 	lastToolCall := ""
 	identicalToolCalls := 0
@@ -51,7 +53,11 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			lifecycle.BeginResponse()
 		}
 		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Messages: a.messages, Tools: a.tools.Schemas()}, func(text string) {
+			if text == "" {
+				return
+			}
 			if !wroteText {
+				task.Suspend()
 				span.Suspend()
 			}
 			wroteText = true
@@ -72,6 +78,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			return nil
 		}
 		for index, call := range response.Message.ToolCalls {
+			task.Resume()
 			fingerprint := toolFingerprint(call)
 			if fingerprint == lastToolCall {
 				identicalToolCalls++

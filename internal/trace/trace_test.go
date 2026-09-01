@@ -74,16 +74,38 @@ func TestAnimatedEventReplacesSpinnerWithDuration(t *testing.T) {
 	}
 }
 
-func TestNonVerboseAnimatedEventShowsOnlyWorkingWhileActive(t *testing.T) {
+func TestNonVerboseAnimatedEventShowsWaitingForWholeTask(t *testing.T) {
 	var output bytes.Buffer
 	logger := NewAnimated(&output, false)
 	logger.SetVerbose(false)
+	task := logger.BeginTask()
 	span := logger.Start("llm", "fake", nil)
-	if got := output.String(); !strings.Contains(got, "Working (⠋)") || strings.Contains(got, "start llm") {
+	if got := output.String(); !strings.Contains(got, "Waiting (⠋)") || strings.Contains(got, "start llm") {
 		t.Fatalf("active event = %q", got)
 	}
 	span.End(nil)
-	if got := output.String(); !strings.HasSuffix(got, "\r\x1b[2K") || strings.Contains(got, "start llm") {
+	if got := output.String(); strings.HasSuffix(got, "\r\x1b[2K") || strings.Contains(got, "start llm") {
+		t.Fatalf("span cleared task indicator = %q", got)
+	}
+	task.End()
+	if got := output.String(); !strings.HasSuffix(got, "\r\x1b[2K") {
 		t.Fatalf("completed event = %q", got)
 	}
+}
+
+func TestTaskIndicatorCanPauseForOutputAndResumeForLocalWork(t *testing.T) {
+	var output bytes.Buffer
+	logger := NewAnimated(&output, false)
+	logger.SetVerbose(false)
+	task := logger.BeginTask()
+	task.Suspend()
+	if got := output.String(); !strings.HasSuffix(got, "\r\x1b[2K") {
+		t.Fatalf("suspended task = %q", got)
+	}
+	output.Reset()
+	task.Resume()
+	if got := output.String(); !strings.Contains(got, "Waiting (⠋)") {
+		t.Fatalf("resumed task = %q", got)
+	}
+	task.End()
 }

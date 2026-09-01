@@ -180,7 +180,7 @@ func (u *UI) printHeader() {
 		}
 	}
 	fmt.Fprintf(u.terminal, "\r\n%sqcode%s  %s%s%s\r\n", bold+cyan, reset, dim, u.provider+" / "+u.model, reset)
-	fmt.Fprintf(u.terminal, "%s%s  ·  Working indicator; /verbose for action traces%s\r\n\r\n", dim, root, reset)
+	fmt.Fprintf(u.terminal, "%s%s  ·  Waiting indicator; /verbose for action traces%s\r\n\r\n", dim, root, reset)
 }
 
 func terminalSize(out *os.File) (int, int) {

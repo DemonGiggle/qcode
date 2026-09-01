@@ -35,6 +35,16 @@ type Span struct {
 	verbose bool
 }
 
+type Task struct {
+	logger  *Logger
+	enabled bool
+	mu      sync.Mutex
+	stop    chan struct{}
+	done    chan struct{}
+	running bool
+	ended   bool
+}
+
 func New(out io.Writer, jsonOutput bool) *Logger {
 	return &Logger{out: out, json: jsonOutput, verbose: true}
 }
@@ -51,6 +61,19 @@ func (l *Logger) SetVerbose(verbose bool) {
 	l.mu.Unlock()
 }
 
+// BeginTask starts the compact task-level indicator. In verbose and JSON
+// modes, individual spans provide the progress output instead.
+func (l *Logger) BeginTask() *Task {
+	l.mu.Lock()
+	active := l.animated && !l.verbose
+	l.mu.Unlock()
+	task := &Task{logger: l, enabled: active}
+	if active {
+		task.Resume()
+	}
+	return task
+}
+
 func (l *Logger) Start(kind, name string, fields map[string]any) *Span {
 	now := time.Now()
 	l.mu.Lock()
@@ -62,6 +85,9 @@ func (l *Logger) Start(kind, name string, fields map[string]any) *Span {
 		return s
 	}
 	if l.animated {
+		if !verbose {
+			return s
+		}
 		s.stop = make(chan struct{})
 		s.done = make(chan struct{})
 		l.writeProgress(s, spinnerFrames[0])
@@ -73,7 +99,7 @@ func (l *Logger) Start(kind, name string, fields map[string]any) *Span {
 // Suspend clears an animated event before another writer starts producing
 // terminal output. End will print the completed event after that output.
 func (s *Span) Suspend() {
-	if s == nil || !s.logger.animated {
+	if s == nil || !s.logger.animated || !s.verbose {
 		return
 	}
 	s.stopAnimation()
@@ -113,7 +139,6 @@ func (s *Span) End(err error) {
 		return
 	}
 	if s.logger.animated && !s.verbose {
-		s.logger.clearProgress(!s.hidden)
 		return
 	}
 	s.logger.writeCompleted(s, duration, fields, !s.hidden)
@@ -146,12 +171,90 @@ func (s *Span) stopAnimation() {
 func (l *Logger) writeProgress(s *Span, frame string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if !s.verbose {
-		fmt.Fprintf(l.out, "\rWorking (%s)", frame)
-		return
-	}
 	fmt.Fprintf(l.out, "\r[%s] start %s %s (%s)", formatTimestamp(s.start), s.kind, s.name, frame)
 	writeTextFields(l.out, s.fields)
+}
+
+func (t *Task) Resume() {
+	if t == nil || t.logger == nil || !t.enabled {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.ended || t.running {
+		return
+	}
+	t.stop = make(chan struct{})
+	t.done = make(chan struct{})
+	t.running = true
+	t.logger.writeWaiting(spinnerFrames[0])
+	go t.animate(t.stop, t.done)
+}
+
+func (t *Task) Suspend() {
+	if t == nil || t.logger == nil || !t.enabled {
+		return
+	}
+	stop, done, running := t.stopRun()
+	if !running {
+		return
+	}
+	close(stop)
+	<-done
+	t.logger.clearProgress(true)
+}
+
+func (t *Task) End() {
+	if t == nil || t.logger == nil || !t.enabled {
+		return
+	}
+	t.mu.Lock()
+	if t.ended {
+		t.mu.Unlock()
+		return
+	}
+	t.ended = true
+	stop, done, running := t.stop, t.done, t.running
+	t.running = false
+	t.mu.Unlock()
+	if running {
+		close(stop)
+		<-done
+		t.logger.clearProgress(true)
+	}
+}
+
+func (t *Task) stopRun() (chan struct{}, chan struct{}, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.ended || !t.running {
+		return nil, nil, false
+	}
+	stop, done := t.stop, t.done
+	t.running = false
+	return stop, done, true
+}
+
+func (t *Task) animate(stop, done chan struct{}) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	defer close(done)
+	frame := 1
+	for {
+		select {
+		case <-ticker.C:
+			t.logger.writeWaiting(spinnerFrames[frame%len(spinnerFrames)])
+			frame++
+		case <-stop:
+			return
+		}
+	}
+}
+
+func (l *Logger) writeWaiting(frame string) {
+	l.mu.Lock()
+	fmt.Fprintf(l.out, "\rWaiting (%s)", frame)
+	l.mu.Unlock()
 }
 
 func (l *Logger) clearProgress(clearLine bool) {
