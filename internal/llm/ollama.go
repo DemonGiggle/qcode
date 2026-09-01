@@ -38,10 +38,11 @@ type ollamaToolCall struct {
 type ollamaMessage struct {
 	Role      string           `json:"role"`
 	Content   string           `json:"content,omitempty"`
+	Thinking  string           `json:"thinking,omitempty"`
 	ToolCalls []ollamaToolCall `json:"tool_calls,omitempty"`
 }
 
-func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText func(string)) (Response, error) {
+func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
 	messages := make([]map[string]any, 0, len(input.Messages))
 	for _, message := range input.Messages {
 		item := map[string]any{"role": message.Role, "content": message.Content}
@@ -99,10 +100,13 @@ func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText fun
 		if event.Error != "" {
 			return Response{}, fmt.Errorf("ollama: %s", event.Error)
 		}
+		if event.Message.Thinking != "" && onText != nil {
+			onText(StreamEvent{Kind: StreamThinking, Text: event.Message.Thinking})
+		}
 		if event.Message.Content != "" {
 			result.Content += event.Message.Content
 			if onText != nil {
-				onText(event.Message.Content)
+				onText(StreamEvent{Kind: StreamOutput, Text: event.Message.Content})
 			}
 		}
 		for _, call := range event.Message.ToolCalls {

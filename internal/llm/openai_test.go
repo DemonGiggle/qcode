@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -28,6 +29,7 @@ func TestOpenAIStreamsTextAndToolCall(t *testing.T) {
 			t.Errorf("stream = %v", body["stream"])
 		}
 		streamBody := strings.Join([]string{
+			`data: {"choices":[{"delta":{"reasoning_content":"checking "}}]}`,
 			`data: {"choices":[{"delta":{"content":"hello "}}]}`,
 			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"abc","function":{"name":"re","arguments":"{\"pa"}}]}}]}`,
 			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"ad","arguments":"th\":\"x\"}"}}]}}]}`,
@@ -41,14 +43,16 @@ func TestOpenAIStreamsTextAndToolCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	var streamed strings.Builder
-	response, err := provider.Complete(context.Background(), Request{Model: "test", Messages: []Message{{Role: "user", Content: "hi"}}}, func(part string) { streamed.WriteString(part) })
+	response, err := provider.Complete(context.Background(), Request{Model: "test", Messages: []Message{{Role: "user", Content: "hi"}}}, func(event StreamEvent) {
+		fmt.Fprintf(&streamed, "%d:%s", event.Kind, event.Text)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gotAuthorization != "Bearer secret" {
 		t.Errorf("authorization = %q", gotAuthorization)
 	}
-	if streamed.String() != "hello " || response.Message.Content != "hello " {
+	if streamed.String() != "1:checking 0:hello " || response.Message.Content != "hello " {
 		t.Errorf("content = %q / %q", streamed.String(), response.Message.Content)
 	}
 	if len(response.Message.ToolCalls) != 1 {

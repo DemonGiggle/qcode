@@ -39,9 +39,23 @@ type Response struct {
 	Message Message
 }
 
+type StreamKind uint8
+
+const (
+	StreamOutput StreamKind = iota
+	StreamThinking
+)
+
+type StreamEvent struct {
+	Kind StreamKind
+	Text string
+}
+
+type StreamCallback func(StreamEvent)
+
 type Provider interface {
 	Name() string
-	Complete(ctx context.Context, request Request, onText func(string)) (Response, error)
+	Complete(ctx context.Context, request Request, onText StreamCallback) (Response, error)
 }
 
 type Factory func(Config) (Provider, error)

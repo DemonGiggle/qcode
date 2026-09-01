@@ -56,7 +56,7 @@ type openAIMessage struct {
 	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
 }
 
-func (p *openAIProvider) Complete(ctx context.Context, input Request, onText func(string)) (Response, error) {
+func (p *openAIProvider) Complete(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
 	messages := make([]openAIMessage, 0, len(input.Messages))
 	for _, message := range input.Messages {
 		converted := openAIMessage{Role: message.Role, Content: message.Content, Name: message.Name, ToolCallID: message.ToolCallID}
@@ -100,7 +100,7 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText fun
 	return parseOpenAIStream(resp.Body, onText)
 }
 
-func parseOpenAIStream(reader io.Reader, onText func(string)) (Response, error) {
+func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error) {
 	result := Message{Role: "assistant"}
 	type partialCall struct{ id, name, arguments string }
 	partials := map[int]*partialCall{}
@@ -121,8 +121,10 @@ func parseOpenAIStream(reader io.Reader, onText func(string)) (Response, error) 
 			} `json:"error,omitempty"`
 			Choices []struct {
 				Delta struct {
-					Content   string           `json:"content"`
-					ToolCalls []openAIToolCall `json:"tool_calls"`
+					Content          string           `json:"content"`
+					ReasoningContent string           `json:"reasoning_content"`
+					Reasoning        string           `json:"reasoning"`
+					ToolCalls        []openAIToolCall `json:"tool_calls"`
 				} `json:"delta"`
 			} `json:"choices"`
 		}
@@ -133,10 +135,17 @@ func parseOpenAIStream(reader io.Reader, onText func(string)) (Response, error) 
 			return Response{}, errors.New(event.Error.Message)
 		}
 		for _, choice := range event.Choices {
+			reasoning := choice.Delta.ReasoningContent
+			if reasoning == "" {
+				reasoning = choice.Delta.Reasoning
+			}
+			if reasoning != "" && onText != nil {
+				onText(StreamEvent{Kind: StreamThinking, Text: reasoning})
+			}
 			if choice.Delta.Content != "" {
 				result.Content += choice.Delta.Content
 				if onText != nil {
-					onText(choice.Delta.Content)
+					onText(StreamEvent{Kind: StreamOutput, Text: choice.Delta.Content})
 				}
 			}
 			for _, delta := range choice.Delta.ToolCalls {

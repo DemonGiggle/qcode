@@ -30,6 +30,11 @@ type responseLifecycle interface {
 	EndResponse()
 }
 
+type thinkingLifecycle interface {
+	BeginThinking()
+	EndThinking()
+}
+
 func New(provider llm.Provider, model string, registry *tools.Registry, logger *trace.Logger, out io.Writer, maxSteps int) *Agent {
 	if maxSteps <= 0 {
 		maxSteps = 32
@@ -50,21 +55,39 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 	for step := 0; step < a.maxSteps; step++ {
 		span := a.trace.Start("llm", a.provider.Name(), map[string]any{"model": a.model, "step": step + 1})
 		wroteText := false
+		thinking := false
 		lifecycle, rendersResponses := a.out.(responseLifecycle)
+		thinkingOutput, stylesThinking := a.out.(thinkingLifecycle)
 		if rendersResponses {
 			lifecycle.BeginResponse()
 		}
-		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Messages: a.messages, Tools: a.tools.Schemas()}, func(text string) {
-			if text == "" {
+		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Messages: a.messages, Tools: a.tools.Schemas()}, func(event llm.StreamEvent) {
+			if event.Text == "" {
 				return
 			}
 			if !wroteText {
 				task.Suspend()
 				span.Suspend()
 			}
+			if event.Kind == llm.StreamThinking && !thinking {
+				if stylesThinking {
+					thinkingOutput.BeginThinking()
+				}
+				thinking = true
+			} else if event.Kind == llm.StreamOutput && thinking {
+				if stylesThinking {
+					thinkingOutput.EndThinking()
+				} else {
+					fmt.Fprintln(a.out)
+				}
+				thinking = false
+			}
 			wroteText = true
-			fmt.Fprint(a.out, text)
+			fmt.Fprint(a.out, event.Text)
 		})
+		if thinking && stylesThinking {
+			thinkingOutput.EndThinking()
+		}
 		if wroteText {
 			fmt.Fprintln(a.out)
 		}

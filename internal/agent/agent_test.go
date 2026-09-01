@@ -18,25 +18,41 @@ type fakeProvider struct{ calls int }
 
 type lifecycleWriter struct {
 	bytes.Buffer
-	begins int
-	ends   int
+	begins         int
+	ends           int
+	thinkingBegins int
+	thinkingEnds   int
 }
 
 func (w *lifecycleWriter) BeginResponse() { w.begins++ }
 func (w *lifecycleWriter) EndResponse()   { w.ends++ }
+func (w *lifecycleWriter) BeginThinking() { w.thinkingBegins++ }
+func (w *lifecycleWriter) EndThinking() {
+	w.thinkingEnds++
+	w.WriteByte('\n')
+}
 
 type responseProvider struct{}
+
+type thinkingProvider struct{}
 
 type repeatingProvider struct{ calls int }
 
 func (p *responseProvider) Name() string { return "response" }
-func (p *responseProvider) Complete(_ context.Context, _ llm.Request, onText func(string)) (llm.Response, error) {
-	onText("finished")
+func (p *responseProvider) Complete(_ context.Context, _ llm.Request, onText llm.StreamCallback) (llm.Response, error) {
+	onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: "finished"})
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "finished"}}, nil
+}
+
+func (p *thinkingProvider) Name() string { return "thinking" }
+func (p *thinkingProvider) Complete(_ context.Context, _ llm.Request, onText llm.StreamCallback) (llm.Response, error) {
+	onText(llm.StreamEvent{Kind: llm.StreamThinking, Text: "considering"})
+	onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: "finished"})
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: "finished"}}, nil
 }
 
 func (p *repeatingProvider) Name() string { return "repeating" }
-func (p *repeatingProvider) Complete(_ context.Context, _ llm.Request, _ func(string)) (llm.Response, error) {
+func (p *repeatingProvider) Complete(_ context.Context, _ llm.Request, _ llm.StreamCallback) (llm.Response, error) {
 	p.calls++
 	return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{
 		ID: "repeat", Name: "read", Arguments: json.RawMessage(`{"path":"same.txt"}`),
@@ -44,7 +60,7 @@ func (p *repeatingProvider) Complete(_ context.Context, _ llm.Request, _ func(st
 }
 
 func (p *fakeProvider) Name() string { return "fake" }
-func (p *fakeProvider) Complete(_ context.Context, request llm.Request, onText func(string)) (llm.Response, error) {
+func (p *fakeProvider) Complete(_ context.Context, request llm.Request, onText llm.StreamCallback) (llm.Response, error) {
 	p.calls++
 	if p.calls == 1 {
 		return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "one", Name: "write", Arguments: json.RawMessage(`{"path":"result.txt","content":"done"}`)}}}}, nil
@@ -53,7 +69,7 @@ func (p *fakeProvider) Complete(_ context.Context, request llm.Request, onText f
 	if last.Role != "tool" {
 		panic("missing tool result")
 	}
-	onText("finished")
+	onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: "finished"})
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: "finished"}}, nil
 }
 
@@ -73,6 +89,25 @@ func TestAgentMarksResponseBoundaries(t *testing.T) {
 		t.Fatalf("boundaries = %d/%d", output.begins, output.ends)
 	}
 	if output.String() != "finished\n" {
+		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestAgentMarksThinkingBoundaries(t *testing.T) {
+	registry, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output lifecycleWriter
+	var events bytes.Buffer
+	runner := New(&thinkingProvider{}, "test", registry, trace.New(&events, false), &output, 1)
+	if err := runner.Run(context.Background(), "respond"); err != nil {
+		t.Fatal(err)
+	}
+	if output.thinkingBegins != 1 || output.thinkingEnds != 1 {
+		t.Fatalf("thinking boundaries = %d/%d", output.thinkingBegins, output.thinkingEnds)
+	}
+	if output.String() != "considering\nfinished\n" {
 		t.Fatalf("output = %q", output.String())
 	}
 }

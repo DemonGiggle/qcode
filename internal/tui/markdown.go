@@ -21,13 +21,14 @@ const (
 // Buffering by line keeps syntax correct when a provider splits a delimiter
 // such as ** or ``` across streamed chunks.
 type MarkdownWriter struct {
-	out     io.Writer
-	enabled bool
-	width   int
-	unicode bool
-	active  bool
-	inFence bool
-	buffer  bytes.Buffer
+	out      io.Writer
+	enabled  bool
+	width    int
+	unicode  bool
+	active   bool
+	inFence  bool
+	thinking bool
+	buffer   bytes.Buffer
 }
 
 func NewMarkdownWriter(out io.Writer, enabled bool, width ...int) *MarkdownWriter {
@@ -46,6 +47,20 @@ func (w *MarkdownWriter) BeginResponse() {
 	w.buffer.Reset()
 }
 
+func (w *MarkdownWriter) BeginThinking() { w.thinking = true }
+
+func (w *MarkdownWriter) EndThinking() {
+	if !w.thinking {
+		return
+	}
+	if w.buffer.Len() > 0 {
+		w.renderLine(strings.TrimSuffix(w.buffer.String(), "\r"))
+		w.buffer.Reset()
+		fmt.Fprintln(w.out)
+	}
+	w.thinking = false
+}
+
 func (w *MarkdownWriter) EndResponse() {
 	if !w.active {
 		return
@@ -55,6 +70,7 @@ func (w *MarkdownWriter) EndResponse() {
 	}
 	w.buffer.Reset()
 	w.inFence = false
+	w.thinking = false
 	w.active = false
 	if w.enabled {
 		fmt.Fprint(w.out, reset)
@@ -87,6 +103,14 @@ func (w *MarkdownWriter) renderLine(line string) {
 		escapeLabel = "<ESC>"
 	}
 	line = strings.ReplaceAll(line, "\x1b", escapeLabel)
+	if w.thinking {
+		rendered := line
+		if w.enabled {
+			rendered = gray + line + reset
+		}
+		fmt.Fprint(w.out, wrapANSI(rendered, w.width, leadingWhitespace(line)))
+		return
+	}
 	if !w.enabled {
 		fmt.Fprint(w.out, wrapANSI(line, w.width, leadingWhitespace(line)))
 		return

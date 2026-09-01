@@ -109,3 +109,25 @@ func TestMarkdownWriterUsesASCIIGlyphs(t *testing.T) {
 		t.Fatalf("ASCII output = %q, want %q", plain, want)
 	}
 }
+
+func TestMarkdownWriterStylesThinkingGray(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true, 80)
+	writer.BeginResponse()
+	writer.BeginThinking()
+	_, _ = writer.Write([]byte("considering options"))
+	writer.EndThinking()
+	_, _ = writer.Write([]byte("**final answer**"))
+	writer.EndResponse()
+
+	if !strings.Contains(output.String(), gray+"considering options"+reset) {
+		t.Fatalf("thinking was not gray: %q", output.String())
+	}
+	if !strings.Contains(output.String(), bold+"final answer"+reset) {
+		t.Fatalf("final answer lost normal Markdown styling: %q", output.String())
+	}
+	plain := ansiPattern.ReplaceAllString(output.String(), "")
+	if plain != "considering options\nfinal answer" {
+		t.Fatalf("plain output = %q", plain)
+	}
+}
