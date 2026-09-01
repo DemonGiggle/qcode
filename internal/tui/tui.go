@@ -24,6 +24,10 @@ type Runner interface {
 	Run(context.Context, string) error
 }
 
+type verboseRunner interface {
+	SetVerbose(bool)
+}
+
 type readWriter struct {
 	io.Reader
 	io.Writer
@@ -32,26 +36,46 @@ type readWriter struct {
 type UI struct {
 	terminal       *term.Terminal
 	responseWriter *MarkdownWriter
+	commandMenu    slashCommandMenu
 	in             *os.File
 	out            *os.File
 	runner         Runner
 	provider       string
 	model          string
 	root           string
+	verbose        bool
 }
 
 func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	rw := readWriter{Reader: in, Writer: out}
 	t := term.NewTerminal(rw, cyan+bold+"> "+reset)
 	t.SetSize(terminalSize(out))
-	return &UI{terminal: t, responseWriter: NewMarkdownWriter(t, ColorEnabled(out)), in: in, out: out, runner: runner, provider: provider, model: model, root: root}
+	u := &UI{
+		terminal:       t,
+		responseWriter: NewMarkdownWriter(t, ColorEnabled(out)),
+		commandMenu:    slashCommandMenu{out: t, color: ColorEnabled(out)},
+		in:             in,
+		out:            out,
+		runner:         runner,
+		provider:       provider,
+		model:          model,
+		root:           root,
+	}
+	t.AutoCompleteCallback = u.completeSlashCommand
+	u.SetRunner(runner)
+	return u
 }
 
 func (u *UI) Writer() io.Writer { return u.terminal }
 
 func (u *UI) ResponseWriter() io.Writer { return u.responseWriter }
 
-func (u *UI) SetRunner(runner Runner) { u.runner = runner }
+func (u *UI) SetRunner(runner Runner) {
+	u.runner = runner
+	if configurable, ok := runner.(verboseRunner); ok {
+		configurable.SetVerbose(u.verbose)
+	}
+}
 
 func (u *UI) Run(ctx context.Context) error {
 	if u.runner == nil {
@@ -69,6 +93,7 @@ func (u *UI) Run(ctx context.Context) error {
 	u.printHeader()
 	for {
 		line, err := u.terminal.ReadLine()
+		u.commandMenu.dismiss(u.out)
 		if err != nil {
 			if err == io.EOF {
 				return nil
@@ -87,7 +112,18 @@ func (u *UI) Run(ctx context.Context) error {
 			u.printHeader()
 			continue
 		case "/help":
-			fmt.Fprintln(u.terminal, dim+"/help  /clear  /quit"+reset)
+			u.printCommandHelp()
+			continue
+		case "/verbose":
+			u.verbose = !u.verbose
+			if configurable, ok := u.runner.(verboseRunner); ok {
+				configurable.SetVerbose(u.verbose)
+			}
+			state := "off"
+			if u.verbose {
+				state = "on"
+			}
+			fmt.Fprintf(u.terminal, "%sVerbose tracing: %s%s\n", dim, state, reset)
 			continue
 		}
 		fmt.Fprintln(u.terminal, green+bold+"assistant"+reset)
@@ -95,6 +131,32 @@ func (u *UI) Run(ctx context.Context) error {
 			fmt.Fprintln(u.terminal, yellow+"error: "+err.Error()+reset)
 		}
 		fmt.Fprintln(u.terminal)
+	}
+}
+
+func (u *UI) completeSlashCommand(line string, pos int, key rune) (string, int, bool) {
+	if key == '\t' {
+		matches := matchingSlashCommands(line)
+		if len(matches) == 0 {
+			u.commandMenu.update(nil)
+			return line, pos, false
+		}
+		completed := matches[0].name
+		u.commandMenu.update(matchingSlashCommands(completed))
+		return completed, len(completed), true
+	}
+	if key < 32 || pos < 0 || pos > len(line) {
+		return line, pos, false
+	}
+	inserted := string(key)
+	newLine := line[:pos] + inserted + line[pos:]
+	u.commandMenu.update(matchingSlashCommands(newLine))
+	return newLine, pos + len(inserted), true
+}
+
+func (u *UI) printCommandHelp() {
+	for _, command := range slashCommands {
+		fmt.Fprintf(u.terminal, "%s%-8s%s %s%s%s\n", cyan, command.name, reset, dim, command.description, reset)
 	}
 }
 
@@ -106,7 +168,7 @@ func (u *UI) printHeader() {
 		}
 	}
 	fmt.Fprintf(u.terminal, "\r\n%sqcode%s  %s%s%s\r\n", bold+cyan, reset, dim, u.provider+" / "+u.model, reset)
-	fmt.Fprintf(u.terminal, "%s%s  ·  actions include timestamps and durations%s\r\n\r\n", dim, root, reset)
+	fmt.Fprintf(u.terminal, "%s%s  ·  Working indicator; /verbose for action traces%s\r\n\r\n", dim, root, reset)
 }
 
 func terminalSize(out *os.File) (int, int) {

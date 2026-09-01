@@ -16,36 +16,47 @@ type Logger struct {
 	out      io.Writer
 	json     bool
 	animated bool
+	verbose  bool
 	mu       sync.Mutex
 }
 
 type Span struct {
-	logger *Logger
-	kind   string
-	name   string
-	start  time.Time
-	fields map[string]any
-	stop   chan struct{}
-	done   chan struct{}
-	once   sync.Once
-	mu     sync.Mutex
-	hidden bool
-	ended  bool
+	logger  *Logger
+	kind    string
+	name    string
+	start   time.Time
+	fields  map[string]any
+	stop    chan struct{}
+	done    chan struct{}
+	once    sync.Once
+	mu      sync.Mutex
+	hidden  bool
+	ended   bool
+	verbose bool
 }
 
 func New(out io.Writer, jsonOutput bool) *Logger {
-	return &Logger{out: out, json: jsonOutput}
+	return &Logger{out: out, json: jsonOutput, verbose: true}
 }
 
 // NewAnimated creates a logger that updates an in-progress text event in place.
 // JSON output remains a pair of start/end events for machine consumers.
 func NewAnimated(out io.Writer, jsonOutput bool) *Logger {
-	return &Logger{out: out, json: jsonOutput, animated: !jsonOutput}
+	return &Logger{out: out, json: jsonOutput, animated: !jsonOutput, verbose: true}
+}
+
+func (l *Logger) SetVerbose(verbose bool) {
+	l.mu.Lock()
+	l.verbose = verbose
+	l.mu.Unlock()
 }
 
 func (l *Logger) Start(kind, name string, fields map[string]any) *Span {
 	now := time.Now()
-	s := &Span{logger: l, kind: kind, name: name, start: now, fields: cloneFields(fields)}
+	l.mu.Lock()
+	verbose := l.verbose
+	l.mu.Unlock()
+	s := &Span{logger: l, kind: kind, name: name, start: now, fields: cloneFields(fields), verbose: verbose}
 	if l.json {
 		l.writeJSON("start", kind, name, now, 0, fields)
 		return s
@@ -101,6 +112,10 @@ func (s *Span) End(err error) {
 		s.logger.writeJSON("end", s.kind, s.name, time.Now(), duration, endFields)
 		return
 	}
+	if s.logger.animated && !s.verbose {
+		s.logger.clearProgress(!s.hidden)
+		return
+	}
 	s.logger.writeCompleted(s, duration, fields, !s.hidden)
 }
 
@@ -131,8 +146,21 @@ func (s *Span) stopAnimation() {
 func (l *Logger) writeProgress(s *Span, frame string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if !s.verbose {
+		fmt.Fprintf(l.out, "\rWorking (%s)", frame)
+		return
+	}
 	fmt.Fprintf(l.out, "\r[%s] start %s %s (%s)", formatTimestamp(s.start), s.kind, s.name, frame)
 	writeTextFields(l.out, s.fields)
+}
+
+func (l *Logger) clearProgress(clearLine bool) {
+	if !clearLine {
+		return
+	}
+	l.mu.Lock()
+	fmt.Fprint(l.out, "\r\x1b[2K")
+	l.mu.Unlock()
 }
 
 func (l *Logger) writeCompleted(s *Span, duration time.Duration, fields map[string]any, clearLine bool) {

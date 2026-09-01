@@ -73,3 +73,17 @@ func TestAnimatedEventReplacesSpinnerWithDuration(t *testing.T) {
 		t.Fatalf("animated event = %q", got)
 	}
 }
+
+func TestNonVerboseAnimatedEventShowsOnlyWorkingWhileActive(t *testing.T) {
+	var output bytes.Buffer
+	logger := NewAnimated(&output, false)
+	logger.SetVerbose(false)
+	span := logger.Start("llm", "fake", nil)
+	if got := output.String(); !strings.Contains(got, "Working (⠋)") || strings.Contains(got, "start llm") {
+		t.Fatalf("active event = %q", got)
+	}
+	span.End(nil)
+	if got := output.String(); !strings.HasSuffix(got, "\r\x1b[2K") || strings.Contains(got, "start llm") {
+		t.Fatalf("completed event = %q", got)
+	}
+}

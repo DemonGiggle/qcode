@@ -37,6 +37,8 @@ func New(provider llm.Provider, model string, registry *tools.Registry, logger *
 	return &Agent{provider: provider, model: model, tools: registry, trace: logger, out: out, maxSteps: maxSteps, messages: []llm.Message{{Role: "system", Content: prompt.System}}}
 }
 
+func (a *Agent) SetVerbose(verbose bool) { a.trace.SetVerbose(verbose) }
+
 func (a *Agent) Run(ctx context.Context, userText string) error {
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userText})
 	lastToolCall := ""
