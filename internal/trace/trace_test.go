@@ -109,3 +109,15 @@ func TestTaskIndicatorCanPauseForOutputAndResumeForLocalWork(t *testing.T) {
 	}
 	task.End()
 }
+
+func TestActiveTaskIndicatorRepaintsForLocalWork(t *testing.T) {
+	var output bytes.Buffer
+	logger := NewAnimated(&output, false)
+	logger.SetVerbose(false)
+	task := logger.BeginTask()
+	task.Resume()
+	task.End()
+	if got := output.String(); strings.Count(got, "Waiting (⠋)") < 2 {
+		t.Fatalf("refreshed task = %q", got)
+	}
+}

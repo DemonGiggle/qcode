@@ -181,7 +181,14 @@ func (t *Task) Resume() {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.ended || t.running {
+	if t.ended {
+		return
+	}
+	if t.running {
+		// Another terminal writer may have displaced the status line while
+		// the task remained active. Repaint it at phase boundaries such as
+		// the start of a local tool call.
+		t.logger.writeWaiting(spinnerFrames[0])
 		return
 	}
 	t.stop = make(chan struct{})
