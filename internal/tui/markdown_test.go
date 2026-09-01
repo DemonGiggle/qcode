@@ -95,3 +95,17 @@ func TestMarkdownWriterWrapsWithoutColor(t *testing.T) {
 		t.Fatalf("wrapped output = %q", got)
 	}
 }
+
+func TestMarkdownWriterUsesASCIIGlyphs(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true)
+	writer.SetUnicode(false)
+	writer.BeginResponse()
+	_, _ = writer.Write([]byte("- item\n> quote\n```text\nvalue\n```\nsafe \x1b[2J"))
+	writer.EndResponse()
+	plain := ansiPattern.ReplaceAllString(output.String(), "")
+	want := "- item\n| quote\n+- text\nvalue\n+-\nsafe <ESC>[2J"
+	if plain != want {
+		t.Fatalf("ASCII output = %q, want %q", plain, want)
+	}
+}

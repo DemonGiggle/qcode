@@ -24,18 +24,21 @@ type MarkdownWriter struct {
 	out     io.Writer
 	enabled bool
 	width   int
+	unicode bool
 	active  bool
 	inFence bool
 	buffer  bytes.Buffer
 }
 
 func NewMarkdownWriter(out io.Writer, enabled bool, width ...int) *MarkdownWriter {
-	writer := &MarkdownWriter{out: out, enabled: enabled}
+	writer := &MarkdownWriter{out: out, enabled: enabled, unicode: true}
 	if len(width) > 0 {
 		writer.width = width[0]
 	}
 	return writer
 }
+
+func (w *MarkdownWriter) SetUnicode(enabled bool) { w.unicode = enabled }
 
 func (w *MarkdownWriter) BeginResponse() {
 	w.active = true
@@ -79,7 +82,11 @@ func (w *MarkdownWriter) Write(data []byte) (int, error) {
 }
 
 func (w *MarkdownWriter) renderLine(line string) {
-	line = strings.ReplaceAll(line, "\x1b", "␛")
+	escapeLabel := "␛"
+	if !w.unicode {
+		escapeLabel = "<ESC>"
+	}
+	line = strings.ReplaceAll(line, "\x1b", escapeLabel)
 	if !w.enabled {
 		fmt.Fprint(w.out, wrapANSI(line, w.width, leadingWhitespace(line)))
 		return
@@ -87,12 +94,19 @@ func (w *MarkdownWriter) renderLine(line string) {
 	trimmed := strings.TrimSpace(line)
 	if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
 		if w.inFence {
-			w.writeRendered(magenta+"╰─"+reset, "")
+			label := "╰─"
+			if !w.unicode {
+				label = "+-"
+			}
+			w.writeRendered(magenta+label+reset, "")
 			w.inFence = false
 			return
 		}
 		language := strings.TrimSpace(trimmed[3:])
 		label := "╭─"
+		if !w.unicode {
+			label = "+-"
+		}
 		if language != "" {
 			label += " " + language
 		}
@@ -105,7 +119,11 @@ func (w *MarkdownWriter) renderLine(line string) {
 		return
 	}
 	if trimmed == "---" || trimmed == "***" || trimmed == "___" {
-		w.writeRendered(gray+strings.Repeat("─", 40)+reset, "")
+		rule := "─"
+		if !w.unicode {
+			rule = "-"
+		}
+		w.writeRendered(gray+strings.Repeat(rule, 40)+reset, "")
 		return
 	}
 	leading := line[:len(line)-len(strings.TrimLeftFunc(line, unicode.IsSpace))]
@@ -122,10 +140,14 @@ func (w *MarkdownWriter) renderLine(line string) {
 	if strings.HasPrefix(content, "> ") || content == ">" {
 		quote := strings.TrimSpace(strings.TrimPrefix(content, ">"))
 		continuation := leading + "  "
-		w.writeRendered(leading+cyan+"│ "+reset+italic+renderInline(quote, italic)+reset, continuation)
+		marker := "│ "
+		if !w.unicode {
+			marker = "| "
+		}
+		w.writeRendered(leading+cyan+marker+reset+italic+renderInline(quote, italic)+reset, continuation)
 		return
 	}
-	if marker, rest, ok := listItem(content); ok {
+	if marker, rest, ok := listItem(content, w.unicode); ok {
 		continuation := leading + strings.Repeat(" ", visibleWidth(marker))
 		w.writeRendered(leading+cyan+marker+reset+renderInline(rest), continuation)
 		return
@@ -152,14 +174,23 @@ func heading(line string) (int, string) {
 	return level, strings.TrimSpace(line[level:])
 }
 
-func listItem(line string) (string, string, bool) {
+func listItem(line string, unicodeEnabled bool) (string, string, bool) {
 	if len(line) >= 2 && (line[0] == '-' || line[0] == '*' || line[0] == '+') && line[1] == ' ' {
 		rest := line[2:]
 		if strings.HasPrefix(strings.ToLower(rest), "[x] ") {
+			if !unicodeEnabled {
+				return "[x] ", rest[4:], true
+			}
 			return "☑ ", rest[4:], true
 		}
 		if strings.HasPrefix(rest, "[ ] ") {
+			if !unicodeEnabled {
+				return "[ ] ", rest[4:], true
+			}
 			return "☐ ", rest[4:], true
+		}
+		if !unicodeEnabled {
+			return "- ", rest, true
 		}
 		return "• ", rest, true
 	}

@@ -10,13 +10,17 @@ import (
 
 const timestampLayout = "15:04:05"
 
-var spinnerFrames = [...]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+var (
+	unicodeSpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	asciiSpinnerFrames   = []string{"|", "/", "-", "\\"}
+)
 
 type Logger struct {
 	out      io.Writer
 	json     bool
 	animated bool
 	verbose  bool
+	unicode  bool
 	mu       sync.Mutex
 }
 
@@ -33,11 +37,13 @@ type Span struct {
 	hidden  bool
 	ended   bool
 	verbose bool
+	frames  []string
 }
 
 type Task struct {
 	logger  *Logger
 	enabled bool
+	frames  []string
 	mu      sync.Mutex
 	stop    chan struct{}
 	done    chan struct{}
@@ -46,13 +52,19 @@ type Task struct {
 }
 
 func New(out io.Writer, jsonOutput bool) *Logger {
-	return &Logger{out: out, json: jsonOutput, verbose: true}
+	return &Logger{out: out, json: jsonOutput, verbose: true, unicode: true}
 }
 
 // NewAnimated creates a logger that updates an in-progress text event in place.
 // JSON output remains a pair of start/end events for machine consumers.
 func NewAnimated(out io.Writer, jsonOutput bool) *Logger {
-	return &Logger{out: out, json: jsonOutput, animated: !jsonOutput, verbose: true}
+	return &Logger{out: out, json: jsonOutput, animated: !jsonOutput, verbose: true, unicode: true}
+}
+
+func (l *Logger) SetUnicode(enabled bool) {
+	l.mu.Lock()
+	l.unicode = enabled
+	l.mu.Unlock()
 }
 
 func (l *Logger) SetVerbose(verbose bool) {
@@ -66,8 +78,9 @@ func (l *Logger) SetVerbose(verbose bool) {
 func (l *Logger) BeginTask() *Task {
 	l.mu.Lock()
 	active := l.animated && !l.verbose
+	frames := l.spinnerFrames()
 	l.mu.Unlock()
-	task := &Task{logger: l, enabled: active}
+	task := &Task{logger: l, enabled: active, frames: frames}
 	if active {
 		task.Resume()
 	}
@@ -78,8 +91,9 @@ func (l *Logger) Start(kind, name string, fields map[string]any) *Span {
 	now := time.Now()
 	l.mu.Lock()
 	verbose := l.verbose
+	frames := l.spinnerFrames()
 	l.mu.Unlock()
-	s := &Span{logger: l, kind: kind, name: name, start: now, fields: cloneFields(fields), verbose: verbose}
+	s := &Span{logger: l, kind: kind, name: name, start: now, fields: cloneFields(fields), verbose: verbose, frames: frames}
 	if l.json {
 		l.writeJSON("start", kind, name, now, 0, fields)
 		return s
@@ -90,7 +104,7 @@ func (l *Logger) Start(kind, name string, fields map[string]any) *Span {
 		}
 		s.stop = make(chan struct{})
 		s.done = make(chan struct{})
-		l.writeProgress(s, spinnerFrames[0])
+		l.writeProgress(s, s.frames[0])
 		go s.animate()
 	}
 	return s
@@ -152,7 +166,7 @@ func (s *Span) animate() {
 	for {
 		select {
 		case <-ticker.C:
-			s.logger.writeProgress(s, spinnerFrames[frame%len(spinnerFrames)])
+			s.logger.writeProgress(s, s.frames[frame%len(s.frames)])
 			frame++
 		case <-s.stop:
 			return
@@ -188,13 +202,13 @@ func (t *Task) Resume() {
 		// Another terminal writer may have displaced the status line while
 		// the task remained active. Repaint it at phase boundaries such as
 		// the start of a local tool call.
-		t.logger.writeWaiting(spinnerFrames[0])
+		t.logger.writeWaiting(t.frames[0])
 		return
 	}
 	t.stop = make(chan struct{})
 	t.done = make(chan struct{})
 	t.running = true
-	t.logger.writeWaiting(spinnerFrames[0])
+	t.logger.writeWaiting(t.frames[0])
 	go t.animate(t.stop, t.done)
 }
 
@@ -250,7 +264,7 @@ func (t *Task) animate(stop, done chan struct{}) {
 	for {
 		select {
 		case <-ticker.C:
-			t.logger.writeWaiting(spinnerFrames[frame%len(spinnerFrames)])
+			t.logger.writeWaiting(t.frames[frame%len(t.frames)])
 			frame++
 		case <-stop:
 			return
@@ -262,6 +276,14 @@ func (l *Logger) writeWaiting(frame string) {
 	l.mu.Lock()
 	fmt.Fprintf(l.out, "\rWaiting (%s)", frame)
 	l.mu.Unlock()
+}
+
+// spinnerFrames must be called while l.mu is held.
+func (l *Logger) spinnerFrames() []string {
+	if l.unicode {
+		return unicodeSpinnerFrames
+	}
+	return asciiSpinnerFrames
 }
 
 func (l *Logger) clearProgress(clearLine bool) {

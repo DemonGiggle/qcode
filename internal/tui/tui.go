@@ -29,6 +29,10 @@ type verboseRunner interface {
 	SetVerbose(bool)
 }
 
+type unicodeRunner interface {
+	SetUnicode(bool)
+}
+
 type readWriter struct {
 	io.Reader
 	io.Writer
@@ -47,6 +51,7 @@ type UI struct {
 	root           string
 	verbose        bool
 	width          int
+	unicode        bool
 }
 
 func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
@@ -54,10 +59,13 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	rw := readWriter{Reader: input, Writer: out}
 	t := term.NewTerminal(rw, cyan+bold+"> "+reset)
 	width, height := terminalSize(out)
+	unicodeEnabled := UnicodeEnabled()
 	t.SetSize(width, height)
+	responseWriter := NewMarkdownWriter(t, ColorEnabled(out), width)
+	responseWriter.SetUnicode(unicodeEnabled)
 	u := &UI{
 		terminal:       t,
-		responseWriter: NewMarkdownWriter(t, ColorEnabled(out), width),
+		responseWriter: responseWriter,
 		commandMenu:    slashCommandMenu{out: t, color: ColorEnabled(out), width: width},
 		input:          input,
 		in:             in,
@@ -67,6 +75,7 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 		model:          model,
 		root:           root,
 		width:          width,
+		unicode:        unicodeEnabled,
 	}
 	t.AutoCompleteCallback = u.completeSlashCommand
 	u.SetRunner(runner)
@@ -81,6 +90,9 @@ func (u *UI) SetRunner(runner Runner) {
 	u.runner = runner
 	if configurable, ok := runner.(verboseRunner); ok {
 		configurable.SetVerbose(u.verbose)
+	}
+	if configurable, ok := runner.(unicodeRunner); ok {
+		configurable.SetUnicode(u.unicode)
 	}
 }
 
@@ -184,7 +196,11 @@ func (u *UI) printHeader() {
 		}
 	}
 	fmt.Fprintf(u.terminal, "\r\n%sqcode%s  %s%s%s\r\n", bold+cyan, reset, dim, u.provider+" / "+u.model, reset)
-	fmt.Fprintf(u.terminal, "%s%s  ·  Waiting indicator; /verbose for action traces%s\r\n\r\n", dim, root, reset)
+	separator := "·"
+	if !u.unicode {
+		separator = "-"
+	}
+	fmt.Fprintf(u.terminal, "%s%s  %s  Waiting indicator; /verbose for action traces%s\r\n\r\n", dim, root, separator, reset)
 }
 
 func terminalSize(out *os.File) (int, int) {

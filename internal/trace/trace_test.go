@@ -121,3 +121,15 @@ func TestActiveTaskIndicatorRepaintsForLocalWork(t *testing.T) {
 		t.Fatalf("refreshed task = %q", got)
 	}
 }
+
+func TestASCIIWaitingSpinner(t *testing.T) {
+	var output bytes.Buffer
+	logger := NewAnimated(&output, false)
+	logger.SetVerbose(false)
+	logger.SetUnicode(false)
+	task := logger.BeginTask()
+	task.End()
+	if got := output.String(); !strings.Contains(got, "Waiting (|)") || strings.Contains(got, "⠋") {
+		t.Fatalf("ASCII task indicator = %q", got)
+	}
+}

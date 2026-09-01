@@ -39,6 +39,8 @@ func New(provider llm.Provider, model string, registry *tools.Registry, logger *
 
 func (a *Agent) SetVerbose(verbose bool) { a.trace.SetVerbose(verbose) }
 
+func (a *Agent) SetUnicode(enabled bool) { a.trace.SetUnicode(enabled) }
+
 func (a *Agent) Run(ctx context.Context, userText string) error {
 	task := a.trace.BeginTask()
 	defer task.End()

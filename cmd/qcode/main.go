@@ -93,7 +93,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
 		logger := newTraceLogger(stderr, opts.jsonEvents)
-		responseWriter := tui.NewMarkdownWriter(stdout, tui.ColorEnabled(stdout), tui.OutputWidth(stdout))
+		responseWriter := newResponseWriter(stdout)
 		runner := agent.New(provider, opts.model, registry, logger, responseWriter, opts.maxSteps)
 		return runner.Run(ctx, promptText)
 	}
@@ -109,7 +109,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
 		logger := newTraceLogger(stderr, opts.jsonEvents)
-		responseWriter := tui.NewMarkdownWriter(stdout, tui.ColorEnabled(stdout), tui.OutputWidth(stdout))
+		responseWriter := newResponseWriter(stdout)
 		runner := agent.New(provider, opts.model, registry, logger, responseWriter, opts.maxSteps)
 		return runner.Run(ctx, promptText)
 	}
@@ -124,10 +124,20 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 }
 
 func newTraceLogger(out *os.File, jsonOutput bool) *trace.Logger {
+	var logger *trace.Logger
 	if term.IsTerminal(int(out.Fd())) {
-		return trace.NewAnimated(out, jsonOutput)
+		logger = trace.NewAnimated(out, jsonOutput)
+	} else {
+		logger = trace.New(out, jsonOutput)
 	}
-	return trace.New(out, jsonOutput)
+	logger.SetUnicode(tui.UnicodeEnabled())
+	return logger
+}
+
+func newResponseWriter(out *os.File) *tui.MarkdownWriter {
+	writer := tui.NewMarkdownWriter(out, tui.ColorEnabled(out), tui.OutputWidth(out))
+	writer.SetUnicode(tui.UnicodeEnabled())
+	return writer
 }
 
 func env(name, fallback string) string {

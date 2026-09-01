@@ -8,6 +8,7 @@
 - Ollama and OpenAI-compatible APIs. `openai-like` is an alias intended for services that implement `/v1/chat/completions`.
 - `read`, `write`, `edit`, `list`, `search`, and `shell` tools.
 - Interactive mode shows a task-level `Waiting` indicator from submission through LLM and local-tool work. Use `/verbose` to toggle detailed telemetry, where every LLM request and tool call appears as one timestamped entry whose spinner is replaced by elapsed time when it finishes.
+- UTF-8 terminals use Unicode interface glyphs; other locales fall back to ASCII without disabling color. Set `QCODE_ASCII=1` to force the ASCII-safe display mode.
 - All text sent to an LLM is collected in [`internal/prompt/prompts.go`](internal/prompt/prompts.go).
 - Standard-library networking and file operations. The terminal helper is compiled into the executable.
 
