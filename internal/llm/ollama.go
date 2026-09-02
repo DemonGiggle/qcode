@@ -28,6 +28,37 @@ func newOllama(config Config) (Provider, error) {
 
 func (p *ollamaProvider) Name() string { return "ollama" }
 
+func (p *ollamaProvider) Models(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/api/tags", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return nil, fmt.Errorf("provider returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
+	}
+	var payload struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("decode ollama models: %w", err)
+	}
+	models := make([]string, 0, len(payload.Models))
+	for _, model := range payload.Models {
+		if model.Name != "" {
+			models = append(models, model.Name)
+		}
+	}
+	return models, nil
+}
+
 type ollamaToolCall struct {
 	Function struct {
 		Name      string          `json:"name"`

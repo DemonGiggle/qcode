@@ -27,6 +27,7 @@ type interruptReader struct {
 	page    func(int)
 	err     error
 	pending []byte
+	raw     bool
 }
 
 func newInterruptReader(source io.Reader) *interruptReader {
@@ -46,6 +47,13 @@ func (r *interruptReader) setCancel(cancel context.CancelFunc) {
 func (r *interruptReader) setPageHandler(page func(int)) {
 	r.mu.Lock()
 	r.page = page
+	r.mu.Unlock()
+}
+
+func (r *interruptReader) setRaw(raw bool) {
+	r.mu.Lock()
+	r.raw = raw
+	r.pending = nil
 	r.mu.Unlock()
 }
 
@@ -99,6 +107,14 @@ func (r *interruptReader) readLoop() {
 
 func (r *interruptReader) route(input []byte) {
 	r.mu.Lock()
+	if r.raw {
+		r.pending = nil
+		for _, key := range input {
+			r.data <- key
+		}
+		r.mu.Unlock()
+		return
+	}
 	cancel := r.cancel
 	if cancel != nil {
 		r.pending = nil

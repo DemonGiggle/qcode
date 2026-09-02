@@ -73,3 +73,24 @@ func TestOllamaSendsThinkingAndNamedToolResult(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestOllamaListsLocalModels(t *testing.T) {
+	client := doerFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/tags" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		body := `{"models":[{"name":"qwen:7b"},{"name":"coder:latest"}]}`
+		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	provider, err := newOllama(Config{BaseURL: "http://ollama.test", HTTP: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := provider.(ModelLister).Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(models, ",") != "qwen:7b,coder:latest" {
+		t.Fatalf("models = %v", models)
+	}
+}

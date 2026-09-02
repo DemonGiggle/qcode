@@ -47,6 +47,13 @@ type Provider struct {
 
 func (p *Provider) Name() string { return "demo" }
 
+func (p *Provider) Models(ctx context.Context) ([]string, error) {
+	if err := wait(ctx, p.delay); err != nil {
+		return nil, err
+	}
+	return []string{Model}, nil
+}
+
 func (p *Provider) Complete(ctx context.Context, request llm.Request, onText llm.StreamCallback) (llm.Response, error) {
 	if err := wait(ctx, p.delay); err != nil {
 		return llm.Response{}, err

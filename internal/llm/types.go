@@ -65,6 +65,11 @@ type Provider interface {
 	Complete(ctx context.Context, request Request, onText StreamCallback) (Response, error)
 }
 
+// ModelLister is an optional provider capability used by interactive clients.
+type ModelLister interface {
+	Models(context.Context) ([]string, error)
+}
+
 type Factory func(Config) (Provider, error)
 
 type Config struct {

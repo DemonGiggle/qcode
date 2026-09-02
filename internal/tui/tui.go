@@ -37,6 +37,11 @@ type unicodeRunner interface {
 	SetUnicode(bool)
 }
 
+type modelRunner interface {
+	ListModels(context.Context) ([]string, error)
+	SetModel(string)
+}
+
 type readWriter struct {
 	io.Reader
 	io.Writer
@@ -157,6 +162,9 @@ func (u *UI) Run(ctx context.Context) error {
 		case "/help":
 			u.printCommandHelp()
 			continue
+		case "/model":
+			u.chooseModel(ctx)
+			continue
 		case "/verbose":
 			u.verbose = !u.verbose
 			if configurable, ok := u.runner.(verboseRunner); ok {
@@ -185,6 +193,53 @@ func (u *UI) Run(ctx context.Context) error {
 			u.printSystemMessage(fmt.Sprintf("%s%sCompleted in %s%s", magenta, bold, formatRunDuration(time.Since(started)), reset))
 		}
 	}
+}
+
+func (u *UI) chooseModel(ctx context.Context) {
+	runner, ok := u.runner.(modelRunner)
+	if !ok {
+		u.printSystemMessage(yellow + "Model selection is unavailable." + reset)
+		return
+	}
+	fetchCtx, cancel := context.WithCancel(ctx)
+	u.input.setCancel(cancel)
+	models, err := runner.ListModels(fetchCtx)
+	u.input.setCancel(nil)
+	cancel()
+	if errors.Is(err, context.Canceled) {
+		u.printSystemMessage(yellow + "Model selection cancelled." + reset)
+		return
+	}
+	if err != nil {
+		u.printSystemMessage(yellow + "Unable to list models: " + err.Error() + reset)
+		return
+	}
+	if len(models) == 0 {
+		u.printSystemMessage(dim + "The provider returned no models." + reset)
+		return
+	}
+	visible := u.height - 6
+	if visible > 12 {
+		visible = 12
+	}
+	if visible < 3 {
+		visible = 3
+	}
+	u.printSystemMessage(dim + "Type to search; use Up/Down to move, Enter to select, or Ctrl+C to cancel." + reset)
+	u.input.setRaw(true)
+	selected, accepted, selectErr := selectModel(u.input, u.terminal, models, u.model, visible, u.width, ColorEnabled(u.out))
+	u.input.setRaw(false)
+	if selectErr != nil {
+		u.printSystemMessage(yellow + "Unable to select model: " + selectErr.Error() + reset)
+		return
+	}
+	if !accepted {
+		u.printSystemMessage(dim + "Model selection cancelled." + reset)
+		return
+	}
+	runner.SetModel(selected)
+	u.model = selected
+	u.printSystemMessage(fmt.Sprintf("%sModel: %s%s", green, selected, reset))
 }
 
 func (u *UI) expandDiff(fields []string) {

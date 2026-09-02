@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
@@ -61,6 +62,26 @@ func New(provider llm.Provider, model string, toolset Toolset, logger *trace.Log
 func (a *Agent) SetVerbose(verbose bool) { a.trace.SetVerbose(verbose) }
 
 func (a *Agent) SetUnicode(enabled bool) { a.trace.SetUnicode(enabled) }
+
+// ListModels returns the provider's currently available models.
+func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
+	lister, ok := a.provider.(llm.ModelLister)
+	if !ok {
+		return nil, fmt.Errorf("provider %q does not support model discovery", a.provider.Name())
+	}
+	models, err := lister.Models(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(models)
+	return models, nil
+}
+
+func (a *Agent) SetModel(model string) {
+	if model != "" {
+		a.model = model
+	}
+}
 
 func (a *Agent) Run(ctx context.Context, userText string) error {
 	task := a.trace.BeginTask()

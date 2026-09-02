@@ -104,3 +104,20 @@ func TestInterruptReaderForwardsOtherEscapeSequences(t *testing.T) {
 		t.Fatalf("input = %q", buffer)
 	}
 }
+
+func TestInterruptReaderRawModeForwardsControlAndPageKeys(t *testing.T) {
+	reader := newInterruptReader(nil)
+	called := false
+	reader.setPageHandler(func(int) { called = true })
+	reader.setRaw(true)
+	reader.route([]byte{ctrlC})
+	reader.route([]byte(pageUpSequence))
+
+	buffer := make([]byte, 1+len(pageUpSequence))
+	if _, err := io.ReadFull(reader, buffer); err != nil {
+		t.Fatal(err)
+	}
+	if buffer[0] != ctrlC || string(buffer[1:]) != pageUpSequence || called {
+		t.Fatalf("raw input = %q, page called = %v", buffer, called)
+	}
+}

@@ -17,6 +17,7 @@ var slashCommands = []slashCommand{
 	{name: "/diff", description: "Expand a recent file diff"},
 	{name: "/exit", description: "Exit qcode"},
 	{name: "/help", description: "Show available commands"},
+	{name: "/model", description: "Select a provider model"},
 	{name: "/quit", description: "Exit qcode"},
 	{name: "/verbose", description: "Toggle detailed action traces"},
 }

@@ -71,6 +71,10 @@ type cancelWithFinalResponseProvider struct {
 	cancel context.CancelFunc
 }
 
+type modelProvider struct {
+	requestedModel string
+}
+
 func (p *responseProvider) Name() string { return "response" }
 func (p *responseProvider) Complete(_ context.Context, _ llm.Request, onText llm.StreamCallback) (llm.Response, error) {
 	onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: "finished"})
@@ -145,6 +149,15 @@ func (p *cancelWithFinalResponseProvider) Complete(_ context.Context, _ llm.Requ
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: "stale output"}}, nil
 }
 
+func (p *modelProvider) Name() string { return "models" }
+func (p *modelProvider) Models(context.Context) ([]string, error) {
+	return []string{"zeta", "alpha"}, nil
+}
+func (p *modelProvider) Complete(_ context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	p.requestedModel = request.Model
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
+}
+
 func TestAgentMarksResponseBoundaries(t *testing.T) {
 	registry, err := tools.New(t.TempDir())
 	if err != nil {
@@ -162,6 +175,30 @@ func TestAgentMarksResponseBoundaries(t *testing.T) {
 	}
 	if output.String() != "finished\n" {
 		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestAgentListsAndChangesProviderModel(t *testing.T) {
+	registry, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &modelProvider{}
+	var output, events bytes.Buffer
+	runner := New(provider, "old", registry, trace.New(&events, false), &output, 1)
+	models, err := runner.ListModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(models, ",") != "alpha,zeta" {
+		t.Fatalf("models = %v", models)
+	}
+	runner.SetModel("alpha")
+	if err := runner.Run(context.Background(), "use it"); err != nil {
+		t.Fatal(err)
+	}
+	if provider.requestedModel != "alpha" {
+		t.Fatalf("requested model = %q", provider.requestedModel)
 	}
 }
 
