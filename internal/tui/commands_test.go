@@ -48,6 +48,16 @@ func TestFormatRunDuration(t *testing.T) {
 	}
 }
 
+func TestPrintSystemMessageHasBlankLinesAroundIt(t *testing.T) {
+	var output bytes.Buffer
+	u := UI{display: newHistoryWriter(&output)}
+	u.printSystemMessage("Completed in 1.25s")
+
+	if got, want := output.String(), "\nCompleted in 1.25s\n\n"; got != want {
+		t.Fatalf("system message output = %q, want %q", got, want)
+	}
+}
+
 func TestSlashCommandMenuReplacesPreviousRows(t *testing.T) {
 	var output bytes.Buffer
 	menu := slashCommandMenu{out: &output}

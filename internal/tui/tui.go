@@ -166,7 +166,7 @@ func (u *UI) Run(ctx context.Context) error {
 			if u.verbose {
 				state = "on"
 			}
-			fmt.Fprintf(u.display, "%sVerbose tracing: %s%s\n", dim, state, reset)
+			u.printSystemMessage(fmt.Sprintf("%sVerbose tracing: %s%s", dim, state, reset))
 			continue
 		}
 		u.responseWriter.ResetDiffs()
@@ -178,26 +178,25 @@ func (u *UI) Run(ctx context.Context) error {
 		u.input.setCancel(nil)
 		cancel()
 		if errors.Is(err, context.Canceled) {
-			fmt.Fprintln(u.display, yellow+"Cancelled"+reset)
+			u.printSystemMessage(yellow + "Cancelled" + reset)
 		} else if err != nil {
-			fmt.Fprintln(u.display, yellow+"error: "+err.Error()+reset)
+			u.printSystemMessage(yellow + "error: " + err.Error() + reset)
 		} else {
-			fmt.Fprintf(u.display, "%s%sCompleted in %s%s\n", magenta, bold, formatRunDuration(time.Since(started)), reset)
+			u.printSystemMessage(fmt.Sprintf("%s%sCompleted in %s%s", magenta, bold, formatRunDuration(time.Since(started)), reset))
 		}
-		fmt.Fprintln(u.display)
 	}
 }
 
 func (u *UI) expandDiff(fields []string) {
 	if len(fields) > 2 {
-		fmt.Fprintln(u.display, yellow+"Usage: /diff [number]"+reset)
+		u.printSystemMessage(yellow + "Usage: /diff [number]" + reset)
 		return
 	}
 	number := 0
 	if len(fields) == 2 {
 		parsed, err := strconv.Atoi(fields[1])
 		if err != nil || parsed < 1 {
-			fmt.Fprintln(u.display, yellow+"Usage: /diff [number]"+reset)
+			u.printSystemMessage(yellow + "Usage: /diff [number]" + reset)
 			return
 		}
 		number = parsed
@@ -207,10 +206,16 @@ func (u *UI) expandDiff(fields []string) {
 		return
 	}
 	if total == 0 {
-		fmt.Fprintln(u.display, dim+"No diffs are available from the latest run."+reset)
+		u.printSystemMessage(dim + "No diffs are available from the latest run." + reset)
 		return
 	}
-	fmt.Fprintf(u.display, "%sDiff %d not found; available diffs: 1-%d.%s\n", yellow, requested, total, reset)
+	u.printSystemMessage(fmt.Sprintf("%sDiff %d not found; available diffs: 1-%d.%s", yellow, requested, total, reset))
+}
+
+// printSystemMessage separates status and command feedback from surrounding
+// conversation so it remains easy to scan in both the terminal and history.
+func (u *UI) printSystemMessage(message string) {
+	fmt.Fprintf(u.display, "\n%s\n\n", message)
 }
 
 func formatRunDuration(duration time.Duration) string {
