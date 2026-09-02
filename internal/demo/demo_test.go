@@ -41,6 +41,19 @@ func TestSessionCallsEveryToolThenFinishes(t *testing.T) {
 	}
 }
 
+func TestWriteAndEditReturnMockCodeDiffs(t *testing.T) {
+	session := newSession([]llm.Tool{{Name: "write"}, {Name: "edit"}}, 0)
+	for _, name := range []string{"write", "edit"} {
+		result, err := session.Tools.ExecuteDetailed(context.Background(), llm.ToolCall{Name: name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Diff == "" {
+			t.Errorf("%s returned no diff", name)
+		}
+	}
+}
+
 func TestMockedBoundariesHonorCancellation(t *testing.T) {
 	session := newSession([]llm.Tool{{Name: "read"}}, time.Hour)
 	ctx, cancel := context.WithCancel(context.Background())

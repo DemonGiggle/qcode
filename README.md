@@ -73,7 +73,9 @@ qcode --demo "show me how qcode works"
 ```
 
 Demo mode deliberately pauses during both mocked LLM requests and every mocked
-tool call, making Ctrl+C cancellation easy to demonstrate. It runs through all
+tool call, making Ctrl+C cancellation easy to demonstrate. Run `qcode --demo`
+interactively and submit any prompt to also see realistic `write` and `edit`
+code-diff previews; `/diff` expansion works normally. The demo runs through all
 available tool schemas, but does not read or change the workspace and does not
 execute shell commands. Provider, URL, API key, and model settings are ignored.
 
