@@ -27,6 +27,11 @@ const maxOutput = 64 * 1024
 
 type Handler func(context.Context, json.RawMessage) (string, error)
 
+type ExecutionResult struct {
+	Output string
+	Diff   string
+}
+
 type Registry struct {
 	root     string
 	schemas  []llm.Tool
@@ -70,11 +75,23 @@ func (r *Registry) add(schema llm.Tool, handler Handler) {
 func (r *Registry) Schemas() []llm.Tool { return append([]llm.Tool(nil), r.schemas...) }
 
 func (r *Registry) Execute(ctx context.Context, call llm.ToolCall) (string, error) {
+	result, err := r.ExecuteDetailed(ctx, call)
+	return result.Output, err
+}
+
+func (r *Registry) ExecuteDetailed(ctx context.Context, call llm.ToolCall) (ExecutionResult, error) {
+	switch call.Name {
+	case "write":
+		return r.writeDetailed(ctx, call.Arguments)
+	case "edit":
+		return r.editDetailed(ctx, call.Arguments)
+	}
 	handler, ok := r.handlers[call.Name]
 	if !ok {
-		return "", fmt.Errorf("unknown tool %q", call.Name)
+		return ExecutionResult{}, fmt.Errorf("unknown tool %q", call.Name)
 	}
-	return handler(ctx, call.Arguments)
+	output, err := handler(ctx, call.Arguments)
+	return ExecutionResult{Output: output}, err
 }
 
 func objectSchema(properties map[string]any, required ...string) map[string]any {
@@ -203,56 +220,74 @@ func (r *Registry) read(_ context.Context, arguments json.RawMessage) (string, e
 }
 
 func (r *Registry) write(_ context.Context, arguments json.RawMessage) (string, error) {
+	result, err := r.writeDetailed(context.Background(), arguments)
+	return result.Output, err
+}
+
+func (r *Registry) writeDetailed(_ context.Context, arguments json.RawMessage) (ExecutionResult, error) {
 	var args struct{ Path, Content string }
 	if err := decode(arguments, &args); err != nil {
-		return "", err
+		return ExecutionResult{}, err
 	}
 	path, err := r.resolve(args.Path)
 	if err != nil {
-		return "", err
+		return ExecutionResult{}, err
+	}
+	before, readErr := os.ReadFile(path)
+	existed := readErr == nil
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		return ExecutionResult{}, readErr
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
+		return ExecutionResult{}, err
 	}
 	if err := os.WriteFile(path, []byte(args.Content), 0o644); err != nil {
-		return "", err
+		return ExecutionResult{}, err
 	}
-	return fmt.Sprintf("wrote %d bytes to %s", len(args.Content), args.Path), nil
+	return ExecutionResult{
+		Output: fmt.Sprintf("wrote %d bytes to %s", len(args.Content), args.Path),
+		Diff:   unifiedDiff(args.Path, before, []byte(args.Content), existed),
+	}, nil
 }
 
 func (r *Registry) edit(_ context.Context, arguments json.RawMessage) (string, error) {
+	result, err := r.editDetailed(context.Background(), arguments)
+	return result.Output, err
+}
+
+func (r *Registry) editDetailed(_ context.Context, arguments json.RawMessage) (ExecutionResult, error) {
 	var args struct {
 		Path    string `json:"path"`
 		OldText string `json:"old_text"`
 		NewText string `json:"new_text"`
 	}
 	if err := decode(arguments, &args); err != nil {
-		return "", err
+		return ExecutionResult{}, err
 	}
 	if args.OldText == "" {
-		return "", errors.New("old_text must not be empty")
+		return ExecutionResult{}, errors.New("old_text must not be empty")
 	}
 	path, err := r.resolve(args.Path)
 	if err != nil {
-		return "", err
+		return ExecutionResult{}, err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return ExecutionResult{}, err
 	}
 	count := bytes.Count(data, []byte(args.OldText))
 	if count != 1 {
-		return "", fmt.Errorf("old_text must occur exactly once; found %d occurrences", count)
+		return ExecutionResult{}, fmt.Errorf("old_text must occur exactly once; found %d occurrences", count)
 	}
 	updated := bytes.Replace(data, []byte(args.OldText), []byte(args.NewText), 1)
 	info, err := os.Stat(path)
 	if err != nil {
-		return "", err
+		return ExecutionResult{}, err
 	}
 	if err := os.WriteFile(path, updated, info.Mode().Perm()); err != nil {
-		return "", err
+		return ExecutionResult{}, err
 	}
-	return fmt.Sprintf("edited %s", args.Path), nil
+	return ExecutionResult{Output: fmt.Sprintf("edited %s", args.Path), Diff: unifiedDiff(args.Path, data, updated, true)}, nil
 }
 
 func (r *Registry) list(_ context.Context, arguments json.RawMessage) (string, error) {

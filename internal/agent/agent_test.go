@@ -24,6 +24,16 @@ type lifecycleWriter struct {
 	thinkingEnds   int
 }
 
+type diffLifecycleWriter struct {
+	lifecycleWriter
+	diffs []string
+}
+
+func (w *diffLifecycleWriter) DiffEnabled() bool { return true }
+func (w *diffLifecycleWriter) WriteDiff(diff string) {
+	w.diffs = append(w.diffs, diff)
+}
+
 func (w *lifecycleWriter) BeginResponse() { w.begins++ }
 func (w *lifecycleWriter) EndResponse()   { w.ends++ }
 func (w *lifecycleWriter) BeginThinking() { w.thinkingBegins++ }
@@ -136,6 +146,26 @@ func TestAgentRunsToolsUntilFinalResponse(t *testing.T) {
 	}
 	if bytes.Contains(events.Bytes(), []byte("end llm")) || bytes.Contains(events.Bytes(), []byte("end tool")) {
 		t.Errorf("events contain separate end entries:\n%s", events.String())
+	}
+}
+
+func TestAgentRendersInteractiveFileDiff(t *testing.T) {
+	registry, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeProvider{}
+	var output diffLifecycleWriter
+	var events bytes.Buffer
+	runner := New(provider, "test", registry, trace.New(&events, false), &output, 4)
+	if err := runner.Run(context.Background(), "create it"); err != nil {
+		t.Fatal(err)
+	}
+	if len(output.diffs) != 1 || !strings.Contains(output.diffs[0], "+done") {
+		t.Fatalf("diffs = %#v", output.diffs)
+	}
+	if output.String() != "finished\n" {
+		t.Fatalf("response output = %q", output.String())
 	}
 }
 

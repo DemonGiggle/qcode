@@ -131,3 +131,36 @@ func TestMarkdownWriterStylesThinkingGray(t *testing.T) {
 		t.Fatalf("plain output = %q", plain)
 	}
 }
+
+func TestMarkdownWriterRendersColoredDiff(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true, 80)
+	writer.EnableDiffs()
+	writer.WriteDiff("--- a/file.go\n+++ b/file.go\n@@ -1,1 +1,1 @@\n-old\n+new")
+	got := output.String()
+	for name, sequence := range map[string]string{"header": bold + cyan, "hunk": magenta, "removal": red, "addition": green} {
+		if !strings.Contains(got, sequence) {
+			t.Errorf("diff has no %s style: %q", name, got)
+		}
+	}
+}
+
+func TestMarkdownWriterDoesNotRenderDiffUnlessEnabled(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true, 80)
+	writer.WriteDiff("+not shown")
+	if output.Len() != 0 || writer.DiffEnabled() {
+		t.Fatalf("disabled diff output = %q", output.String())
+	}
+}
+
+func TestMarkdownWriterNeutralizesDiffEscapeSequences(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true, 80)
+	writer.EnableDiffs()
+	writer.WriteDiff("+safe \x1b[2J\r\a")
+	plain := ansiPattern.ReplaceAllString(output.String(), "")
+	if plain != "+safe ␛[2J<0x0D><0x07>\n" {
+		t.Fatalf("diff output = %q", plain)
+	}
+}

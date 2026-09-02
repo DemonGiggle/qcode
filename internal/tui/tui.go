@@ -19,6 +19,7 @@ const (
 	dim    = "\x1b[2m"
 	cyan   = "\x1b[36m"
 	green  = "\x1b[32m"
+	red    = "\x1b[31m"
 	yellow = "\x1b[33m"
 )
 
@@ -64,6 +65,7 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	t.SetSize(width, height)
 	responseWriter := NewMarkdownWriter(t, ColorEnabled(out), width)
 	responseWriter.SetUnicode(unicodeEnabled)
+	responseWriter.EnableDiffs()
 	u := &UI{
 		terminal:       t,
 		responseWriter: responseWriter,

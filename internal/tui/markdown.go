@@ -28,6 +28,7 @@ type MarkdownWriter struct {
 	active   bool
 	inFence  bool
 	thinking bool
+	diffs    bool
 	buffer   bytes.Buffer
 }
 
@@ -40,6 +41,60 @@ func NewMarkdownWriter(out io.Writer, enabled bool, width ...int) *MarkdownWrite
 }
 
 func (w *MarkdownWriter) SetUnicode(enabled bool) { w.unicode = enabled }
+
+func (w *MarkdownWriter) EnableDiffs() { w.diffs = true }
+
+func (w *MarkdownWriter) DiffEnabled() bool { return w.diffs }
+
+func (w *MarkdownWriter) WriteDiff(diff string) {
+	if !w.diffs || diff == "" {
+		return
+	}
+	escapeLabel := "␛"
+	if !w.unicode {
+		escapeLabel = "<ESC>"
+	}
+	for _, line := range strings.Split(diff, "\n") {
+		line = sanitizeDiffLine(line, escapeLabel)
+		style := ""
+		if w.enabled {
+			switch {
+			case strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "+++ "):
+				style = bold + cyan
+			case strings.HasPrefix(line, "@@"):
+				style = magenta
+			case strings.HasPrefix(line, "+"):
+				style = green
+			case strings.HasPrefix(line, "-"):
+				style = red
+			case strings.HasPrefix(line, "..."):
+				style = yellow
+			default:
+				style = dim
+			}
+		}
+		rendered := line
+		if style != "" {
+			rendered = style + line + reset
+		}
+		fmt.Fprintln(w.out, wrapANSI(rendered, w.width, "  "))
+	}
+}
+
+func sanitizeDiffLine(line, escapeLabel string) string {
+	var output strings.Builder
+	for _, char := range line {
+		switch {
+		case char == '\x1b':
+			output.WriteString(escapeLabel)
+		case char == '\t' || char >= 32:
+			output.WriteRune(char)
+		default:
+			fmt.Fprintf(&output, "<0x%02X>", char)
+		}
+	}
+	return output.String()
+}
 
 func (w *MarkdownWriter) BeginResponse() {
 	w.active = true

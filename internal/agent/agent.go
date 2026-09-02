@@ -35,6 +35,11 @@ type thinkingLifecycle interface {
 	EndThinking()
 }
 
+type diffWriter interface {
+	DiffEnabled() bool
+	WriteDiff(string)
+}
+
 func New(provider llm.Provider, model string, registry *tools.Registry, logger *trace.Logger, out io.Writer, maxSteps int) *Agent {
 	if maxSteps <= 0 {
 		maxSteps = 32
@@ -119,8 +124,14 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			}
 			arguments := compactJSON(call.Arguments)
 			toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": arguments})
-			result, toolErr := a.tools.Execute(ctx, call)
+			execution, toolErr := a.tools.ExecuteDetailed(ctx, call)
 			toolSpan.End(toolErr)
+			if renderer, ok := a.out.(diffWriter); ok && renderer.DiffEnabled() && execution.Diff != "" {
+				task.Suspend()
+				renderer.WriteDiff(execution.Diff)
+				task.Resume()
+			}
+			result := execution.Output
 			if toolErr != nil {
 				if result != "" {
 					result += "\n"
