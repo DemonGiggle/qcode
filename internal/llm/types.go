@@ -40,6 +40,12 @@ type Response struct {
 	Message Message
 }
 
+// ToolResult is the normalized output returned by a tool implementation.
+type ToolResult struct {
+	Output string
+	Diff   string
+}
+
 type StreamKind uint8
 
 const (

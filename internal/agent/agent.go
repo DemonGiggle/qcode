@@ -9,7 +9,6 @@ import (
 
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
-	"qcode/internal/tools"
 	"qcode/internal/trace"
 )
 
@@ -18,11 +17,19 @@ const maxIdenticalToolCalls = 3
 type Agent struct {
 	provider llm.Provider
 	model    string
-	tools    *tools.Registry
+	tools    Toolset
 	trace    *trace.Logger
 	out      io.Writer
 	maxSteps int
 	messages []llm.Message
+}
+
+// Toolset is the complete tool boundary used by the agent loop. Production and
+// demo implementations can provide the same schemas with different execution
+// behavior without adding mode-specific branches to the loop.
+type Toolset interface {
+	Schemas() []llm.Tool
+	ExecuteDetailed(context.Context, llm.ToolCall) (llm.ToolResult, error)
 }
 
 type responseLifecycle interface {
@@ -44,11 +51,11 @@ type diffWriter interface {
 	WriteDiff(string)
 }
 
-func New(provider llm.Provider, model string, registry *tools.Registry, logger *trace.Logger, out io.Writer, maxSteps int) *Agent {
+func New(provider llm.Provider, model string, toolset Toolset, logger *trace.Logger, out io.Writer, maxSteps int) *Agent {
 	if maxSteps <= 0 {
 		maxSteps = 32
 	}
-	return &Agent{provider: provider, model: model, tools: registry, trace: logger, out: out, maxSteps: maxSteps, messages: []llm.Message{{Role: "system", Content: prompt.System}}}
+	return &Agent{provider: provider, model: model, tools: toolset, trace: logger, out: out, maxSteps: maxSteps, messages: []llm.Message{{Role: "system", Content: prompt.System}}}
 }
 
 func (a *Agent) SetVerbose(verbose bool) { a.trace.SetVerbose(verbose) }

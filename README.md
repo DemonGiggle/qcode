@@ -66,6 +66,17 @@ qcode "explain this repository"
 qcode --json-events "run the tests" 2>events.jsonl
 ```
 
+Try the full agent loop without configuring or connecting to an LLM:
+
+```sh
+qcode --demo "show me how qcode works"
+```
+
+Demo mode deliberately pauses during both mocked LLM requests and every mocked
+tool call, making Ctrl+C cancellation easy to demonstrate. It runs through all
+available tool schemas, but does not read or change the workspace and does not
+execute shell commands. Provider, URL, API key, and model settings are ignored.
+
 Flags can also be set with `QCODE_PROVIDER`, `QCODE_MODEL`, `QCODE_BASE_URL`, and `QCODE_API_KEY`.
 
 ## Extending providers

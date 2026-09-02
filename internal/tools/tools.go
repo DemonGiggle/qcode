@@ -27,10 +27,7 @@ const maxOutput = 64 * 1024
 
 type Handler func(context.Context, json.RawMessage) (string, error)
 
-type ExecutionResult struct {
-	Output string
-	Diff   string
-}
+type ExecutionResult = llm.ToolResult
 
 type Registry struct {
 	root     string

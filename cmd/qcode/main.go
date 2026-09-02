@@ -14,6 +14,7 @@ import (
 	"golang.org/x/term"
 
 	"qcode/internal/agent"
+	"qcode/internal/demo"
 	"qcode/internal/llm"
 	"qcode/internal/tools"
 	"qcode/internal/trace"
@@ -32,6 +33,7 @@ type options struct {
 	jsonEvents    bool
 	listProviders bool
 	showVersion   bool
+	demo          bool
 }
 
 func main() {
@@ -54,6 +56,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	flags.BoolVar(&opts.jsonEvents, "json-events", false, "emit action events as JSON Lines")
 	flags.BoolVar(&opts.listProviders, "list-providers", false, "list built-in providers")
 	flags.BoolVar(&opts.showVersion, "version", false, "print version")
+	flags.BoolVar(&opts.demo, "demo", false, "run without an LLM or real tool execution")
 	flags.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\n\nOptions:\n")
 		flags.PrintDefaults()
@@ -72,7 +75,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		fmt.Fprintln(stdout, strings.Join(llm.Names(), "\n"))
 		return nil
 	}
-	if opts.model == "" {
+	if !opts.demo && opts.model == "" {
 		return errors.New("model must not be empty")
 	}
 
@@ -84,9 +87,19 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if err != nil {
 		return err
 	}
-	provider, err := llm.New(opts.provider, llm.Config{BaseURL: opts.baseURL, APIKey: opts.apiKey})
-	if err != nil {
-		return err
+	var provider llm.Provider
+	var toolset agent.Toolset = registry
+	if opts.demo {
+		session := demo.New(registry.Schemas())
+		provider = session.Provider
+		toolset = session.Tools
+		opts.provider = provider.Name()
+		opts.model = demo.Model
+	} else {
+		provider, err = llm.New(opts.provider, llm.Config{BaseURL: opts.baseURL, APIKey: opts.apiKey})
+		if err != nil {
+			return err
+		}
 	}
 	promptText := strings.TrimSpace(strings.Join(flags.Args(), " "))
 	if promptText != "" {
@@ -94,7 +107,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		defer stop()
 		logger := newTraceLogger(stderr, opts.jsonEvents)
 		responseWriter := newResponseWriter(stdout)
-		runner := agent.New(provider, opts.model, registry, logger, responseWriter, opts.maxSteps)
+		runner := agent.New(provider, opts.model, toolset, logger, responseWriter, opts.maxSteps)
 		return runner.Run(ctx, promptText)
 	}
 	if stat, statErr := stdin.Stat(); statErr == nil && stat.Mode()&os.ModeCharDevice == 0 {
@@ -110,7 +123,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		defer stop()
 		logger := newTraceLogger(stderr, opts.jsonEvents)
 		responseWriter := newResponseWriter(stdout)
-		runner := agent.New(provider, opts.model, registry, logger, responseWriter, opts.maxSteps)
+		runner := agent.New(provider, opts.model, toolset, logger, responseWriter, opts.maxSteps)
 		return runner.Run(ctx, promptText)
 	}
 
@@ -118,7 +131,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	// updates do not corrupt the editable input line.
 	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
 	logger := trace.NewAnimated(ui.Writer(), opts.jsonEvents)
-	runner := agent.New(provider, opts.model, registry, logger, ui.ResponseWriter(), opts.maxSteps)
+	runner := agent.New(provider, opts.model, toolset, logger, ui.ResponseWriter(), opts.maxSteps)
 	ui.SetRunner(runner)
 	return ui.Run(context.Background())
 }
