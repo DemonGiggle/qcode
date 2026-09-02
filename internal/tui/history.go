@@ -2,22 +2,29 @@ package tui
 
 import (
 	"io"
+	"strings"
 	"sync"
 	"unicode/utf8"
 )
 
 const maxHistoryLines = 5000
 
-// historyWriter records a plain-text copy of persistent terminal output while
-// forwarding the original, styled output unchanged.
+type historyCell struct {
+	char  rune
+	style string
+}
+
+// historyWriter records a styled copy of persistent terminal output while
+// interpreting cursor rewrites so transient progress animation is excluded.
 type historyWriter struct {
 	out io.Writer
 
 	mu      sync.Mutex
 	lines   []string
-	current []rune
+	current []historyCell
 	cursor  int
 	pending []byte
+	style   string
 }
 
 func newHistoryWriter(out io.Writer) *historyWriter {
@@ -46,6 +53,7 @@ func (w *historyWriter) Clear() {
 	w.current = nil
 	w.cursor = 0
 	w.pending = nil
+	w.style = ""
 	w.mu.Unlock()
 }
 
@@ -65,9 +73,19 @@ func (w *historyWriter) record(data []byte) {
 				w.pending = append(w.pending, data...)
 				return
 			}
+			sequence := string(data[:length])
 			if length > 0 && data[length-1] == 'K' && string(data[2:length-1]) == "2" {
 				w.current = nil
 				w.cursor = 0
+			} else if length > 0 && data[length-1] == 'm' {
+				parameters := string(data[2 : length-1])
+				if parameters == "" || parameters == "0" {
+					w.style = ""
+				} else if hasANSIReset(parameters) {
+					w.style = sequence
+				} else {
+					w.style += sequence
+				}
 			}
 			data = data[length:]
 			continue
@@ -94,12 +112,21 @@ func (w *historyWriter) record(data []byte) {
 			continue
 		}
 		if w.cursor < len(w.current) {
-			w.current[w.cursor] = r
+			w.current[w.cursor] = historyCell{char: r, style: w.style}
 		} else {
-			w.current = append(w.current, r)
+			w.current = append(w.current, historyCell{char: r, style: w.style})
 		}
 		w.cursor++
 	}
+}
+
+func hasANSIReset(parameters string) bool {
+	for _, parameter := range strings.Split(parameters, ";") {
+		if parameter == "0" {
+			return true
+		}
+	}
+	return false
 }
 
 func ansiSequenceLength(data []byte) (int, bool) {
@@ -117,8 +144,23 @@ func ansiSequenceLength(data []byte) (int, bool) {
 	return 0, false
 }
 
-func (w *historyWriter) commit(line []rune) {
-	w.lines = append(w.lines, string(line))
+func (w *historyWriter) commit(line []historyCell) {
+	var rendered strings.Builder
+	active := ""
+	for _, cell := range line {
+		if cell.style != active {
+			if active != "" {
+				rendered.WriteString(reset)
+			}
+			rendered.WriteString(cell.style)
+			active = cell.style
+		}
+		rendered.WriteRune(cell.char)
+	}
+	if active != "" {
+		rendered.WriteString(reset)
+	}
+	w.lines = append(w.lines, rendered.String())
 	if len(w.lines) > maxHistoryLines {
 		drop := maxHistoryLines / 5
 		w.lines = append([]string(nil), w.lines[drop:]...)

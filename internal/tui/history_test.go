@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestHistoryWriterRecordsPlainPersistentOutput(t *testing.T) {
+func TestHistoryWriterRecordsStyledPersistentOutput(t *testing.T) {
 	var output bytes.Buffer
 	history := newHistoryWriter(&output)
 	input := "\x1b[31mhello\x1b[0m\r\n\rWaiting (|)\r\x1b[2Kworld\n"
@@ -14,7 +14,7 @@ func TestHistoryWriterRecordsPlainPersistentOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := []string{"hello", "world"}
+	want := []string{"\x1b[31mhello\x1b[0m", "world"}
 	if got := history.Lines(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("history = %#v, want %#v", got, want)
 	}
@@ -31,7 +31,18 @@ func TestHistoryWriterHandlesSplitUTF8AndANSI(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := history.Lines(); !reflect.DeepEqual(got, []string{"想法"}) {
+	if got := history.Lines(); !reflect.DeepEqual(got, []string{"\x1b[2m想法\x1b[0m"}) {
+		t.Fatalf("history = %#v", got)
+	}
+}
+
+func TestHistoryWriterPreservesFinalStyleAfterProgressRewrite(t *testing.T) {
+	history := newHistoryWriter(&bytes.Buffer{})
+	input := "\x1b[33mWaiting\x1b[0m\r\x1b[2K\x1b[32mdone\x1b[0m\n"
+	if _, err := history.Write([]byte(input)); err != nil {
+		t.Fatal(err)
+	}
+	if got := history.Lines(); !reflect.DeepEqual(got, []string{"\x1b[32mdone\x1b[0m"}) {
 		t.Fatalf("history = %#v", got)
 	}
 }
