@@ -35,6 +35,10 @@ type thinkingLifecycle interface {
 	EndThinking()
 }
 
+type lineStreamingWriter interface {
+	StreamChunkCompletesLine(string) bool
+}
+
 type diffWriter interface {
 	DiffEnabled() bool
 	WriteDiff(string)
@@ -62,6 +66,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		thinking := false
 		lifecycle, rendersResponses := a.out.(responseLifecycle)
 		thinkingOutput, stylesThinking := a.out.(thinkingLifecycle)
+		lineStreamer, keepsWaiting := a.out.(lineStreamingWriter)
 		if rendersResponses {
 			lifecycle.BeginResponse()
 		}
@@ -69,7 +74,8 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			if event.Text == "" {
 				return
 			}
-			if !wroteText {
+			willRenderLine := keepsWaiting && (lineStreamer.StreamChunkCompletesLine(event.Text) || (event.Kind == llm.StreamOutput && thinking))
+			if willRenderLine || !keepsWaiting && !wroteText {
 				task.Suspend()
 				span.Suspend()
 			}
@@ -88,7 +94,14 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			}
 			wroteText = true
 			fmt.Fprint(a.out, event.Text)
+			if willRenderLine {
+				task.Resume()
+			}
 		})
+		if keepsWaiting && wroteText {
+			task.Suspend()
+			span.Suspend()
+		}
 		if thinking && stylesThinking {
 			thinkingOutput.EndThinking()
 		}

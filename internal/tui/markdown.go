@@ -51,6 +51,12 @@ func (w *MarkdownWriter) EnableDiffs() { w.diffs = true }
 
 func (w *MarkdownWriter) DiffEnabled() bool { return w.diffs }
 
+// StreamChunkCompletesLine reports whether writing a provider chunk will
+// produce visible output instead of only extending the Markdown line buffer.
+func (w *MarkdownWriter) StreamChunkCompletesLine(text string) bool {
+	return strings.Contains(text, "\n")
+}
+
 func (w *MarkdownWriter) WriteDiff(diff string) {
 	if !w.diffs || diff == "" {
 		return

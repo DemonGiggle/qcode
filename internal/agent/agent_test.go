@@ -13,6 +13,7 @@ import (
 	"qcode/internal/llm"
 	"qcode/internal/tools"
 	"qcode/internal/trace"
+	"qcode/internal/tui"
 )
 
 type fakeProvider struct{ calls int }
@@ -54,6 +55,12 @@ type scriptedProvider struct {
 	sequence []llm.ToolCall
 }
 
+type observingStreamProvider struct {
+	terminal     *bytes.Buffer
+	afterToken   string
+	afterNewline string
+}
+
 func (p *responseProvider) Name() string { return "response" }
 func (p *responseProvider) Complete(_ context.Context, _ llm.Request, onText llm.StreamCallback) (llm.Response, error) {
 	onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: "finished"})
@@ -84,6 +91,15 @@ func (p *scriptedProvider) Complete(_ context.Context, _ llm.Request, _ llm.Stre
 	call := p.sequence[p.calls-1]
 	call.ID = fmt.Sprintf("call-%d", p.calls)
 	return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{call}}}, nil
+}
+
+func (p *observingStreamProvider) Name() string { return "observing" }
+func (p *observingStreamProvider) Complete(_ context.Context, _ llm.Request, onText llm.StreamCallback) (llm.Response, error) {
+	onText(llm.StreamEvent{Kind: llm.StreamThinking, Text: "thought"})
+	p.afterToken = p.terminal.String()
+	onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: "answer\nnext"})
+	p.afterNewline = p.terminal.String()
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "answer\nnext", Thinking: "thought"}}, nil
 }
 
 func (p *fakeProvider) Name() string { return "fake" }
@@ -136,6 +152,33 @@ func TestAgentMarksThinkingBoundaries(t *testing.T) {
 	}
 	if output.String() != "considering\nfinished\n" {
 		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestAgentKeepsWaitingUntilBufferedOutputIsVisible(t *testing.T) {
+	registry, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var terminal bytes.Buffer
+	provider := &observingStreamProvider{terminal: &terminal}
+	logger := trace.NewAnimated(&terminal, false)
+	logger.SetVerbose(false)
+	output := tui.NewMarkdownWriter(&terminal, false, 80)
+	runner := New(provider, "test", registry, logger, output, 1)
+	if err := runner.Run(context.Background(), "respond"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(provider.afterToken, "Waiting (") || strings.Contains(provider.afterToken, "thought") {
+		t.Fatalf("after partial token = %q", provider.afterToken)
+	}
+	first := strings.LastIndex(provider.afterNewline, "answer\n")
+	waiting := strings.LastIndex(provider.afterNewline, "Waiting (")
+	if first < 0 || waiting < first {
+		t.Fatalf("waiting was not repainted below streamed line: %q", provider.afterNewline)
+	}
+	if got := terminal.String(); !strings.Contains(got, "thought\n") || !strings.Contains(got, "answer\n") || !strings.Contains(got, "next\n") {
+		t.Fatalf("final output = %q", got)
 	}
 }
 

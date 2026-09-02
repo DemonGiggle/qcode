@@ -48,6 +48,16 @@ func TestMarkdownWriterRendersStreamedSyntax(t *testing.T) {
 	}
 }
 
+func TestMarkdownWriterReportsWhenStreamChunkBecomesVisible(t *testing.T) {
+	writer := NewMarkdownWriter(&bytes.Buffer{}, true, 80)
+	if writer.StreamChunkCompletesLine("partial") {
+		t.Fatal("partial line reported as visible")
+	}
+	if !writer.StreamChunkCompletesLine("completed\nnext") {
+		t.Fatal("completed line reported as buffered")
+	}
+}
+
 func TestMarkdownWriterPassesThroughWhenDisabled(t *testing.T) {
 	var output bytes.Buffer
 	writer := NewMarkdownWriter(&output, false)
