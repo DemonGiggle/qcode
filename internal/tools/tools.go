@@ -80,6 +80,9 @@ func (r *Registry) Execute(ctx context.Context, call llm.ToolCall) (string, erro
 }
 
 func (r *Registry) ExecuteDetailed(ctx context.Context, call llm.ToolCall) (ExecutionResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ExecutionResult{}, err
+	}
 	switch call.Name {
 	case "write":
 		return r.writeDetailed(ctx, call.Arguments)
@@ -166,7 +169,7 @@ func (r *Registry) resolve(name string) (string, error) {
 	return path, nil
 }
 
-func (r *Registry) read(_ context.Context, arguments json.RawMessage) (string, error) {
+func (r *Registry) read(ctx context.Context, arguments json.RawMessage) (string, error) {
 	var args struct {
 		Path   string          `json:"path"`
 		Offset flexibleInteger `json:"offset"`
@@ -182,6 +185,9 @@ func (r *Registry) read(_ context.Context, arguments json.RawMessage) (string, e
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
 		return "", err
 	}
 	if bytes.IndexByte(data, 0) >= 0 {
@@ -211,6 +217,9 @@ func (r *Registry) read(_ context.Context, arguments json.RawMessage) (string, e
 	}
 	var out strings.Builder
 	for i := offset - 1; i < end; i++ {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		fmt.Fprintf(&out, "%6d\t%s\n", i+1, lines[i])
 	}
 	if end < len(lines) {
@@ -219,14 +228,17 @@ func (r *Registry) read(_ context.Context, arguments json.RawMessage) (string, e
 	return truncate(out.String()), nil
 }
 
-func (r *Registry) write(_ context.Context, arguments json.RawMessage) (string, error) {
-	result, err := r.writeDetailed(context.Background(), arguments)
+func (r *Registry) write(ctx context.Context, arguments json.RawMessage) (string, error) {
+	result, err := r.writeDetailed(ctx, arguments)
 	return result.Output, err
 }
 
-func (r *Registry) writeDetailed(_ context.Context, arguments json.RawMessage) (ExecutionResult, error) {
+func (r *Registry) writeDetailed(ctx context.Context, arguments json.RawMessage) (ExecutionResult, error) {
 	var args struct{ Path, Content string }
 	if err := decode(arguments, &args); err != nil {
+		return ExecutionResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return ExecutionResult{}, err
 	}
 	path, err := r.resolve(args.Path)
@@ -241,6 +253,9 @@ func (r *Registry) writeDetailed(_ context.Context, arguments json.RawMessage) (
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return ExecutionResult{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		return ExecutionResult{}, err
+	}
 	if err := os.WriteFile(path, []byte(args.Content), 0o644); err != nil {
 		return ExecutionResult{}, err
 	}
@@ -250,18 +265,21 @@ func (r *Registry) writeDetailed(_ context.Context, arguments json.RawMessage) (
 	}, nil
 }
 
-func (r *Registry) edit(_ context.Context, arguments json.RawMessage) (string, error) {
-	result, err := r.editDetailed(context.Background(), arguments)
+func (r *Registry) edit(ctx context.Context, arguments json.RawMessage) (string, error) {
+	result, err := r.editDetailed(ctx, arguments)
 	return result.Output, err
 }
 
-func (r *Registry) editDetailed(_ context.Context, arguments json.RawMessage) (ExecutionResult, error) {
+func (r *Registry) editDetailed(ctx context.Context, arguments json.RawMessage) (ExecutionResult, error) {
 	var args struct {
 		Path    string `json:"path"`
 		OldText string `json:"old_text"`
 		NewText string `json:"new_text"`
 	}
 	if err := decode(arguments, &args); err != nil {
+		return ExecutionResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return ExecutionResult{}, err
 	}
 	if args.OldText == "" {
@@ -284,13 +302,16 @@ func (r *Registry) editDetailed(_ context.Context, arguments json.RawMessage) (E
 	if err != nil {
 		return ExecutionResult{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		return ExecutionResult{}, err
+	}
 	if err := os.WriteFile(path, updated, info.Mode().Perm()); err != nil {
 		return ExecutionResult{}, err
 	}
 	return ExecutionResult{Output: fmt.Sprintf("edited %s", args.Path), Diff: unifiedDiff(args.Path, data, updated, true)}, nil
 }
 
-func (r *Registry) list(_ context.Context, arguments json.RawMessage) (string, error) {
+func (r *Registry) list(ctx context.Context, arguments json.RawMessage) (string, error) {
 	var args struct {
 		Path string `json:"path"`
 	}
@@ -307,6 +328,9 @@ func (r *Registry) list(_ context.Context, arguments json.RawMessage) (string, e
 	}
 	items := make([]string, 0, len(entries))
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		name := entry.Name()
 		if entry.IsDir() {
 			name += "/"
@@ -317,7 +341,7 @@ func (r *Registry) list(_ context.Context, arguments json.RawMessage) (string, e
 	return truncate(strings.Join(items, "\n")), nil
 }
 
-func (r *Registry) search(_ context.Context, arguments json.RawMessage) (string, error) {
+func (r *Registry) search(ctx context.Context, arguments json.RawMessage) (string, error) {
 	var args struct {
 		Pattern, Path string
 		MaxResults    int `json:"max_results"`
@@ -341,6 +365,9 @@ func (r *Registry) search(_ context.Context, arguments json.RawMessage) (string,
 	}
 	var matches []string
 	err = filepath.WalkDir(path, func(file string, entry fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return nil
 		}
@@ -403,6 +430,7 @@ func (r *Registry) shell(ctx context.Context, arguments json.RawMessage) (string
 	} else {
 		cmd = exec.CommandContext(commandCtx, "/bin/sh", "-c", args.Command)
 	}
+	configureShellCancellation(cmd)
 	cmd.Dir = r.root
 	var output limitedBuffer
 	cmd.Stdout = &output
@@ -411,6 +439,9 @@ func (r *Registry) shell(ctx context.Context, arguments json.RawMessage) (string
 	text := output.String()
 	if commandCtx.Err() == context.DeadlineExceeded {
 		return text, fmt.Errorf("command timed out after %dms", args.TimeoutMS)
+	}
+	if err := ctx.Err(); err != nil {
+		return text, err
 	}
 	if err != nil {
 		return text, fmt.Errorf("command failed: %w", err)

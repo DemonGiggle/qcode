@@ -3,11 +3,14 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"qcode/internal/llm"
 )
@@ -78,6 +81,60 @@ func TestShellCapturesOutput(t *testing.T) {
 	}
 	if result != "qcode" {
 		t.Fatalf("result = %q", result)
+	}
+}
+
+func TestCancelledToolDoesNotModifyWorkspace(t *testing.T) {
+	root := t.TempDir()
+	registry, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = registry.Execute(ctx, llm.ToolCall{Name: "write", Arguments: json.RawMessage(`{"path":"cancelled.txt","content":"nope"}`)})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("write error = %v, want context cancellation", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "cancelled.txt")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("cancelled write created a file: %v", statErr)
+	}
+}
+
+func TestShellCancellationStopsBackgroundChildren(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process groups are POSIX-specific")
+	}
+	root := t.TempDir()
+	registry, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := registry.Execute(ctx, llm.ToolCall{Name: "shell", Arguments: json.RawMessage(`{"command":"touch started && sleep 30 & wait"}`)})
+		done <- err
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, statErr := os.Stat(filepath.Join(root, "started")); statErr == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("shell command did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("shell error = %v, want context cancellation", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Ctrl+C did not stop the shell process group")
 	}
 }
 

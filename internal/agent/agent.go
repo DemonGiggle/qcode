@@ -71,6 +71,9 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			lifecycle.BeginResponse()
 		}
 		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Messages: a.messages, Tools: a.tools.Schemas()}, func(event llm.StreamEvent) {
+			if ctx.Err() != nil {
+				return
+			}
 			if event.Text == "" {
 				return
 			}
@@ -112,6 +115,9 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			lifecycle.EndResponse()
 		}
 		span.End(err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			return err
 		}
@@ -120,6 +126,9 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			return nil
 		}
 		for index, call := range response.Message.ToolCalls {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			task.Resume()
 			fingerprint := toolFingerprint(call)
 			identicalToolCalls[fingerprint]++
@@ -133,6 +142,9 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": arguments})
 			execution, toolErr := a.tools.ExecuteDetailed(ctx, call)
 			toolSpan.End(toolErr)
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if toolErr == nil && toolMayChangeWorkspace(call.Name) {
 				currentCount := identicalToolCalls[fingerprint]
 				identicalToolCalls = map[string]int{fingerprint: currentCount}

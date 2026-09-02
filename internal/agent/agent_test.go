@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,6 +62,15 @@ type observingStreamProvider struct {
 	afterNewline string
 }
 
+type cancelBeforeToolProvider struct {
+	calls  int
+	cancel context.CancelFunc
+}
+
+type cancelWithFinalResponseProvider struct {
+	cancel context.CancelFunc
+}
+
 func (p *responseProvider) Name() string { return "response" }
 func (p *responseProvider) Complete(_ context.Context, _ llm.Request, onText llm.StreamCallback) (llm.Response, error) {
 	onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: "finished"})
@@ -114,6 +124,25 @@ func (p *fakeProvider) Complete(_ context.Context, request llm.Request, onText l
 	}
 	onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: "finished"})
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: "finished"}}, nil
+}
+
+func (p *cancelBeforeToolProvider) Name() string { return "cancel-before-tool" }
+func (p *cancelBeforeToolProvider) Complete(_ context.Context, _ llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	p.calls++
+	if p.calls > 1 {
+		panic("agent requested another model turn after cancellation")
+	}
+	p.cancel()
+	return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{
+		ID: "cancelled", Name: "write", Arguments: json.RawMessage(`{"path":"result.txt","content":"nope"}`),
+	}}}}, nil
+}
+
+func (p *cancelWithFinalResponseProvider) Name() string { return "cancel-with-final-response" }
+func (p *cancelWithFinalResponseProvider) Complete(_ context.Context, _ llm.Request, onText llm.StreamCallback) (llm.Response, error) {
+	p.cancel()
+	onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: "stale output"})
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "stale output"}}, nil
 }
 
 func TestAgentMarksResponseBoundaries(t *testing.T) {
@@ -206,6 +235,46 @@ func TestAgentRunsToolsUntilFinalResponse(t *testing.T) {
 	}
 	if bytes.Contains(events.Bytes(), []byte("end llm")) || bytes.Contains(events.Bytes(), []byte("end tool")) {
 		t.Errorf("events contain separate end entries:\n%s", events.String())
+	}
+}
+
+func TestAgentStopsAfterCancelledTool(t *testing.T) {
+	root := t.TempDir()
+	registry, err := tools.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	provider := &cancelBeforeToolProvider{cancel: cancel}
+	var output, events bytes.Buffer
+	runner := New(provider, "test", registry, trace.New(&events, false), &output, 4)
+	err = runner.Run(ctx, "cancel it")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("run error = %v, want context cancellation", err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "result.txt")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("cancelled tool created a file: %v", statErr)
+	}
+}
+
+func TestAgentTreatsCancelledProviderResponseAsCancellation(t *testing.T) {
+	registry, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	provider := &cancelWithFinalResponseProvider{cancel: cancel}
+	var output, events bytes.Buffer
+	runner := New(provider, "test", registry, trace.New(&events, false), &output, 1)
+	err = runner.Run(ctx, "cancel it")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("run error = %v, want context cancellation", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("output after cancellation = %q", output.String())
 	}
 }
 
