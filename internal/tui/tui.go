@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -139,12 +140,18 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		u.display.AddLine("> " + line)
 		u.resetPage()
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == "/diff" {
+			u.expandDiff(fields)
+			continue
+		}
 		switch line {
 		case "/quit", "/exit":
 			return nil
 		case "/clear":
 			fmt.Fprint(u.terminal, "\x1b[2J\x1b[H")
 			u.display.Clear()
+			u.responseWriter.ResetDiffs()
 			u.printHeader()
 			continue
 		case "/help":
@@ -162,6 +169,7 @@ func (u *UI) Run(ctx context.Context) error {
 			fmt.Fprintf(u.display, "%sVerbose tracing: %s%s\n", dim, state, reset)
 			continue
 		}
+		u.responseWriter.ResetDiffs()
 		fmt.Fprintln(u.display, green+bold+"assistant"+reset)
 		started := time.Now()
 		taskCtx, cancel := context.WithCancel(ctx)
@@ -178,6 +186,31 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		fmt.Fprintln(u.display)
 	}
+}
+
+func (u *UI) expandDiff(fields []string) {
+	if len(fields) > 2 {
+		fmt.Fprintln(u.display, yellow+"Usage: /diff [number]"+reset)
+		return
+	}
+	number := 0
+	if len(fields) == 2 {
+		parsed, err := strconv.Atoi(fields[1])
+		if err != nil || parsed < 1 {
+			fmt.Fprintln(u.display, yellow+"Usage: /diff [number]"+reset)
+			return
+		}
+		number = parsed
+	}
+	requested, total, ok := u.responseWriter.WriteStoredDiff(number)
+	if ok {
+		return
+	}
+	if total == 0 {
+		fmt.Fprintln(u.display, dim+"No diffs are available from the latest run."+reset)
+		return
+	}
+	fmt.Fprintf(u.display, "%sDiff %d not found; available diffs: 1-%d.%s\n", yellow, requested, total, reset)
 }
 
 func formatRunDuration(duration time.Duration) string {

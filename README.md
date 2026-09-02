@@ -11,7 +11,7 @@
 - Use Page Up and Page Down to scroll through qcode's output history without leaving the interactive prompt.
 - Successful interactive runs end with a distinct colored `Completed in ...` notice measuring the complete run across every model turn and tool call.
 - Provider-delimited model thinking streams in subtle gray, while the final answer retains normal Markdown styling. Ollama uses `message.thinking`; OpenAI-compatible providers may use `reasoning_content` or `reasoning` deltas.
-- Interactive `write` and `edit` tool calls display bounded unified diffs with colored additions, removals, and hunk headers; tool results sent back to the model remain plain text.
+- Interactive `write` and `edit` tool calls display numbered, 10-line unified diff previews with colored additions, removals, and hunk headers. Use `/diff` or `/diff N` to expand a preview up to the 200-line safety limit; tool results sent back to the model remain plain text.
 - UTF-8 terminals use Unicode interface glyphs; other locales fall back to ASCII without disabling color. Set `QCODE_ASCII=1` to force the ASCII-safe display mode.
 - All text sent to an LLM is collected in [`internal/prompt/prompts.go`](internal/prompt/prompts.go).
 - Standard-library networking and file operations. The terminal helper is compiled into the executable.

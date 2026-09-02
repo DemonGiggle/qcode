@@ -14,6 +14,7 @@ type slashCommand struct {
 
 var slashCommands = []slashCommand{
 	{name: "/clear", description: "Clear the conversation display"},
+	{name: "/diff", description: "Expand a recent file diff"},
 	{name: "/exit", description: "Exit qcode"},
 	{name: "/help", description: "Show available commands"},
 	{name: "/quit", description: "Exit qcode"},

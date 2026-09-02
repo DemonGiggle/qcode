@@ -4,17 +4,20 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
+	"sync"
 	"unicode"
 )
 
 const (
-	italic        = "\x1b[3m"
-	underline     = "\x1b[4m"
-	strikethrough = "\x1b[9m"
-	blue          = "\x1b[34m"
-	magenta       = "\x1b[35m"
-	gray          = "\x1b[90m"
+	italic             = "\x1b[3m"
+	underline          = "\x1b[4m"
+	strikethrough      = "\x1b[9m"
+	blue               = "\x1b[34m"
+	magenta            = "\x1b[35m"
+	gray               = "\x1b[90m"
+	maxDiffPreviewRows = 10
 )
 
 // MarkdownWriter renders complete Markdown lines as ANSI-styled terminal text.
@@ -29,6 +32,8 @@ type MarkdownWriter struct {
 	inFence  bool
 	thinking bool
 	diffs    bool
+	diffMu   sync.Mutex
+	diffList []string
 	buffer   bytes.Buffer
 }
 
@@ -50,35 +55,179 @@ func (w *MarkdownWriter) WriteDiff(diff string) {
 	if !w.diffs || diff == "" {
 		return
 	}
+	w.diffMu.Lock()
+	w.diffList = append(w.diffList, diff)
+	number := len(w.diffList)
+	w.diffMu.Unlock()
+	w.writeDiffPreview(diff, number)
+}
+
+func (w *MarkdownWriter) ResetDiffs() {
+	w.diffMu.Lock()
+	w.diffList = nil
+	w.diffMu.Unlock()
+}
+
+// WriteStoredDiff expands a numbered diff. Number zero selects the latest.
+func (w *MarkdownWriter) WriteStoredDiff(number int) (int, int, bool) {
+	w.diffMu.Lock()
+	total := len(w.diffList)
+	if number == 0 {
+		number = total
+	}
+	if number < 1 || number > total {
+		w.diffMu.Unlock()
+		return number, total, false
+	}
+	diff := w.diffList[number-1]
+	w.diffMu.Unlock()
+
+	w.writeDiffLabel(fmt.Sprintf("Diff %d (expanded)", number))
+	w.writeDiffLines(strings.Split(diff, "\n"), false)
+	return number, total, true
+}
+
+func (w *MarkdownWriter) writeDiffPreview(diff string, number int) {
+	lines := strings.Split(diff, "\n")
+	w.writeDiffLabel(fmt.Sprintf("Diff %d", number))
+	available := maxDiffPreviewRows - 1
+	truncated := len(lines) > available
+	if truncated {
+		available--
+	}
+	indices := balancedDiffIndices(lines, available)
+	preview := make([]string, 0, len(indices))
+	for _, index := range indices {
+		preview = append(preview, lines[index])
+	}
+	w.writeDiffLines(preview, true)
+	if truncated {
+		omitted := len(lines) - len(preview)
+		hint := fmt.Sprintf("[diff %d: %d more lines - /diff %d to expand]", number, omitted, number)
+		w.writeStyledDiffLine(hint, true)
+	}
+}
+
+func balancedDiffIndices(lines []string, limit int) []int {
+	if limit >= len(lines) {
+		indices := make([]int, len(lines))
+		for index := range lines {
+			indices[index] = index
+		}
+		return indices
+	}
+	selected := make(map[int]bool, limit)
+	add := func(index int) {
+		if index >= 0 && index < len(lines) && len(selected) < limit {
+			selected[index] = true
+		}
+	}
+	metadata := 0
+	for index, line := range lines {
+		if strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ ") || strings.HasPrefix(line, "@@") {
+			add(index)
+			metadata++
+			if metadata == 3 {
+				break
+			}
+		}
+	}
+	for index, line := range lines {
+		if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "--- ") {
+			add(index)
+			break
+		}
+	}
+	for index, line := range lines {
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++ ") {
+			add(index)
+			break
+		}
+	}
+	for index := range lines {
+		add(index)
+	}
+	indices := make([]int, 0, len(selected))
+	for index := range selected {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	return indices
+}
+
+func (w *MarkdownWriter) writeDiffLabel(label string) {
+	label = truncateDiffLine(label, w.width, w.unicode)
+	if w.enabled {
+		label = bold + label + reset
+	}
+	fmt.Fprintln(w.out, label)
+}
+
+func (w *MarkdownWriter) writeDiffLines(lines []string, truncate bool) {
+	for _, line := range lines {
+		w.writeStyledDiffLine(line, truncate)
+	}
+}
+
+func (w *MarkdownWriter) writeStyledDiffLine(line string, truncate bool) {
 	escapeLabel := "␛"
 	if !w.unicode {
 		escapeLabel = "<ESC>"
 	}
-	for _, line := range strings.Split(diff, "\n") {
-		line = sanitizeDiffLine(line, escapeLabel)
-		style := ""
-		if w.enabled {
-			switch {
-			case strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "+++ "):
-				style = bold + cyan
-			case strings.HasPrefix(line, "@@"):
-				style = magenta
-			case strings.HasPrefix(line, "+"):
-				style = green
-			case strings.HasPrefix(line, "-"):
-				style = red
-			case strings.HasPrefix(line, "..."):
-				style = yellow
-			default:
-				style = dim
-			}
-		}
-		rendered := line
-		if style != "" {
-			rendered = style + line + reset
-		}
-		fmt.Fprintln(w.out, wrapANSI(rendered, w.width, "  "))
+	line = sanitizeDiffLine(line, escapeLabel)
+	if truncate {
+		line = truncateDiffLine(line, w.width, w.unicode)
 	}
+	style := ""
+	if w.enabled {
+		switch {
+		case strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "+++ "):
+			style = bold + cyan
+		case strings.HasPrefix(line, "@@"):
+			style = magenta
+		case strings.HasPrefix(line, "+"):
+			style = green
+		case strings.HasPrefix(line, "-"):
+			style = red
+		case strings.HasPrefix(line, "[diff"):
+			style = yellow
+		default:
+			style = dim
+		}
+	}
+	rendered := line
+	if style != "" {
+		rendered = style + line + reset
+	}
+	fmt.Fprintln(w.out, wrapANSI(rendered, w.width, "  "))
+}
+
+func truncateDiffLine(line string, width int, unicodeEnabled bool) string {
+	if width <= 0 || visibleWidth(line) <= width {
+		return line
+	}
+	suffix := "..."
+	if unicodeEnabled {
+		suffix = "…"
+	} else if width < len(suffix) {
+		suffix = suffix[:width]
+	}
+	limit := width - visibleWidth(suffix)
+	if limit < 0 {
+		limit = 0
+	}
+	units := displayUnits(line)
+	var output strings.Builder
+	used := 0
+	for _, unit := range units {
+		if used+unit.width > limit {
+			break
+		}
+		output.WriteString(unit.raw)
+		used += unit.width
+	}
+	output.WriteString(suffix)
+	return output.String()
 }
 
 func sanitizeDiffLine(line, escapeLabel string) string {

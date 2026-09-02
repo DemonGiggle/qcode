@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -160,7 +161,69 @@ func TestMarkdownWriterNeutralizesDiffEscapeSequences(t *testing.T) {
 	writer.EnableDiffs()
 	writer.WriteDiff("+safe \x1b[2J\r\a")
 	plain := ansiPattern.ReplaceAllString(output.String(), "")
-	if plain != "+safe ␛[2J<0x0D><0x07>\n" {
+	if plain != "Diff 1\n+safe ␛[2J<0x0D><0x07>\n" {
 		t.Fatalf("diff output = %q", plain)
+	}
+}
+
+func TestMarkdownWriterLimitsAndBalancesDiffPreview(t *testing.T) {
+	var lines []string
+	lines = append(lines, "--- a/file.go", "+++ b/file.go", "@@ -1,12 +1,12 @@")
+	for index := range 12 {
+		lines = append(lines, fmt.Sprintf("-old %d", index))
+	}
+	for index := range 12 {
+		lines = append(lines, fmt.Sprintf("+new %d", index))
+	}
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, false, 80)
+	writer.EnableDiffs()
+	writer.WriteDiff(strings.Join(lines, "\n"))
+
+	preview := strings.TrimSuffix(output.String(), "\n")
+	if rows := strings.Count(preview, "\n") + 1; rows != maxDiffPreviewRows {
+		t.Fatalf("preview rows = %d:\n%s", rows, preview)
+	}
+	for _, expected := range []string{"Diff 1", "-old 0", "+new 0", "/diff 1 to expand"} {
+		if !strings.Contains(preview, expected) {
+			t.Errorf("preview missing %q:\n%s", expected, preview)
+		}
+	}
+}
+
+func TestMarkdownWriterExpandsNumberedDiff(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, false, 80)
+	writer.EnableDiffs()
+	writer.WriteDiff("--- a/one\n+++ b/one\n-old\n+new")
+	writer.WriteDiff("--- a/two\n+++ b/two\n-before\n+after")
+	output.Reset()
+
+	number, total, ok := writer.WriteStoredDiff(1)
+	if !ok || number != 1 || total != 2 {
+		t.Fatalf("expanded diff = number %d, total %d, ok %v", number, total, ok)
+	}
+	if got := output.String(); !strings.Contains(got, "Diff 1 (expanded)\n") || !strings.Contains(got, "+new\n") || strings.Contains(got, "+after\n") {
+		t.Fatalf("expanded output = %q", got)
+	}
+	output.Reset()
+	if number, total, ok = writer.WriteStoredDiff(0); !ok || number != 2 || total != 2 || !strings.Contains(output.String(), "+after\n") {
+		t.Fatalf("latest diff = number %d, total %d, ok %v, output %q", number, total, ok, output.String())
+	}
+
+	writer.ResetDiffs()
+	if _, total, ok := writer.WriteStoredDiff(0); ok || total != 0 {
+		t.Fatalf("diffs remained after reset: total %d, ok %v", total, ok)
+	}
+}
+
+func TestDiffPreviewStaysWithinRowsOnNarrowTerminal(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, false, 1)
+	writer.SetUnicode(false)
+	writer.EnableDiffs()
+	writer.WriteDiff(strings.Repeat("+very-long-line\n", 12))
+	if rows := strings.Count(strings.TrimSuffix(output.String(), "\n"), "\n") + 1; rows != maxDiffPreviewRows {
+		t.Fatalf("preview rows = %d: %q", rows, output.String())
 	}
 }
