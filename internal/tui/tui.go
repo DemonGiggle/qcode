@@ -25,6 +25,13 @@ const (
 	yellow = "\x1b[33m"
 )
 
+var qcodeBanner = []string{
+	`  ___   ___ ___  ___  ___`,
+	` / _ \ / __/ _ \|   \| __|`,
+	`| (_) | (_| (_) | |) | _|`,
+	` \__\_|\___\___/|___/|___|`,
+}
+
 type Runner interface {
 	Run(context.Context, string) error
 }
@@ -178,7 +185,6 @@ func (u *UI) Run(ctx context.Context) error {
 			continue
 		}
 		u.responseWriter.ResetDiffs()
-		fmt.Fprintln(u.display, green+bold+"assistant"+reset)
 		started := time.Now()
 		taskCtx, cancel := context.WithCancel(ctx)
 		u.input.setCancel(cancel)
@@ -314,12 +320,25 @@ func (u *UI) printHeader() {
 			root = filepath.Join("~", rel)
 		}
 	}
-	fmt.Fprintf(u.display, "\r\n%sqcode%s  %s%s%s\r\n", bold+cyan, reset, dim, u.provider+" / "+u.model, reset)
+	fmt.Fprint(u.display, "\r\n")
+	for _, line := range headerLogo(u.width) {
+		fmt.Fprintf(u.display, "%s%s%s\r\n", bold+cyan, line, reset)
+	}
+	fmt.Fprintf(u.display, "%s%s%s\r\n", dim, u.provider+" / "+u.model, reset)
 	separator := "·"
 	if !u.unicode {
 		separator = "-"
 	}
 	fmt.Fprintf(u.display, "%s%s  %s  Waiting indicator; /verbose for action traces%s\r\n\r\n", dim, root, separator, reset)
+}
+
+func headerLogo(width int) []string {
+	for _, line := range qcodeBanner {
+		if width > 0 && visibleWidth(line) > width {
+			return []string{"qcode"}
+		}
+	}
+	return qcodeBanner
 }
 
 func (u *UI) resetPage() {

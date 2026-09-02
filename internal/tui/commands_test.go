@@ -59,6 +59,16 @@ func TestPrintSystemMessageHasBlankLinesAroundIt(t *testing.T) {
 	}
 }
 
+func TestHeaderLogoUsesASCIIBannerWithNarrowFallback(t *testing.T) {
+	wide := strings.Join(headerLogo(80), "\n")
+	if len(headerLogo(80)) != 4 || !strings.Contains(wide, `\__\_|\___\___/`) {
+		t.Fatalf("wide logo = %q", wide)
+	}
+	if got := headerLogo(12); len(got) != 1 || got[0] != "qcode" {
+		t.Fatalf("narrow logo = %v", got)
+	}
+}
+
 func TestSlashCommandMenuReplacesPreviousRows(t *testing.T) {
 	var output bytes.Buffer
 	menu := slashCommandMenu{out: &output}
