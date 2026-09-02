@@ -14,8 +14,9 @@ import (
 
 const (
 	// Model is a display-only model name used by the demo session.
-	Model        = "scripted-demo"
-	defaultDelay = 1500 * time.Millisecond
+	Model          = "scripted-demo"
+	demoModelCount = 240
+	defaultDelay   = 1500 * time.Millisecond
 )
 
 // Session contains both mocked boundaries needed by the normal agent loop.
@@ -51,7 +52,12 @@ func (p *Provider) Models(ctx context.Context) ([]string, error) {
 	if err := wait(ctx, p.delay); err != nil {
 		return nil, err
 	}
-	return []string{Model}, nil
+	models := make([]string, 0, demoModelCount+1)
+	models = append(models, Model)
+	for index := 1; index <= demoModelCount; index++ {
+		models = append(models, fmt.Sprintf("demo-coder-%03d", index))
+	}
+	return models, nil
 }
 
 func (p *Provider) Complete(ctx context.Context, request llm.Request, onText llm.StreamCallback) (llm.Response, error) {
@@ -77,7 +83,20 @@ func (p *Provider) Complete(ctx context.Context, request llm.Request, onText llm
 		}}, nil
 	}
 
-	message := fmt.Sprintf("Demo complete. The mocked LLM connection succeeded and all %d available tools ran without reading, changing, or executing anything in your workspace.", len(request.Tools))
+	message := fmt.Sprintf(`## Demo report
+
+The mocked LLM connection succeeded and all %d available tools ran. Use Page Up and Page Down to revisit the colored output.
+
+| Feature | Demonstration | Safety |
+| :--- | :---: | ---: |
+| LLM connection | Mocked with delay | Offline |
+| Tool calls | All %d schemas | Mocked |
+| Cancellation | Every phase | Ctrl+C |
+| Code diffs | Write and edit | No files changed |
+| Markdown tables | Aligned output | Width bounded |
+| Model search | %d fake models | No API call |
+| History paging | Colored content | PgUp / PgDn |
+| Completion time | Whole seconds | Deterministic |`, len(request.Tools), len(request.Tools), demoModelCount+1)
 	if onText != nil {
 		onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: message})
 	}

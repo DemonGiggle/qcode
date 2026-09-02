@@ -1,12 +1,20 @@
 package demo
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"qcode/internal/agent"
 	"qcode/internal/llm"
+	"qcode/internal/tools"
+	"qcode/internal/trace"
+	"qcode/internal/tui"
 )
 
 func TestSessionCallsEveryToolThenFinishes(t *testing.T) {
@@ -39,6 +47,24 @@ func TestSessionCallsEveryToolThenFinishes(t *testing.T) {
 	if final.Message.Content == "" || len(final.Message.ToolCalls) != 0 {
 		t.Fatalf("final response = %#v", final.Message)
 	}
+	if !strings.Contains(final.Message.Content, "| Feature | Demonstration | Safety |") ||
+		!strings.Contains(final.Message.Content, "| :--- | :---: | ---: |") {
+		t.Fatalf("final response has no demonstration table:\n%s", final.Message.Content)
+	}
+}
+
+func TestModelsReturnsLargeSearchableCatalog(t *testing.T) {
+	session := newSession(nil, 0)
+	models, err := session.Provider.Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != demoModelCount+1 {
+		t.Fatalf("models = %d, want %d", len(models), demoModelCount+1)
+	}
+	if models[0] != Model || models[len(models)-1] != "demo-coder-240" {
+		t.Fatalf("model bounds = %q / %q", models[0], models[len(models)-1])
+	}
 }
 
 func TestWriteAndEditReturnMockCodeDiffs(t *testing.T) {
@@ -54,6 +80,35 @@ func TestWriteAndEditReturnMockCodeDiffs(t *testing.T) {
 	}
 }
 
+func TestFullDemoProducesColoredPageableShowcaseWithoutSideEffects(t *testing.T) {
+	root := t.TempDir()
+	registry, err := tools.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := newSession(registry.Schemas(), 0)
+	var output, events bytes.Buffer
+	writer := tui.NewMarkdownWriter(&output, true, 80)
+	writer.EnableDiffs()
+	runner := agent.New(session.Provider, Model, session.Tools, trace.New(&events, false), writer, 4)
+	if err := runner.Run(context.Background(), "show everything"); err != nil {
+		t.Fatal(err)
+	}
+
+	rendered := output.String()
+	for _, expected := range []string{"Added demo/greeter.go", "Edited demo/greeter.go", "┌", "Demo report", "\x1b["} {
+		if !strings.Contains(rendered, expected) {
+			t.Errorf("showcase output missing %q:\n%s", expected, rendered)
+		}
+	}
+	if lines := strings.Count(rendered, "\n"); lines < 24 {
+		t.Errorf("showcase has only %d lines; it may not exercise paging", lines)
+	}
+	if _, err := os.Stat(filepath.Join(root, "demo", "greeter.go")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("demo created its mocked file: %v", err)
+	}
+}
+
 func TestMockedBoundariesHonorCancellation(t *testing.T) {
 	session := newSession([]llm.Tool{{Name: "read"}}, time.Hour)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -61,6 +116,9 @@ func TestMockedBoundariesHonorCancellation(t *testing.T) {
 
 	if _, err := session.Provider.Complete(ctx, llm.Request{}, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("provider error = %v", err)
+	}
+	if _, err := session.Provider.Models(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("model discovery error = %v", err)
 	}
 	if _, err := session.Tools.ExecuteDetailed(ctx, llm.ToolCall{Name: "read"}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("tool error = %v", err)

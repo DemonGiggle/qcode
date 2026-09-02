@@ -87,9 +87,12 @@ qcode --demo "show me how qcode works"
 Demo mode deliberately pauses during both mocked LLM requests and every mocked
 tool call, making Ctrl+C cancellation easy to demonstrate. Run `qcode --demo`
 interactively and submit any prompt to also see realistic `write` and `edit`
-code-diff previews; `/diff` expansion works normally. The demo runs through all
-available tool schemas, but does not read or change the workspace and does not
-execute shell commands. Provider, URL, API key, and model settings are ignored.
+code-diff previews, a rendered Markdown feature table, and enough colored output
+to try Page Up and Page Down; `/diff` expansion works normally. `/model` exposes
+a large fake catalog for trying search and keyboard navigation. The demo runs
+through all available tool schemas, but does not read or change the workspace
+and does not execute shell commands. Provider, URL, API key, and model settings
+are ignored.
 
 Flags can also be set with `QCODE_PROVIDER`, `QCODE_MODEL`, `QCODE_BASE_URL`, and `QCODE_API_KEY`.
 
