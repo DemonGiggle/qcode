@@ -35,7 +35,7 @@ func TestMarkdownWriterRendersStreamedSyntax(t *testing.T) {
 		"╭─ go",
 		`fmt.Println("hi")`,
 		"╰─",
-		"site (https://example.com) and old",
+		"• site (https://example.com) and old",
 		"",
 	}, "\n")
 	if plain != want {
@@ -79,7 +79,7 @@ func TestMarkdownWriterNeutralizesModelEscapeSequences(t *testing.T) {
 	_, _ = writer.Write([]byte("safe \x1b[2J text"))
 	writer.EndResponse()
 	plain := ansiPattern.ReplaceAllString(output.String(), "")
-	if plain != "safe ␛[2J text" {
+	if plain != "• safe ␛[2J text" {
 		t.Fatalf("plain output = %q", plain)
 	}
 }
@@ -91,7 +91,7 @@ func TestMarkdownWriterWrapsAtWordBoundaries(t *testing.T) {
 	_, _ = writer.Write([]byte("one two three four"))
 	writer.EndResponse()
 	plain := ansiPattern.ReplaceAllString(output.String(), "")
-	if plain != "one two\nthree four" {
+	if plain != "• one two\n  three four" {
 		t.Fatalf("wrapped output = %q", plain)
 	}
 }
@@ -102,7 +102,7 @@ func TestMarkdownWriterWrapsWithoutColor(t *testing.T) {
 	writer.BeginResponse()
 	_, _ = writer.Write([]byte("one two three"))
 	writer.EndResponse()
-	if got := output.String(); got != "one two\nthree" {
+	if got := output.String(); got != "• one\n  two\n  three" {
 		t.Fatalf("wrapped output = %q", got)
 	}
 }
@@ -115,7 +115,7 @@ func TestMarkdownWriterUsesASCIIGlyphs(t *testing.T) {
 	_, _ = writer.Write([]byte("- item\n> quote\n```text\nvalue\n```\nsafe \x1b[2J"))
 	writer.EndResponse()
 	plain := ansiPattern.ReplaceAllString(output.String(), "")
-	want := "- item\n| quote\n+- text\nvalue\n+-\nsafe <ESC>[2J"
+	want := "- item\n| quote\n+- text\nvalue\n+-\n* safe <ESC>[2J"
 	if plain != want {
 		t.Fatalf("ASCII output = %q, want %q", plain, want)
 	}
@@ -138,7 +138,7 @@ func TestMarkdownWriterStylesThinkingGray(t *testing.T) {
 		t.Fatalf("final answer lost normal Markdown styling: %q", output.String())
 	}
 	plain := ansiPattern.ReplaceAllString(output.String(), "")
-	if plain != "considering options\nfinal answer" {
+	if plain != "• considering options\n• final answer" {
 		t.Fatalf("plain output = %q", plain)
 	}
 }

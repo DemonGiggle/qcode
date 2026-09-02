@@ -314,19 +314,16 @@ func (w *MarkdownWriter) renderLine(line string) {
 	}
 	line = strings.ReplaceAll(line, "\x1b", escapeLabel)
 	if w.thinking {
-		rendered := line
-		if w.enabled {
-			rendered = gray + line + reset
-		}
-		fmt.Fprint(w.out, wrapANSI(rendered, w.width, leadingWhitespace(line)))
-		return
-	}
-	if !w.enabled {
-		fmt.Fprint(w.out, wrapANSI(line, w.width, leadingWhitespace(line)))
+		w.writeStatement(line, gray)
 		return
 	}
 	trimmed := strings.TrimSpace(line)
 	if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+		if !w.enabled {
+			w.inFence = !w.inFence
+			fmt.Fprint(w.out, wrapANSI(line, w.width, leadingWhitespace(line)))
+			return
+		}
 		if w.inFence {
 			label := "╰─"
 			if !w.unicode {
@@ -349,7 +346,19 @@ func (w *MarkdownWriter) renderLine(line string) {
 		return
 	}
 	if w.inFence {
+		if !w.enabled {
+			fmt.Fprint(w.out, wrapANSI(line, w.width, leadingWhitespace(line)))
+			return
+		}
 		w.writeRendered(yellow+line+reset, leadingWhitespace(line))
+		return
+	}
+	if !w.enabled {
+		if isPlainStatement(line, w.unicode) {
+			w.writeStatement(line, "")
+		} else {
+			fmt.Fprint(w.out, wrapANSI(line, w.width, leadingWhitespace(line)))
+		}
 		return
 	}
 	if trimmed == "---" || trimmed == "***" || trimmed == "___" {
@@ -386,11 +395,63 @@ func (w *MarkdownWriter) renderLine(line string) {
 		w.writeRendered(leading+cyan+marker+reset+renderInline(rest), continuation)
 		return
 	}
-	w.writeRendered(renderInline(line), leading)
+	if content == "" || strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") || strings.HasPrefix(content, "|") {
+		w.writeRendered(renderInline(line), leading)
+		return
+	}
+	w.writeStatement(line, "")
 }
 
 func (w *MarkdownWriter) writeRendered(rendered, continuation string) {
 	fmt.Fprint(w.out, wrapANSI(rendered, w.width, continuation))
+}
+
+func (w *MarkdownWriter) writeStatement(line, style string) {
+	leading := leadingWhitespace(line)
+	content := strings.TrimLeftFunc(line, unicode.IsSpace)
+	if content == "" || !isPlainStatement(line, w.unicode) {
+		rendered := line
+		if w.enabled && style != "" {
+			rendered = style + line + reset
+		}
+		w.writeRendered(rendered, leading)
+		return
+	}
+	marker := "• "
+	if !w.unicode {
+		marker = "* "
+	}
+	markerStyle := cyan
+	if style != "" {
+		markerStyle = style
+	}
+	renderedContent := renderInline(content)
+	if w.enabled && style != "" {
+		renderedContent = style + content + reset
+	}
+	if w.enabled {
+		w.writeRendered(leading+markerStyle+marker+reset+renderedContent, leading+"  ")
+		return
+	}
+	w.writeRendered(leading+marker+content, leading+"  ")
+}
+
+func isPlainStatement(line string, unicodeEnabled bool) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") || strings.HasPrefix(trimmed, "|") {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") || strings.HasPrefix(trimmed, ">") {
+		return false
+	}
+	if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+		return false
+	}
+	if level, _ := heading(trimmed); level > 0 {
+		return false
+	}
+	_, _, list := listItem(trimmed, unicodeEnabled)
+	return !list
 }
 
 func leadingWhitespace(line string) string {
