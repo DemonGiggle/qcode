@@ -88,30 +88,78 @@ func (w *MarkdownWriter) WriteStoredDiff(number int) (int, int, bool) {
 	diff := w.diffList[number-1]
 	w.diffMu.Unlock()
 
-	w.writeDiffLabel(fmt.Sprintf("Diff %d (expanded)", number))
-	w.writeDiffLines(strings.Split(diff, "\n"), false)
+	details := parseDiffDetails(diff)
+	w.writeDiffSummary(details, number, true)
+	w.writeDiffLines(details.lines, false)
+	w.writeDiffFooter("")
 	return number, total, true
 }
 
 func (w *MarkdownWriter) writeDiffPreview(diff string, number int) {
-	lines := strings.Split(diff, "\n")
-	w.writeDiffLabel(fmt.Sprintf("Diff %d", number))
-	available := maxDiffPreviewRows - 1
-	truncated := len(lines) > available
-	if truncated {
-		available--
-	}
-	indices := balancedDiffIndices(lines, available)
+	details := parseDiffDetails(diff)
+	w.writeDiffSummary(details, number, false)
+	available := maxDiffPreviewRows - 2
+	truncated := len(details.lines) > available
+	indices := balancedDiffIndices(details.lines, available)
 	preview := make([]string, 0, len(indices))
 	for _, index := range indices {
-		preview = append(preview, lines[index])
+		preview = append(preview, details.lines[index])
 	}
 	w.writeDiffLines(preview, true)
 	if truncated {
-		omitted := len(lines) - len(preview)
-		hint := fmt.Sprintf("[diff %d: %d more lines - /diff %d to expand]", number, omitted, number)
-		w.writeStyledDiffLine(hint, true)
+		omitted := len(details.lines) - len(preview)
+		separator := "·"
+		if !w.unicode {
+			separator = "-"
+		}
+		w.writeDiffFooter(fmt.Sprintf("/diff %d to expand %s %d hidden", number, separator, omitted))
+	} else {
+		w.writeDiffFooter("")
 	}
+}
+
+type diffDetails struct {
+	action    string
+	path      string
+	additions int
+	deletions int
+	lines     []string
+}
+
+func parseDiffDetails(diff string) diffDetails {
+	details := diffDetails{action: "Edited", path: "file"}
+	oldPath := ""
+	newPath := ""
+	lines := strings.Split(strings.TrimSuffix(diff, "\n"), "\n")
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "--- "):
+			oldPath = strings.TrimPrefix(line, "--- ")
+			continue
+		case strings.HasPrefix(line, "+++ "):
+			newPath = strings.TrimPrefix(line, "+++ ")
+			continue
+		case strings.HasPrefix(line, "Binary file changed: "):
+			details.path = strings.TrimPrefix(line, "Binary file changed: ")
+		}
+		if strings.HasPrefix(line, "+") {
+			details.additions++
+		} else if strings.HasPrefix(line, "-") {
+			details.deletions++
+		}
+		details.lines = append(details.lines, line)
+	}
+	if newPath != "" && newPath != "/dev/null" {
+		details.path = strings.TrimPrefix(newPath, "b/")
+	} else if oldPath != "" && oldPath != "/dev/null" {
+		details.path = strings.TrimPrefix(oldPath, "a/")
+	}
+	if oldPath == "/dev/null" {
+		details.action = "Added"
+	} else if newPath == "/dev/null" {
+		details.action = "Deleted"
+	}
+	return details
 }
 
 func balancedDiffIndices(lines []string, limit int) []int {
@@ -130,24 +178,35 @@ func balancedDiffIndices(lines []string, limit int) []int {
 	}
 	metadata := 0
 	for index, line := range lines {
-		if strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ ") || strings.HasPrefix(line, "@@") {
+		if strings.HasPrefix(line, "@@") {
 			add(index)
 			metadata++
-			if metadata == 3 {
+			if metadata == 2 {
 				break
 			}
 		}
 	}
 	for index, line := range lines {
-		if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "--- ") {
+		if strings.HasPrefix(line, " ") {
 			add(index)
 			break
 		}
 	}
+	removals := make([]int, 0, limit)
+	additions := make([]int, 0, limit)
 	for index, line := range lines {
-		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++ ") {
-			add(index)
-			break
+		if strings.HasPrefix(line, "-") {
+			removals = append(removals, index)
+		} else if strings.HasPrefix(line, "+") {
+			additions = append(additions, index)
+		}
+	}
+	for index := 0; len(selected) < limit && (index < len(removals) || index < len(additions)); index++ {
+		if index < len(removals) {
+			add(removals[index])
+		}
+		if index < len(additions) {
+			add(additions[index])
 		}
 	}
 	for index := range lines {
@@ -161,12 +220,46 @@ func balancedDiffIndices(lines []string, limit int) []int {
 	return indices
 }
 
-func (w *MarkdownWriter) writeDiffLabel(label string) {
-	label = truncateDiffLine(label, w.width, w.unicode)
-	if w.enabled {
-		label = bold + label + reset
+func (w *MarkdownWriter) writeDiffSummary(details diffDetails, number int, expanded bool) {
+	marker := "• "
+	separator := "·"
+	if !w.unicode {
+		marker = "* "
+		separator = "-"
 	}
-	fmt.Fprintln(w.out, label)
+	escapeLabel := "␛"
+	if !w.unicode {
+		escapeLabel = "<ESC>"
+	}
+	details.path = sanitizeDiffLine(details.path, escapeLabel)
+	suffix := fmt.Sprintf(" (+%d -%d) %s diff %d", details.additions, details.deletions, separator, number)
+	if expanded {
+		suffix += " " + separator + " expanded"
+	}
+	plain := fmt.Sprintf("%s%s %s%s", marker, details.action, details.path, suffix)
+	if w.width > 0 && visibleWidth(plain) > w.width {
+		available := w.width - visibleWidth(marker)
+		if available < 1 {
+			marker = ""
+			available = w.width
+		}
+		plain = marker + truncateDiffLine(details.action+" "+details.path, available, w.unicode)
+		if w.enabled {
+			fmt.Fprintln(w.out, cyan+marker+reset+bold+strings.TrimPrefix(plain, marker)+reset)
+			return
+		}
+		fmt.Fprintln(w.out, plain)
+		return
+	}
+	if !w.enabled {
+		fmt.Fprintln(w.out, plain)
+		return
+	}
+	fmt.Fprintf(w.out, "%s%s%s%s%s %s%s (%s+%d%s %s-%d%s) %s%s diff %d%s", cyan, marker, reset, bold, details.action, details.path, reset, green, details.additions, reset, red, details.deletions, reset, dim, separator, number, reset)
+	if expanded {
+		fmt.Fprintf(w.out, " %s%s expanded%s", dim, separator, reset)
+	}
+	fmt.Fprintln(w.out)
 }
 
 func (w *MarkdownWriter) writeDiffLines(lines []string, truncate bool) {
@@ -181,21 +274,37 @@ func (w *MarkdownWriter) writeStyledDiffLine(line string, truncate bool) {
 		escapeLabel = "<ESC>"
 	}
 	line = sanitizeDiffLine(line, escapeLabel)
+	marker := "│ "
+	if !w.unicode {
+		marker = "| "
+	}
+	if w.width > 0 && w.width < visibleWidth(marker)+1 {
+		marker = ""
+	}
+	contentWidth := 0
+	if w.width > 0 {
+		contentWidth = w.width - visibleWidth(marker)
+		if contentWidth < 1 {
+			contentWidth = 1
+		}
+	}
 	if truncate {
-		line = truncateDiffLine(line, w.width, w.unicode)
+		line = truncateDiffLine(line, contentWidth, w.unicode)
+	}
+	styledMarker := marker
+	if w.enabled {
+		styledMarker = dim + marker + reset
 	}
 	style := ""
 	if w.enabled {
 		switch {
-		case strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "+++ "):
-			style = bold + cyan
 		case strings.HasPrefix(line, "@@"):
-			style = magenta
+			style = cyan
 		case strings.HasPrefix(line, "+"):
 			style = green
 		case strings.HasPrefix(line, "-"):
 			style = red
-		case strings.HasPrefix(line, "[diff"):
+		case strings.HasPrefix(line, "..."):
 			style = yellow
 		default:
 			style = dim
@@ -205,7 +314,24 @@ func (w *MarkdownWriter) writeStyledDiffLine(line string, truncate bool) {
 	if style != "" {
 		rendered = style + line + reset
 	}
-	fmt.Fprintln(w.out, wrapANSI(rendered, w.width, "  "))
+	fmt.Fprintln(w.out, wrapANSI(styledMarker+rendered, w.width, styledMarker))
+}
+
+func (w *MarkdownWriter) writeDiffFooter(text string) {
+	marker := "╰─"
+	if !w.unicode {
+		marker = "+-"
+	}
+	line := marker
+	if text != "" {
+		line += " " + text
+	}
+	line = truncateDiffLine(line, w.width, w.unicode)
+	if w.enabled {
+		fmt.Fprintln(w.out, dim+line+reset)
+		return
+	}
+	fmt.Fprintln(w.out, line)
 }
 
 func truncateDiffLine(line string, width int, unicodeEnabled bool) string {

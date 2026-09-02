@@ -161,10 +161,27 @@ func TestMarkdownWriterRendersColoredDiff(t *testing.T) {
 	writer.EnableDiffs()
 	writer.WriteDiff("--- a/file.go\n+++ b/file.go\n@@ -1,1 +1,1 @@\n-old\n+new")
 	got := output.String()
-	for name, sequence := range map[string]string{"header": bold + cyan, "hunk": magenta, "removal": red, "addition": green} {
+	for name, sequence := range map[string]string{
+		"summary marker": cyan + "• ",
+		"file name":      bold + "Edited file.go",
+		"hunk":           cyan + "@@",
+		"removal":        red + "-old",
+		"addition":       green + "+new",
+		"gutter":         dim + "│ ",
+	} {
 		if !strings.Contains(got, sequence) {
 			t.Errorf("diff has no %s style: %q", name, got)
 		}
+	}
+}
+
+func TestMarkdownWriterSummarizesAddedFile(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, false, 80)
+	writer.EnableDiffs()
+	writer.WriteDiff("--- /dev/null\n+++ b/new.go\n@@ -0,0 +1,1 @@\n+package main")
+	if got := output.String(); !strings.HasPrefix(got, "• Added new.go (+1 -0) · diff 1\n") {
+		t.Fatalf("added-file summary = %q", got)
 	}
 }
 
@@ -183,7 +200,7 @@ func TestMarkdownWriterNeutralizesDiffEscapeSequences(t *testing.T) {
 	writer.EnableDiffs()
 	writer.WriteDiff("+safe \x1b[2J\r\a")
 	plain := ansiPattern.ReplaceAllString(output.String(), "")
-	if plain != "Diff 1\n+safe ␛[2J<0x0D><0x07>\n" {
+	if plain != "• Edited file (+1 -0) · diff 1\n│ +safe ␛[2J<0x0D><0x07>\n╰─\n" {
 		t.Fatalf("diff output = %q", plain)
 	}
 }
@@ -206,10 +223,25 @@ func TestMarkdownWriterLimitsAndBalancesDiffPreview(t *testing.T) {
 	if rows := strings.Count(preview, "\n") + 1; rows != maxDiffPreviewRows {
 		t.Fatalf("preview rows = %d:\n%s", rows, preview)
 	}
-	for _, expected := range []string{"Diff 1", "-old 0", "+new 0", "/diff 1 to expand"} {
+	for _, expected := range []string{"• Edited file.go (+12 -12) · diff 1", "│ -old 0", "│ -old 3", "│ +new 0", "│ +new 2", "╰─ /diff 1 to expand · 17 hidden"} {
 		if !strings.Contains(preview, expected) {
 			t.Errorf("preview missing %q:\n%s", expected, preview)
 		}
+	}
+}
+
+func TestDiffPreviewIgnoresTrailingNewline(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, false, 80)
+	writer.EnableDiffs()
+	writer.WriteDiff("--- a/file.go\n+++ b/file.go\n@@ -1 +1 @@\n-old\n+new\n")
+
+	got := output.String()
+	if strings.Contains(got, "│ \n") {
+		t.Fatalf("preview includes a synthetic empty line: %q", got)
+	}
+	if rows := strings.Count(strings.TrimSuffix(got, "\n"), "\n") + 1; rows != 5 {
+		t.Fatalf("preview rows = %d: %q", rows, got)
 	}
 }
 
@@ -225,17 +257,31 @@ func TestMarkdownWriterExpandsNumberedDiff(t *testing.T) {
 	if !ok || number != 1 || total != 2 {
 		t.Fatalf("expanded diff = number %d, total %d, ok %v", number, total, ok)
 	}
-	if got := output.String(); !strings.Contains(got, "Diff 1 (expanded)\n") || !strings.Contains(got, "+new\n") || strings.Contains(got, "+after\n") {
+	if got := output.String(); !strings.Contains(got, "• Edited one (+1 -1) · diff 1 · expanded\n") || !strings.Contains(got, "│ +new\n") || strings.Contains(got, "+after\n") {
 		t.Fatalf("expanded output = %q", got)
 	}
 	output.Reset()
-	if number, total, ok = writer.WriteStoredDiff(0); !ok || number != 2 || total != 2 || !strings.Contains(output.String(), "+after\n") {
+	if number, total, ok = writer.WriteStoredDiff(0); !ok || number != 2 || total != 2 || !strings.Contains(output.String(), "│ +after\n") {
 		t.Fatalf("latest diff = number %d, total %d, ok %v, output %q", number, total, ok, output.String())
 	}
 
 	writer.ResetDiffs()
 	if _, total, ok := writer.WriteStoredDiff(0); ok || total != 0 {
 		t.Fatalf("diffs remained after reset: total %d, ok %v", total, ok)
+	}
+}
+
+func TestExpandedDiffWrapsWithGuide(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, false, 12)
+	writer.EnableDiffs()
+	writer.WriteDiff("--- a/file\n+++ b/file\n+abcdefghijklmnop")
+	output.Reset()
+
+	writer.WriteStoredDiff(1)
+	got := output.String()
+	if !strings.Contains(got, "│ +abcdefghi\n│ jklmnop\n") {
+		t.Fatalf("wrapped expanded diff lost its guide: %q", got)
 	}
 }
 
