@@ -33,7 +33,7 @@ func TestMarkdownWriterRendersStreamedSyntax(t *testing.T) {
 		"• bold and code",
 		"│ quoted",
 		"╭─ go",
-		`fmt.Println("hi")`,
+		`│ fmt.Println("hi")`,
 		"╰─",
 		"• site (https://example.com) and old",
 		"",
@@ -107,6 +107,18 @@ func TestMarkdownWriterWrapsWithoutColor(t *testing.T) {
 	}
 }
 
+func TestMarkdownWriterKeepsCodeGuideOnWrappedRows(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true, 10)
+	writer.BeginResponse()
+	_, _ = writer.Write([]byte("```txt\none two three\n```\n"))
+	writer.EndResponse()
+	plain := ansiPattern.ReplaceAllString(output.String(), "")
+	if plain != "╭─ txt\n│ one two\n│ three\n╰─\n" {
+		t.Fatalf("wrapped code block = %q", plain)
+	}
+}
+
 func TestMarkdownWriterUsesASCIIGlyphs(t *testing.T) {
 	var output bytes.Buffer
 	writer := NewMarkdownWriter(&output, true)
@@ -115,7 +127,7 @@ func TestMarkdownWriterUsesASCIIGlyphs(t *testing.T) {
 	_, _ = writer.Write([]byte("- item\n> quote\n```text\nvalue\n```\nsafe \x1b[2J"))
 	writer.EndResponse()
 	plain := ansiPattern.ReplaceAllString(output.String(), "")
-	want := "- item\n| quote\n+- text\nvalue\n+-\n* safe <ESC>[2J"
+	want := "- item\n| quote\n+- text\n| value\n+-\n* safe <ESC>[2J"
 	if plain != want {
 		t.Fatalf("ASCII output = %q, want %q", plain, want)
 	}

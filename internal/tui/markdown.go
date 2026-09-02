@@ -350,7 +350,12 @@ func (w *MarkdownWriter) renderLine(line string) {
 			fmt.Fprint(w.out, wrapANSI(line, w.width, leadingWhitespace(line)))
 			return
 		}
-		w.writeRendered(yellow+line+reset, leadingWhitespace(line))
+		marker := "│ "
+		if !w.unicode {
+			marker = "| "
+		}
+		styledMarker := magenta + marker + reset
+		w.writeRendered(styledMarker+yellow+line+reset, styledMarker)
 		return
 	}
 	if !w.enabled {
