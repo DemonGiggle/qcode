@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMatchingSlashCommands(t *testing.T) {
@@ -27,6 +28,21 @@ func TestMatchingSlashCommands(t *testing.T) {
 		}
 		if strings.Join(got, ",") != strings.Join(test.want, ",") {
 			t.Errorf("matchingSlashCommands(%q) = %v, want %v", test.line, got, test.want)
+		}
+	}
+}
+
+func TestFormatRunDuration(t *testing.T) {
+	for _, test := range []struct {
+		duration time.Duration
+		want     string
+	}{
+		{duration: 400 * time.Microsecond, want: "<1ms"},
+		{duration: 1250 * time.Millisecond, want: "1.25s"},
+		{duration: time.Minute + 2345*time.Millisecond, want: "1m2.345s"},
+	} {
+		if got := formatRunDuration(test.duration); got != test.want {
+			t.Errorf("formatRunDuration(%s) = %q, want %q", test.duration, got, test.want)
 		}
 	}
 }

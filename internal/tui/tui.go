@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 )
@@ -147,6 +148,7 @@ func (u *UI) Run(ctx context.Context) error {
 			continue
 		}
 		fmt.Fprintln(u.terminal, green+bold+"assistant"+reset)
+		started := time.Now()
 		taskCtx, cancel := context.WithCancel(ctx)
 		u.input.setCancel(cancel)
 		err = u.runner.Run(taskCtx, line)
@@ -156,9 +158,18 @@ func (u *UI) Run(ctx context.Context) error {
 			fmt.Fprintln(u.terminal, yellow+"Cancelled"+reset)
 		} else if err != nil {
 			fmt.Fprintln(u.terminal, yellow+"error: "+err.Error()+reset)
+		} else {
+			fmt.Fprintf(u.terminal, "%s%sCompleted in %s%s\n", magenta, bold, formatRunDuration(time.Since(started)), reset)
 		}
 		fmt.Fprintln(u.terminal)
 	}
+}
+
+func formatRunDuration(duration time.Duration) string {
+	if duration < time.Millisecond {
+		return "<1ms"
+	}
+	return duration.Round(time.Millisecond).String()
 }
 
 func (u *UI) completeSlashCommand(line string, pos int, key rune) (string, int, bool) {
