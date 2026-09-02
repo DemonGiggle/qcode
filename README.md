@@ -59,6 +59,18 @@ qcode --provider openai-like \
   --model my-model
 ```
 
+OpenCode Go (using one of its models served through the Chat Completions endpoint):
+
+```sh
+export QCODE_API_KEY=...
+qcode --provider opencode-go --model kimi-k3
+```
+
+The OpenCode Go API base URL defaults to `https://opencode.ai/zen/go/v1` and
+can be overridden with `--base-url`. Consult the OpenCode Go model table when
+choosing a model: models assigned to its Responses or Anthropic Messages
+endpoints are not supported by qcode yet.
+
 Pass a prompt for non-interactive use. Assistant text goes to stdout and action events go to stderr:
 
 ```sh

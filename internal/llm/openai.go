@@ -13,9 +13,11 @@ import (
 )
 
 type openAIProvider struct {
-	baseURL string
-	apiKey  string
-	client  HTTPDoer
+	baseURL   string
+	apiKey    string
+	client    HTTPDoer
+	name      string
+	userAgent string
 }
 
 func init() {
@@ -24,14 +26,18 @@ func init() {
 }
 
 func newOpenAI(config Config) (Provider, error) {
-	baseURL := strings.TrimRight(config.BaseURL, "/")
-	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
-	}
-	return &openAIProvider{baseURL: baseURL, apiKey: config.APIKey, client: httpClient(config)}, nil
+	return newOpenAICompatible(config, "https://api.openai.com/v1", "openai-like", "")
 }
 
-func (p *openAIProvider) Name() string { return "openai-like" }
+func newOpenAICompatible(config Config, defaultBaseURL, name, userAgent string) (Provider, error) {
+	baseURL := strings.TrimRight(config.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = defaultBaseURL
+	}
+	return &openAIProvider{baseURL: baseURL, apiKey: config.APIKey, client: httpClient(config), name: name, userAgent: userAgent}, nil
+}
+
+func (p *openAIProvider) Name() string { return p.name }
 
 type openAITool struct {
 	Type     string `json:"type"`
@@ -85,6 +91,9 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 		return Response{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if p.userAgent != "" {
+		req.Header.Set("User-Agent", p.userAgent)
+	}
 	if p.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}

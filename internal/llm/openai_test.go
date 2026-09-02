@@ -66,7 +66,7 @@ func TestOpenAIStreamsTextAndToolCall(t *testing.T) {
 
 func TestProviderNamesAreStable(t *testing.T) {
 	got := strings.Join(Names(), ",")
-	if got != "ollama,openai,openai-like" {
+	if got != "ollama,openai,openai-like,opencode-go" {
 		t.Fatalf("names = %q", got)
 	}
 }
