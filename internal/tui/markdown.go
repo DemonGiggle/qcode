@@ -35,6 +35,7 @@ type MarkdownWriter struct {
 	diffMu   sync.Mutex
 	diffList []string
 	buffer   bytes.Buffer
+	table    []markdownTableLine
 }
 
 func NewMarkdownWriter(out io.Writer, enabled bool, width ...int) *MarkdownWriter {
@@ -381,6 +382,7 @@ func (w *MarkdownWriter) BeginResponse() {
 	w.active = true
 	w.inFence = false
 	w.buffer.Reset()
+	w.table = nil
 }
 
 func (w *MarkdownWriter) BeginThinking() { w.thinking = true }
@@ -402,11 +404,13 @@ func (w *MarkdownWriter) EndResponse() {
 		return
 	}
 	if w.buffer.Len() > 0 && (w.enabled || w.width > 0) {
-		w.renderLine(strings.TrimSuffix(w.buffer.String(), "\r"))
+		w.consumeLine(strings.TrimSuffix(w.buffer.String(), "\r"), false)
 	}
+	w.flushTable()
 	w.buffer.Reset()
 	w.inFence = false
 	w.thinking = false
+	w.table = nil
 	w.active = false
 	if w.enabled {
 		fmt.Fprint(w.out, reset)
@@ -425,12 +429,18 @@ func (w *MarkdownWriter) Write(data []byte) (int, error) {
 			break
 		}
 		_, _ = w.buffer.Write(data[:newline])
-		w.renderLine(strings.TrimSuffix(w.buffer.String(), "\r"))
-		fmt.Fprint(w.out, "\n")
+		w.consumeLine(strings.TrimSuffix(w.buffer.String(), "\r"), true)
 		w.buffer.Reset()
 		data = data[newline+1:]
 	}
 	return written, nil
+}
+
+func (w *MarkdownWriter) renderCompleteLine(line string, newline bool) {
+	w.renderLine(line)
+	if newline {
+		fmt.Fprint(w.out, "\n")
+	}
 }
 
 func (w *MarkdownWriter) renderLine(line string) {

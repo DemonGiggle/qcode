@@ -283,6 +283,9 @@ func formatRunDuration(duration time.Duration) string {
 	if duration < time.Millisecond {
 		return "<1ms"
 	}
+	if duration >= time.Second {
+		return duration.Round(time.Second).String()
+	}
 	return duration.Round(time.Millisecond).String()
 }
 

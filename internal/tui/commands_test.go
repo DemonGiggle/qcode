@@ -40,8 +40,10 @@ func TestFormatRunDuration(t *testing.T) {
 		want     string
 	}{
 		{duration: 400 * time.Microsecond, want: "<1ms"},
-		{duration: 1250 * time.Millisecond, want: "1.25s"},
-		{duration: time.Minute + 2345*time.Millisecond, want: "1m2.345s"},
+		{duration: 1250 * time.Millisecond, want: "1s"},
+		{duration: 42*time.Second + 800*time.Millisecond, want: "43s"},
+		{duration: time.Minute + 2345*time.Millisecond, want: "1m2s"},
+		{duration: time.Minute + 42*time.Second + 800*time.Millisecond, want: "1m43s"},
 	} {
 		if got := formatRunDuration(test.duration); got != test.want {
 			t.Errorf("formatRunDuration(%s) = %q, want %q", test.duration, got, test.want)

@@ -58,6 +58,101 @@ func TestMarkdownWriterReportsWhenStreamChunkBecomesVisible(t *testing.T) {
 	}
 }
 
+func TestMarkdownWriterRendersAlignedTable(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true, 80)
+	writer.BeginResponse()
+	chunks := []string{
+		"| Name | Sco", "re | Note |\n| :--- | ---: | :---: |\n",
+		"| **Ada** | 7 | ready |\n| Bob | 42 | waiting |",
+	}
+	for _, chunk := range chunks {
+		_, _ = writer.Write([]byte(chunk))
+	}
+	writer.EndResponse()
+
+	plain := ansiPattern.ReplaceAllString(output.String(), "")
+	want := strings.Join([]string{
+		"┌──────┬───────┬─────────┐",
+		"│ Name │ Score │  Note   │",
+		"├──────┼───────┼─────────┤",
+		"│ Ada  │     7 │  ready  │",
+		"│ Bob  │    42 │ waiting │",
+		"└──────┴───────┴─────────┘",
+	}, "\n")
+	if plain != want {
+		t.Fatalf("table output:\n%s\nwant:\n%s", plain, want)
+	}
+	if !strings.Contains(output.String(), bold+"Name"+reset) {
+		t.Fatalf("table header is not bold: %q", output.String())
+	}
+}
+
+func TestMarkdownWriterBoundsWideTableToTerminal(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, false, 24)
+	writer.BeginResponse()
+	_, _ = writer.Write([]byte("Name | Description\n--- | ---\nalpha | a very long description that cannot fit\n"))
+	writer.EndResponse()
+
+	for _, line := range strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n") {
+		if width := visibleWidth(line); width > 24 {
+			t.Errorf("table line width = %d: %q", width, line)
+		}
+	}
+	if !strings.Contains(output.String(), "…") {
+		t.Fatalf("wide cell was not truncated: %q", output.String())
+	}
+}
+
+func TestMarkdownWriterLeavesInvalidTableAsMarkdown(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true, 80)
+	writer.BeginResponse()
+	_, _ = writer.Write([]byte("| not | a table |\nordinary text\n"))
+	writer.EndResponse()
+	plain := ansiPattern.ReplaceAllString(output.String(), "")
+	if plain != "| not | a table |\n• ordinary text\n" {
+		t.Fatalf("output = %q", plain)
+	}
+}
+
+func TestMarkdownWriterUsesASCIITableBorders(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, false, 80)
+	writer.SetUnicode(false)
+	writer.BeginResponse()
+	_, _ = writer.Write([]byte("| A | B |\n| --- | --- |\n| x | y |\n"))
+	writer.EndResponse()
+	if got := output.String(); got != "+---+---+\n| A | B |\n+---+---+\n| x | y |\n+---+---+\n" {
+		t.Fatalf("ASCII table = %q", got)
+	}
+}
+
+func TestMarkdownWriterNeutralizesTableEscapeSequences(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true, 80)
+	writer.BeginResponse()
+	_, _ = writer.Write([]byte("| Value |\n| --- |\n| safe \x1b[2J |\n"))
+	writer.EndResponse()
+	plain := ansiPattern.ReplaceAllString(output.String(), "")
+	if !strings.Contains(plain, "safe ␛[2J") {
+		t.Fatalf("table escape was not neutralized: %q", plain)
+	}
+}
+
+func TestMarkdownWriterKeepsEscapedAndCodePipesInsideCells(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true, 80)
+	writer.BeginResponse()
+	_, _ = writer.Write([]byte("| Plain | Code |\n| --- | --- |\n| one \\| two | `x|y` |\n"))
+	writer.EndResponse()
+	plain := ansiPattern.ReplaceAllString(output.String(), "")
+	if !strings.Contains(plain, "│ one | two │ x|y  │") {
+		t.Fatalf("cell pipes split columns: %q", plain)
+	}
+}
+
 func TestMarkdownWriterPassesThroughWhenDisabled(t *testing.T) {
 	var output bytes.Buffer
 	writer := NewMarkdownWriter(&output, false)
