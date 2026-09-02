@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,10 +31,45 @@ func TestOllamaStreamsTextAndToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if streamed.String() != "1:checking 0:hi" || response.Message.Content != "hi" {
-		t.Errorf("content = %q", response.Message.Content)
+	if streamed.String() != "1:checking 0:hi" || response.Message.Content != "hi" || response.Message.Thinking != "checking " {
+		t.Errorf("message = %#v", response.Message)
 	}
 	if len(response.Message.ToolCalls) != 1 || response.Message.ToolCalls[0].Name != "list" {
 		t.Fatalf("calls = %#v", response.Message.ToolCalls)
+	}
+}
+
+func TestOllamaSendsThinkingAndNamedToolResult(t *testing.T) {
+	client := doerFunc(func(r *http.Request) (*http.Response, error) {
+		var payload struct {
+			Messages []map[string]any `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if len(payload.Messages) != 2 {
+			t.Fatalf("messages = %#v", payload.Messages)
+		}
+		assistant := payload.Messages[0]
+		if assistant["role"] != "assistant" || assistant["thinking"] != "checking" || assistant["tool_calls"] == nil {
+			t.Errorf("assistant message = %#v", assistant)
+		}
+		tool := payload.Messages[1]
+		if tool["role"] != "tool" || tool["tool_name"] != "list" || tool["content"] != "files" {
+			t.Errorf("tool message = %#v", tool)
+		}
+		body := `{"message":{"role":"assistant","content":"done"},"done":true}` + "\n"
+		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	provider, err := newOllama(Config{BaseURL: "http://ollama.test", HTTP: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := Request{Model: "test", Messages: []Message{
+		{Role: "assistant", Thinking: "checking", ToolCalls: []ToolCall{{Name: "list", Arguments: json.RawMessage(`{"path":"."}`)}}},
+		{Role: "tool", Name: "list", Content: "files"},
+	}}
+	if _, err := provider.Complete(context.Background(), request, nil); err != nil {
+		t.Fatal(err)
 	}
 }

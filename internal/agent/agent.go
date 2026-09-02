@@ -55,8 +55,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 	task := a.trace.BeginTask()
 	defer task.End()
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userText})
-	lastToolCall := ""
-	identicalToolCalls := 0
+	identicalToolCalls := map[string]int{}
 	for step := 0; step < a.maxSteps; step++ {
 		span := a.trace.Start("llm", a.provider.Name(), map[string]any{"model": a.model, "step": step + 1})
 		wroteText := false
@@ -110,14 +109,9 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		for index, call := range response.Message.ToolCalls {
 			task.Resume()
 			fingerprint := toolFingerprint(call)
-			if fingerprint == lastToolCall {
-				identicalToolCalls++
-			} else {
-				lastToolCall = fingerprint
-				identicalToolCalls = 1
-			}
-			if identicalToolCalls >= maxIdenticalToolCalls {
-				return fmt.Errorf("agent stopped after tool %q was requested unchanged %d times; arguments=%s", call.Name, identicalToolCalls, compactJSON(call.Arguments))
+			identicalToolCalls[fingerprint]++
+			if identicalToolCalls[fingerprint] >= maxIdenticalToolCalls {
+				return fmt.Errorf("agent stopped after tool %q was requested unchanged %d times; arguments=%s", call.Name, identicalToolCalls[fingerprint], compactJSON(call.Arguments))
 			}
 			if call.ID == "" {
 				call.ID = fmt.Sprintf("call_%d_%d", step+1, index+1)
@@ -126,6 +120,10 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": arguments})
 			execution, toolErr := a.tools.ExecuteDetailed(ctx, call)
 			toolSpan.End(toolErr)
+			if toolErr == nil && toolMayChangeWorkspace(call.Name) {
+				currentCount := identicalToolCalls[fingerprint]
+				identicalToolCalls = map[string]int{fingerprint: currentCount}
+			}
 			if renderer, ok := a.out.(diffWriter); ok && renderer.DiffEnabled() && execution.Diff != "" {
 				task.Suspend()
 				renderer.WriteDiff(execution.Diff)
@@ -142,6 +140,10 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		}
 	}
 	return fmt.Errorf("agent stopped after %d model steps", a.maxSteps)
+}
+
+func toolMayChangeWorkspace(name string) bool {
+	return name == "write" || name == "edit" || name == "shell"
 }
 
 func toolFingerprint(call llm.ToolCall) string {

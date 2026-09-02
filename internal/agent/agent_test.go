@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,6 +49,11 @@ type thinkingProvider struct{}
 
 type repeatingProvider struct{ calls int }
 
+type scriptedProvider struct {
+	calls    int
+	sequence []llm.ToolCall
+}
+
 func (p *responseProvider) Name() string { return "response" }
 func (p *responseProvider) Complete(_ context.Context, _ llm.Request, onText llm.StreamCallback) (llm.Response, error) {
 	onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: "finished"})
@@ -67,6 +73,17 @@ func (p *repeatingProvider) Complete(_ context.Context, _ llm.Request, _ llm.Str
 	return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{
 		ID: "repeat", Name: "read", Arguments: json.RawMessage(`{"path":"same.txt"}`),
 	}}}}, nil
+}
+
+func (p *scriptedProvider) Name() string { return "scripted" }
+func (p *scriptedProvider) Complete(_ context.Context, _ llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	p.calls++
+	if p.calls > len(p.sequence) {
+		return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
+	}
+	call := p.sequence[p.calls-1]
+	call.ID = fmt.Sprintf("call-%d", p.calls)
+	return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{call}}}, nil
 }
 
 func (p *fakeProvider) Name() string { return "fake" }
@@ -190,5 +207,50 @@ func TestAgentStopsRepeatedIdenticalToolCallsEarly(t *testing.T) {
 	}
 	if bytes.Count(events.Bytes(), []byte("start tool read")) != 2 {
 		t.Fatalf("tool events:\n%s", events.String())
+	}
+}
+
+func TestAgentDetectsIdenticalCallsAcrossReadOnlyInterleaving(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "same.txt"), []byte("same"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := tools.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := llm.ToolCall{Name: "read", Arguments: json.RawMessage(`{"path":"same.txt"}`)}
+	list := llm.ToolCall{Name: "list", Arguments: json.RawMessage(`{"path":"."}`)}
+	provider := &scriptedProvider{sequence: []llm.ToolCall{read, list, read, list, read}}
+	var output, events bytes.Buffer
+	runner := New(provider, "test", registry, trace.New(&events, false), &output, 16)
+	err = runner.Run(context.Background(), "loop")
+	if err == nil || !strings.Contains(err.Error(), `tool "read" was requested unchanged 3 times`) {
+		t.Fatalf("error = %v", err)
+	}
+	if bytes.Count(events.Bytes(), []byte("start tool read")) != 2 || bytes.Count(events.Bytes(), []byte("start tool list")) != 2 {
+		t.Fatalf("tool events:\n%s", events.String())
+	}
+}
+
+func TestAgentAllowsRepeatedReadAfterWorkspaceChange(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "same.txt"), []byte("same"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := tools.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := llm.ToolCall{Name: "read", Arguments: json.RawMessage(`{"path":"same.txt"}`)}
+	write := llm.ToolCall{Name: "write", Arguments: json.RawMessage(`{"path":"same.txt","content":"changed"}`)}
+	provider := &scriptedProvider{sequence: []llm.ToolCall{read, read, write, read, read}}
+	var output, events bytes.Buffer
+	runner := New(provider, "test", registry, trace.New(&events, false), &output, 16)
+	if err := runner.Run(context.Background(), "inspect, change, inspect"); err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 6 {
+		t.Fatalf("provider calls = %d", provider.calls)
 	}
 }

@@ -47,7 +47,12 @@ func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText Str
 	for _, message := range input.Messages {
 		item := map[string]any{"role": message.Role, "content": message.Content}
 		if message.Role == "tool" {
-			item["role"] = "tool"
+			if message.Name != "" {
+				item["tool_name"] = message.Name
+			}
+		}
+		if message.Thinking != "" {
+			item["thinking"] = message.Thinking
 		}
 		if len(message.ToolCalls) > 0 {
 			calls := make([]map[string]any, 0, len(message.ToolCalls))
@@ -100,8 +105,11 @@ func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText Str
 		if event.Error != "" {
 			return Response{}, fmt.Errorf("ollama: %s", event.Error)
 		}
-		if event.Message.Thinking != "" && onText != nil {
-			onText(StreamEvent{Kind: StreamThinking, Text: event.Message.Thinking})
+		if event.Message.Thinking != "" {
+			result.Thinking += event.Message.Thinking
+			if onText != nil {
+				onText(StreamEvent{Kind: StreamThinking, Text: event.Message.Thinking})
+			}
 		}
 		if event.Message.Content != "" {
 			result.Content += event.Message.Content
