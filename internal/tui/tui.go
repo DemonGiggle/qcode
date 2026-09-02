@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/term"
@@ -42,6 +43,7 @@ type readWriter struct {
 
 type UI struct {
 	terminal       *term.Terminal
+	display        *historyWriter
 	responseWriter *MarkdownWriter
 	commandMenu    slashCommandMenu
 	input          *interruptReader
@@ -53,7 +55,11 @@ type UI struct {
 	root           string
 	verbose        bool
 	width          int
+	height         int
 	unicode        bool
+	pageMu         sync.Mutex
+	pageOffset     int
+	pageActive     bool
 }
 
 func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
@@ -63,11 +69,13 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	width, height := terminalSize(out)
 	unicodeEnabled := UnicodeEnabled()
 	t.SetSize(width, height)
-	responseWriter := NewMarkdownWriter(t, ColorEnabled(out), width)
+	display := newHistoryWriter(t)
+	responseWriter := NewMarkdownWriter(display, ColorEnabled(out), width)
 	responseWriter.SetUnicode(unicodeEnabled)
 	responseWriter.EnableDiffs()
 	u := &UI{
 		terminal:       t,
+		display:        display,
 		responseWriter: responseWriter,
 		commandMenu:    slashCommandMenu{out: t, color: ColorEnabled(out), width: width},
 		input:          input,
@@ -78,14 +86,16 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 		model:          model,
 		root:           root,
 		width:          width,
+		height:         height,
 		unicode:        unicodeEnabled,
 	}
 	t.AutoCompleteCallback = u.completeSlashCommand
+	input.setPageHandler(u.showPage)
 	u.SetRunner(runner)
 	return u
 }
 
-func (u *UI) Writer() io.Writer { return u.terminal }
+func (u *UI) Writer() io.Writer { return u.display }
 
 func (u *UI) ResponseWriter() io.Writer { return u.responseWriter }
 
@@ -127,11 +137,14 @@ func (u *UI) Run(ctx context.Context) error {
 		if line == "" {
 			continue
 		}
+		u.display.AddLine("> " + line)
+		u.resetPage()
 		switch line {
 		case "/quit", "/exit":
 			return nil
 		case "/clear":
 			fmt.Fprint(u.terminal, "\x1b[2J\x1b[H")
+			u.display.Clear()
 			u.printHeader()
 			continue
 		case "/help":
@@ -146,10 +159,10 @@ func (u *UI) Run(ctx context.Context) error {
 			if u.verbose {
 				state = "on"
 			}
-			fmt.Fprintf(u.terminal, "%sVerbose tracing: %s%s\n", dim, state, reset)
+			fmt.Fprintf(u.display, "%sVerbose tracing: %s%s\n", dim, state, reset)
 			continue
 		}
-		fmt.Fprintln(u.terminal, green+bold+"assistant"+reset)
+		fmt.Fprintln(u.display, green+bold+"assistant"+reset)
 		started := time.Now()
 		taskCtx, cancel := context.WithCancel(ctx)
 		u.input.setCancel(cancel)
@@ -157,13 +170,13 @@ func (u *UI) Run(ctx context.Context) error {
 		u.input.setCancel(nil)
 		cancel()
 		if errors.Is(err, context.Canceled) {
-			fmt.Fprintln(u.terminal, yellow+"Cancelled"+reset)
+			fmt.Fprintln(u.display, yellow+"Cancelled"+reset)
 		} else if err != nil {
-			fmt.Fprintln(u.terminal, yellow+"error: "+err.Error()+reset)
+			fmt.Fprintln(u.display, yellow+"error: "+err.Error()+reset)
 		} else {
-			fmt.Fprintf(u.terminal, "%s%sCompleted in %s%s\n", magenta, bold, formatRunDuration(time.Since(started)), reset)
+			fmt.Fprintf(u.display, "%s%sCompleted in %s%s\n", magenta, bold, formatRunDuration(time.Since(started)), reset)
 		}
-		fmt.Fprintln(u.terminal)
+		fmt.Fprintln(u.display)
 	}
 }
 
@@ -197,7 +210,7 @@ func (u *UI) completeSlashCommand(line string, pos int, key rune) (string, int, 
 func (u *UI) printCommandHelp() {
 	for _, command := range slashCommands {
 		line := fmt.Sprintf("%s%-8s%s %s%s%s", cyan, command.name, reset, dim, command.description, reset)
-		fmt.Fprintln(u.terminal, wrapANSI(line, u.width, "         "))
+		fmt.Fprintln(u.display, wrapANSI(line, u.width, "         "))
 	}
 }
 
@@ -208,12 +221,71 @@ func (u *UI) printHeader() {
 			root = filepath.Join("~", rel)
 		}
 	}
-	fmt.Fprintf(u.terminal, "\r\n%sqcode%s  %s%s%s\r\n", bold+cyan, reset, dim, u.provider+" / "+u.model, reset)
+	fmt.Fprintf(u.display, "\r\n%sqcode%s  %s%s%s\r\n", bold+cyan, reset, dim, u.provider+" / "+u.model, reset)
 	separator := "·"
 	if !u.unicode {
 		separator = "-"
 	}
-	fmt.Fprintf(u.terminal, "%s%s  %s  Waiting indicator; /verbose for action traces%s\r\n\r\n", dim, root, separator, reset)
+	fmt.Fprintf(u.display, "%s%s  %s  Waiting indicator; /verbose for action traces%s\r\n\r\n", dim, root, separator, reset)
+}
+
+func (u *UI) resetPage() {
+	u.pageMu.Lock()
+	active := u.pageActive
+	u.pageOffset = 0
+	u.pageActive = false
+	u.pageMu.Unlock()
+	if !active {
+		return
+	}
+
+	lines := u.visualHistoryLines()
+	page, _ := historyPage(lines, u.height-1, 0, 0)
+	var output strings.Builder
+	output.WriteString("\x1b[2J\x1b[H")
+	output.WriteString(strings.Join(page, "\n"))
+	if len(page) > 0 {
+		output.WriteByte('\n')
+	}
+	_, _ = u.terminal.Write([]byte(output.String()))
+}
+
+func (u *UI) showPage(direction int) {
+	u.pageMu.Lock()
+	lines := u.visualHistoryLines()
+	pageSize := u.height - 2
+	page, offset := historyPage(lines, pageSize, u.pageOffset, direction)
+	u.pageOffset = offset
+	u.pageActive = true
+	u.pageMu.Unlock()
+
+	u.commandMenu.reset()
+	start := len(lines) - offset - len(page) + 1
+	end := len(lines) - offset
+	if len(page) == 0 {
+		start, end = 0, 0
+	}
+	var output strings.Builder
+	output.WriteString("\x1b[2J\x1b[H")
+	output.WriteString(strings.Join(page, "\n"))
+	if len(page) > 0 {
+		output.WriteByte('\n')
+	}
+	separator := "·"
+	if !u.unicode {
+		separator = "-"
+	}
+	fmt.Fprintf(&output, "%s[%d-%d of %d %s PgUp/PgDn]%s\n", dim, start, end, len(lines), separator, reset)
+	_, _ = u.terminal.Write([]byte(output.String()))
+}
+
+func (u *UI) visualHistoryLines() []string {
+	logical := u.display.Lines()
+	visual := make([]string, 0, len(logical))
+	for _, line := range logical {
+		visual = append(visual, strings.Split(wrapANSI(line, u.width, ""), "\n")...)
+	}
+	return visual
 }
 
 func terminalSize(out *os.File) (int, int) {

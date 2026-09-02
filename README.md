@@ -8,6 +8,7 @@
 - Ollama and OpenAI-compatible APIs. `openai-like` is an alias intended for services that implement `/v1/chat/completions`.
 - `read`, `write`, `edit`, `list`, `search`, and `shell` tools.
 - Interactive mode shows a task-level `Waiting` indicator from submission through LLM and local-tool work. Use `/verbose` to toggle detailed telemetry, where every LLM request and tool call appears as one timestamped entry whose spinner is replaced by elapsed time when it finishes.
+- Use Page Up and Page Down to scroll through qcode's output history without leaving the interactive prompt.
 - Successful interactive runs end with a distinct colored `Completed in ...` notice measuring the complete run across every model turn and tool call.
 - Provider-delimited model thinking streams in subtle gray, while the final answer retains normal Markdown styling. Ollama uses `message.thinking`; OpenAI-compatible providers may use `reasoning_content` or `reasoning` deltas.
 - Interactive `write` and `edit` tool calls display bounded unified diffs with colored additions, removals, and hunk headers; tool results sent back to the model remain plain text.

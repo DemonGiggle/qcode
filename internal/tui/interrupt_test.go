@@ -57,3 +57,50 @@ func TestInterruptReaderDiscardsOtherInputDuringTask(t *testing.T) {
 		t.Fatalf("input = %q", buffer)
 	}
 }
+
+func TestInterruptReaderRoutesPageKeys(t *testing.T) {
+	reader := newInterruptReader(nil)
+	var directions []int
+	reader.setPageHandler(func(direction int) {
+		directions = append(directions, direction)
+	})
+
+	reader.route([]byte(pageUpSequence + pageDownSequence))
+	if len(directions) != 2 || directions[0] != 1 || directions[1] != -1 {
+		t.Fatalf("page directions = %v", directions)
+	}
+	select {
+	case key := <-reader.data:
+		t.Fatalf("page key leaked to line editor as %q", key)
+	default:
+	}
+}
+
+func TestInterruptReaderRecognizesSplitPageSequence(t *testing.T) {
+	reader := newInterruptReader(nil)
+	called := 0
+	reader.setPageHandler(func(direction int) {
+		if direction != 1 {
+			t.Fatalf("direction = %d", direction)
+		}
+		called++
+	})
+
+	reader.route([]byte("\x1b["))
+	reader.route([]byte("5~"))
+	if called != 1 {
+		t.Fatalf("page handler called %d times", called)
+	}
+}
+
+func TestInterruptReaderForwardsOtherEscapeSequences(t *testing.T) {
+	reader := newInterruptReader(nil)
+	reader.route([]byte("\x1b[A"))
+	buffer := make([]byte, 3)
+	if _, err := io.ReadFull(reader, buffer); err != nil {
+		t.Fatal(err)
+	}
+	if string(buffer) != "\x1b[A" {
+		t.Fatalf("input = %q", buffer)
+	}
+}

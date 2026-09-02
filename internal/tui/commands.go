@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 )
 
 type slashCommand struct {
@@ -33,6 +34,7 @@ func matchingSlashCommands(line string) []slashCommand {
 }
 
 type slashCommandMenu struct {
+	mu      sync.Mutex
 	out     io.Writer
 	color   bool
 	visible int
@@ -40,6 +42,8 @@ type slashCommandMenu struct {
 }
 
 func (m *slashCommandMenu) update(commands []slashCommand) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var output strings.Builder
 	for range m.visible {
 		output.WriteString("\x1b[1A\r\x1b[2K")
@@ -66,9 +70,17 @@ func (m *slashCommandMenu) update(commands []slashCommand) {
 // dismiss removes menu rows after ReadLine has advanced below the submitted
 // command. Delete-line shifts that command up instead of leaving blank space.
 func (m *slashCommandMenu) dismiss(out io.Writer) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.visible == 0 {
 		return
 	}
 	fmt.Fprintf(out, "\x1b[%dA\r\x1b[%dM\x1b[1B\r", m.visible+1, m.visible)
 	m.visible = 0
+}
+
+func (m *slashCommandMenu) reset() {
+	m.mu.Lock()
+	m.visible = 0
+	m.mu.Unlock()
 }
