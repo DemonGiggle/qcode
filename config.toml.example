@@ -1,0 +1,11 @@
+# LLM provider: ollama, openai, openai-like, or opencode-go.
+provider = "ollama"
+
+# Model identifier passed to the selected provider.
+model = "qwen2.5-coder:7b"
+
+# Maximum number of model turns allowed for each request.
+max_steps = 32
+
+# Optional provider API base URL override.
+# base_url = "http://127.0.0.1:11434"

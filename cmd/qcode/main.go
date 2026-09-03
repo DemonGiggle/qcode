@@ -14,6 +14,7 @@ import (
 	"golang.org/x/term"
 
 	"qcode/internal/agent"
+	"qcode/internal/config"
 	"qcode/internal/demo"
 	"qcode/internal/llm"
 	"qcode/internal/tools"
@@ -75,6 +76,15 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		fmt.Fprintln(stdout, strings.Join(llm.Names(), "\n"))
 		return nil
 	}
+	if !opts.demo {
+		cfg, _, err := config.Load()
+		if err != nil {
+			return err
+		}
+		setFlags := make(map[string]bool)
+		flags.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+		applyConfig(&opts, cfg, setFlags)
+	}
 	if !opts.demo && opts.model == "" {
 		return errors.New("model must not be empty")
 	}
@@ -134,6 +144,21 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	runner := agent.New(provider, opts.model, toolset, logger, ui.ResponseWriter(), opts.maxSteps)
 	ui.SetRunner(runner)
 	return ui.Run(context.Background())
+}
+
+func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
+	if !setFlags["provider"] && os.Getenv("QCODE_PROVIDER") == "" && cfg.Provider != "" {
+		opts.provider = cfg.Provider
+	}
+	if !setFlags["model"] && os.Getenv("QCODE_MODEL") == "" && cfg.Model != "" {
+		opts.model = cfg.Model
+	}
+	if !setFlags["base-url"] && os.Getenv("QCODE_BASE_URL") == "" && cfg.BaseURL != "" {
+		opts.baseURL = cfg.BaseURL
+	}
+	if !setFlags["max-steps"] && cfg.MaxSteps != nil {
+		opts.maxSteps = *cfg.MaxSteps
+	}
 }
 
 func newTraceLogger(out *os.File, jsonOutput bool) *trace.Logger {

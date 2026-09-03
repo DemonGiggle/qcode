@@ -96,6 +96,34 @@ are ignored.
 
 Flags can also be set with `QCODE_PROVIDER`, `QCODE_MODEL`, `QCODE_BASE_URL`, and `QCODE_API_KEY`.
 
+## Configuration
+
+qcode loads the first `config.toml` file it finds; files are not merged. Copy
+[`config.toml.example`](config.toml.example) to one of the locations below and
+adapt it as needed. All fields are optional:
+
+```toml
+provider = "openai-like"
+base_url = "http://localhost:8000/v1"
+model = "my-model"
+max_steps = 32
+```
+
+The lookup order is platform-specific:
+
+| Priority | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| 1 | `config.toml` beside the executable | `config.toml` beside the executable | `config.toml` beside the executable |
+| 2 | `~/.local/etc/qcode/config.toml` | `~/Library/Application Support/qcode/config.toml` | `%AppData%\qcode\config.toml` |
+| 3 | `/usr/local/etc/qcode/config.toml` | `/Library/Application Support/qcode/config.toml` | `%ProgramData%\qcode\config.toml` |
+
+Other Unix-like systems use the operating system's user configuration
+directory followed by `/usr/local/etc/qcode/config.toml`. Explicit command-line
+flags take precedence over environment variables, which take precedence over
+the configuration file, which takes precedence over built-in defaults. API
+keys are intentionally kept out of this file and continue to come from
+`--api-key`, `QCODE_API_KEY`, or `OPENAI_API_KEY`.
+
 ## Extending providers
 
 Providers implement the small `llm.Provider` interface in `internal/llm/types.go`. Add an implementation and register its factory in `init`:
