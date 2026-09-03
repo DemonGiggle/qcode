@@ -91,7 +91,7 @@ func TestStartNewSessionResetsRunner(t *testing.T) {
 
 func TestHeaderLogoUsesASCIIBannerWithNarrowFallback(t *testing.T) {
 	wide := strings.Join(headerLogo(80), "\n")
-	if len(headerLogo(80)) != 4 || !strings.Contains(wide, `\__\_|\___\___/`) {
+	if len(headerLogo(80)) != 16 || !strings.Contains(wide, `████████`) {
 		t.Fatalf("wide logo = %q", wide)
 	}
 	if got := headerLogo(12); len(got) != 1 || got[0] != "qcode" {

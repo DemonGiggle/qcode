@@ -26,10 +26,41 @@ const (
 )
 
 var qcodeBanner = []string{
-	`  ___   ___ ___  ___  ___`,
-	` / _ \ / __/ _ \|   \| __|`,
-	`| (_) | (_| (_) | |) | _|`,
-	` \__\_|\___\___/|___/|___|`,
+	`  ████████      ████████      ████████    ██████████    ████████████`,
+	`  ████████      ████████      ████████    ██████████    ████████████`,
+	`██        ██  ██        ██  ██        ██  ██        ██  ██          `,
+	`██        ██  ██        ██  ██        ██  ██        ██  ██          `,
+	`██        ██  ██            ██        ██  ██        ██  ██          `,
+	`██        ██  ██            ██        ██  ██        ██  ██          `,
+	`██        ██  ██            ██        ██  ██        ██  ██████████  `,
+	`██        ██  ██            ██        ██  ██        ██  ██████████  `,
+	`██    ██  ██  ██            ██        ██  ██        ██  ██          `,
+	`██    ██  ██  ██            ██        ██  ██        ██  ██          `,
+	`██      ████  ██        ██  ██        ██  ██        ██  ██          `,
+	`██      ████  ██        ██  ██        ██  ██        ██  ██          `,
+	`  ████████      ████████      ████████    ██████████    ████████████`,
+	`  ████████      ████████      ████████    ██████████    ████████████`,
+	`          ██                                                        `,
+	`          ██                                                        `,
+}
+
+// bannerColor stores the randomly chosen color palette for the banner gradient
+var bannerColor = pickBannerColor()
+
+// pickBannerColor randomly selects a color palette for the mono gradient
+func pickBannerColor() []int {
+	// Color palettes: each is a progression from dark to light shades
+	palettes := [][]int{
+		{23, 24, 25, 26, 31, 37, 43, 49, 50, 51}, // cyan shades
+		{17, 18, 19, 20, 21, 56, 57, 93, 129, 201}, // blue/magenta shades
+		{22, 28, 34, 40, 46, 83, 120, 157, 194, 231}, // green shades
+		{52, 53, 89, 90, 126, 127, 163, 164, 203, 204}, // red/pink shades
+		{58, 94, 130, 166, 172, 178, 184, 186, 220, 229}, // yellow/orange shades
+		{53, 54, 55, 91, 92, 98, 99, 134, 135, 141}, // purple shades
+	}
+	// Use a simple hash of current time to pick a palette
+	now := time.Now().UnixNano()
+	return palettes[int(now)%len(palettes)]
 }
 
 type Runner interface {
@@ -343,8 +374,13 @@ func (u *UI) printCommandHelp() {
 
 func (u *UI) printHeader() {
 	fmt.Fprint(u.display, "\r\n")
+	colorEnabled := ColorEnabled(u.out)
 	for _, line := range headerLogo(u.width) {
-		fmt.Fprintf(u.display, "%s%s%s\r\n", bold+cyan, line, reset)
+		if colorEnabled {
+			fmt.Fprintf(u.display, "%s%s%s\r\n", bold, gradientLine(line), reset)
+		} else {
+			fmt.Fprintf(u.display, "%s\r\n", line)
+		}
 	}
 	fmt.Fprintf(u.display, "\r\n")
 	if !u.statusActive {
@@ -437,6 +473,39 @@ func headerLogo(width int) []string {
 		}
 	}
 	return qcodeBanner
+}
+
+// gradientLine applies a mono gradient using shades from the banner color palette
+func gradientLine(line string) string {
+	var result strings.Builder
+	visibleChars := 0
+	// Count visible characters first
+	for _, ch := range line {
+		if ch != ' ' {
+			visibleChars++
+		}
+	}
+	
+	if visibleChars == 0 {
+		return line
+	}
+	
+	// Apply mono gradient using palette shades
+	coloredIndex := 0
+	for _, ch := range line {
+		if ch == ' ' {
+			result.WriteRune(ch)
+		} else {
+			// Map progress to palette index (0 to len-1)
+			progress := float64(coloredIndex) / float64(visibleChars-1)
+			paletteIndex := int(progress * float64(len(bannerColor)-1))
+			colorCode := bannerColor[paletteIndex]
+			
+			result.WriteString(fmt.Sprintf("\x1b[38;5;%dm%c", colorCode, ch))
+			coloredIndex++
+		}
+	}
+	return result.String()
 }
 
 func (u *UI) resetPage() {
