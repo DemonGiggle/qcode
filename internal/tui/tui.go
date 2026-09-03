@@ -73,6 +73,7 @@ type UI struct {
 	pageMu         sync.Mutex
 	pageOffset     int
 	pageActive     bool
+	statusActive   bool
 }
 
 func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
@@ -133,8 +134,12 @@ func (u *UI) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("enable terminal mode: %w", err)
 	}
-	defer term.Restore(int(u.in.Fd()), state)
+	defer func() {
+		u.teardownStatusBar()
+		_ = term.Restore(int(u.in.Fd()), state)
+	}()
 	u.input.start()
+	u.setupStatusBar()
 
 	u.printHeader()
 	for {
@@ -164,6 +169,7 @@ func (u *UI) Run(ctx context.Context) error {
 			fmt.Fprint(u.terminal, "\x1b[2J\x1b[H")
 			u.display.Clear()
 			u.responseWriter.ResetDiffs()
+			u.resetStatusLayout()
 			u.printHeader()
 			continue
 		case "/help":
@@ -245,6 +251,7 @@ func (u *UI) chooseModel(ctx context.Context) {
 	}
 	runner.SetModel(selected)
 	u.model = selected
+	u.drawStatusBar()
 	u.printSystemMessage(fmt.Sprintf("%sModel: %s%s", green, selected, reset))
 }
 
@@ -317,22 +324,96 @@ func (u *UI) printCommandHelp() {
 }
 
 func (u *UI) printHeader() {
-	root := u.root
-	if home, err := os.UserHomeDir(); err == nil {
-		if rel, relErr := filepath.Rel(home, root); relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			root = filepath.Join("~", rel)
-		}
-	}
 	fmt.Fprint(u.display, "\r\n")
 	for _, line := range headerLogo(u.width) {
 		fmt.Fprintf(u.display, "%s%s%s\r\n", bold+cyan, line, reset)
 	}
-	fmt.Fprintf(u.display, "%s%s%s\r\n", dim, u.provider+" / "+u.model, reset)
 	separator := "·"
 	if !u.unicode {
 		separator = "-"
 	}
-	fmt.Fprintf(u.display, "%s%s  %s  Waiting indicator; /verbose for action traces%s\r\n\r\n", dim, root, separator, reset)
+	fmt.Fprintf(u.display, "%sWaiting indicator  %s  /verbose for action traces%s\r\n\r\n", dim, separator, reset)
+	if !u.statusActive {
+		fmt.Fprintf(u.display, "%s\r\n", statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out)))
+	}
+}
+
+func displayRoot(root string) string {
+	if home, err := os.UserHomeDir(); err == nil {
+		if rel, relErr := filepath.Rel(home, root); relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return filepath.Join("~", rel)
+		}
+	}
+	return root
+}
+
+func (u *UI) setupStatusBar() {
+	if u.height < 4 {
+		return
+	}
+	u.statusActive = true
+	// Start the full-screen layout from a clean viewport. CSI 2J clears the
+	// visible screen without erasing the terminal's scrollback history.
+	fmt.Fprint(u.out, "\x1b[2J\x1b[H")
+	u.resetStatusLayout()
+}
+
+func (u *UI) resetStatusLayout() {
+	if !u.statusActive {
+		return
+	}
+	// Reserve the last row for status and leave the row above it blank.
+	// Conversation output and the editable prompt scroll above both rows.
+	fmt.Fprintf(u.out, "\x1b[1;%dr\x1b[%d;1H", u.height-2, u.height-2)
+	u.drawStatusBar()
+}
+
+func (u *UI) drawStatusBar() {
+	if !u.statusActive {
+		return
+	}
+	bar := statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out))
+	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", u.height, bar)
+}
+
+func (u *UI) teardownStatusBar() {
+	if !u.statusActive {
+		return
+	}
+	u.statusActive = false
+	// Restore full-screen scrolling and clear the reserved footer rows before
+	// returning control to the invoking shell.
+	fmt.Fprintf(u.out, "\x1b[r\x1b[%d;1H\x1b[J", u.height-1)
+}
+
+func statusBar(provider, model, root string, width int, unicodeEnabled, color bool) string {
+	provider = sanitizeDiffLine(provider, "<ESC>")
+	model = sanitizeDiffLine(model, "<ESC>")
+	root = sanitizeDiffLine(root, "<ESC>")
+
+	if !color {
+		bar := fmt.Sprintf("[PROVIDER %s] [MODEL %s] [WORKSPACE %s]", provider, model, root)
+		return truncateDiffLine(bar, width, unicodeEnabled)
+	}
+
+	segments := []string{
+		statusSegment("PROVIDER", provider, cyan),
+		statusSegment("MODEL", model, magenta),
+		statusSegment("WORKSPACE", root, blue),
+	}
+	separator := dim + "  │  " + reset
+	if !unicodeEnabled {
+		separator = dim + "  |  " + reset
+	}
+	bar := strings.Join(segments, separator)
+	if width > 0 && visibleWidth(bar) > width {
+		bar = truncateDiffLine(bar, width, unicodeEnabled)
+	}
+	return bar + reset
+}
+
+func statusSegment(label, value, color string) string {
+	return color + bold + label + reset + " " + color + value + reset
 }
 
 func headerLogo(width int) []string {
@@ -355,7 +436,11 @@ func (u *UI) resetPage() {
 	}
 
 	lines := u.visualHistoryLines()
-	page, _ := historyPage(lines, u.height-1, 0, 0)
+	pageHeight := u.height - 1
+	if u.statusActive {
+		pageHeight = u.height - 3
+	}
+	page, _ := historyPage(lines, pageHeight, 0, 0)
 	var output strings.Builder
 	output.WriteString("\x1b[2J\x1b[H")
 	output.WriteString(strings.Join(page, "\n"))
@@ -363,12 +448,16 @@ func (u *UI) resetPage() {
 		output.WriteByte('\n')
 	}
 	_, _ = u.terminal.Write([]byte(output.String()))
+	u.drawStatusBar()
 }
 
 func (u *UI) showPage(direction int) {
 	u.pageMu.Lock()
 	lines := u.visualHistoryLines()
 	pageSize := u.height - 2
+	if u.statusActive {
+		pageSize = u.height - 3
+	}
 	page, offset := historyPage(lines, pageSize, u.pageOffset, direction)
 	u.pageOffset = offset
 	u.pageActive = true
@@ -392,6 +481,7 @@ func (u *UI) showPage(direction int) {
 	}
 	fmt.Fprintf(&output, "%s[%d-%d of %d %s PgUp/PgDn]%s\n", dim, start, end, len(lines), separator, reset)
 	_, _ = u.terminal.Write([]byte(output.String()))
+	u.drawStatusBar()
 }
 
 func (u *UI) visualHistoryLines() []string {

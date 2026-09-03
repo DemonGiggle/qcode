@@ -71,6 +71,41 @@ func TestHeaderLogoUsesASCIIBannerWithNarrowFallback(t *testing.T) {
 	}
 }
 
+func TestStatusBarPlainFallback(t *testing.T) {
+	got := statusBar("ollama", "qwen", "~/code", 80, true, false)
+	want := "[PROVIDER ollama] [MODEL qwen] [WORKSPACE ~/code]"
+	if got != want {
+		t.Fatalf("status bar = %q, want %q", got, want)
+	}
+}
+
+func TestStatusBarUsesColoredSegments(t *testing.T) {
+	got := statusBar("ollama", "qwen", "~/code", 80, true, true)
+	for _, sequence := range []string{cyan, magenta, blue} {
+		if !strings.Contains(got, sequence) {
+			t.Fatalf("status bar %q does not contain color %q", got, sequence)
+		}
+	}
+	for _, background := range []string{"\x1b[40m", "\x1b[41m", "\x1b[42m", "\x1b[43m", "\x1b[44m", "\x1b[45m", "\x1b[46m", "\x1b[47m"} {
+		if strings.Contains(got, background) {
+			t.Fatalf("status bar contains background color %q: %q", background, got)
+		}
+	}
+	if !strings.HasSuffix(got, reset) {
+		t.Fatalf("status bar does not restore terminal styling: %q", got)
+	}
+}
+
+func TestStatusBarFitsTerminalWidth(t *testing.T) {
+	got := statusBar("openai-like", "a-very-long-model-name", "~/a/very/long/workspace/path", 32, true, true)
+	if visibleWidth(got) > 32 {
+		t.Fatalf("status bar width = %d, want at most 32: %q", visibleWidth(got), got)
+	}
+	if !strings.Contains(got, "…") {
+		t.Fatalf("truncated status bar has no ellipsis: %q", got)
+	}
+}
+
 func TestSlashCommandMenuReplacesPreviousRows(t *testing.T) {
 	var output bytes.Buffer
 	menu := slashCommandMenu{out: &output}
