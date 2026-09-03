@@ -19,6 +19,7 @@ type openAIProvider struct {
 	client    HTTPDoer
 	name      string
 	userAgent string
+	sessionID string
 }
 
 func init() {
@@ -27,15 +28,15 @@ func init() {
 }
 
 func newOpenAI(config Config) (Provider, error) {
-	return newOpenAICompatible(config, "https://api.openai.com/v1", "openai-like", "")
+	return newOpenAICompatible(config, "https://api.openai.com/v1", "openai-like", "", "")
 }
 
-func newOpenAICompatible(config Config, defaultBaseURL, name, userAgent string) (Provider, error) {
+func newOpenAICompatible(config Config, defaultBaseURL, name, userAgent, sessionID string) (Provider, error) {
 	baseURL := strings.TrimRight(config.BaseURL, "/")
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
-	return &openAIProvider{baseURL: baseURL, apiKey: config.APIKey, client: httpClient(config), name: name, userAgent: userAgent}, nil
+	return &openAIProvider{baseURL: baseURL, apiKey: config.APIKey, client: httpClient(config), name: name, userAgent: userAgent, sessionID: sessionID}, nil
 }
 
 func (p *openAIProvider) Name() string { return p.name }
@@ -47,6 +48,9 @@ func (p *openAIProvider) Models(ctx context.Context) ([]string, error) {
 	}
 	if p.userAgent != "" {
 		req.Header.Set("User-Agent", p.userAgent)
+	}
+	if p.sessionID != "" {
+		req.Header.Set("x-opencode-session", p.sessionID)
 	}
 	if p.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
@@ -131,6 +135,9 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 	req.Header.Set("Content-Type", "application/json")
 	if p.userAgent != "" {
 		req.Header.Set("User-Agent", p.userAgent)
+	}
+	if p.sessionID != "" {
+		req.Header.Set("x-opencode-session", p.sessionID)
 	}
 	if p.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
