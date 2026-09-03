@@ -67,3 +67,32 @@ func TestApplyConfigDoesNotOverrideAPIKeyFlag(t *testing.T) {
 		t.Fatalf("api key = %q, want flag value", opts.apiKey)
 	}
 }
+
+func TestApplyConfigDoesNotMixSettingsFromAnotherProvider(t *testing.T) {
+	t.Setenv("QCODE_PROVIDER", "")
+	t.Setenv("QCODE_MODEL", "")
+	t.Setenv("QCODE_BASE_URL", "")
+	t.Setenv("QCODE_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	opts := options{
+		provider: "opencode-go",
+		model:    "default-model",
+		maxSteps: 32,
+	}
+	configuredMaxSteps := 48
+
+	applyConfig(&opts, config.Config{
+		Provider: "ollama",
+		Model:    "configured-model",
+		BaseURL:  "http://ollama.test",
+		APIKey:   "configured-key",
+		MaxSteps: &configuredMaxSteps,
+	}, map[string]bool{"provider": true})
+
+	if opts.provider != "opencode-go" || opts.model != "default-model" || opts.baseURL != "" || opts.apiKey != "" {
+		t.Fatalf("options = %+v, mixed provider-specific config", opts)
+	}
+	if opts.maxSteps != 48 {
+		t.Fatalf("max steps = %d, want provider-independent config value", opts.maxSteps)
+	}
+}

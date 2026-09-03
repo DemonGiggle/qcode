@@ -150,13 +150,17 @@ func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
 	if !setFlags["provider"] && os.Getenv("QCODE_PROVIDER") == "" && cfg.Provider != "" {
 		opts.provider = cfg.Provider
 	}
-	if !setFlags["model"] && os.Getenv("QCODE_MODEL") == "" && cfg.Model != "" {
+	// A model, base URL, and API key describe the configured provider. Do not
+	// carry them over when a higher-precedence source selects another provider.
+	// They can still be supplied explicitly through their own flag or env var.
+	providerConfigApplies := cfg.Provider == "" || opts.provider == cfg.Provider
+	if providerConfigApplies && !setFlags["model"] && os.Getenv("QCODE_MODEL") == "" && cfg.Model != "" {
 		opts.model = cfg.Model
 	}
-	if !setFlags["base-url"] && os.Getenv("QCODE_BASE_URL") == "" && cfg.BaseURL != "" {
+	if providerConfigApplies && !setFlags["base-url"] && os.Getenv("QCODE_BASE_URL") == "" && cfg.BaseURL != "" {
 		opts.baseURL = cfg.BaseURL
 	}
-	if !setFlags["api-key"] && firstEnv("QCODE_API_KEY", "OPENAI_API_KEY") == "" && cfg.APIKey != "" {
+	if providerConfigApplies && !setFlags["api-key"] && firstEnv("QCODE_API_KEY", "OPENAI_API_KEY") == "" && cfg.APIKey != "" {
 		opts.apiKey = cfg.APIKey
 	}
 	if !setFlags["max-steps"] && cfg.MaxSteps != nil {

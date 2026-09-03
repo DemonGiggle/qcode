@@ -138,7 +138,10 @@ The lookup order is platform-specific:
 Other Unix-like systems use the operating system's user configuration
 directory followed by `/usr/local/etc/qcode/config.toml`. Explicit command-line
 flags take precedence over environment variables, which take precedence over
-the configuration file, which takes precedence over built-in defaults. API
+the configuration file, which takes precedence over built-in defaults. When a
+flag or environment variable selects a provider different from the configured
+provider, the configured `model`, `base_url`, and `api_key` are not inherited;
+set any of them explicitly if they should apply to the selected provider. API
 keys can be set with `api_key` in this file, though `QCODE_API_KEY` or
 `OPENAI_API_KEY` is preferable on shared systems. `--api-key` takes precedence
 over both environment variables and the configuration file. Keep configuration
