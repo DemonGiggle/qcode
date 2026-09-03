@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"qcode/internal/llm"
+	"qcode/internal/prompt"
 	"qcode/internal/tools"
 	"qcode/internal/trace"
 	"qcode/internal/tui"
@@ -175,6 +176,28 @@ func TestAgentMarksResponseBoundaries(t *testing.T) {
 	}
 	if output.String() != "finished\n" {
 		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestAgentResetSessionDiscardsConversationHistory(t *testing.T) {
+	registry, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &responseProvider{}
+	var output, events bytes.Buffer
+	runner := New(provider, "test", registry, trace.New(&events, false), &output, 1)
+	if err := runner.Run(context.Background(), "remember this"); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.messages) != 3 {
+		t.Fatalf("message count before reset = %d, want 3", len(runner.messages))
+	}
+
+	runner.ResetSession()
+
+	if len(runner.messages) != 1 || runner.messages[0].Role != "system" || runner.messages[0].Content != prompt.System {
+		t.Fatalf("messages after reset = %#v, want only the system prompt", runner.messages)
 	}
 }
 

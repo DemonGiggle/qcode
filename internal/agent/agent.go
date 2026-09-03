@@ -83,6 +83,12 @@ func (a *Agent) SetModel(model string) {
 	}
 }
 
+// ResetSession discards conversation history while retaining the agent's
+// provider, model, tools, and runtime settings.
+func (a *Agent) ResetSession() {
+	a.messages = []llm.Message{{Role: "system", Content: prompt.System}}
+}
+
 func (a *Agent) Run(ctx context.Context, userText string) error {
 	task := a.trace.BeginTask()
 	defer task.End()

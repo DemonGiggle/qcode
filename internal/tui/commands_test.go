@@ -2,10 +2,18 @@ package tui
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 	"time"
 )
+
+type resettableRunner struct {
+	reset bool
+}
+
+func (*resettableRunner) Run(context.Context, string) error { return nil }
+func (r *resettableRunner) ResetSession()                   { r.reset = true }
 
 func TestMatchingSlashCommands(t *testing.T) {
 	tests := []struct {
@@ -13,10 +21,11 @@ func TestMatchingSlashCommands(t *testing.T) {
 		want []string
 	}{
 		{line: "", want: nil},
-		{line: "/", want: []string{"/clear", "/diff", "/exit", "/help", "/model", "/quit", "/verbose"}},
+		{line: "/", want: []string{"/clear", "/diff", "/exit", "/help", "/model", "/new", "/quit", "/verbose"}},
 		{line: "/d", want: []string{"/diff"}},
 		{line: "/h", want: []string{"/help"}},
 		{line: "/m", want: []string{"/model"}},
+		{line: "/n", want: []string{"/new"}},
 		{line: "/qu", want: []string{"/quit"}},
 		{line: "/v", want: []string{"/verbose"}},
 		{line: "/unknown", want: nil},
@@ -58,6 +67,25 @@ func TestPrintSystemMessageHasBlankLinesAroundIt(t *testing.T) {
 
 	if got, want := output.String(), "\nCompleted in 1.25s\n\n"; got != want {
 		t.Fatalf("system message output = %q, want %q", got, want)
+	}
+}
+
+func TestStartNewSessionResetsRunner(t *testing.T) {
+	var output bytes.Buffer
+	runner := &resettableRunner{}
+	u := UI{
+		runner:         runner,
+		display:        newHistoryWriter(&output),
+		responseWriter: NewMarkdownWriter(&output, false, 80),
+	}
+
+	u.startNewSession()
+
+	if !runner.reset {
+		t.Fatal("runner session was not reset")
+	}
+	if !strings.Contains(output.String(), "New session started; previous context cleared.") {
+		t.Fatalf("output = %q, want reset confirmation", output.String())
 	}
 }
 

@@ -49,6 +49,10 @@ type modelRunner interface {
 	SetModel(string)
 }
 
+type sessionRunner interface {
+	ResetSession()
+}
+
 type readWriter struct {
 	io.Reader
 	io.Writer
@@ -178,6 +182,9 @@ func (u *UI) Run(ctx context.Context) error {
 		case "/model":
 			u.chooseModel(ctx)
 			continue
+		case "/new":
+			u.startNewSession()
+			continue
 		case "/verbose":
 			u.verbose = !u.verbose
 			if configurable, ok := u.runner.(verboseRunner); ok {
@@ -205,6 +212,17 @@ func (u *UI) Run(ctx context.Context) error {
 			u.printSystemMessage(fmt.Sprintf("%s%sCompleted in %s%s", magenta, bold, formatRunDuration(time.Since(started)), reset))
 		}
 	}
+}
+
+func (u *UI) startNewSession() {
+	resetter, ok := u.runner.(sessionRunner)
+	if !ok {
+		u.printSystemMessage(yellow + "Starting a new session is unavailable." + reset)
+		return
+	}
+	resetter.ResetSession()
+	u.responseWriter.ResetDiffs()
+	u.printSystemMessage(green + "New session started; previous context cleared." + reset)
 }
 
 func (u *UI) chooseModel(ctx context.Context) {
