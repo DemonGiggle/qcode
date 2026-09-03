@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-version=${VERSION:-dev}
+version=${VERSION:-$(sh ./scripts/version.sh)}
 out=${OUT_DIR:-dist}
 mkdir -p "$out"
 

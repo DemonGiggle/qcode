@@ -1,5 +1,5 @@
 APP := qcode
-VERSION ?= dev
+VERSION ?= $(shell sh ./scripts/version.sh)
 GO ?= go
 BUILD_FLAGS := -trimpath -ldflags=-s\ -w\ -X\ main.version=$(VERSION)
 
