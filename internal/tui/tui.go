@@ -346,11 +346,7 @@ func (u *UI) printHeader() {
 	for _, line := range headerLogo(u.width) {
 		fmt.Fprintf(u.display, "%s%s%s\r\n", bold+cyan, line, reset)
 	}
-	separator := "·"
-	if !u.unicode {
-		separator = "-"
-	}
-	fmt.Fprintf(u.display, "%sWaiting indicator  %s  /verbose for action traces%s\r\n\r\n", dim, separator, reset)
+	fmt.Fprintf(u.display, "\r\n")
 	if !u.statusActive {
 		fmt.Fprintf(u.display, "%s\r\n", statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out)))
 	}
