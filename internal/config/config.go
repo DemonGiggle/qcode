@@ -19,6 +19,7 @@ const fileName = "config.toml"
 type Config struct {
 	Provider string `toml:"provider"`
 	BaseURL  string `toml:"base_url"`
+	APIKey   string `toml:"api_key"`
 	Model    string `toml:"model"`
 	MaxSteps *int   `toml:"max_steps"`
 }

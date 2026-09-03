@@ -9,3 +9,6 @@ max_steps = 32
 
 # Optional provider API base URL override.
 # base_url = "http://127.0.0.1:11434"
+
+# Optional provider API key. Prefer an environment variable on shared systems.
+# api_key = "your-api-key"

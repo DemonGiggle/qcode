@@ -156,6 +156,9 @@ func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
 	if !setFlags["base-url"] && os.Getenv("QCODE_BASE_URL") == "" && cfg.BaseURL != "" {
 		opts.baseURL = cfg.BaseURL
 	}
+	if !setFlags["api-key"] && firstEnv("QCODE_API_KEY", "OPENAI_API_KEY") == "" && cfg.APIKey != "" {
+		opts.apiKey = cfg.APIKey
+	}
 	if !setFlags["max-steps"] && cfg.MaxSteps != nil {
 		opts.maxSteps = *cfg.MaxSteps
 	}

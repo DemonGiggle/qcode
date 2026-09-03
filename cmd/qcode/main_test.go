@@ -10,6 +10,8 @@ func TestApplyConfig(t *testing.T) {
 	t.Setenv("QCODE_PROVIDER", "")
 	t.Setenv("QCODE_MODEL", "")
 	t.Setenv("QCODE_BASE_URL", "")
+	t.Setenv("QCODE_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
 	opts := options{provider: "ollama", model: "default-model"}
 	maxSteps := 48
 
@@ -17,10 +19,11 @@ func TestApplyConfig(t *testing.T) {
 		Provider: "openai-like",
 		Model:    "configured-model",
 		BaseURL:  "https://example.test/v1",
+		APIKey:   "configured-key",
 		MaxSteps: &maxSteps,
 	}, nil)
 
-	if opts.provider != "openai-like" || opts.model != "configured-model" || opts.baseURL != "https://example.test/v1" || opts.maxSteps != 48 {
+	if opts.provider != "openai-like" || opts.model != "configured-model" || opts.baseURL != "https://example.test/v1" || opts.apiKey != "configured-key" || opts.maxSteps != 48 {
 		t.Fatalf("options = %+v, want config values", opts)
 	}
 }
@@ -29,10 +32,13 @@ func TestApplyConfigDoesNotOverrideFlagsOrEnvironment(t *testing.T) {
 	t.Setenv("QCODE_PROVIDER", "env-provider")
 	t.Setenv("QCODE_MODEL", "")
 	t.Setenv("QCODE_BASE_URL", "")
+	t.Setenv("QCODE_API_KEY", "env-key")
+	t.Setenv("OPENAI_API_KEY", "")
 	opts := options{
 		provider: "env-provider",
 		model:    "flag-model",
 		baseURL:  "flag-url",
+		apiKey:   "env-key",
 		maxSteps: 64,
 	}
 	configuredMaxSteps := 48
@@ -41,10 +47,23 @@ func TestApplyConfigDoesNotOverrideFlagsOrEnvironment(t *testing.T) {
 		Provider: "config-provider",
 		Model:    "config-model",
 		BaseURL:  "config-url",
+		APIKey:   "config-key",
 		MaxSteps: &configuredMaxSteps,
 	}, map[string]bool{"model": true, "base-url": true, "max-steps": true})
 
-	if opts.provider != "env-provider" || opts.model != "flag-model" || opts.baseURL != "flag-url" || opts.maxSteps != 64 {
+	if opts.provider != "env-provider" || opts.model != "flag-model" || opts.baseURL != "flag-url" || opts.apiKey != "env-key" || opts.maxSteps != 64 {
 		t.Fatalf("options = %+v, higher-precedence values were overwritten", opts)
+	}
+}
+
+func TestApplyConfigDoesNotOverrideAPIKeyFlag(t *testing.T) {
+	t.Setenv("QCODE_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	opts := options{apiKey: "flag-key"}
+
+	applyConfig(&opts, config.Config{APIKey: "config-key"}, map[string]bool{"api-key": true})
+
+	if opts.apiKey != "flag-key" {
+		t.Fatalf("api key = %q, want flag value", opts.apiKey)
 	}
 }

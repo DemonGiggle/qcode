@@ -122,6 +122,7 @@ adapt it as needed. All fields are optional:
 ```toml
 provider = "openai-like"
 base_url = "http://localhost:8000/v1"
+api_key = "your-api-key"
 model = "my-model"
 max_steps = 32
 ```
@@ -138,8 +139,10 @@ Other Unix-like systems use the operating system's user configuration
 directory followed by `/usr/local/etc/qcode/config.toml`. Explicit command-line
 flags take precedence over environment variables, which take precedence over
 the configuration file, which takes precedence over built-in defaults. API
-keys are intentionally kept out of this file and continue to come from
-`--api-key`, `QCODE_API_KEY`, or `OPENAI_API_KEY`.
+keys can be set with `api_key` in this file, though `QCODE_API_KEY` or
+`OPENAI_API_KEY` is preferable on shared systems. `--api-key` takes precedence
+over both environment variables and the configuration file. Keep configuration
+files containing a key private (for example, mode `0600` on Unix-like systems).
 
 ## Extending providers
 
