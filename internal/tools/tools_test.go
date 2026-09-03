@@ -70,6 +70,61 @@ func TestFileToolsRejectParentEscape(t *testing.T) {
 	}
 }
 
+func TestViewImageLoadsSupportedImage(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		mediaType string
+		data      []byte
+	}{
+		{name: "screen.png", mediaType: "image/png", data: []byte("\x89PNG\r\n\x1a\nimage-data")},
+		{name: "photo.jpg", mediaType: "image/jpeg", data: []byte("\xff\xd8\xff\xdbimage-data")},
+		{name: "graphic.webp", mediaType: "image/webp", data: []byte("RIFF\x00\x00\x00\x00WEBPVP8 image-data")},
+		{name: "image.gif", mediaType: "image/gif", data: []byte("GIF89aimage-data")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, test.name), test.data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			registry, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := registry.ExecuteDetailed(context.Background(), llm.ToolCall{
+				Name: "view_image", Arguments: json.RawMessage(`{"path":"` + test.name + `"}`),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Images) != 1 || result.Images[0].MediaType != test.mediaType || string(result.Images[0].Data) != string(test.data) {
+				t.Fatalf("images = %#v", result.Images)
+			}
+			if !strings.Contains(result.Output, "Loaded image") {
+				t.Fatalf("output = %q", result.Output)
+			}
+		})
+	}
+}
+
+func TestViewImageRejectsNonImage(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("not an image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = registry.ExecuteDetailed(context.Background(), llm.ToolCall{
+		Name: "view_image", Arguments: json.RawMessage(`{"path":"notes.txt"}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported image type") {
+		t.Fatalf("error = %v, want unsupported image type", err)
+	}
+}
+
 func TestShellCapturesOutput(t *testing.T) {
 	registry, err := New(t.TempDir())
 	if err != nil {

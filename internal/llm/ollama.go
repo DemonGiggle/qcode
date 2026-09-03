@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -93,6 +94,13 @@ func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText Str
 				calls = append(calls, map[string]any{"function": map[string]any{"name": call.Name, "arguments": arguments}})
 			}
 			item["tool_calls"] = calls
+		}
+		if len(message.Images) > 0 {
+			images := make([]string, 0, len(message.Images))
+			for _, image := range message.Images {
+				images = append(images, base64.StdEncoding.EncodeToString(image.Data))
+			}
+			item["images"] = images
 		}
 		messages = append(messages, item)
 	}

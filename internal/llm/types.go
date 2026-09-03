@@ -14,6 +14,12 @@ type ToolCall struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 
+// Image is provider-neutral binary image input attached to a message.
+type Image struct {
+	MediaType string
+	Data      []byte
+}
+
 type Message struct {
 	Role       string     `json:"role"`
 	Content    string     `json:"content,omitempty"`
@@ -21,6 +27,7 @@ type Message struct {
 	Name       string     `json:"name,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	Images     []Image    `json:"-"`
 }
 
 type Tool struct {
@@ -44,6 +51,7 @@ type Response struct {
 type ToolResult struct {
 	Output string
 	Diff   string
+	Images []Image
 }
 
 type StreamKind uint8

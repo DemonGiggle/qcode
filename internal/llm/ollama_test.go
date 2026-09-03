@@ -74,6 +74,34 @@ func TestOllamaSendsThinkingAndNamedToolResult(t *testing.T) {
 	}
 }
 
+func TestOllamaSendsImageData(t *testing.T) {
+	client := doerFunc(func(r *http.Request) (*http.Response, error) {
+		var payload struct {
+			Messages []struct {
+				Images []string `json:"images"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if len(payload.Messages) != 1 || len(payload.Messages[0].Images) != 1 || payload.Messages[0].Images[0] != "AQID" {
+			t.Fatalf("messages = %#v", payload.Messages)
+		}
+		body := `{"message":{"role":"assistant","content":"seen"},"done":true}` + "\n"
+		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	provider, err := newOllama(Config{BaseURL: "http://ollama.test", HTTP: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := Request{Model: "vision", Messages: []Message{{
+		Role: "user", Content: "describe", Images: []Image{{MediaType: "image/png", Data: []byte{1, 2, 3}}},
+	}}}
+	if _, err := provider.Complete(context.Background(), request, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOllamaListsLocalModels(t *testing.T) {
 	client := doerFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/tags" {

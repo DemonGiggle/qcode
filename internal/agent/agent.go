@@ -159,6 +159,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		if len(response.Message.ToolCalls) == 0 {
 			return nil
 		}
+		var loadedImages []llm.Image
 		for index, call := range response.Message.ToolCalls {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -196,6 +197,16 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 				result += "ERROR: " + toolErr.Error()
 			}
 			a.messages = append(a.messages, llm.Message{Role: "tool", Content: result, Name: call.Name, ToolCallID: call.ID})
+			if len(execution.Images) > 0 {
+				loadedImages = append(loadedImages, execution.Images...)
+			}
+		}
+		if len(loadedImages) > 0 {
+			a.messages = append(a.messages, llm.Message{
+				Role:    "user",
+				Content: "Image data loaded by the requested tool calls.",
+				Images:  loadedImages,
+			})
 		}
 	}
 	return fmt.Errorf("agent stopped after %d model steps", a.maxSteps)

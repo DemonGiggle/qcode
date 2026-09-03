@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"math"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +25,8 @@ import (
 )
 
 const maxOutput = 64 * 1024
+
+const maxImageSize = 20 * 1024 * 1024
 
 type Handler func(context.Context, json.RawMessage) (string, error)
 
@@ -61,6 +64,9 @@ func New(root string) (*Registry, error) {
 	r.add(llm.Tool{Name: "shell", Description: prompt.ShellTool, Parameters: objectSchema(map[string]any{
 		"command": stringProperty(prompt.CommandParameter), "timeout_ms": integerProperty(prompt.TimeoutParameter),
 	}, "command")}, r.shell)
+	r.add(llm.Tool{Name: "view_image", Description: prompt.ImageTool, Parameters: objectSchema(map[string]any{
+		"path": stringProperty(prompt.PathParameter),
+	}, "path")}, r.viewImage)
 	return r, nil
 }
 
@@ -85,6 +91,8 @@ func (r *Registry) ExecuteDetailed(ctx context.Context, call llm.ToolCall) (Exec
 		return r.writeDetailed(ctx, call.Arguments)
 	case "edit":
 		return r.editDetailed(ctx, call.Arguments)
+	case "view_image":
+		return r.viewImageDetailed(ctx, call.Arguments)
 	}
 	handler, ok := r.handlers[call.Name]
 	if !ok {
@@ -92,6 +100,59 @@ func (r *Registry) ExecuteDetailed(ctx context.Context, call llm.ToolCall) (Exec
 	}
 	output, err := handler(ctx, call.Arguments)
 	return ExecutionResult{Output: output}, err
+}
+
+func (r *Registry) viewImage(ctx context.Context, arguments json.RawMessage) (string, error) {
+	result, err := r.viewImageDetailed(ctx, arguments)
+	return result.Output, err
+}
+
+func (r *Registry) viewImageDetailed(ctx context.Context, arguments json.RawMessage) (ExecutionResult, error) {
+	var args struct {
+		Path string `json:"path"`
+	}
+	if err := decode(arguments, &args); err != nil {
+		return ExecutionResult{}, err
+	}
+	path, err := r.resolve(args.Path)
+	if err != nil {
+		return ExecutionResult{}, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return ExecutionResult{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return ExecutionResult{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return ExecutionResult{}, fmt.Errorf("image path %q is not a regular file", args.Path)
+	}
+	if info.Size() > maxImageSize {
+		return ExecutionResult{}, fmt.Errorf("image %q is larger than the %d MiB limit", args.Path, maxImageSize/(1024*1024))
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxImageSize+1))
+	if err != nil {
+		return ExecutionResult{}, err
+	}
+	if len(data) > maxImageSize {
+		return ExecutionResult{}, fmt.Errorf("image %q is larger than the %d MiB limit", args.Path, maxImageSize/(1024*1024))
+	}
+	if err := ctx.Err(); err != nil {
+		return ExecutionResult{}, err
+	}
+	mediaType := http.DetectContentType(data)
+	switch mediaType {
+	case "image/png", "image/jpeg", "image/webp", "image/gif":
+	default:
+		return ExecutionResult{}, fmt.Errorf("unsupported image type %q; use PNG, JPEG, WEBP, or GIF", mediaType)
+	}
+	return ExecutionResult{
+		Output: fmt.Sprintf("Loaded image %q (%s, %d bytes).", args.Path, mediaType, len(data)),
+		Images: []llm.Image{{MediaType: mediaType, Data: data}},
+	}, nil
 }
 
 func objectSchema(properties map[string]any, required ...string) map[string]any {
@@ -188,7 +249,7 @@ func (r *Registry) read(ctx context.Context, arguments json.RawMessage) (string,
 		return "", err
 	}
 	if bytes.IndexByte(data, 0) >= 0 {
-		return "", errors.New("file appears to be binary")
+		return "", errors.New("file appears to be binary; use view_image for supported image files")
 	}
 	offset := int(args.Offset)
 	if offset < 1 {

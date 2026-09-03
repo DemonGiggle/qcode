@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -93,7 +94,7 @@ type openAIToolCall struct {
 
 type openAIMessage struct {
 	Role       string           `json:"role"`
-	Content    string           `json:"content,omitempty"`
+	Content    any              `json:"content,omitempty"`
 	Name       string           `json:"name,omitempty"`
 	ToolCallID string           `json:"tool_call_id,omitempty"`
 	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
@@ -102,7 +103,7 @@ type openAIMessage struct {
 func (p *openAIProvider) Complete(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
 	messages := make([]openAIMessage, 0, len(input.Messages))
 	for _, message := range input.Messages {
-		converted := openAIMessage{Role: message.Role, Content: message.Content, Name: message.Name, ToolCallID: message.ToolCallID}
+		converted := openAIMessage{Role: message.Role, Content: openAIContent(message), Name: message.Name, ToolCallID: message.ToolCallID}
 		for i, call := range message.ToolCalls {
 			item := openAIToolCall{Index: i, ID: call.ID, Type: "function"}
 			item.Function.Name = call.Name
@@ -144,6 +145,27 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 		return Response{}, fmt.Errorf("provider returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
 	}
 	return parseOpenAIStream(resp.Body, onText)
+}
+
+func openAIContent(message Message) any {
+	if len(message.Images) == 0 {
+		if message.Content == "" {
+			return nil
+		}
+		return message.Content
+	}
+	parts := make([]map[string]any, 0, len(message.Images)+1)
+	if message.Content != "" {
+		parts = append(parts, map[string]any{"type": "text", "text": message.Content})
+	}
+	for _, image := range message.Images {
+		dataURL := "data:" + image.MediaType + ";base64," + base64.StdEncoding.EncodeToString(image.Data)
+		parts = append(parts, map[string]any{
+			"type":      "image_url",
+			"image_url": map[string]any{"url": dataURL},
+		})
+	}
+	return parts
 }
 
 func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error) {

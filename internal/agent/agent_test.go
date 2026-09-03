@@ -76,6 +76,10 @@ type modelProvider struct {
 	requestedModel string
 }
 
+type imageProvider struct {
+	requests []llm.Request
+}
+
 func (p *responseProvider) Name() string { return "response" }
 func (p *responseProvider) Complete(_ context.Context, _ llm.Request, onText llm.StreamCallback) (llm.Response, error) {
 	onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: "finished"})
@@ -159,6 +163,19 @@ func (p *modelProvider) Complete(_ context.Context, request llm.Request, _ llm.S
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
 }
 
+func (*imageProvider) Name() string { return "image" }
+func (p *imageProvider) Complete(_ context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	request.Messages = append([]llm.Message(nil), request.Messages...)
+	p.requests = append(p.requests, request)
+	if len(p.requests) == 1 {
+		return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "image-1", Name: "view_image", Arguments: json.RawMessage(`{"path":"screen.png"}`)},
+			{ID: "list-1", Name: "list", Arguments: json.RawMessage(`{"path":"."}`)},
+		}}}, nil
+	}
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "seen"}}, nil
+}
+
 func TestAgentMarksResponseBoundaries(t *testing.T) {
 	registry, err := tools.New(t.TempDir())
 	if err != nil {
@@ -198,6 +215,35 @@ func TestAgentResetSessionDiscardsConversationHistory(t *testing.T) {
 
 	if len(runner.messages) != 1 || runner.messages[0].Role != "system" || runner.messages[0].Content != prompt.System {
 		t.Fatalf("messages after reset = %#v, want only the system prompt", runner.messages)
+	}
+}
+
+func TestAgentAddsLoadedImageAsUserInput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "screen.png"), []byte("\x89PNG\r\n\x1a\nimage-data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := tools.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &imageProvider{}
+	var output, events bytes.Buffer
+	runner := New(provider, "vision", registry, trace.New(&events, false), &output, 2)
+
+	if err := runner.Run(context.Background(), "describe screen.png"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(provider.requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(provider.requests))
+	}
+	messages := provider.requests[1].Messages
+	if len(messages) != 6 || messages[3].Role != "tool" || messages[4].Role != "tool" || messages[5].Role != "user" || len(messages[5].Images) != 1 {
+		t.Fatalf("second request messages = %#v", messages)
+	}
+	if messages[5].Images[0].MediaType != "image/png" {
+		t.Fatalf("image = %#v", messages[5].Images[0])
 	}
 }
 

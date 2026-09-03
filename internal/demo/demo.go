@@ -147,12 +147,13 @@ func wait(ctx context.Context, delay time.Duration) error {
 
 func demoArguments(name string) json.RawMessage {
 	values := map[string]string{
-		"read":   `{"path":"README.md","offset":1,"limit":20}`,
-		"write":  `{"path":"demo/greeter.go","content":"package demo\n\nfunc Greeting(name string) string {\n\treturn \"Hello, \" + name\n}\n"}`,
-		"edit":   `{"path":"demo/greeter.go","old_text":"return \"Hello, \" + name","new_text":"return \"Hello, \" + name + \"!\""}`,
-		"list":   `{"path":"."}`,
-		"search": `{"pattern":"TODO|FIXME","path":".","max_results":20}`,
-		"shell":  `{"command":"go test ./...","timeout_ms":120000}`,
+		"read":       `{"path":"README.md","offset":1,"limit":20}`,
+		"write":      `{"path":"demo/greeter.go","content":"package demo\n\nfunc Greeting(name string) string {\n\treturn \"Hello, \" + name\n}\n"}`,
+		"edit":       `{"path":"demo/greeter.go","old_text":"return \"Hello, \" + name","new_text":"return \"Hello, \" + name + \"!\""}`,
+		"list":       `{"path":"."}`,
+		"search":     `{"pattern":"TODO|FIXME","path":".","max_results":20}`,
+		"shell":      `{"command":"go test ./...","timeout_ms":120000}`,
+		"view_image": `{"path":"screenshot.png"}`,
 	}
 	if value, ok := values[name]; ok {
 		return json.RawMessage(value)
@@ -199,6 +200,8 @@ func demoResult(call llm.ToolCall) llm.ToolResult {
 		return llm.ToolResult{Output: "internal/demo/demo.go:1:// Mocked search result"}
 	case "shell":
 		return llm.ToolResult{Output: "ok\tqcode/internal/demo\t0.001s\n(mocked command; nothing was executed)"}
+	case "view_image":
+		return llm.ToolResult{Output: "Loaded screenshot.png (mocked image; no file was read)."}
 	default:
 		return llm.ToolResult{Output: fmt.Sprintf("%s completed with mocked arguments %s", call.Name, strings.TrimSpace(string(call.Arguments)))}
 	}

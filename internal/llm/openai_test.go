@@ -64,6 +64,47 @@ func TestOpenAIStreamsTextAndToolCall(t *testing.T) {
 	}
 }
 
+func TestOpenAISendsImageContentParts(t *testing.T) {
+	client := doerFunc(func(r *http.Request) (*http.Response, error) {
+		var payload struct {
+			Messages []struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if len(payload.Messages) != 1 {
+			t.Fatalf("messages = %#v", payload.Messages)
+		}
+		var parts []struct {
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			ImageURL struct {
+				URL string `json:"url"`
+			} `json:"image_url"`
+		}
+		if err := json.Unmarshal(payload.Messages[0].Content, &parts); err != nil {
+			t.Fatal(err)
+		}
+		if len(parts) != 2 || parts[0].Type != "text" || parts[0].Text != "describe" || parts[1].Type != "image_url" || parts[1].ImageURL.URL != "data:image/png;base64,AQID" {
+			t.Fatalf("content parts = %#v", parts)
+		}
+		streamBody := "data: {\"choices\":[{\"delta\":{\"content\":\"seen\"}}]}\n\ndata: [DONE]\n\n"
+		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(streamBody))}, nil
+	})
+	provider, err := newOpenAI(Config{BaseURL: "http://provider.test/v1", HTTP: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := Request{Model: "vision", Messages: []Message{{
+		Role: "user", Content: "describe", Images: []Image{{MediaType: "image/png", Data: []byte{1, 2, 3}}},
+	}}}
+	if _, err := provider.Complete(context.Background(), request, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProviderNamesAreStable(t *testing.T) {
 	got := strings.Join(Names(), ",")
 	if got != "ollama,openai,openai-like,opencode-go" {

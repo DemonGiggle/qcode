@@ -13,6 +13,7 @@ const (
 	ListTool   = "List a directory. Results are sorted and include a trailing slash for directories."
 	SearchTool = "Search UTF-8 files under a directory with a Go regular expression."
 	ShellTool  = "Run a command with the platform shell in the current working directory."
+	ImageTool  = "Load a local image and attach it for visual analysis. Use this when the user asks about an image in the workspace. Supports PNG, JPEG, WEBP, and GIF."
 )
 
 // Tool parameter descriptions are model-visible prompts too, so they live here.
