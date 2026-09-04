@@ -87,6 +87,9 @@ func (a *Agent) SetModel(model string) {
 // provider, model, tools, and runtime settings.
 func (a *Agent) ResetSession() {
 	a.messages = []llm.Message{{Role: "system", Content: prompt.System}}
+	if resetter, ok := a.tools.(interface{ ResetSession() }); ok {
+		resetter.ResetSession()
+	}
 }
 
 func (a *Agent) Run(ctx context.Context, userText string) error {
@@ -213,7 +216,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 }
 
 func toolMayChangeWorkspace(name string) bool {
-	return name == "write" || name == "edit" || name == "shell"
+	return name == "write" || name == "edit" || name == "shell" || name == "request_directory_access"
 }
 
 func toolFingerprint(call llm.ToolCall) string {

@@ -113,6 +113,13 @@ are ignored.
 
 Flags can also be set with `QCODE_PROVIDER`, `QCODE_MODEL`, `QCODE_BASE_URL`, and `QCODE_API_KEY`.
 
+On Linux, pass `--sandbox` to isolate model-triggered tools with
+[bubblewrap](https://github.com/containers/bubblewrap). Sandbox mode blocks
+network access, hides the user's home directory, exposes the selected workspace
+read/write, and mounts the rest of the host filesystem read-only. Temporary
+files created under the sandbox's private `/tmp` do not persist. It is disabled
+by default.
+
 ## Configuration
 
 qcode loads the first `config.toml` file it finds; files are not merged. Copy
@@ -125,6 +132,7 @@ base_url = "http://localhost:8000/v1"
 api_key = "your-api-key"
 model = "my-model"
 max_steps = 32
+sandbox = true
 ```
 
 The lookup order is platform-specific:
@@ -161,4 +169,26 @@ The agent loop only sees normalized messages, streamed text, and tool calls, so 
 
 ## Trust model
 
-File tools reject paths that lexically leave the selected workspace (`--cwd`). qcode is not a security sandbox: symbolic links and the `shell` tool can reach anything allowed by the operating-system account. A shell command's complete requested arguments are shown in the timestamped start event before execution.
+Without `--sandbox`, file tools reject paths that lexically leave the selected
+workspace (`--cwd`), but symbolic links and the `shell` tool can still reach
+anything allowed by the operating-system account.
+
+With `--sandbox`, qcode first checks that bubblewrap and the kernel features it
+needs are usable. qcode itself remains outside the sandbox so it can load its
+configuration and contact the selected provider; API keys and other environment
+secrets are removed from shell-tool environments, and the loaded qcode config
+file is hidden from model tools. Each shell call receives a
+fresh namespace with no network, a hidden real home and runtime directory, a
+private temporary directory, a read-only root filesystem, and read/write mounts
+for approved directories. Built-in file tools use kernel-assisted path
+confinement to prevent symlink escapes.
+
+The model can call `request_directory_access` when work requires another
+directory. qcode asks the interactive user to approve an editable directory
+path, grants it read/write for the current session, and clears added grants on
+`/new`. The filesystem root cannot be granted. Non-interactive directory
+requests are denied. If bubblewrap is missing or unusable, or if the selected
+workspace contains the user's home, interactive mode offers to continue without
+the sandbox or leave; one-shot mode prints a warning and continues unsandboxed.
+A shell command's complete requested arguments are shown in the timestamped
+start event before execution.

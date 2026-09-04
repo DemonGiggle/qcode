@@ -35,6 +35,7 @@ type options struct {
 	listProviders bool
 	showVersion   bool
 	demo          bool
+	sandbox       bool
 }
 
 func main() {
@@ -46,6 +47,7 @@ func main() {
 
 func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	var opts options
+	configPath := ""
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider: ollama, openai, openai-like, or opencode-go")
@@ -58,6 +60,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	flags.BoolVar(&opts.listProviders, "list-providers", false, "list built-in providers")
 	flags.BoolVar(&opts.showVersion, "version", false, "print version")
 	flags.BoolVar(&opts.demo, "demo", false, "run without an LLM or real tool execution")
+	flags.BoolVar(&opts.sandbox, "sandbox", false, "isolate tools with bubblewrap (Linux only)")
 	flags.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\n\nOptions:\n")
 		flags.PrintDefaults()
@@ -77,10 +80,11 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		return nil
 	}
 	if !opts.demo {
-		cfg, _, err := config.Load()
+		cfg, loadedPath, err := config.Load()
 		if err != nil {
 			return err
 		}
+		configPath = loadedPath
 		setFlags := make(map[string]bool)
 		flags.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
 		applyConfig(&opts, cfg, setFlags)
@@ -93,7 +97,37 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if err != nil {
 		return err
 	}
-	registry, err := tools.New(root)
+	promptText := strings.TrimSpace(strings.Join(flags.Args(), " "))
+	stdinPiped := false
+	if stat, statErr := stdin.Stat(); statErr == nil {
+		stdinPiped = stat.Mode()&os.ModeCharDevice == 0
+	}
+	interactive := promptText == "" && !stdinPiped
+	sandboxActive := false
+	sandboxPath := ""
+	sandboxNotice := ""
+	sandboxChoice := false
+	if opts.sandbox && !opts.demo {
+		if tools.WorkspaceExposesHome(root) {
+			sandboxNotice = "Sandbox disabled: the selected workspace contains your home directory and would expose its secrets."
+			sandboxChoice = interactive
+		} else if checkedPath, checkErr := tools.CheckSandbox(root, false); checkErr != nil {
+			sandboxNotice = "Sandbox unavailable: " + checkErr.Error()
+			sandboxChoice = interactive
+		} else {
+			sandboxActive = true
+			sandboxPath = checkedPath
+			sandboxNotice = "Sandbox enabled: only approved folders can be changed; home is hidden; network is blocked."
+		}
+		if !sandboxActive && !interactive {
+			fmt.Fprintln(stderr, "WARNING:", sandboxNotice, "Continuing without sandbox.")
+		}
+	}
+	protectedPaths := []string(nil)
+	if configPath != "" {
+		protectedPaths = append(protectedPaths, configPath)
+	}
+	registry, err := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths})
 	if err != nil {
 		return err
 	}
@@ -111,7 +145,6 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			return err
 		}
 	}
-	promptText := strings.TrimSpace(strings.Join(flags.Args(), " "))
 	if promptText != "" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
@@ -140,6 +173,12 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	// Terminal output must go through term.Terminal so asynchronous-looking stream
 	// updates do not corrupt the editable input line.
 	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
+	if sandboxNotice != "" {
+		ui.SetStartupNotice(sandboxNotice, sandboxChoice)
+	}
+	if sandboxActive {
+		registry.SetDirectoryApprover(ui.ApproveDirectory)
+	}
 	logger := trace.NewAnimated(ui.Writer(), opts.jsonEvents)
 	runner := agent.New(provider, opts.model, toolset, logger, ui.ResponseWriter(), opts.maxSteps)
 	ui.SetRunner(runner)
@@ -165,6 +204,9 @@ func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
 	}
 	if !setFlags["max-steps"] && cfg.MaxSteps != nil {
 		opts.maxSteps = *cfg.MaxSteps
+	}
+	if !setFlags["sandbox"] && cfg.Sandbox != nil {
+		opts.sandbox = *cfg.Sandbox
 	}
 }
 

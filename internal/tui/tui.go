@@ -25,6 +25,8 @@ const (
 	yellow = "\x1b[33m"
 )
 
+const inputPrompt = cyan + bold + "> " + reset
+
 var qcodeBanner = []string{
 	` #####    #####    #####   ######  #######`,
 	`##   ##  ##       ##   ##  ##   ## ##     `,
@@ -104,12 +106,14 @@ type UI struct {
 	pageOffset     int
 	pageActive     bool
 	statusActive   bool
+	startupNotice  string
+	startupChoice  bool
 }
 
 func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	input := newInterruptReader(in)
 	rw := readWriter{Reader: input, Writer: out}
-	t := term.NewTerminal(rw, cyan+bold+"> "+reset)
+	t := term.NewTerminal(rw, inputPrompt)
 	width, height := terminalSize(out)
 	unicodeEnabled := UnicodeEnabled()
 	t.SetSize(width, height)
@@ -153,6 +157,13 @@ func (u *UI) SetRunner(runner Runner) {
 	}
 }
 
+// SetStartupNotice displays sandbox status between the banner and first user
+// prompt. requireChoice offers Continue or Leave before the session starts.
+func (u *UI) SetStartupNotice(message string, requireChoice bool) {
+	u.startupNotice = message
+	u.startupChoice = requireChoice
+}
+
 func (u *UI) Run(ctx context.Context) error {
 	if u.runner == nil {
 		return fmt.Errorf("terminal UI has no agent runner")
@@ -172,6 +183,21 @@ func (u *UI) Run(ctx context.Context) error {
 	u.setupStatusBar()
 
 	u.printHeader()
+	if u.startupNotice != "" {
+		u.printSystemMessage(yellow + u.startupNotice + reset)
+	}
+	if u.startupChoice {
+		continued, choiceErr := u.readChoice("[c] Continue without sandbox  [l] Leave > ")
+		if choiceErr != nil {
+			if choiceErr == io.EOF {
+				return nil
+			}
+			return choiceErr
+		}
+		if !continued {
+			return nil
+		}
+	}
 	for {
 		line, err := u.terminal.ReadLine()
 		u.commandMenu.dismiss(u.out)
@@ -238,6 +264,82 @@ func (u *UI) Run(ctx context.Context) error {
 			u.printSystemMessage(fmt.Sprintf("%s%sCompleted in %s%s", magenta, bold, formatRunDuration(time.Since(started)), reset))
 		}
 	}
+}
+
+func (u *UI) readChoice(prompt string) (bool, error) {
+	u.terminal.SetPrompt(yellow + prompt + reset)
+	defer u.terminal.SetPrompt(inputPrompt)
+	for {
+		line, err := u.terminal.ReadLine()
+		if err != nil {
+			return false, err
+		}
+		switch strings.ToLower(strings.TrimSpace(line)) {
+		case "c", "continue", "y", "yes":
+			return true, nil
+		case "l", "leave", "n", "no", "":
+			return false, nil
+		default:
+			u.printSystemMessage(yellow + "Enter c to continue or l to leave." + reset)
+		}
+	}
+}
+
+// ApproveDirectory implements the interactive callback used by sandboxed file
+// tools and request_directory_access.
+func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	u.printSystemMessage(yellow + "Additional directory access requested: " + sanitizeDiffLine(requested, "<ESC>") + reset)
+	u.terminal.SetPrompt(yellow + "Directory to grant (Enter for " + sanitizeDiffLine(proposed, "<ESC>") + "): " + reset)
+	line, err := u.terminal.ReadLine()
+	u.terminal.SetPrompt(inputPrompt)
+	if err != nil {
+		return "", false, err
+	}
+	selected := strings.TrimSpace(line)
+	if selected == "" {
+		selected = proposed
+	}
+	if !filepath.IsAbs(selected) {
+		selected = filepath.Join(u.root, selected)
+	}
+	sensitive := false
+	if home, homeErr := os.UserHomeDir(); homeErr == nil && pathContainsForUI(selected, home) {
+		sensitive = true
+		u.printSystemMessage(yellow + bold + "Warning: this grant exposes your home directory or an ancestor containing it." + reset)
+	}
+	u.terminal.SetPrompt(yellow + "Grant read/write access to " + sanitizeDiffLine(selected, "<ESC>") + " for this session? [y/N] " + reset)
+	answer, err := u.terminal.ReadLine()
+	u.terminal.SetPrompt(inputPrompt)
+	if err != nil {
+		return "", false, err
+	}
+	approved := strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes")
+	if approved && sensitive {
+		u.terminal.SetPrompt(yellow + bold + "Confirm broad home access by typing YES: " + reset)
+		confirmation, confirmErr := u.terminal.ReadLine()
+		u.terminal.SetPrompt(inputPrompt)
+		if confirmErr != nil {
+			return "", false, confirmErr
+		}
+		approved = strings.TrimSpace(confirmation) == "YES"
+	}
+	return selected, approved, nil
+}
+
+func pathContainsForUI(parent, child string) bool {
+	parent, err := filepath.Abs(parent)
+	if err != nil {
+		return false
+	}
+	child, err = filepath.Abs(child)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func (u *UI) startNewSession() {

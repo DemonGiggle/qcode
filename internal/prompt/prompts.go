@@ -7,13 +7,14 @@ const System = `You are qcode, a careful coding agent working in the user's curr
 Use tools when they are needed to inspect or change the workspace. Before changing files, inspect the relevant code. Make focused changes, preserve unrelated work, and verify the result. Treat tool results as authoritative and do not repeat a tool call with unchanged arguments unless the workspace changed and another observation is necessary. Do not claim that a command succeeded unless its tool result says it did. Prefer search and targeted reads over dumping large files. Explain the completed result concisely.`
 
 const (
-	ReadTool   = "Read a UTF-8 text file. Use the one-based offset and limit parameters for large files, continuing with the exact next offset shown in the result."
-	WriteTool  = "Create or replace a UTF-8 text file, including parent directories."
-	EditTool   = "Replace one exact occurrence of old_text in a UTF-8 text file."
-	ListTool   = "List a directory. Results are sorted and include a trailing slash for directories."
-	SearchTool = "Search UTF-8 files under a directory with a Go regular expression."
-	ShellTool  = "Run a command with the platform shell in the current working directory."
-	ImageTool  = "Load a local image and attach it for visual analysis. Use this when the user asks about an image in the workspace. Supports PNG, JPEG, WEBP, and GIF."
+	ReadTool            = "Read a UTF-8 text file. Use the one-based offset and limit parameters for large files, continuing with the exact next offset shown in the result."
+	WriteTool           = "Create or replace a UTF-8 text file, including parent directories."
+	EditTool            = "Replace one exact occurrence of old_text in a UTF-8 text file."
+	ListTool            = "List a directory. Results are sorted and include a trailing slash for directories."
+	SearchTool          = "Search UTF-8 files under a directory with a Go regular expression."
+	ShellTool           = "Run a command with the platform shell in the current working directory."
+	ImageTool           = "Load a local image and attach it for visual analysis. Use this when the user asks about an image in the workspace. Supports PNG, JPEG, WEBP, and GIF."
+	DirectoryAccessTool = "Ask the user to grant read/write access to an additional directory for this session. Use this before a shell command needs a path outside the approved workspace."
 )
 
 // Tool parameter descriptions are model-visible prompts too, so they live here.
@@ -30,4 +31,5 @@ const (
 	MaxResultsParameter = "Maximum matches (default 100)"
 	CommandParameter    = "Shell command"
 	TimeoutParameter    = "Timeout in milliseconds (default 120000)"
+	AccessPathParameter = "File or directory path that must be accessible outside the approved workspace"
 )

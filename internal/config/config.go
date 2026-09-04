@@ -22,6 +22,7 @@ type Config struct {
 	APIKey   string `toml:"api_key"`
 	Model    string `toml:"model"`
 	MaxSteps *int   `toml:"max_steps"`
+	Sandbox  *bool  `toml:"sandbox"`
 }
 
 // Load returns the first configuration found in lookup order. An empty path

@@ -52,7 +52,7 @@ func TestLoadUsesFirstExistingFile(t *testing.T) {
 	dir := t.TempDir()
 	first := filepath.Join(dir, "first.toml")
 	second := filepath.Join(dir, "second.toml")
-	if err := os.WriteFile(first, []byte("provider = \"openai\"\nmodel = \"gpt-5\"\nbase_url = \"https://example.test/v1\"\napi_key = \"configured-key\"\nmax_steps = 48\n"), 0o600); err != nil {
+	if err := os.WriteFile(first, []byte("provider = \"openai\"\nmodel = \"gpt-5\"\nbase_url = \"https://example.test/v1\"\napi_key = \"configured-key\"\nmax_steps = 48\nsandbox = true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(second, []byte("provider = \"ollama\"\n"), 0o600); err != nil {
@@ -63,7 +63,7 @@ func TestLoadUsesFirstExistingFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != first || cfg.Provider != "openai" || cfg.Model != "gpt-5" || cfg.BaseURL != "https://example.test/v1" || cfg.APIKey != "configured-key" || cfg.MaxSteps == nil || *cfg.MaxSteps != 48 {
+	if path != first || cfg.Provider != "openai" || cfg.Model != "gpt-5" || cfg.BaseURL != "https://example.test/v1" || cfg.APIKey != "configured-key" || cfg.MaxSteps == nil || *cfg.MaxSteps != 48 || cfg.Sandbox == nil || !*cfg.Sandbox {
 		t.Fatalf("load = (%+v, %q), want first config", cfg, path)
 	}
 }

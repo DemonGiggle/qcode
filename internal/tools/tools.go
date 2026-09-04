@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"qcode/internal/llm"
@@ -33,17 +34,52 @@ type Handler func(context.Context, json.RawMessage) (string, error)
 type ExecutionResult = llm.ToolResult
 
 type Registry struct {
-	root     string
-	schemas  []llm.Tool
-	handlers map[string]Handler
+	root      string
+	schemas   []llm.Tool
+	handlers  map[string]Handler
+	sandbox   *sandboxState
+	grantMu   sync.RWMutex
+	grants    []string
+	approver  DirectoryApprover
+	protected []string
 }
 
+// DirectoryApprover asks the interactive host to approve an additional
+// writable directory. selected is ignored when approved is false.
+type DirectoryApprover func(ctx context.Context, requested, proposed string) (selected string, approved bool, err error)
+
 func New(root string) (*Registry, error) {
+	return NewWithOptions(root, Options{})
+}
+
+func NewWithOptions(root string, options Options) (*Registry, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
 	}
-	r := &Registry{root: abs, handlers: map[string]Handler{}}
+	if canonical, evalErr := filepath.EvalSymlinks(abs); evalErr == nil {
+		abs = canonical
+	}
+	r := &Registry{root: abs, handlers: map[string]Handler{}, grants: []string{abs}}
+	if options.Sandbox {
+		bwrap := options.BubblewrapPath
+		if bwrap == "" {
+			bwrap, err = exec.LookPath("bwrap")
+			if err != nil {
+				return nil, fmt.Errorf("locate bubblewrap: %w", err)
+			}
+		}
+		home, _ := os.UserHomeDir()
+		if canonical, evalErr := filepath.EvalSymlinks(home); evalErr == nil {
+			home = canonical
+		}
+		for _, protected := range options.ProtectedPaths {
+			if canonical, protectErr := filepath.EvalSymlinks(protected); protectErr == nil {
+				r.protected = append(r.protected, canonical)
+			}
+		}
+		r.sandbox = &sandboxState{bwrap: bwrap, home: home, allowNetwork: options.AllowNetwork, protected: r.protected}
+	}
 	r.add(llm.Tool{Name: "read", Description: prompt.ReadTool, Parameters: objectSchema(map[string]any{
 		"path":   stringProperty(prompt.PathParameter),
 		"offset": integerProperty(prompt.OffsetParameter),
@@ -67,7 +103,21 @@ func New(root string) (*Registry, error) {
 	r.add(llm.Tool{Name: "view_image", Description: prompt.ImageTool, Parameters: objectSchema(map[string]any{
 		"path": stringProperty(prompt.PathParameter),
 	}, "path")}, r.viewImage)
+	if r.sandbox != nil {
+		r.add(llm.Tool{Name: "request_directory_access", Description: prompt.DirectoryAccessTool, Parameters: objectSchema(map[string]any{
+			"path": stringProperty(prompt.AccessPathParameter),
+		}, "path")}, r.requestDirectoryAccess)
+	}
 	return r, nil
+}
+
+func (r *Registry) SetDirectoryApprover(approver DirectoryApprover) { r.approver = approver }
+
+// ResetSession removes grants acquired after startup.
+func (r *Registry) ResetSession() {
+	r.grantMu.Lock()
+	r.grants = []string{r.root}
+	r.grantMu.Unlock()
 }
 
 func (r *Registry) add(schema llm.Tool, handler Handler) {
@@ -114,11 +164,11 @@ func (r *Registry) viewImageDetailed(ctx context.Context, arguments json.RawMess
 	if err := decode(arguments, &args); err != nil {
 		return ExecutionResult{}, err
 	}
-	path, err := r.resolve(args.Path)
+	path, err := r.resolveFor(ctx, args.Path)
 	if err != nil {
 		return ExecutionResult{}, err
 	}
-	file, err := os.Open(path)
+	file, err := r.openFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		return ExecutionResult{}, err
 	}
@@ -221,10 +271,227 @@ func (r *Registry) resolve(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if r.sandbox == nil && (rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
 		return "", fmt.Errorf("path %q is outside workspace %q", name, r.root)
 	}
 	return path, nil
+}
+
+func (r *Registry) resolveFor(ctx context.Context, name string) (string, error) {
+	path, err := r.resolve(name)
+	if err != nil || r.sandbox == nil {
+		return path, err
+	}
+	return r.authorizePath(ctx, path)
+}
+
+func (r *Registry) authorizePath(ctx context.Context, path string) (string, error) {
+	canonical, err := canonicalTarget(path)
+	if err != nil {
+		return "", err
+	}
+	for _, protected := range r.protected {
+		if canonical == protected {
+			return "", fmt.Errorf("path %q contains qcode configuration secrets and is not available to model tools", path)
+		}
+	}
+	if r.isGranted(canonical) {
+		return canonical, nil
+	}
+	proposed := nearestExistingDirectory(canonical)
+	if r.approver == nil {
+		return "", fmt.Errorf("path %q is outside approved directories; call request_directory_access first", path)
+	}
+	selected, approved, err := r.approver(ctx, canonical, proposed)
+	if err != nil {
+		return "", err
+	}
+	if !approved {
+		return "", fmt.Errorf("directory access denied for %q", path)
+	}
+	grant := selected
+	if !filepath.IsAbs(grant) {
+		grant = filepath.Join(r.root, grant)
+	}
+	grant, err = filepath.Abs(grant)
+	if err != nil {
+		return "", err
+	}
+	grant, err = filepath.EvalSymlinks(grant)
+	if err != nil {
+		return "", fmt.Errorf("resolve granted directory: %w", err)
+	}
+	info, err := os.Stat(grant)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("granted path %q is not an existing directory", grant)
+	}
+	if filepath.Clean(grant) == string(filepath.Separator) {
+		return "", errors.New("granting the filesystem root is not allowed")
+	}
+	if !pathContains(grant, canonical) {
+		return "", fmt.Errorf("granted directory %q does not contain requested path %q", grant, canonical)
+	}
+	r.addGrant(grant)
+	return canonical, nil
+}
+
+func nearestExistingDirectory(path string) string {
+	for {
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			return path
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return path
+		}
+		path = parent
+	}
+}
+
+func canonicalTarget(path string) (string, error) {
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	var tail []string
+	parent := path
+	for {
+		if resolved, resolveErr := filepath.EvalSymlinks(parent); resolveErr == nil {
+			for index := len(tail) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, tail[index])
+			}
+			return resolved, nil
+		} else if !errors.Is(resolveErr, os.ErrNotExist) {
+			return "", resolveErr
+		}
+		next := filepath.Dir(parent)
+		if next == parent {
+			return "", os.ErrNotExist
+		}
+		tail = append(tail, filepath.Base(parent))
+		parent = next
+	}
+}
+
+func (r *Registry) isGranted(path string) bool {
+	r.grantMu.RLock()
+	defer r.grantMu.RUnlock()
+	for _, grant := range r.grants {
+		if pathContains(grant, path) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Registry) addGrant(path string) {
+	r.grantMu.Lock()
+	defer r.grantMu.Unlock()
+	for _, grant := range r.grants {
+		if pathContains(grant, path) {
+			return
+		}
+	}
+	kept := r.grants[:0]
+	for _, grant := range r.grants {
+		if !pathContains(path, grant) {
+			kept = append(kept, grant)
+		}
+	}
+	r.grants = append(kept, path)
+}
+
+func (r *Registry) grantPaths() []string {
+	r.grantMu.RLock()
+	defer r.grantMu.RUnlock()
+	return append([]string(nil), r.grants...)
+}
+
+func (r *Registry) matchingGrant(path string) string {
+	r.grantMu.RLock()
+	defer r.grantMu.RUnlock()
+	best := ""
+	for _, grant := range r.grants {
+		if pathContains(grant, path) && len(grant) > len(best) {
+			best = grant
+		}
+	}
+	return best
+}
+
+func (r *Registry) openFile(path string, flags int, perm os.FileMode) (*os.File, error) {
+	if r.sandbox == nil {
+		return os.OpenFile(path, flags, perm)
+	}
+	for _, protected := range r.protected {
+		if path == protected {
+			return nil, fmt.Errorf("path %q contains qcode configuration secrets and is not available to model tools", path)
+		}
+	}
+	grant := r.matchingGrant(path)
+	if grant == "" {
+		return nil, os.ErrPermission
+	}
+	return secureOpen(grant, path, flags, perm)
+}
+
+func (r *Registry) mkdirAll(path string, perm os.FileMode) error {
+	if r.sandbox == nil {
+		return os.MkdirAll(path, perm)
+	}
+	grant := r.matchingGrant(path)
+	if grant == "" {
+		return os.ErrPermission
+	}
+	return secureMkdirAll(grant, path, perm)
+}
+
+func (r *Registry) readFile(path string) ([]byte, error) {
+	file, err := r.openFile(path, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(file)
+}
+
+func (r *Registry) writeFile(path string, data []byte, perm os.FileMode) error {
+	file, err := r.openFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	_, writeErr := file.Write(data)
+	closeErr := file.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
+}
+
+func (r *Registry) requestDirectoryAccess(ctx context.Context, arguments json.RawMessage) (string, error) {
+	var args struct {
+		Path string `json:"path"`
+	}
+	if err := decode(arguments, &args); err != nil {
+		return "", err
+	}
+	path, err := r.resolve(args.Path)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := canonicalTarget(path)
+	if err != nil {
+		return "", err
+	}
+	if r.isGranted(canonical) {
+		return fmt.Sprintf("%s is already approved", args.Path), nil
+	}
+	if _, err := r.authorizePath(ctx, path); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("granted read/write access to %s for this session", args.Path), nil
 }
 
 func (r *Registry) read(ctx context.Context, arguments json.RawMessage) (string, error) {
@@ -237,11 +504,11 @@ func (r *Registry) read(ctx context.Context, arguments json.RawMessage) (string,
 	if err := decode(arguments, &args); err != nil {
 		return "", err
 	}
-	path, err := r.resolve(args.Path)
+	path, err := r.resolveFor(ctx, args.Path)
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(path)
+	data, err := r.readFile(path)
 	if err != nil {
 		return "", err
 	}
@@ -299,22 +566,22 @@ func (r *Registry) writeDetailed(ctx context.Context, arguments json.RawMessage)
 	if err := ctx.Err(); err != nil {
 		return ExecutionResult{}, err
 	}
-	path, err := r.resolve(args.Path)
+	path, err := r.resolveFor(ctx, args.Path)
 	if err != nil {
 		return ExecutionResult{}, err
 	}
-	before, readErr := os.ReadFile(path)
+	before, readErr := r.readFile(path)
 	existed := readErr == nil
 	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
 		return ExecutionResult{}, readErr
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := r.mkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return ExecutionResult{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return ExecutionResult{}, err
 	}
-	if err := os.WriteFile(path, []byte(args.Content), 0o644); err != nil {
+	if err := r.writeFile(path, []byte(args.Content), 0o644); err != nil {
 		return ExecutionResult{}, err
 	}
 	return ExecutionResult{
@@ -343,11 +610,11 @@ func (r *Registry) editDetailed(ctx context.Context, arguments json.RawMessage) 
 	if args.OldText == "" {
 		return ExecutionResult{}, errors.New("old_text must not be empty")
 	}
-	path, err := r.resolve(args.Path)
+	path, err := r.resolveFor(ctx, args.Path)
 	if err != nil {
 		return ExecutionResult{}, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := r.readFile(path)
 	if err != nil {
 		return ExecutionResult{}, err
 	}
@@ -363,7 +630,7 @@ func (r *Registry) editDetailed(ctx context.Context, arguments json.RawMessage) 
 	if err := ctx.Err(); err != nil {
 		return ExecutionResult{}, err
 	}
-	if err := os.WriteFile(path, updated, info.Mode().Perm()); err != nil {
+	if err := r.writeFile(path, updated, info.Mode().Perm()); err != nil {
 		return ExecutionResult{}, err
 	}
 	return ExecutionResult{Output: fmt.Sprintf("edited %s", args.Path), Diff: unifiedDiff(args.Path, data, updated, true)}, nil
@@ -376,11 +643,16 @@ func (r *Registry) list(ctx context.Context, arguments json.RawMessage) (string,
 	if err := decode(arguments, &args); err != nil {
 		return "", err
 	}
-	path, err := r.resolve(args.Path)
+	path, err := r.resolveFor(ctx, args.Path)
 	if err != nil {
 		return "", err
 	}
-	entries, err := os.ReadDir(path)
+	directory, err := r.openFile(path, os.O_RDONLY, 0)
+	if err != nil {
+		return "", err
+	}
+	defer directory.Close()
+	entries, err := directory.ReadDir(-1)
 	if err != nil {
 		return "", err
 	}
@@ -411,7 +683,7 @@ func (r *Registry) search(ctx context.Context, arguments json.RawMessage) (strin
 	if err != nil {
 		return "", fmt.Errorf("invalid pattern: %w", err)
 	}
-	path, err := r.resolve(args.Path)
+	path, err := r.resolveFor(ctx, args.Path)
 	if err != nil {
 		return "", err
 	}
@@ -442,7 +714,7 @@ func (r *Registry) search(ctx context.Context, arguments json.RawMessage) (strin
 		if infoErr != nil || info.Size() > 2*1024*1024 {
 			return nil
 		}
-		data, readErr := os.ReadFile(file)
+		data, readErr := r.readFile(file)
 		if readErr != nil || bytes.IndexByte(data, 0) >= 0 {
 			return nil
 		}
@@ -483,12 +755,18 @@ func (r *Registry) shell(ctx context.Context, arguments json.RawMessage) (string
 	commandCtx, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
 	defer cancel()
 	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
+	if r.sandbox != nil {
+		cmd = r.sandbox.command(commandCtx, r.root, r.grantPaths(), args.Command)
+	} else if runtime.GOOS == "windows" {
 		cmd = exec.CommandContext(commandCtx, "cmd.exe", "/d", "/s", "/c", args.Command)
 	} else {
 		cmd = exec.CommandContext(commandCtx, "/bin/sh", "-c", args.Command)
 	}
-	configureShellCancellation(cmd)
+	// --new-session conflicts with placing bubblewrap itself in a process
+	// group. --die-with-parent handles sandbox child cleanup instead.
+	if r.sandbox == nil {
+		configureShellCancellation(cmd)
+	}
 	cmd.Dir = r.root
 	var output limitedBuffer
 	cmd.Stdout = &output
@@ -502,6 +780,9 @@ func (r *Registry) shell(ctx context.Context, arguments json.RawMessage) (string
 		return text, err
 	}
 	if err != nil {
+		if r.sandbox != nil {
+			return text, fmt.Errorf("command failed: %w; if it needs a path outside approved directories, call request_directory_access and retry", err)
+		}
 		return text, fmt.Errorf("command failed: %w", err)
 	}
 	if text == "" {

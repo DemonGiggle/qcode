@@ -96,3 +96,18 @@ func TestApplyConfigDoesNotMixSettingsFromAnotherProvider(t *testing.T) {
 		t.Fatalf("max steps = %d, want provider-independent config value", opts.maxSteps)
 	}
 }
+
+func TestApplyConfigSandboxPrecedence(t *testing.T) {
+	enabled := true
+	opts := options{}
+	applyConfig(&opts, config.Config{Sandbox: &enabled}, nil)
+	if !opts.sandbox {
+		t.Fatal("sandbox config was not applied")
+	}
+
+	opts.sandbox = false
+	applyConfig(&opts, config.Config{Sandbox: &enabled}, map[string]bool{"sandbox": true})
+	if opts.sandbox {
+		t.Fatal("sandbox config overrode explicit --sandbox=false")
+	}
+}
