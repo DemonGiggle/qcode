@@ -90,12 +90,28 @@ func TestStartNewSessionResetsRunner(t *testing.T) {
 }
 
 func TestHeaderLogoUsesASCIIBannerWithNarrowFallback(t *testing.T) {
-	wide := strings.Join(headerLogo(80), "\n")
-	if len(headerLogo(80)) != 16 || !strings.Contains(wide, `████████`) {
+	wide := strings.Join(headerLogo(42), "\n")
+	if len(headerLogo(42)) != 7 || !strings.Contains(wide, "#") {
 		t.Fatalf("wide logo = %q", wide)
 	}
-	if got := headerLogo(12); len(got) != 1 || got[0] != "qcode" {
+	for _, character := range wide {
+		if character > 0x7f {
+			t.Fatalf("banner contains non-ASCII character %q", character)
+		}
+	}
+	if got := headerLogo(41); len(got) != 1 || got[0] != "qcode" {
 		t.Fatalf("narrow logo = %v", got)
+	}
+}
+
+func TestGradientLineSkipsDarkestPaletteShades(t *testing.T) {
+	previous := bannerColor
+	bannerColor = []int{10, 20, 30, 40, 50, 60}
+	t.Cleanup(func() { bannerColor = previous })
+
+	got := gradientLine("##")
+	if !strings.Contains(got, "\x1b[38;5;50m#") || !strings.Contains(got, "\x1b[38;5;60m#") {
+		t.Fatalf("gradient = %q, want the two lightest shades", got)
 	}
 }
 
