@@ -141,7 +141,7 @@ func TestStatusBarUsesColoredSegments(t *testing.T) {
 }
 
 func TestStatusBarFitsTerminalWidth(t *testing.T) {
-	got := statusBar("openai-like", "a-very-long-model-name", "~/a/very/long/workspace/path", 32, true, true)
+	got := statusBar("openai", "a-very-long-model-name", "~/a/very/long/workspace/path", 32, true, true)
 	if visibleWidth(got) > 32 {
 		t.Fatalf("status bar width = %d, want at most 32: %q", visibleWidth(got), got)
 	}

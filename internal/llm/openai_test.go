@@ -107,7 +107,7 @@ func TestOpenAISendsImageContentParts(t *testing.T) {
 
 func TestProviderNamesAreStable(t *testing.T) {
 	got := strings.Join(Names(), ",")
-	if got != "ollama,openai,openai-like,opencode-go" {
+	if got != "ollama,openai,opencode-go" {
 		t.Fatalf("names = %q", got)
 	}
 }

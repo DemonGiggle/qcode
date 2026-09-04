@@ -5,7 +5,7 @@
 ## What is included
 
 - A terminal UI with editable input, history, full word wrapping, streamed responses, ANSI-colored Markdown (including aligned GFM tables), a fixed bottom status bar, cancellable tasks via Ctrl+C, and live prefix-matched slash-command suggestions with descriptions. Use `/model` to fetch the provider's models, search a large catalog by typing, move through matches with Up/Down, and select with Enter. Set `NO_COLOR=1` to disable response styling.
-- Ollama and OpenAI-compatible APIs. `openai-like` is an alias intended for services that implement `/v1/chat/completions`.
+- Ollama and OpenAI-compatible APIs.
 - `read`, `write`, `edit`, `list`, `search`, `view_image`, and `shell` tools.
 - Interactive mode shows a task-level `Waiting` indicator from submission through LLM and local-tool work. Use `/verbose` to toggle detailed telemetry, where every LLM request and tool call appears as one timestamped entry whose spinner is replaced by elapsed time when it finishes.
 - Use Page Up and Page Down to scroll through qcode's output history without leaving the interactive prompt.
@@ -56,14 +56,6 @@ export OPENAI_API_KEY=...
 qcode --provider openai --model gpt-5
 ```
 
-Any OpenAI-compatible endpoint:
-
-```sh
-qcode --provider openai-like \
-  --base-url http://localhost:8000/v1 \
-  --model my-model
-```
-
 Vision-capable models can inspect PNG, JPEG, WEBP, and GIF files inside the
 workspace. Name the image in the prompt; the agent can load it with
 `view_image` and send it through the active provider:
@@ -73,7 +65,7 @@ qcode --provider ollama --model gemma3 "describe assets/screenshot.png"
 ```
 
 Images are limited to 20 MiB each. Ollama receives native `images` data;
-OpenAI, `openai-like`, and `opencode-go` receive standard Chat Completions
+OpenAI and `opencode-go` receive standard Chat Completions
 image content parts. The selected model and endpoint must support image input.
 
 OpenCode Go (using one of its models served through the Chat Completions endpoint):
@@ -127,7 +119,7 @@ qcode loads the first `config.toml` file it finds; files are not merged. Copy
 adapt it as needed. All fields are optional:
 
 ```toml
-provider = "openai-like"
+provider = "openai"
 base_url = "http://localhost:8000/v1"
 api_key = "your-api-key"
 model = "my-model"

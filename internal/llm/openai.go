@@ -24,11 +24,10 @@ type openAIProvider struct {
 
 func init() {
 	Register("openai", newOpenAI)
-	Register("openai-like", newOpenAI)
 }
 
 func newOpenAI(config Config) (Provider, error) {
-	return newOpenAICompatible(config, "https://api.openai.com/v1", "openai-like", "", "")
+	return newOpenAICompatible(config, "https://api.openai.com/v1", "openai", "", "")
 }
 
 func newOpenAICompatible(config Config, defaultBaseURL, name, userAgent, sessionID string) (Provider, error) {

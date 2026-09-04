@@ -16,14 +16,14 @@ func TestApplyConfig(t *testing.T) {
 	maxSteps := 48
 
 	applyConfig(&opts, config.Config{
-		Provider: "openai-like",
+		Provider: "openai",
 		Model:    "configured-model",
 		BaseURL:  "https://example.test/v1",
 		APIKey:   "configured-key",
 		MaxSteps: &maxSteps,
 	}, nil)
 
-	if opts.provider != "openai-like" || opts.model != "configured-model" || opts.baseURL != "https://example.test/v1" || opts.apiKey != "configured-key" || opts.maxSteps != 48 {
+	if opts.provider != "openai" || opts.model != "configured-model" || opts.baseURL != "https://example.test/v1" || opts.apiKey != "configured-key" || opts.maxSteps != 48 {
 		t.Fatalf("options = %+v, want config values", opts)
 	}
 }

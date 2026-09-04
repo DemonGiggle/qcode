@@ -51,7 +51,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	configPath := ""
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider: ollama, openai, openai-like, or opencode-go")
+	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider: ollama, openai, or opencode-go")
 	flags.StringVar(&opts.model, "model", env("QCODE_MODEL", "qwen2.5-coder:7b"), "model identifier")
 	flags.StringVar(&opts.baseURL, "base-url", os.Getenv("QCODE_BASE_URL"), "provider API base URL")
 	flags.StringVar(&opts.apiKey, "api-key", firstEnv("QCODE_API_KEY", "OPENAI_API_KEY"), "API key (prefer QCODE_API_KEY or OPENAI_API_KEY)")

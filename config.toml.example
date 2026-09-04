@@ -1,4 +1,4 @@
-# LLM provider: ollama, openai, openai-like, or opencode-go.
+# LLM provider: ollama, openai, or opencode-go.
 provider = "ollama"
 
 # Model identifier passed to the selected provider.
