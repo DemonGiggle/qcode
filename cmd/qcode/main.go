@@ -25,17 +25,18 @@ import (
 var version = "dev"
 
 type options struct {
-	provider      string
-	model         string
-	baseURL       string
-	apiKey        string
-	root          string
-	maxSteps      int
-	jsonEvents    bool
-	listProviders bool
-	showVersion   bool
-	demo          bool
-	sandbox       bool
+	provider            string
+	model               string
+	baseURL             string
+	apiKey              string
+	root                string
+	maxSteps            int
+	jsonEvents          bool
+	listProviders       bool
+	showVersion         bool
+	demo                bool
+	sandbox             bool
+	dangerSkipTLSVerify bool
 }
 
 func main() {
@@ -61,6 +62,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	flags.BoolVar(&opts.showVersion, "version", false, "print version")
 	flags.BoolVar(&opts.demo, "demo", false, "run without an LLM or real tool execution")
 	flags.BoolVar(&opts.sandbox, "sandbox", false, "isolate tools with bubblewrap (Linux only)")
+	flags.BoolVar(&opts.dangerSkipTLSVerify, "danger-skip-tls-verify", false, "skip TLS certificate verification (insecure)")
 	flags.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\n\nOptions:\n")
 		flags.PrintDefaults()
@@ -140,7 +142,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		opts.provider = provider.Name()
 		opts.model = demo.Model
 	} else {
-		provider, err = llm.New(opts.provider, llm.Config{BaseURL: opts.baseURL, APIKey: opts.apiKey})
+		provider, err = llm.New(opts.provider, llm.Config{BaseURL: opts.baseURL, APIKey: opts.apiKey, InsecureSkipVerify: opts.dangerSkipTLSVerify})
 		if err != nil {
 			return err
 		}
@@ -207,6 +209,9 @@ func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
 	}
 	if !setFlags["sandbox"] && cfg.Sandbox != nil {
 		opts.sandbox = *cfg.Sandbox
+	}
+	if !setFlags["danger-skip-tls-verify"] && cfg.DangerSkipTLSVerify != nil {
+		opts.dangerSkipTLSVerify = *cfg.DangerSkipTLSVerify
 	}
 }
 

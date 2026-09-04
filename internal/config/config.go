@@ -17,12 +17,13 @@ const fileName = "config.toml"
 
 // Config contains settings that may be supplied by a qcode config file.
 type Config struct {
-	Provider string `toml:"provider"`
-	BaseURL  string `toml:"base_url"`
-	APIKey   string `toml:"api_key"`
-	Model    string `toml:"model"`
-	MaxSteps *int   `toml:"max_steps"`
-	Sandbox  *bool  `toml:"sandbox"`
+	Provider            string `toml:"provider"`
+	BaseURL             string `toml:"base_url"`
+	APIKey              string `toml:"api_key"`
+	Model               string `toml:"model"`
+	MaxSteps            *int   `toml:"max_steps"`
+	Sandbox             *bool  `toml:"sandbox"`
+	DangerSkipTLSVerify *bool  `toml:"danger_skip_tls_verify"`
 }
 
 // Load returns the first configuration found in lookup order. An empty path

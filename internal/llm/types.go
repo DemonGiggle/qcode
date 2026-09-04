@@ -81,9 +81,10 @@ type ModelLister interface {
 type Factory func(Config) (Provider, error)
 
 type Config struct {
-	BaseURL string
-	APIKey  string
-	HTTP    HTTPDoer
+	BaseURL            string
+	APIKey             string
+	HTTP               HTTPDoer
+	InsecureSkipVerify bool
 }
 
 type HTTPDoer interface {
