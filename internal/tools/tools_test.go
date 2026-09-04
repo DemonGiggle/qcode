@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -236,4 +237,34 @@ func TestToolsRejectUnknownArguments(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("error = %v", err)
 	}
+}
+
+type testSkillLoader map[string]string
+
+func (s testSkillLoader) Load(name string) (string, error) {
+	value, ok := s[name]
+	if !ok {
+		return "", fmt.Errorf("unknown skill %q", name)
+	}
+	return value, nil
+}
+
+func TestSkillToolLoadsOnlyDiscoveredSkills(t *testing.T) {
+	registry, err := NewWithOptions(t.TempDir(), Options{Skills: testSkillLoader{"review": "Review instructions"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := registry.Execute(context.Background(), llm.ToolCall{Name: "skill", Arguments: json.RawMessage(`{"name":"review"}`)})
+	if err != nil || result != "Review instructions" {
+		t.Fatalf("skill result = %q, %v", result, err)
+	}
+	if _, err := registry.Execute(context.Background(), llm.ToolCall{Name: "skill", Arguments: json.RawMessage(`{"name":"missing"}`)}); err == nil {
+		t.Fatal("missing skill succeeded")
+	}
+	for _, schema := range registry.Schemas() {
+		if schema.Name == "skill" {
+			return
+		}
+	}
+	t.Fatal("skill schema missing")
 }

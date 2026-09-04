@@ -23,6 +23,7 @@ type Agent struct {
 	out      io.Writer
 	maxSteps int
 	messages []llm.Message
+	system   string
 }
 
 // Toolset is the complete tool boundary used by the agent loop. Production and
@@ -53,10 +54,19 @@ type diffWriter interface {
 }
 
 func New(provider llm.Provider, model string, toolset Toolset, logger *trace.Logger, out io.Writer, maxSteps int) *Agent {
+	return NewWithSystem(provider, model, toolset, logger, out, maxSteps, prompt.System)
+}
+
+// NewWithSystem constructs an agent with additional startup instructions, such
+// as a workspace skill catalog.
+func NewWithSystem(provider llm.Provider, model string, toolset Toolset, logger *trace.Logger, out io.Writer, maxSteps int, system string) *Agent {
 	if maxSteps <= 0 {
 		maxSteps = 32
 	}
-	return &Agent{provider: provider, model: model, tools: toolset, trace: logger, out: out, maxSteps: maxSteps, messages: []llm.Message{{Role: "system", Content: prompt.System}}}
+	if system == "" {
+		system = prompt.System
+	}
+	return &Agent{provider: provider, model: model, tools: toolset, trace: logger, out: out, maxSteps: maxSteps, system: system, messages: []llm.Message{{Role: "system", Content: system}}}
 }
 
 func (a *Agent) SetVerbose(verbose bool) { a.trace.SetVerbose(verbose) }
@@ -83,10 +93,18 @@ func (a *Agent) SetModel(model string) {
 	}
 }
 
+// SetSkills replaces the user-selected skills advertised to the model.
+func (a *Agent) SetSkills(skills []prompt.SkillSummary) {
+	a.system = prompt.SystemWithSkills(skills)
+	if len(a.messages) > 0 && a.messages[0].Role == "system" {
+		a.messages[0].Content = a.system
+	}
+}
+
 // ResetSession discards conversation history while retaining the agent's
 // provider, model, tools, and runtime settings.
 func (a *Agent) ResetSession() {
-	a.messages = []llm.Message{{Role: "system", Content: prompt.System}}
+	a.messages = []llm.Message{{Role: "system", Content: a.system}}
 	if resetter, ok := a.tools.(interface{ ResetSession() }); ok {
 		resetter.ResetSession()
 	}
@@ -176,6 +194,11 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			if call.ID == "" {
 				call.ID = fmt.Sprintf("call_%d_%d", step+1, index+1)
 			}
+			if skillName, ok := referencedSkill(call); ok {
+				task.Suspend()
+				fmt.Fprintf(a.out, "Using skill: %s\n", skillName)
+				task.Resume()
+			}
 			arguments := compactJSON(call.Arguments)
 			toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": arguments})
 			execution, toolErr := a.tools.ExecuteDetailed(ctx, call)
@@ -213,6 +236,22 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		}
 	}
 	return fmt.Errorf("agent stopped after %d model steps", a.maxSteps)
+}
+
+// referencedSkill extracts a display-safe name from a valid skill-tool call.
+// Tool execution remains responsible for validating the name against the
+// discovered catalog.
+func referencedSkill(call llm.ToolCall) (string, bool) {
+	if call.Name != "skill" {
+		return "", false
+	}
+	var arguments struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(call.Arguments, &arguments) != nil || arguments.Name == "" {
+		return "", false
+	}
+	return arguments.Name, true
 }
 
 func toolMayChangeWorkspace(name string) bool {

@@ -1,0 +1,92 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	"qcode/internal/prompt"
+)
+
+func (u *UI) chooseSkills() {
+	runner, ok := u.runner.(skillRunner)
+	if !ok || len(u.skills) == 0 {
+		u.printSystemMessage(dim + "No workspace skills are available." + reset)
+		return
+	}
+	selected := make(map[int]bool)
+	current := 0
+	u.printSystemMessage(dim + "Use Up/Down to move, Space to toggle, Enter to apply, or Ctrl+C to cancel." + reset)
+	u.input.setRaw(true)
+	defer u.input.setRaw(false)
+	for {
+		renderSkillSelector(u.terminal, u.skills, selected, current, ColorEnabled(u.out))
+		key, err := readSkillByte(u.input)
+		clearSkillSelector(u.terminal, len(u.skills))
+		if err != nil {
+			return
+		}
+		switch key {
+		case ctrlC:
+			u.printSystemMessage(dim + "Skill selection cancelled." + reset)
+			return
+		case '\r', '\n':
+			names := make([]string, 0, len(selected))
+			summaries := make([]prompt.SkillSummary, 0, len(selected))
+			for i, skill := range u.skills {
+				if selected[i] {
+					names = append(names, skill.Name)
+					summaries = append(summaries, skill)
+				}
+			}
+			runner.SetSkills(summaries)
+			if u.onSkills != nil {
+				u.onSkills(names)
+			}
+			u.printSystemMessage(fmt.Sprintf("%sSkills enabled: %d%s", green, len(names), reset))
+			return
+		case ' ':
+			selected[current] = !selected[current]
+		case 0x1b:
+			var tail [2]byte
+			if _, err := u.input.Read(tail[:]); err == nil && tail[0] == '[' {
+				if tail[1] == 'A' {
+					current = (current - 1 + len(u.skills)) % len(u.skills)
+				}
+				if tail[1] == 'B' {
+					current = (current + 1) % len(u.skills)
+				}
+			}
+		}
+	}
+}
+
+func readSkillByte(input *interruptReader) (byte, error) {
+	var buffer [1]byte
+	_, err := input.Read(buffer[:])
+	return buffer[0], err
+}
+
+func renderSkillSelector(out interface{ Write([]byte) (int, error) }, skills []prompt.SkillSummary, selected map[int]bool, current int, color bool) {
+	for i, skill := range skills {
+		box := "[ ]"
+		if selected[i] {
+			box = "[x]"
+		}
+		prefix := "  "
+		if i == current {
+			prefix = "> "
+		}
+		line := fmt.Sprintf("%s%s %-18s %s", prefix, box, skill.Name, skill.Description)
+		if color && i == current {
+			line = cyan + line + reset
+		}
+		fmt.Fprintln(out, strings.TrimSpace(line))
+	}
+}
+func clearSkillSelector(out interface{ Write([]byte) (int, error) }, rows int) {
+	fmt.Fprintf(out, "\x1b[%dA", rows)
+	for range rows {
+		fmt.Fprint(out, "\r\x1b[2K\x1b[1B")
+	}
+	fmt.Fprintf(out, "\x1b[%dA\r", rows)
+}
