@@ -43,6 +43,7 @@ type Registry struct {
 	approver  DirectoryApprover
 	protected []string
 	skills    SkillLoader
+	disabled  map[string]bool
 }
 
 // DirectoryApprover asks the interactive host to approve an additional
@@ -132,11 +133,12 @@ func (r *Registry) loadSkill(_ context.Context, arguments json.RawMessage) (stri
 
 func (r *Registry) SetDirectoryApprover(approver DirectoryApprover) { r.approver = approver }
 
-// ResetSession removes grants acquired after startup.
+// ResetSession removes grants acquired after startup and clears disabled tools.
 func (r *Registry) ResetSession() {
 	r.grantMu.Lock()
 	r.grants = []string{r.root}
 	r.grantMu.Unlock()
+	r.disabled = nil
 }
 
 func (r *Registry) add(schema llm.Tool, handler Handler) {
@@ -145,6 +147,44 @@ func (r *Registry) add(schema llm.Tool, handler Handler) {
 }
 
 func (r *Registry) Schemas() []llm.Tool { return append([]llm.Tool(nil), r.schemas...) }
+
+// EnabledSchemas returns only the tool schemas that are not disabled.
+func (r *Registry) EnabledSchemas() []llm.Tool {
+	result := make([]llm.Tool, 0, len(r.schemas))
+	for _, tool := range r.schemas {
+		if !r.disabled[tool.Name] {
+			result = append(result, tool)
+		}
+	}
+	return result
+}
+
+// EnableTool re-enables a previously disabled tool.
+func (r *Registry) EnableTool(name string) {
+	delete(r.disabled, name)
+}
+
+// DisableTool prevents a tool from being sent to the model.
+func (r *Registry) DisableTool(name string) {
+	if r.disabled == nil {
+		r.disabled = make(map[string]bool)
+	}
+	r.disabled[name] = true
+}
+
+// IsToolEnabled reports whether a tool is currently enabled.
+func (r *Registry) IsToolEnabled(name string) bool {
+	return !r.disabled[name]
+}
+
+// ToolNames returns the names of all registered tools in registration order.
+func (r *Registry) ToolNames() []string {
+	names := make([]string, len(r.schemas))
+	for i, tool := range r.schemas {
+		names[i] = tool.Name
+	}
+	return names
+}
 
 func (r *Registry) Execute(ctx context.Context, call llm.ToolCall) (string, error) {
 	result, err := r.ExecuteDetailed(ctx, call)

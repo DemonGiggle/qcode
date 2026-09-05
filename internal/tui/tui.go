@@ -85,6 +85,12 @@ type sessionRunner interface {
 
 type skillRunner interface{ SetSkills([]prompt.SkillSummary) }
 
+type toolRunner interface {
+	ToggleTool(name string, enabled bool)
+	ToolEnabled(name string) bool
+	ToolNames() []string
+}
+
 type readWriter struct {
 	io.Reader
 	io.Writer
@@ -248,6 +254,9 @@ func (u *UI) Run(ctx context.Context) error {
 			continue
 		case "/skill":
 			u.chooseSkills()
+			continue
+		case "/tool":
+			u.chooseTools()
 			continue
 		case "/new":
 			u.startNewSession()

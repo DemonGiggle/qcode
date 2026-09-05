@@ -127,6 +127,11 @@ func (t *Toolset) Schemas() []llm.Tool {
 	return append([]llm.Tool(nil), t.schemas...)
 }
 
+// EnabledSchemas returns all schemas in demo mode (tools are never disabled).
+func (t *Toolset) EnabledSchemas() []llm.Tool {
+	return t.Schemas()
+}
+
 func (t *Toolset) ExecuteDetailed(ctx context.Context, call llm.ToolCall) (llm.ToolResult, error) {
 	if err := wait(ctx, t.delay); err != nil {
 		return llm.ToolResult{}, err
