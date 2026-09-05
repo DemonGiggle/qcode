@@ -133,11 +133,12 @@ func (r *Registry) loadSkill(_ context.Context, arguments json.RawMessage) (stri
 
 func (r *Registry) SetDirectoryApprover(approver DirectoryApprover) { r.approver = approver }
 
-// ResetSession removes grants acquired after startup.
+// ResetSession removes grants acquired after startup and clears disabled tools.
 func (r *Registry) ResetSession() {
 	r.grantMu.Lock()
 	r.grants = []string{r.root}
 	r.grantMu.Unlock()
+	r.disabled = nil
 }
 
 func (r *Registry) add(schema llm.Tool, handler Handler) {
@@ -183,46 +184,6 @@ func (r *Registry) ToolNames() []string {
 		names[i] = tool.Name
 	}
 	return names
-}
-
-// ResetSession clears all disabled tools so every tool is enabled again.
-func (r *Registry) ResetSession() {
-	r.disabled = nil
-}
-
-// ResetSession clears all disabled tools so every tool is enabled again.
-func (r *Registry) ResetSession() {
-	r.disabled = nil
-}
-
-// ResetSession clears all disabled tools so every tool is enabled again.
-func (r *Registry) ResetSession() {
-	r.disabled = nil
-}
-
-// ResetSession clears all disabled tools so every tool is enabled again.
-func (r *Registry) ResetSession() {
-	r.disabled = nil
-}
-
-// ResetSession clears all disabled tools so every tool is enabled again.
-func (r *Registry) ResetSession() {
-	r.disabled = nil
-}
-
-// ResetSession clears all disabled tools so every tool is enabled again.
-func (r *Registry) ResetSession() {
-	r.disabled = nil
-}
-
-// ResetSession clears all disabled tools so every tool is enabled again.
-func (r *Registry) ResetSession() {
-	r.disabled = nil
-}
-
-// ResetSession clears all disabled tools so every tool is enabled again.
-func (r *Registry) ResetSession() {
-	r.disabled = nil
 }
 
 func (r *Registry) Execute(ctx context.Context, call llm.ToolCall) (string, error) {
