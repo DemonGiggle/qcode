@@ -10,6 +10,7 @@ import (
 
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
+	"qcode/internal/tools"
 	"qcode/internal/trace"
 )
 
@@ -31,6 +32,7 @@ type Agent struct {
 // behavior without adding mode-specific branches to the loop.
 type Toolset interface {
 	Schemas() []llm.Tool
+	EnabledSchemas() []llm.Tool
 	ExecuteDetailed(context.Context, llm.ToolCall) (llm.ToolResult, error)
 }
 
@@ -110,6 +112,33 @@ func (a *Agent) ResetSession() {
 	}
 }
 
+// ToolNames returns the names of all registered tools.
+func (a *Agent) ToolNames() []string {
+	if registry, ok := a.tools.(*tools.Registry); ok {
+		return registry.ToolNames()
+	}
+	return nil
+}
+
+// ToggleTool enables or disables a tool by name.
+func (a *Agent) ToggleTool(name string, enabled bool) {
+	if registry, ok := a.tools.(*tools.Registry); ok {
+		if enabled {
+			registry.EnableTool(name)
+		} else {
+			registry.DisableTool(name)
+		}
+	}
+}
+
+// ToolEnabled reports whether a tool is currently enabled.
+func (a *Agent) ToolEnabled(name string) bool {
+	if registry, ok := a.tools.(*tools.Registry); ok {
+		return registry.IsToolEnabled(name)
+	}
+	return true
+}
+
 func (a *Agent) Run(ctx context.Context, userText string) error {
 	task := a.trace.BeginTask()
 	defer task.End()
@@ -125,7 +154,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		if rendersResponses {
 			lifecycle.BeginResponse()
 		}
-		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Messages: a.messages, Tools: a.tools.Schemas()}, func(event llm.StreamEvent) {
+		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Messages: a.messages, Tools: a.tools.EnabledSchemas()}, func(event llm.StreamEvent) {
 			if ctx.Err() != nil {
 				return
 			}

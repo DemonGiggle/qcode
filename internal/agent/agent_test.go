@@ -88,6 +88,10 @@ func (*skillToolset) Schemas() []llm.Tool {
 	return []llm.Tool{{Name: "skill"}}
 }
 
+func (*skillToolset) EnabledSchemas() []llm.Tool {
+	return []llm.Tool{{Name: "skill"}}
+}
+
 func (*skillToolset) ExecuteDetailed(_ context.Context, _ llm.ToolCall) (llm.ToolResult, error) {
 	return llm.ToolResult{Output: "skill instructions"}, nil
 }
