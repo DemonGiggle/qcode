@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"qcode/internal/prompt"
@@ -13,56 +14,66 @@ func (u *UI) chooseSkills() {
 		u.printSystemMessage(dim + "No workspace skills are available." + reset)
 		return
 	}
-	selected := make(map[int]bool)
-	current := 0
 	u.printSystemMessage(dim + "Use Up/Down to move, Space to toggle, Enter to apply, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
 	defer u.input.setRaw(false)
+	names, summaries, accepted, err := selectSkills(u.input, u.terminal, u.skills, ColorEnabled(u.out))
+	if err != nil {
+		return
+	}
+	if !accepted {
+		u.printSystemMessage(dim + "Skill selection cancelled." + reset)
+		return
+	}
+	runner.SetSkills(summaries)
+	if u.onSkills != nil {
+		u.onSkills(names)
+	}
+	u.printSystemMessage(fmt.Sprintf("%sSkills enabled: %d%s", green, len(names), reset))
+}
+
+func selectSkills(in io.Reader, out interface{ Write([]byte) (int, error) }, skills []prompt.SkillSummary, color bool) ([]string, []prompt.SkillSummary, bool, error) {
+	selected := make(map[int]bool)
+	current := 0
 	for {
-		renderSkillSelector(u.terminal, u.skills, selected, current, ColorEnabled(u.out))
-		key, err := readSkillByte(u.input)
-		clearSkillSelector(u.terminal, len(u.skills))
+		renderSkillSelector(out, skills, selected, current, color)
+		key, err := readSkillByte(in)
+		clearSkillSelector(out, len(skills))
 		if err != nil {
-			return
+			return nil, nil, false, err
 		}
 		switch key {
 		case ctrlC:
-			u.printSystemMessage(dim + "Skill selection cancelled." + reset)
-			return
+			return nil, nil, false, nil
 		case '\r', '\n':
 			names := make([]string, 0, len(selected))
 			summaries := make([]prompt.SkillSummary, 0, len(selected))
-			for i, skill := range u.skills {
+			for i, skill := range skills {
 				if selected[i] {
 					names = append(names, skill.Name)
 					summaries = append(summaries, skill)
 				}
 			}
-			runner.SetSkills(summaries)
-			if u.onSkills != nil {
-				u.onSkills(names)
-			}
-			u.printSystemMessage(fmt.Sprintf("%sSkills enabled: %d%s", green, len(names), reset))
-			return
+			return names, summaries, true, nil
 		case ' ':
 			selected[current] = !selected[current]
 		case 0x1b:
 			var tail [2]byte
-			if _, err := u.input.Read(tail[:]); err == nil && tail[0] == '[' {
+			if _, err := io.ReadFull(in, tail[:]); err == nil && tail[0] == '[' {
 				if tail[1] == 'A' {
-					current = (current - 1 + len(u.skills)) % len(u.skills)
+					current = (current - 1 + len(skills)) % len(skills)
 				}
 				if tail[1] == 'B' {
-					current = (current + 1) % len(u.skills)
+					current = (current + 1) % len(skills)
 				}
 			}
 		}
 	}
 }
 
-func readSkillByte(input *interruptReader) (byte, error) {
+func readSkillByte(input io.Reader) (byte, error) {
 	var buffer [1]byte
-	_, err := input.Read(buffer[:])
+	_, err := io.ReadFull(input, buffer[:])
 	return buffer[0], err
 }
 
