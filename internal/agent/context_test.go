@@ -1,0 +1,89 @@
+package agent
+
+import (
+	"context"
+	"io"
+	"testing"
+
+	"qcode/internal/llm"
+	"qcode/internal/trace"
+)
+
+type usageProvider struct{ calls int }
+
+func (*usageProvider) Name() string                                       { return "usage" }
+func (*usageProvider) ContextWindow(context.Context, string) (int, error) { return 1000, nil }
+func (p *usageProvider) Complete(context.Context, llm.Request, llm.StreamCallback) (llm.Response, error) {
+	p.calls++
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "hi"}, Usage: &llm.Usage{InputTokens: 700, OutputTokens: 50}}, nil
+}
+
+func TestContextTracksLatestRequestAndReset(t *testing.T) {
+	p := &usageProvider{}
+	a := New(p, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 3)
+	a.RefreshContext(context.Background())
+	if _, known, estimated := a.ContextRemaining(); !known || !estimated {
+		t.Fatal("initial estimate missing")
+	}
+	for range 2 {
+		if err := a.Run(context.Background(), "hello"); err != nil {
+			t.Fatal(err)
+		}
+		if left, known, estimated := a.ContextRemaining(); left != 25 || !known || estimated {
+			t.Fatalf("context=%d %v %v", left, known, estimated)
+		}
+	}
+	a.ResetSession()
+	if _, _, estimated := a.ContextRemaining(); !estimated || a.contextUsage != nil {
+		t.Fatal("reset retained usage")
+	}
+	a.SetContextWindow(500)
+	a.contextUsage = &llm.Usage{InputTokens: 700, OutputTokens: 50}
+	a.contextMessages = len(a.messages)
+	a.publishContext()
+	if left, _, _ := a.ContextRemaining(); left != 0 {
+		t.Fatalf("overflow=%d", left)
+	}
+	a.SetModel("other")
+	if _, known, _ := a.ContextRemaining(); known {
+		t.Fatal("model switch retained old capacity")
+	}
+}
+
+func TestContextIncludesPendingToolResults(t *testing.T) {
+	a := New(&usageProvider{}, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 3)
+	a.SetContextWindow(1000)
+	a.contextUsage = &llm.Usage{InputTokens: 500, OutputTokens: 50}
+	a.contextMessages = len(a.messages)
+	a.messages = append(a.messages, llm.Message{Role: "tool", Content: "new tool output"})
+	a.publishContext()
+	left, known, estimated := a.ContextRemaining()
+	if left >= 45 || !known || !estimated {
+		t.Fatalf("pending context=%d %v %v", left, known, estimated)
+	}
+}
+
+func TestContextMissingUsageAndChangedSettings(t *testing.T) {
+	a := New(&usageProvider{}, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 3)
+	a.SetContextWindow(10000)
+	a.contextUsage = &llm.Usage{InputTokens: 2900}
+	a.contextMessages = len(a.messages)
+	a.publishContext()
+	if left, _, _ := a.ContextRemaining(); left != 71 {
+		t.Fatalf("rounding=%d", left)
+	}
+	a.SetSkills(nil)
+	if _, known, estimated := a.ContextRemaining(); !known || !estimated {
+		t.Fatal("skill change retained measured usage")
+	}
+	a.contextUsage = &llm.Usage{InputTokens: 2000}
+	a.ToggleTool("skill", false)
+	if _, known, estimated := a.ContextRemaining(); !known || !estimated {
+		t.Fatal("tool change retained measured usage")
+	}
+	a.contextUsage = nil
+	a.publishContext()
+	if left, known, estimated := a.ContextRemaining(); left < 0 || left > 100 || !known || !estimated {
+		t.Fatal("invalid fallback estimate")
+	}
+}

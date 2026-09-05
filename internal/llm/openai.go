@@ -119,7 +119,7 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 	for _, tool := range input.Tools {
 		tools = append(tools, openAITool{Type: "function", Function: tool})
 	}
-	body := map[string]any{"model": input.Model, "messages": messages, "stream": true, "temperature": input.Temperature}
+	body := map[string]any{"stream_options": map[string]any{"include_usage": true}, "model": input.Model, "messages": messages, "stream": true, "temperature": input.Temperature}
 	if len(tools) > 0 {
 		body["tools"] = tools
 	}
@@ -176,6 +176,7 @@ func openAIContent(message Message) any {
 
 func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error) {
 	result := Message{Role: "assistant"}
+	var usage *Usage
 	type partialCall struct{ id, name, arguments string }
 	partials := map[int]*partialCall{}
 	scanner := bufio.NewScanner(reader)
@@ -190,6 +191,7 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 			break
 		}
 		var event struct {
+			Usage *Usage `json:"usage"`
 			Error *struct {
 				Message string `json:"message"`
 			} `json:"error,omitempty"`
@@ -204,6 +206,9 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 		}
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			return Response{}, fmt.Errorf("decode provider stream: %w", err)
+		}
+		if event.Usage != nil {
+			usage = event.Usage
 		}
 		if event.Error != nil {
 			return Response{}, errors.New(event.Error.Message)
@@ -250,5 +255,5 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 		}
 		result.ToolCalls = append(result.ToolCalls, ToolCall{ID: part.id, Name: part.name, Arguments: arguments})
 	}
-	return Response{Message: result}, nil
+	return Response{Message: result, Usage: usage}, nil
 }

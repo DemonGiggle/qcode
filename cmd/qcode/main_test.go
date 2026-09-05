@@ -111,3 +111,29 @@ func TestApplyConfigSandboxPrecedence(t *testing.T) {
 		t.Fatal("sandbox config overrode explicit --sandbox=false")
 	}
 }
+
+func TestContextWindowConfigPrecedence(t *testing.T) {
+	t.Setenv("QCODE_PROVIDER", "")
+	t.Setenv("QCODE_MODEL", "")
+	capacity := 8192
+	cfg := config.Config{Provider: "ollama", Model: "test", ContextWindow: &capacity}
+	for _, tc := range []struct {
+		name  string
+		opts  options
+		flags map[string]bool
+		want  int
+	}{
+		{"config", options{}, nil, 8192},
+		{"flag", options{contextWindow: 4096}, map[string]bool{"context-window": true}, 4096},
+		{"automatic flag", options{}, map[string]bool{"context-window": true}, 0},
+		{"different model", options{model: "other"}, map[string]bool{"model": true}, 0},
+		{"different provider", options{provider: "openai"}, map[string]bool{"provider": true}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			applyConfig(&tc.opts, cfg, tc.flags)
+			if tc.opts.contextWindow != tc.want {
+				t.Fatalf("got %d want %d", tc.opts.contextWindow, tc.want)
+			}
+		})
+	}
+}

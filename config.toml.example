@@ -18,3 +18,8 @@ max_steps = 32
 
 # Skip TLS certificate verification for provider connections (insecure).
 # danger_skip_tls_verify = true
+
+# Context capacity in tokens for the status bar (0 = automatic).
+# Set this for custom endpoints or models missing from the bundled catalog.
+# This is a display setting; it does not change the server's context allocation.
+# context_window = 32768

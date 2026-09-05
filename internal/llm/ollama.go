@@ -131,15 +131,21 @@ func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText Str
 		return Response{}, fmt.Errorf("provider returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
 	}
 	result := Message{Role: "assistant"}
+	var usage *Usage
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		var event struct {
-			Message ollamaMessage `json:"message"`
-			Error   string        `json:"error"`
+			InputTokens  *int          `json:"prompt_eval_count"`
+			OutputTokens int           `json:"eval_count"`
+			Message      ollamaMessage `json:"message"`
+			Error        string        `json:"error"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			return Response{}, fmt.Errorf("decode provider stream: %w", err)
+		}
+		if event.InputTokens != nil {
+			usage = &Usage{InputTokens: *event.InputTokens, OutputTokens: event.OutputTokens}
 		}
 		if event.Error != "" {
 			return Response{}, fmt.Errorf("ollama: %s", event.Error)
@@ -163,5 +169,5 @@ func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText Str
 	if err := scanner.Err(); err != nil {
 		return Response{}, err
 	}
-	return Response{Message: result}, nil
+	return Response{Message: result, Usage: usage}, nil
 }
