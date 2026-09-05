@@ -185,6 +185,46 @@ func (r *Registry) ToolNames() []string {
 	return names
 }
 
+// ResetSession clears all disabled tools so every tool is enabled again.
+func (r *Registry) ResetSession() {
+	r.disabled = nil
+}
+
+// ResetSession clears all disabled tools so every tool is enabled again.
+func (r *Registry) ResetSession() {
+	r.disabled = nil
+}
+
+// ResetSession clears all disabled tools so every tool is enabled again.
+func (r *Registry) ResetSession() {
+	r.disabled = nil
+}
+
+// ResetSession clears all disabled tools so every tool is enabled again.
+func (r *Registry) ResetSession() {
+	r.disabled = nil
+}
+
+// ResetSession clears all disabled tools so every tool is enabled again.
+func (r *Registry) ResetSession() {
+	r.disabled = nil
+}
+
+// ResetSession clears all disabled tools so every tool is enabled again.
+func (r *Registry) ResetSession() {
+	r.disabled = nil
+}
+
+// ResetSession clears all disabled tools so every tool is enabled again.
+func (r *Registry) ResetSession() {
+	r.disabled = nil
+}
+
+// ResetSession clears all disabled tools so every tool is enabled again.
+func (r *Registry) ResetSession() {
+	r.disabled = nil
+}
+
 func (r *Registry) Execute(ctx context.Context, call llm.ToolCall) (string, error) {
 	result, err := r.ExecuteDetailed(ctx, call)
 	return result.Output, err
