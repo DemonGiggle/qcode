@@ -42,6 +42,7 @@ type Registry struct {
 	grants    []string
 	approver  DirectoryApprover
 	protected []string
+	skills    SkillLoader
 }
 
 // DirectoryApprover asks the interactive host to approve an additional
@@ -60,7 +61,7 @@ func NewWithOptions(root string, options Options) (*Registry, error) {
 	if canonical, evalErr := filepath.EvalSymlinks(abs); evalErr == nil {
 		abs = canonical
 	}
-	r := &Registry{root: abs, handlers: map[string]Handler{}, grants: []string{abs}}
+	r := &Registry{root: abs, handlers: map[string]Handler{}, grants: []string{abs}, skills: options.Skills}
 	if options.Sandbox {
 		bwrap := options.BubblewrapPath
 		if bwrap == "" {
@@ -103,12 +104,30 @@ func NewWithOptions(root string, options Options) (*Registry, error) {
 	r.add(llm.Tool{Name: "view_image", Description: prompt.ImageTool, Parameters: objectSchema(map[string]any{
 		"path": stringProperty(prompt.PathParameter),
 	}, "path")}, r.viewImage)
+	if r.skills != nil {
+		r.add(llm.Tool{Name: "skill", Description: prompt.SkillTool, Parameters: objectSchema(map[string]any{
+			"name": stringProperty(prompt.SkillNameParameter),
+		}, "name")}, r.loadSkill)
+	}
 	if r.sandbox != nil {
 		r.add(llm.Tool{Name: "request_directory_access", Description: prompt.DirectoryAccessTool, Parameters: objectSchema(map[string]any{
 			"path": stringProperty(prompt.AccessPathParameter),
 		}, "path")}, r.requestDirectoryAccess)
 	}
 	return r, nil
+}
+
+func (r *Registry) loadSkill(_ context.Context, arguments json.RawMessage) (string, error) {
+	var args struct {
+		Name string `json:"name"`
+	}
+	if err := decode(arguments, &args); err != nil {
+		return "", err
+	}
+	if args.Name == "" {
+		return "", fmt.Errorf("skill name must not be empty")
+	}
+	return r.skills.Load(args.Name)
 }
 
 func (r *Registry) SetDirectoryApprover(approver DirectoryApprover) { r.approver = approver }

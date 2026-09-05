@@ -19,6 +19,14 @@ type Options struct {
 	AllowNetwork   bool
 	BubblewrapPath string
 	ProtectedPaths []string
+	Skills         SkillLoader
+}
+
+// SkillLoader supplies previously discovered workspace skill instructions.
+// Keeping discovery outside the tool registry makes its roots and precedence
+// explicit at application startup.
+type SkillLoader interface {
+	Load(name string) (string, error)
 }
 
 type sandboxState struct {

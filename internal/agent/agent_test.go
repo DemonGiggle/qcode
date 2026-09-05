@@ -80,6 +80,18 @@ type imageProvider struct {
 	requests []llm.Request
 }
 
+type skillProvider struct{ calls int }
+
+type skillToolset struct{}
+
+func (*skillToolset) Schemas() []llm.Tool {
+	return []llm.Tool{{Name: "skill"}}
+}
+
+func (*skillToolset) ExecuteDetailed(_ context.Context, _ llm.ToolCall) (llm.ToolResult, error) {
+	return llm.ToolResult{Output: "skill instructions"}, nil
+}
+
 func (p *responseProvider) Name() string { return "response" }
 func (p *responseProvider) Complete(_ context.Context, _ llm.Request, onText llm.StreamCallback) (llm.Response, error) {
 	onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: "finished"})
@@ -174,6 +186,29 @@ func (p *imageProvider) Complete(_ context.Context, request llm.Request, _ llm.S
 		}}}, nil
 	}
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: "seen"}}, nil
+}
+
+func (p *skillProvider) Name() string { return "skill" }
+func (p *skillProvider) Complete(_ context.Context, _ llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	p.calls++
+	if p.calls == 1 {
+		return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{
+			Name: "skill", Arguments: json.RawMessage(`{"name":"review"}`),
+		}}}}, nil
+	}
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
+}
+
+func TestAgentNotifiesWhenSkillIsLoaded(t *testing.T) {
+	provider := &skillProvider{}
+	var output, events bytes.Buffer
+	runner := New(provider, "test", &skillToolset{}, trace.New(&events, false), &output, 2)
+	if err := runner.Run(context.Background(), "review this"); err != nil {
+		t.Fatal(err)
+	}
+	if got := output.String(); got != "Using skill: review\n" {
+		t.Fatalf("output = %q", got)
+	}
 }
 
 func TestAgentMarksResponseBoundaries(t *testing.T) {

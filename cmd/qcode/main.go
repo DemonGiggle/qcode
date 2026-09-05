@@ -17,6 +17,8 @@ import (
 	"qcode/internal/config"
 	"qcode/internal/demo"
 	"qcode/internal/llm"
+	"qcode/internal/prompt"
+	"qcode/internal/skills"
 	"qcode/internal/tools"
 	"qcode/internal/trace"
 	"qcode/internal/tui"
@@ -129,7 +131,12 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if configPath != "" {
 		protectedPaths = append(protectedPaths, configPath)
 	}
-	registry, err := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths})
+	skillCatalog, err := skills.Discover(root)
+	if err != nil {
+		return err
+	}
+	skillSelection := skills.NewSelection(skillCatalog)
+	registry, err := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, Skills: skillSelection})
 	if err != nil {
 		return err
 	}
@@ -147,12 +154,13 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			return err
 		}
 	}
+	system := prompt.System
 	if promptText != "" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
 		logger := newTraceLogger(stderr, opts.jsonEvents)
 		responseWriter := newResponseWriter(stdout)
-		runner := agent.New(provider, opts.model, toolset, logger, responseWriter, opts.maxSteps)
+		runner := agent.NewWithSystem(provider, opts.model, toolset, logger, responseWriter, opts.maxSteps, system)
 		return runner.Run(ctx, promptText)
 	}
 	if stat, statErr := stdin.Stat(); statErr == nil && stat.Mode()&os.ModeCharDevice == 0 {
@@ -168,13 +176,14 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		defer stop()
 		logger := newTraceLogger(stderr, opts.jsonEvents)
 		responseWriter := newResponseWriter(stdout)
-		runner := agent.New(provider, opts.model, toolset, logger, responseWriter, opts.maxSteps)
+		runner := agent.NewWithSystem(provider, opts.model, toolset, logger, responseWriter, opts.maxSteps, system)
 		return runner.Run(ctx, promptText)
 	}
 
 	// Terminal output must go through term.Terminal so asynchronous-looking stream
 	// updates do not corrupt the editable input line.
 	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
+	ui.SetSkillCatalog(skillSummaries(skillCatalog), skillSelection.Set)
 	if sandboxNotice != "" {
 		ui.SetStartupNotice(sandboxNotice, sandboxChoice)
 	}
@@ -182,9 +191,18 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		registry.SetDirectoryApprover(ui.ApproveDirectory)
 	}
 	logger := trace.NewAnimated(ui.Writer(), opts.jsonEvents)
-	runner := agent.New(provider, opts.model, toolset, logger, ui.ResponseWriter(), opts.maxSteps)
+	runner := agent.NewWithSystem(provider, opts.model, toolset, logger, ui.ResponseWriter(), opts.maxSteps, system)
 	ui.SetRunner(runner)
 	return ui.Run(context.Background())
+}
+
+func skillSummaries(catalog *skills.Catalog) []prompt.SkillSummary {
+	available := catalog.Skills()
+	summaries := make([]prompt.SkillSummary, len(available))
+	for i, skill := range available {
+		summaries[i] = prompt.SkillSummary{Name: skill.Name, Description: skill.Description}
+	}
+	return summaries
 }
 
 func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {

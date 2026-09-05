@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/term"
+
+	"qcode/internal/prompt"
 )
 
 const (
@@ -81,6 +83,8 @@ type sessionRunner interface {
 	ResetSession()
 }
 
+type skillRunner interface{ SetSkills([]prompt.SkillSummary) }
+
 type readWriter struct {
 	io.Reader
 	io.Writer
@@ -108,6 +112,14 @@ type UI struct {
 	statusActive   bool
 	startupNotice  string
 	startupChoice  bool
+	skills         []prompt.SkillSummary
+	onSkills       func([]string)
+}
+
+// SetSkillCatalog configures the optional /skill selector.
+func (u *UI) SetSkillCatalog(skills []prompt.SkillSummary, onChange func([]string)) {
+	u.skills = append([]prompt.SkillSummary(nil), skills...)
+	u.onSkills = onChange
 }
 
 func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
@@ -233,6 +245,9 @@ func (u *UI) Run(ctx context.Context) error {
 			continue
 		case "/model":
 			u.chooseModel(ctx)
+			continue
+		case "/skill":
+			u.chooseSkills()
 			continue
 		case "/new":
 			u.startNewSession()
