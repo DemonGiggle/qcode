@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync/atomic"
 
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
@@ -17,14 +18,19 @@ import (
 const maxIdenticalToolCalls = 3
 
 type Agent struct {
-	provider llm.Provider
-	model    string
-	tools    Toolset
-	trace    *trace.Logger
-	out      io.Writer
-	maxSteps int
-	messages []llm.Message
-	system   string
+	provider        llm.Provider
+	model           string
+	tools           Toolset
+	trace           *trace.Logger
+	out             io.Writer
+	maxSteps        int
+	messages        []llm.Message
+	contextStatus   atomic.Pointer[contextStatus]
+	contextWindow   int
+	contextOverride int
+	contextUsage    *llm.Usage
+	contextMessages int
+	system          string
 }
 
 // Toolset is the complete tool boundary used by the agent loop. Production and
@@ -91,12 +97,19 @@ func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
 
 func (a *Agent) SetModel(model string) {
 	if model != "" {
+		if a.model != model {
+			a.contextWindow = 0
+			a.contextOverride = 0
+			a.contextUsage = nil
+		}
 		a.model = model
+		a.publishContext()
 	}
 }
 
 // SetSkills replaces the user-selected skills advertised to the model.
 func (a *Agent) SetSkills(skills []prompt.SkillSummary) {
+	defer a.invalidateContextUsage()
 	a.system = prompt.SystemWithSkills(skills)
 	if len(a.messages) > 0 && a.messages[0].Role == "system" {
 		a.messages[0].Content = a.system
@@ -106,6 +119,7 @@ func (a *Agent) SetSkills(skills []prompt.SkillSummary) {
 // ResetSession discards conversation history while retaining the agent's
 // provider, model, tools, and runtime settings.
 func (a *Agent) ResetSession() {
+	defer a.invalidateContextUsage()
 	a.messages = []llm.Message{{Role: "system", Content: a.system}}
 	if resetter, ok := a.tools.(interface{ ResetSession() }); ok {
 		resetter.ResetSession()
@@ -117,11 +131,17 @@ func (a *Agent) ToolNames() []string {
 	if registry, ok := a.tools.(*tools.Registry); ok {
 		return registry.ToolNames()
 	}
-	return nil
+	names := make([]string, 0)
+	for _, tool := range a.tools.Schemas() {
+		names = append(names, tool.Name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // ToggleTool enables or disables a tool by name.
 func (a *Agent) ToggleTool(name string, enabled bool) {
+	defer a.invalidateContextUsage()
 	if registry, ok := a.tools.(*tools.Registry); ok {
 		if enabled {
 			registry.EnableTool(name)
@@ -136,10 +156,16 @@ func (a *Agent) ToolEnabled(name string) bool {
 	if registry, ok := a.tools.(*tools.Registry); ok {
 		return registry.IsToolEnabled(name)
 	}
-	return true
+	for _, tool := range a.tools.EnabledSchemas() {
+		if tool.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Agent) Run(ctx context.Context, userText string) error {
+	defer a.publishContext()
 	task := a.trace.BeginTask()
 	defer task.End()
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userText})
@@ -206,6 +232,9 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			return err
 		}
 		a.messages = append(a.messages, response.Message)
+		a.contextUsage = response.Usage
+		a.contextMessages = len(a.messages)
+		a.RefreshContext(ctx)
 		if len(response.Message.ToolCalls) == 0 {
 			return nil
 		}

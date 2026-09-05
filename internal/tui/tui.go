@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,6 +78,11 @@ type unicodeRunner interface {
 type modelRunner interface {
 	ListModels(context.Context) ([]string, error)
 	SetModel(string)
+}
+
+type contextRunner interface {
+	ContextRemaining() (int, bool, bool)
+	RefreshContext(context.Context)
 }
 
 type sessionRunner interface {
@@ -189,6 +195,9 @@ func (u *UI) Run(ctx context.Context) error {
 	if !term.IsTerminal(int(u.in.Fd())) || !term.IsTerminal(int(u.out.Fd())) {
 		return fmt.Errorf("interactive mode requires a terminal; pass a prompt argument for one-shot mode")
 	}
+	if runner, ok := u.runner.(contextRunner); ok {
+		runner.RefreshContext(ctx)
+	}
 	state, err := term.MakeRaw(int(u.in.Fd()))
 	if err != nil {
 		return fmt.Errorf("enable terminal mode: %w", err)
@@ -254,9 +263,11 @@ func (u *UI) Run(ctx context.Context) error {
 			continue
 		case "/skill":
 			u.chooseSkills()
+			u.drawStatusBar()
 			continue
 		case "/tool":
 			u.chooseTools()
+			u.drawStatusBar()
 			continue
 		case "/new":
 			u.startNewSession()
@@ -280,6 +291,7 @@ func (u *UI) Run(ctx context.Context) error {
 		err = u.runner.Run(taskCtx, line)
 		u.input.setCancel(nil)
 		cancel()
+		u.drawStatusBar()
 		if errors.Is(err, context.Canceled) {
 			u.printSystemMessage(yellow + "Cancelled" + reset)
 		} else if err != nil {
@@ -373,6 +385,7 @@ func (u *UI) startNewSession() {
 		return
 	}
 	resetter.ResetSession()
+	u.drawStatusBar()
 	u.responseWriter.ResetDiffs()
 	u.printSystemMessage(green + "New session started; previous context cleared." + reset)
 }
@@ -420,6 +433,9 @@ func (u *UI) chooseModel(ctx context.Context) {
 		return
 	}
 	runner.SetModel(selected)
+	if tracker, ok := u.runner.(contextRunner); ok {
+		tracker.RefreshContext(ctx)
+	}
 	u.model = selected
 	u.drawStatusBar()
 	u.printSystemMessage(fmt.Sprintf("%sModel: %s%s", green, selected, reset))
@@ -504,8 +520,9 @@ func (u *UI) printHeader() {
 		}
 	}
 	fmt.Fprintf(u.display, "\r\n")
+	u.printToolSummary()
 	if !u.statusActive {
-		fmt.Fprintf(u.display, "%s\r\n", statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out)))
+		fmt.Fprintf(u.display, "%s\r\n", statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel()))
 	}
 }
 
@@ -543,7 +560,7 @@ func (u *UI) drawStatusBar() {
 	if !u.statusActive {
 		return
 	}
-	bar := statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out))
+	bar := statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel())
 	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", u.height, bar)
 }
 
@@ -557,13 +574,16 @@ func (u *UI) teardownStatusBar() {
 	fmt.Fprintf(u.out, "\x1b[r\x1b[%d;1H\x1b[J", u.height-1)
 }
 
-func statusBar(provider, model, root string, width int, unicodeEnabled, color bool) string {
+func statusBar(provider, model, root string, width int, unicodeEnabled, color bool, contextLabel ...string) string {
 	provider = sanitizeDiffLine(provider, "<ESC>")
 	model = sanitizeDiffLine(model, "<ESC>")
 	root = sanitizeDiffLine(root, "<ESC>")
 
 	if !color {
 		bar := fmt.Sprintf("[PROVIDER %s] [MODEL %s] [WORKSPACE %s]", provider, model, root)
+		if len(contextLabel) > 0 {
+			bar = "[CONTEXT " + contextLabel[0] + "] " + bar
+		}
 		return truncateDiffLine(bar, width, unicodeEnabled)
 	}
 
@@ -571,6 +591,9 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 		statusSegment("PROVIDER", provider, cyan),
 		statusSegment("MODEL", model, magenta),
 		statusSegment("WORKSPACE", root, blue),
+	}
+	if len(contextLabel) > 0 {
+		segments = append([]string{statusSegment("CONTEXT", contextLabel[0], green)}, segments...)
 	}
 	separator := dim + "  │  " + reset
 	if !unicodeEnabled {
@@ -719,4 +742,46 @@ func OutputWidth(out *os.File) int {
 		return 80
 	}
 	return width
+}
+
+func (u *UI) contextLabel() string {
+	if runner, ok := u.runner.(contextRunner); ok {
+		remaining, known, estimated := runner.ContextRemaining()
+		if known {
+			prefix := ""
+			if estimated {
+				prefix = "~"
+			}
+			return fmt.Sprintf("%s%d%% left", prefix, remaining)
+		}
+	}
+	return "unknown"
+}
+
+func (u *UI) printToolSummary() {
+	runner, ok := u.runner.(toolRunner)
+	if !ok {
+		return
+	}
+	var enabled, disabled []string
+	for _, name := range runner.ToolNames() {
+		safe := sanitizeDiffLine(name, "<ESC>")
+		if runner.ToolEnabled(name) {
+			enabled = append(enabled, safe)
+		} else {
+			disabled = append(disabled, safe)
+		}
+	}
+	sort.Strings(enabled)
+	sort.Strings(disabled)
+	join := func(names []string) string {
+		if len(names) == 0 {
+			return "none"
+		}
+		return strings.Join(names, ", ")
+	}
+	for _, line := range []string{"Tools enabled: " + join(enabled), "Tools disabled: " + join(disabled)} {
+		fmt.Fprintln(u.display, wrapANSI(line, u.width, "  "))
+	}
+	fmt.Fprintln(u.display)
 }

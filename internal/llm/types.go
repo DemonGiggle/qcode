@@ -45,6 +45,7 @@ type Request struct {
 
 type Response struct {
 	Message Message
+	Usage   *Usage
 }
 
 // ToolResult is the normalized output returned by a tool implementation.
@@ -126,4 +127,16 @@ func Names() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// Usage describes one completion, not cumulative session billing.
+type Usage struct {
+	InputTokens  int `json:"prompt_tokens"`
+	OutputTokens int `json:"completion_tokens"`
+}
+
+// ContextWindowProvider reports the active model's context capacity, or zero
+// when unknown. Discovery must not prevent a completion from succeeding.
+type ContextWindowProvider interface {
+	ContextWindow(context.Context, string) (int, error)
 }

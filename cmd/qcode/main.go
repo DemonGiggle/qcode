@@ -32,6 +32,7 @@ type options struct {
 	baseURL             string
 	apiKey              string
 	root                string
+	contextWindow       int
 	maxSteps            int
 	jsonEvents          bool
 	listProviders       bool
@@ -58,6 +59,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	flags.StringVar(&opts.baseURL, "base-url", os.Getenv("QCODE_BASE_URL"), "provider API base URL")
 	flags.StringVar(&opts.apiKey, "api-key", firstEnv("QCODE_API_KEY", "OPENAI_API_KEY"), "API key (prefer QCODE_API_KEY or OPENAI_API_KEY)")
 	flags.StringVar(&opts.root, "cwd", ".", "workspace root")
+	flags.IntVar(&opts.contextWindow, "context-window", 0, "model context capacity in tokens for status display (0: automatic)")
 	flags.IntVar(&opts.maxSteps, "max-steps", 32, "maximum model turns per request")
 	flags.BoolVar(&opts.jsonEvents, "json-events", false, "emit action events as JSON Lines")
 	flags.BoolVar(&opts.listProviders, "list-providers", false, "list built-in providers")
@@ -74,6 +76,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			return nil
 		}
 		return err
+	}
+	if opts.contextWindow < 0 {
+		return fmt.Errorf("context-window must be non-negative")
 	}
 	if opts.showVersion {
 		fmt.Fprintln(stdout, version)
@@ -192,6 +197,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	}
 	logger := trace.NewAnimated(ui.Writer(), opts.jsonEvents)
 	runner := agent.NewWithSystem(provider, opts.model, toolset, logger, ui.ResponseWriter(), opts.maxSteps, system)
+	runner.SetContextWindow(opts.contextWindow)
 	ui.SetRunner(runner)
 	return ui.Run(context.Background())
 }
@@ -215,6 +221,10 @@ func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
 	providerConfigApplies := cfg.Provider == "" || opts.provider == cfg.Provider
 	if providerConfigApplies && !setFlags["model"] && os.Getenv("QCODE_MODEL") == "" && cfg.Model != "" {
 		opts.model = cfg.Model
+	}
+	// A configured capacity belongs to the configured model and provider.
+	if providerConfigApplies && (cfg.Model == "" || cfg.Model == opts.model) && !setFlags["context-window"] && cfg.ContextWindow != nil {
+		opts.contextWindow = *cfg.ContextWindow
 	}
 	if providerConfigApplies && !setFlags["base-url"] && os.Getenv("QCODE_BASE_URL") == "" && cfg.BaseURL != "" {
 		opts.baseURL = cfg.BaseURL

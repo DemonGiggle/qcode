@@ -21,6 +21,7 @@ type Config struct {
 	BaseURL             string `toml:"base_url"`
 	APIKey              string `toml:"api_key"`
 	Model               string `toml:"model"`
+	ContextWindow       *int   `toml:"context_window"`
 	MaxSteps            *int   `toml:"max_steps"`
 	Sandbox             *bool  `toml:"sandbox"`
 	DangerSkipTLSVerify *bool  `toml:"danger_skip_tls_verify"`
@@ -91,6 +92,9 @@ func load(paths []string) (Config, string, error) {
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&cfg); err != nil {
 			return Config{}, path, fmt.Errorf("parse config %s: %w", path, err)
+		}
+		if cfg.ContextWindow != nil && *cfg.ContextWindow < 0 {
+			return Config{}, path, fmt.Errorf("parse config %s: context_window must be non-negative", path)
 		}
 		if cfg.MaxSteps != nil && *cfg.MaxSteps <= 0 {
 			return Config{}, path, fmt.Errorf("parse config %s: max_steps must be greater than zero", path)
