@@ -84,9 +84,11 @@ func renderSkillSelector(out interface{ Write([]byte) (int, error) }, skills []p
 	}
 }
 func clearSkillSelector(out interface{ Write([]byte) (int, error) }, rows int) {
-	fmt.Fprintf(out, "\x1b[%dA", rows)
 	for range rows {
-		fmt.Fprint(out, "\r\x1b[2K\x1b[1B")
+		// The selector leaves the cursor on the line after its final item.
+		// Move up and erase one row at a time, ending at the first row so the
+		// next render replaces the selector in place. Moving back down between
+		// rows can scroll the terminal when the selector reaches the bottom.
+		fmt.Fprint(out, "\x1b[1A\r\x1b[2K")
 	}
-	fmt.Fprintf(out, "\x1b[%dA\r", rows)
 }
