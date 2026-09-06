@@ -10,7 +10,11 @@ import (
 	"qcode/internal/session"
 )
 
-const tabSwitchHint = "Ctrl+PgUp/PgDn"
+const (
+	fullTabSwitchHint      = "Switch tabs: Ctrl+PgUp/PgDn · Alt+,/."
+	asciiFullTabSwitchHint = "Switch tabs: Ctrl+PgUp/PgDn | Alt+,/."
+	compactTabSwitchHint   = "Switch: Ctrl+Pg/Alt+,/."
+)
 
 func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 	if u.manager == nil {
@@ -472,7 +476,7 @@ func (u *UI) drawTabBarLocked() {
 func tabBar(summaries []session.Summary, active string, views map[string]*agentView, width int, unicodeEnabled, color bool) string {
 	bar := renderTabs(summaries, active, views, unicodeEnabled, color, false)
 	if width <= 0 || visibleWidth(bar) <= width {
-		return withTabSwitchHint(bar, width, color)
+		return withTabSwitchHint(bar, width, unicodeEnabled, color)
 	}
 	ordered := make([]session.Summary, 0, len(summaries))
 	for _, summary := range summaries {
@@ -494,7 +498,7 @@ func tabBar(summaries []session.Summary, active string, views map[string]*agentV
 	}
 	bar = renderTabs(ordered, active, views, unicodeEnabled, color, true)
 	if visibleWidth(bar) <= width {
-		return withTabSwitchHint(bar, width, color)
+		return withTabSwitchHint(bar, width, unicodeEnabled, color)
 	}
 	if active != "main" {
 		var essential []session.Summary
@@ -511,22 +515,31 @@ func tabBar(summaries []session.Summary, active string, views map[string]*agentV
 		}
 		bar = renderTabs(essential, active, views, unicodeEnabled, color, false)
 	}
-	return withTabSwitchHint(truncateDiffLine(bar, width, unicodeEnabled), width, color)
+	return withTabSwitchHint(truncateDiffLine(bar, width, unicodeEnabled), width, unicodeEnabled, color)
 }
 
-func withTabSwitchHint(bar string, width int, color bool) string {
+func withTabSwitchHint(bar string, width int, unicodeEnabled, color bool) string {
 	if width <= 0 {
 		return bar
 	}
-	gap := width - visibleWidth(bar) - len(tabSwitchHint)
-	if gap < 2 {
-		return bar
+	hints := []string{compactTabSwitchHint}
+	if unicodeEnabled {
+		hints = append([]string{fullTabSwitchHint}, hints...)
+	} else {
+		hints = append([]string{asciiFullTabSwitchHint}, hints...)
 	}
-	hint := tabSwitchHint
-	if color {
-		hint = dim + hint + reset
+	for _, plainHint := range hints {
+		gap := width - visibleWidth(bar) - visibleWidth(plainHint)
+		if gap < 2 {
+			continue
+		}
+		hint := plainHint
+		if color {
+			hint = dim + hint + reset
+		}
+		return bar + strings.Repeat(" ", gap) + hint
 	}
-	return bar + strings.Repeat(" ", gap) + hint
+	return bar
 }
 
 func renderTabs(summaries []session.Summary, active string, views map[string]*agentView, unicodeEnabled, color, compact bool) string {

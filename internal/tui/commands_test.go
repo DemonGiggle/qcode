@@ -169,8 +169,23 @@ func TestTabBarShowsActiveAgentAndStatuses(t *testing.T) {
 	if visibleWidth(got) > 80 {
 		t.Fatalf("tab bar width = %d", visibleWidth(got))
 	}
-	if !strings.HasSuffix(got, tabSwitchHint) {
+	if !strings.HasSuffix(got, asciiFullTabSwitchHint) {
 		t.Fatalf("tab bar hint = %q", got)
+	}
+}
+
+func TestTabBarUsesCompactSwitchHintWhenNeeded(t *testing.T) {
+	summaries := []session.Summary{
+		{ID: "main", Name: "main", Status: session.StatusIdle},
+		{ID: "agent-1", Name: "review", Status: session.StatusRunning},
+		{ID: "agent-2", Name: "tests", Status: session.StatusCompleted},
+	}
+	got := tabBar(summaries, "agent-1", nil, 60, true, false)
+	if !strings.HasSuffix(got, compactTabSwitchHint) {
+		t.Fatalf("compact tab hint = %q", got)
+	}
+	if visibleWidth(got) != 60 {
+		t.Fatalf("compact tab bar width = %d", visibleWidth(got))
 	}
 }
 
@@ -184,6 +199,9 @@ func TestTabBarKeepsActiveAgentOnNarrowScreen(t *testing.T) {
 	got := tabBar(summaries, "agent-2", nil, 24, false, false)
 	if !strings.Contains(got, "m") || !strings.Contains(got, "active") || !strings.Contains(got, ">") || visibleWidth(got) > 24 {
 		t.Fatalf("narrow tab bar = %q (width %d)", got, visibleWidth(got))
+	}
+	if strings.Contains(got, "Switch") {
+		t.Fatalf("narrow tab bar unexpectedly contains hint = %q", got)
 	}
 }
 
