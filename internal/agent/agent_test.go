@@ -203,15 +203,18 @@ func (p *skillProvider) Complete(_ context.Context, _ llm.Request, _ llm.StreamC
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
 }
 
-func TestAgentNotifiesWhenSkillIsLoaded(t *testing.T) {
+func TestAgentEmitsActivityWhenSkillIsLoaded(t *testing.T) {
 	provider := &skillProvider{}
 	var output, events bytes.Buffer
 	runner := New(provider, "test", &skillToolset{}, trace.New(&events, false), &output, 2)
 	if err := runner.Run(context.Background(), "review this"); err != nil {
 		t.Fatal(err)
 	}
-	if got := output.String(); got != "Using skill: review\n" {
-		t.Fatalf("output = %q", got)
+	if got := output.String(); got != "" {
+		t.Fatalf("assistant output = %q", got)
+	}
+	if !strings.Contains(events.String(), "Loaded skill review") {
+		t.Fatalf("activity = %q", events.String())
 	}
 }
 
@@ -290,6 +293,11 @@ func TestAgentAddsLoadedImageAsUserInput(t *testing.T) {
 	}
 	if messages[5].Images[0].MediaType != "image/png" {
 		t.Fatalf("image = %#v", messages[5].Images[0])
+	}
+	for _, message := range messages {
+		if strings.Contains(message.Content, "Viewed screen.png") || strings.Contains(message.Content, "Listed .") {
+			t.Fatalf("activity leaked into model context: %#v", messages)
+		}
 	}
 }
 

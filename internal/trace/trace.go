@@ -20,6 +20,7 @@ type Logger struct {
 	json          bool
 	animated      bool
 	verbose       bool
+	color         bool
 	unicode       bool
 	taskIndicator bool
 	mu            sync.Mutex
@@ -52,6 +53,41 @@ type Task struct {
 	ended   bool
 }
 
+// ActivityCategory controls the accent used for a concise activity event.
+// Categories intentionally describe the user-visible operation instead of the
+// underlying trace span, whose fields may contain more detail.
+type ActivityCategory string
+
+const (
+	ActivityRead  ActivityCategory = "read"
+	ActivityWrite ActivityCategory = "write"
+	ActivityAgent ActivityCategory = "agent"
+	ActivityOther ActivityCategory = "other"
+)
+
+// Activity is safe, user-facing context about work being performed. It must
+// not contain raw tool arguments, file contents, or credentials.
+type Activity struct {
+	Action    string
+	Start     string
+	Completed string
+	Category  ActivityCategory
+}
+
+// ActivitySpan tracks one concise activity event. Unlike Span, it is emitted
+// regardless of whether detailed verbose tracing is enabled.
+type ActivitySpan struct {
+	logger   *Logger
+	activity Activity
+	start    time.Time
+	stop     chan struct{}
+	done     chan struct{}
+	once     sync.Once
+	mu       sync.Mutex
+	ended    bool
+	frames   []string
+}
+
 func New(out io.Writer, jsonOutput bool) *Logger {
 	return &Logger{out: out, json: jsonOutput, verbose: true, unicode: true, taskIndicator: true}
 }
@@ -71,6 +107,14 @@ func (l *Logger) SetUnicode(enabled bool) {
 func (l *Logger) SetVerbose(verbose bool) {
 	l.mu.Lock()
 	l.verbose = verbose
+	l.mu.Unlock()
+}
+
+// SetColor enables ANSI styling for human-readable activity events. JSON
+// output never contains ANSI sequences regardless of this setting.
+func (l *Logger) SetColor(enabled bool) {
+	l.mu.Lock()
+	l.color = enabled
 	l.mu.Unlock()
 }
 
@@ -115,6 +159,33 @@ func (l *Logger) Start(kind, name string, fields map[string]any) *Span {
 		s.stop = make(chan struct{})
 		s.done = make(chan struct{})
 		l.writeProgress(s, s.frames[0])
+		go s.animate()
+	}
+	return s
+}
+
+// StartActivity emits a concise, safe description of work. It is deliberately
+// separate from Start so callers cannot accidentally turn raw trace fields
+// into terminal output.
+func (l *Logger) StartActivity(activity Activity) *ActivitySpan {
+	now := time.Now()
+	l.mu.Lock()
+	frames := l.spinnerFrames()
+	// Verbose spans already own the in-progress row. Keep activity events
+	// persistent in that mode without competing with their detailed spinner.
+	animated := l.animated && !l.json && !l.verbose
+	l.mu.Unlock()
+	s := &ActivitySpan{logger: l, activity: activity, start: now, frames: frames}
+	if l.json {
+		l.writeJSON("start", "activity", activity.Action, now, 0, map[string]any{
+			"action": activity.Action, "summary": activity.Start, "status": "running",
+		})
+		return s
+	}
+	if animated {
+		s.stop = make(chan struct{})
+		s.done = make(chan struct{})
+		l.writeActivityProgress(s, s.frames[0])
 		go s.animate()
 	}
 	return s
@@ -192,11 +263,75 @@ func (s *Span) stopAnimation() {
 	<-s.done
 }
 
+// End finalizes an activity as a single persistent terminal-history line.
+func (s *ActivitySpan) End(err error) {
+	if s == nil {
+		return
+	}
+	s.stopAnimation()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ended {
+		return
+	}
+	s.ended = true
+	duration := time.Since(s.start)
+	status := "success"
+	fields := map[string]any{
+		"action": s.activity.Action, "summary": s.activity.Completed, "status": status,
+	}
+	if err != nil {
+		status = "error"
+		fields["status"] = status
+	}
+	if s.logger.json {
+		s.logger.writeJSON("end", "activity", s.activity.Action, time.Now(), duration, fields)
+		return
+	}
+	s.logger.writeActivityCompleted(s, duration, err, s.stop != nil)
+}
+
+func (s *ActivitySpan) animate() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	defer close(s.done)
+	frame := 1
+	for {
+		select {
+		case <-ticker.C:
+			s.logger.writeActivityProgress(s, s.frames[frame%len(s.frames)])
+			frame++
+		case <-s.stop:
+			return
+		}
+	}
+}
+
+func (s *ActivitySpan) stopAnimation() {
+	if s.stop == nil {
+		return
+	}
+	s.once.Do(func() { close(s.stop) })
+	<-s.done
+}
+
 func (l *Logger) writeProgress(s *Span, frame string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	fmt.Fprintf(l.out, "\r[%s] start %s %s (%s)", formatTimestamp(s.start), s.kind, s.name, frame)
 	writeTextFields(l.out, s.fields)
+}
+
+func (l *Logger) writeActivityProgress(s *ActivitySpan, frame string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	marker := "->"
+	if l.unicode {
+		marker = "↗"
+	}
+	message := l.style(l.activityColor(s.activity.Category), marker+" "+s.activity.Start)
+	spinner := l.style(traceDim, " ("+frame+")")
+	fmt.Fprintf(l.out, "\r%s%s", message, spinner)
 }
 
 func (t *Task) Resume() {
@@ -316,6 +451,32 @@ func (l *Logger) writeCompleted(s *Span, duration time.Duration, fields map[stri
 	fmt.Fprintln(l.out)
 }
 
+func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration, err error, clearLine bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if clearLine {
+		fmt.Fprint(l.out, "\r\x1b[2K")
+	}
+	marker := "OK"
+	if l.unicode {
+		marker = "✓"
+	}
+	color := traceGreen
+	message := s.activity.Completed
+	if err != nil {
+		marker = "!"
+		if l.unicode {
+			marker = "✗"
+		}
+		color = traceRed
+		message = s.activity.Start
+	}
+	fmt.Fprint(l.out, l.style(color, marker)+" ")
+	fmt.Fprint(l.out, l.style(l.activityColor(s.activity.Category), message))
+	fmt.Fprint(l.out, l.style(traceDim, " ("+duration.Round(time.Millisecond).String()+")"))
+	fmt.Fprintln(l.out)
+}
+
 func (l *Logger) writeJSON(event, kind, name string, at time.Time, duration time.Duration, fields map[string]any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -328,6 +489,36 @@ func (l *Logger) writeJSON(event, kind, name string, at time.Time, duration time
 	}
 	data, _ := json.Marshal(entry)
 	fmt.Fprintln(l.out, string(data))
+}
+
+const (
+	traceReset   = "\x1b[0m"
+	traceDim     = "\x1b[2m"
+	traceCyan    = "\x1b[36m"
+	traceYellow  = "\x1b[33m"
+	traceMagenta = "\x1b[35m"
+	traceGreen   = "\x1b[32m"
+	traceRed     = "\x1b[31m"
+)
+
+func (l *Logger) activityColor(category ActivityCategory) string {
+	switch category {
+	case ActivityRead:
+		return traceCyan
+	case ActivityWrite:
+		return traceYellow
+	case ActivityAgent:
+		return traceMagenta
+	default:
+		return traceCyan
+	}
+}
+
+func (l *Logger) style(color, value string) string {
+	if !l.color || l.json {
+		return value
+	}
+	return color + value + traceReset
 }
 
 func writeTextFields(out io.Writer, fields map[string]any) {

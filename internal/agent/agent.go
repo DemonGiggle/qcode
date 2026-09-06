@@ -303,15 +303,12 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			if call.ID == "" {
 				call.ID = fmt.Sprintf("call_%d_%d", step+1, index+1)
 			}
-			if skillName, ok := referencedSkill(call); ok {
-				task.Suspend()
-				fmt.Fprintf(a.out, "Using skill: %s\n", skillName)
-				task.Resume()
-			}
 			arguments := compactJSON(call.Arguments)
+			activity := a.trace.StartActivity(toolActivity(call))
 			toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": arguments})
 			execution, toolErr := a.tools.ExecuteDetailed(ctx, call)
 			toolSpan.End(toolErr)
+			activity.End(toolErr)
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -345,22 +342,6 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		}
 	}
 	return fmt.Errorf("agent stopped after %d model steps", a.maxSteps)
-}
-
-// referencedSkill extracts a display-safe name from a valid skill-tool call.
-// Tool execution remains responsible for validating the name against the
-// discovered catalog.
-func referencedSkill(call llm.ToolCall) (string, bool) {
-	if call.Name != "skill" {
-		return "", false
-	}
-	var arguments struct {
-		Name string `json:"name"`
-	}
-	if json.Unmarshal(call.Arguments, &arguments) != nil || arguments.Name == "" {
-		return "", false
-	}
-	return arguments.Name, true
 }
 
 func toolMayChangeWorkspace(name string) bool {

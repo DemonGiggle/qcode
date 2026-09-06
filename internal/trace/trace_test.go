@@ -134,6 +134,66 @@ func TestASCIIWaitingSpinner(t *testing.T) {
 	}
 }
 
+func TestActivityUsesCategoryColorsAndKeepsCompletedLine(t *testing.T) {
+	var output bytes.Buffer
+	logger := NewAnimated(&output, false)
+	logger.SetVerbose(false)
+	logger.SetColor(true)
+	activity := logger.StartActivity(Activity{Action: "read", Start: "Reading x.go", Completed: "Read x.go", Category: ActivityRead})
+	activity.End(nil)
+	got := output.String()
+	for _, expected := range []string{traceCyan, traceGreen, "✓", "Read x.go", "\n"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("activity missing %q: %q", expected, got)
+		}
+	}
+}
+
+func TestActivityJSONIsSafeAndStructured(t *testing.T) {
+	var output bytes.Buffer
+	logger := New(&output, true)
+	logger.SetColor(true)
+	activity := logger.StartActivity(Activity{Action: "read", Start: "Reading x.go", Completed: "Read x.go", Category: ActivityRead})
+	activity.End(assertionError("denied"))
+	lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n"))
+	if len(lines) != 2 {
+		t.Fatalf("lines = %d", len(lines))
+	}
+	for index, line := range lines {
+		var event map[string]any
+		if err := json.Unmarshal(line, &event); err != nil {
+			t.Fatal(err)
+		}
+		if event["kind"] != "activity" || event["action"] != "read" || strings.Contains(string(line), "\x1b[") {
+			t.Fatalf("event %d = %#v", index, event)
+		}
+	}
+	var completed map[string]any
+	_ = json.Unmarshal(lines[1], &completed)
+	if completed["status"] != "error" || completed["summary"] != "Read x.go" {
+		t.Fatalf("completed activity = %#v", completed)
+	}
+	if strings.Contains(output.String(), "denied") {
+		t.Fatalf("activity JSON leaked detailed error: %q", output.String())
+	}
+}
+
+func TestActivityHonorsDisabledColorAndASCII(t *testing.T) {
+	var output bytes.Buffer
+	logger := New(&output, false)
+	logger.SetUnicode(false)
+	activity := logger.StartActivity(Activity{Action: "read", Start: "Reading x.go", Completed: "Read x.go", Category: ActivityRead})
+	activity.End(nil)
+	got := output.String()
+	if strings.Contains(got, "\x1b[") || !strings.Contains(got, "OK Read x.go") || strings.Contains(got, "✓") {
+		t.Fatalf("plain ASCII activity = %q", got)
+	}
+}
+
+type assertionError string
+
+func (e assertionError) Error() string { return string(e) }
+
 func TestTaskIndicatorCanBeDisabledForManagedUI(t *testing.T) {
 	var output bytes.Buffer
 	logger := NewAnimated(&output, false)
