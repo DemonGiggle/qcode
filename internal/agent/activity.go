@@ -11,7 +11,12 @@ import (
 	"qcode/internal/trace"
 )
 
-const maxActivityTargetRunes = 96
+const (
+	maxActivityTargetRunes = 96
+	// Keep the entire shell activity comfortably within a typical terminal row,
+	// including its label and duration.
+	maxShellCommandRunes = 48
+)
 
 // toolActivity turns an allowlisted subset of a tool call into safe terminal
 // telemetry. It intentionally never returns arbitrary arguments or tool
@@ -55,7 +60,11 @@ func toolActivity(call llm.ToolCall) trace.Activity {
 	case "web_fetch":
 		return activity("web_fetch", "Fetching "+target(address, "web page"), "Fetched "+target(address, "web page"), trace.ActivityRead)
 	case "shell":
-		return activity("shell", "Running shell command", "Ran shell command", trace.ActivityWrite)
+		command := shellActivityCommand(activityArgument(call.Arguments, "command"))
+		if command == "" {
+			return activity("shell", "Running shell command", "Ran shell command", trace.ActivityWrite)
+		}
+		return activity("shell", "Running shell command: "+command, "Ran shell command: "+command, trace.ActivityWrite)
 	case "view_image":
 		return activity("view_image", "Viewing "+target(path, "image"), "Viewed "+target(path, "image"), trace.ActivityRead)
 	case "skill":
@@ -98,6 +107,17 @@ func activityURL(value string) string {
 }
 
 func activityTarget(value string) string {
+	return truncateActivityTarget(value, maxActivityTargetRunes)
+}
+
+// shellActivityCommand gives the command enough room to be recognizable while
+// keeping the persistent activity event on one terminal row. It uses the same
+// control-character sanitization as other activity targets.
+func shellActivityCommand(command string) string {
+	return truncateActivityTarget(command, maxShellCommandRunes)
+}
+
+func truncateActivityTarget(value string, maxRunes int) string {
 	value = strings.TrimSpace(value)
 	var out strings.Builder
 	count := 0
@@ -108,7 +128,7 @@ func activityTarget(value string) string {
 			out.WriteRune(character)
 		}
 		count++
-		if count == maxActivityTargetRunes {
+		if count == maxRunes {
 			if utf8.RuneCountInString(value) > count {
 				out.WriteRune('…')
 			}

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -26,7 +27,7 @@ func TestToolActivityUsesAllowlistedSummaries(t *testing.T) {
 		{"web search", activityCall("web_search", `{"query":"Go context compaction"}`), `Searching web for "Go context compaction"`, `Searched web for "Go context compaction"`, trace.ActivityRead},
 		{"fetch", activityCall("web_fetch", `{"url":"https://example.test/path?token=secret#fragment"}`), "Fetching example.test", "Fetched example.test", trace.ActivityRead},
 		{"delegate", activityCall("delegate_task", `{"agent_id":"agent-2","prompt":"secret task"}`), "Consulting agent-2", "Agent agent-2 accepted the task", trace.ActivityAgent},
-		{"shell", activityCall("shell", `{"command":"echo secret"}`), "Running shell command", "Ran shell command", trace.ActivityWrite},
+		{"shell", activityCall("shell", `{"command":"echo secret"}`), "Running shell command: echo secret", "Ran shell command: echo secret", trace.ActivityWrite},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -47,5 +48,19 @@ func TestToolActivitySanitizesAndBoundsTargets(t *testing.T) {
 	got = toolActivity(activityCall("read", `{"path":"`+long+`"}`))
 	if !strings.HasSuffix(got.Start, "…") || len([]rune(got.Start)) > len([]rune("Reading "))+maxActivityTargetRunes+1 {
 		t.Fatalf("bounded activity = %q", got.Start)
+	}
+}
+
+func TestToolActivityShellCommandIsSingleLineAndBounded(t *testing.T) {
+	command := "printf 'first\nsecond' " + strings.Repeat("x", maxShellCommandRunes)
+	got := toolActivity(activityCall("shell", `{"command":`+strconv.Quote(command)+`}`))
+	if strings.ContainsAny(got.Start, "\r\n") || !strings.Contains(got.Start, "first?second") {
+		t.Fatalf("shell activity = %q", got.Start)
+	}
+	if !strings.HasSuffix(got.Start, "…") {
+		t.Fatalf("shell activity was not truncated: %q", got.Start)
+	}
+	if len([]rune(got.Start)) > len([]rune("Running shell command: "))+maxShellCommandRunes+1 {
+		t.Fatalf("shell activity is too long: %q", got.Start)
 	}
 }
