@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/term"
+	term "qcode/internal/lineedit"
 
 	"qcode/internal/session"
 )

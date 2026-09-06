@@ -52,7 +52,7 @@ func (u *UI) learn(ctx context.Context, arguments string) {
 		defer u.input.setCancel(cancel)
 		u.printSystemMessage(formatLearningReview(review, u.width, ColorEnabled(u.out)))
 		u.terminal.SetPrompt(yellow + "Apply these global learning changes? [y/N] " + reset)
-		answer, err := u.terminal.ReadLine()
+		answer, err := u.readLine()
 		u.terminal.SetPrompt(inputPrompt)
 		if err != nil {
 			return false, err

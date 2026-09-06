@@ -15,6 +15,8 @@ import (
 
 	"golang.org/x/term"
 
+	"qcode/internal/lineedit"
+
 	"qcode/internal/prompt"
 	"qcode/internal/session"
 )
@@ -127,7 +129,7 @@ type agentController interface {
 }
 
 type UI struct {
-	terminal          *term.Terminal
+	terminal          *lineedit.Terminal
 	display           historyDisplay
 	responseWriter    *MarkdownWriter
 	commandMenu       slashCommandMenu
@@ -173,7 +175,7 @@ func (u *UI) SetSkillCatalog(skills []prompt.SkillSummary, onChange func([]strin
 func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	input := newInterruptReader(in)
 	rw := readWriter{Reader: input, Writer: out}
-	t := term.NewTerminal(rw, inputPrompt)
+	t := lineedit.NewTerminal(rw, inputPrompt)
 	width, height := terminalSize(out)
 	unicodeEnabled := UnicodeEnabled()
 	t.SetSize(width, height)
@@ -211,6 +213,10 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 func (u *UI) Writer() io.Writer { return u.display }
 
 func (u *UI) ResponseWriter() io.Writer { return u.responseWriter }
+
+func (u *UI) readLine() (string, error) {
+	return u.terminal.ReadLine()
+}
 
 // AddAgentView creates an isolated output/history buffer for an agent.
 func (u *UI) AddAgentView(id, provider, model string) (io.Writer, io.Writer) {
@@ -341,7 +347,7 @@ func (u *UI) Run(ctx context.Context) error {
 			}
 			continue
 		}
-		line, err := u.terminal.ReadLine()
+		line, err := u.readLine()
 		u.commandMenu.dismiss(u.out)
 		if err != nil {
 			if err == io.EOF {
@@ -444,7 +450,7 @@ func (u *UI) readChoice(prompt string) (bool, error) {
 	u.terminal.SetPrompt(yellow + prompt + reset)
 	defer u.terminal.SetPrompt(inputPrompt)
 	for {
-		line, err := u.terminal.ReadLine()
+		line, err := u.readLine()
 		if err != nil {
 			return false, err
 		}
@@ -467,7 +473,7 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 	}
 	u.printSystemMessage(yellow + "Additional directory access requested: " + sanitizeDiffLine(requested, "<ESC>") + reset)
 	u.terminal.SetPrompt(yellow + "Directory to grant (Enter for " + sanitizeDiffLine(proposed, "<ESC>") + "): " + reset)
-	line, err := u.terminal.ReadLine()
+	line, err := u.readLine()
 	u.terminal.SetPrompt(inputPrompt)
 	if err != nil {
 		return "", false, err
@@ -485,7 +491,7 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 		u.printSystemMessage(yellow + bold + "Warning: this grant exposes your home directory or an ancestor containing it." + reset)
 	}
 	u.terminal.SetPrompt(yellow + "Grant read/write access to " + sanitizeDiffLine(selected, "<ESC>") + " for this session? [y/N] " + reset)
-	answer, err := u.terminal.ReadLine()
+	answer, err := u.readLine()
 	u.terminal.SetPrompt(inputPrompt)
 	if err != nil {
 		return "", false, err
@@ -493,7 +499,7 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 	approved := strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes")
 	if approved && sensitive {
 		u.terminal.SetPrompt(yellow + bold + "Confirm broad home access by typing YES: " + reset)
-		confirmation, confirmErr := u.terminal.ReadLine()
+		confirmation, confirmErr := u.readLine()
 		u.terminal.SetPrompt(inputPrompt)
 		if confirmErr != nil {
 			return "", false, confirmErr
