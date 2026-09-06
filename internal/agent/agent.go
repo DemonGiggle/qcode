@@ -90,6 +90,10 @@ func (a *Agent) SetVerbose(verbose bool) { a.trace.SetVerbose(verbose) }
 
 func (a *Agent) SetUnicode(enabled bool) { a.trace.SetUnicode(enabled) }
 
+// SetTaskIndicator controls the trace-level Waiting animation. Terminal tab
+// UIs can render the shared task state themselves instead.
+func (a *Agent) SetTaskIndicator(enabled bool) { a.trace.SetTaskIndicator(enabled) }
+
 // SetRequestContext installs an ephemeral context source. Its result is added
 // to requests without becoming part of the stored conversation.
 func (a *Agent) SetRequestContext(source func() string) {

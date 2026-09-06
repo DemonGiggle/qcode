@@ -242,6 +242,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		wrappedTools := manager.WrapToolset(id, currentToolset, isMain)
 		logger := trace.NewAnimated(display, opts.jsonEvents)
 		runner := agent.NewWithSystem(currentProvider, model, wrappedTools, logger, response, opts.maxSteps, system)
+		runner.SetTaskIndicator(false)
 		runner.SetLearning(learningStore, opts.learningBudget)
 		if model == opts.model {
 			runner.SetContextWindow(opts.contextWindow)

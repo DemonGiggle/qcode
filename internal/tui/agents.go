@@ -215,6 +215,7 @@ func (u *UI) watchAgentEvents(events <-chan session.Event) {
 }
 
 func (u *UI) handleAgentEvent(event session.Event) {
+	u.signalUIEvent()
 	u.screenMu.Lock()
 	view := u.views[event.Agent.ID]
 	active := u.activeAgent == event.Agent.ID
@@ -393,7 +394,10 @@ func (u *UI) requestTabSwitch(direction int) {
 	u.tabMu.Lock()
 	u.pendingTab = direction
 	u.tabMu.Unlock()
-	u.input.interruptLine()
+	u.signalUIEvent()
+	if !u.activeAgentRunning() {
+		u.input.interruptLine()
+	}
 }
 
 func (u *UI) handlePendingTabSwitch() {
@@ -430,6 +434,7 @@ func (u *UI) repaintActive() {
 	page, _ := historyPage(lines, pageHeight, offset, 0)
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
+	u.taskIndicatorText = ""
 	var output strings.Builder
 	output.WriteString("\x1b[2;1H\x1b[J")
 	if len(page) > 0 {
@@ -579,6 +584,7 @@ func (u *UI) runActiveTask(ctx context.Context, line string) error {
 		return err
 	}
 	u.updateActiveCancellation()
+	u.drawTaskIndicator()
 	return nil
 }
 

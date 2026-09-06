@@ -133,3 +133,15 @@ func TestASCIIWaitingSpinner(t *testing.T) {
 		t.Fatalf("ASCII task indicator = %q", got)
 	}
 }
+
+func TestTaskIndicatorCanBeDisabledForManagedUI(t *testing.T) {
+	var output bytes.Buffer
+	logger := NewAnimated(&output, false)
+	logger.SetVerbose(false)
+	logger.SetTaskIndicator(false)
+	task := logger.BeginTask()
+	task.End()
+	if got := output.String(); got != "" {
+		t.Fatalf("disabled task indicator output = %q", got)
+	}
+}

@@ -127,39 +127,41 @@ type agentController interface {
 }
 
 type UI struct {
-	terminal        *term.Terminal
-	display         historyDisplay
-	responseWriter  *MarkdownWriter
-	commandMenu     slashCommandMenu
-	input           *interruptReader
-	in              *os.File
-	out             *os.File
-	runner          Runner
-	provider        string
-	model           string
-	root            string
-	verbose         bool
-	width           int
-	height          int
-	unicode         bool
-	pageMu          sync.Mutex
-	pageOffset      int
-	pageActive      bool
-	statusActive    bool
-	startupNotice   string
-	startupChoice   bool
-	skills          []prompt.SkillSummary
-	onSkills        func([]string)
-	manager         agentController
-	activeAgent     string
-	views           map[string]*agentView
-	screenMu        sync.Mutex
-	drafts          map[string]string
-	approvalMu      sync.Mutex
-	approvals       map[string][]*approvalRequest
-	tabMu           sync.Mutex
-	pendingTab      int
-	agentEventsDone chan struct{}
+	terminal          *term.Terminal
+	display           historyDisplay
+	responseWriter    *MarkdownWriter
+	commandMenu       slashCommandMenu
+	input             *interruptReader
+	in                *os.File
+	out               *os.File
+	runner            Runner
+	provider          string
+	model             string
+	root              string
+	verbose           bool
+	width             int
+	height            int
+	unicode           bool
+	pageMu            sync.Mutex
+	pageOffset        int
+	pageActive        bool
+	statusActive      bool
+	startupNotice     string
+	startupChoice     bool
+	skills            []prompt.SkillSummary
+	onSkills          func([]string)
+	manager           agentController
+	activeAgent       string
+	views             map[string]*agentView
+	screenMu          sync.Mutex
+	drafts            map[string]string
+	approvalMu        sync.Mutex
+	approvals         map[string][]*approvalRequest
+	tabMu             sync.Mutex
+	pendingTab        int
+	agentEventsDone   chan struct{}
+	uiEvents          chan struct{}
+	taskIndicatorText string
 }
 
 // SetSkillCatalog configures the optional /skill selector.
@@ -197,6 +199,7 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 		views:          make(map[string]*agentView),
 		drafts:         make(map[string]string),
 		approvals:      make(map[string][]*approvalRequest),
+		uiEvents:       make(chan struct{}, 1),
 	}
 	t.AutoCompleteCallback = u.completeSlashCommand
 	input.setPageHandler(u.showPage)
@@ -310,6 +313,8 @@ func (u *UI) Run(ctx context.Context) error {
 	u.setupStatusBar()
 	stopResize := u.watchResize()
 	defer stopResize()
+	stopTaskIndicator := u.watchTaskIndicator()
+	defer stopTaskIndicator()
 
 	u.printHeader()
 	if u.startupNotice != "" {
@@ -330,6 +335,12 @@ func (u *UI) Run(ctx context.Context) error {
 	for {
 		u.handlePendingTabSwitch()
 		u.handlePendingApproval(ctx)
+		if u.activeAgentRunning() {
+			if err := u.waitForAgentEvent(ctx); err != nil {
+				return err
+			}
+			continue
+		}
 		line, err := u.terminal.ReadLine()
 		u.commandMenu.dismiss(u.out)
 		if err != nil {
