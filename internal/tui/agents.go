@@ -10,6 +10,8 @@ import (
 	"qcode/internal/session"
 )
 
+const tabSwitchHint = "Ctrl+PgUp/PgDn"
+
 func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 	if u.manager == nil {
 		u.printSystemMessage(yellow + "Agent tabs are unavailable." + reset)
@@ -470,7 +472,7 @@ func (u *UI) drawTabBarLocked() {
 func tabBar(summaries []session.Summary, active string, views map[string]*agentView, width int, unicodeEnabled, color bool) string {
 	bar := renderTabs(summaries, active, views, unicodeEnabled, color, false)
 	if width <= 0 || visibleWidth(bar) <= width {
-		return bar
+		return withTabSwitchHint(bar, width, color)
 	}
 	ordered := make([]session.Summary, 0, len(summaries))
 	for _, summary := range summaries {
@@ -492,7 +494,7 @@ func tabBar(summaries []session.Summary, active string, views map[string]*agentV
 	}
 	bar = renderTabs(ordered, active, views, unicodeEnabled, color, true)
 	if visibleWidth(bar) <= width {
-		return bar
+		return withTabSwitchHint(bar, width, color)
 	}
 	if active != "main" {
 		var essential []session.Summary
@@ -509,7 +511,22 @@ func tabBar(summaries []session.Summary, active string, views map[string]*agentV
 		}
 		bar = renderTabs(essential, active, views, unicodeEnabled, color, false)
 	}
-	return truncateDiffLine(bar, width, unicodeEnabled)
+	return withTabSwitchHint(truncateDiffLine(bar, width, unicodeEnabled), width, color)
+}
+
+func withTabSwitchHint(bar string, width int, color bool) string {
+	if width <= 0 {
+		return bar
+	}
+	gap := width - visibleWidth(bar) - len(tabSwitchHint)
+	if gap < 2 {
+		return bar
+	}
+	hint := tabSwitchHint
+	if color {
+		hint = dim + hint + reset
+	}
+	return bar + strings.Repeat(" ", gap) + hint
 }
 
 func renderTabs(summaries []session.Summary, active string, views map[string]*agentView, unicodeEnabled, color, compact bool) string {

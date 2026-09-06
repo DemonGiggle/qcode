@@ -169,6 +169,9 @@ func TestTabBarShowsActiveAgentAndStatuses(t *testing.T) {
 	if visibleWidth(got) > 80 {
 		t.Fatalf("tab bar width = %d", visibleWidth(got))
 	}
+	if !strings.HasSuffix(got, tabSwitchHint) {
+		t.Fatalf("tab bar hint = %q", got)
+	}
 }
 
 func TestTabBarKeepsActiveAgentOnNarrowScreen(t *testing.T) {
