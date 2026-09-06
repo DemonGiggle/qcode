@@ -228,6 +228,10 @@ func (u *UI) handleAgentEvent(event session.Event) {
 	}
 	if active {
 		u.updateActiveCancellation()
+		// Agent.Run publishes its latest context usage before the manager emits
+		// the terminal event. Refresh the footer here just as the synchronous
+		// single-agent path did after each run.
+		u.drawStatusBar()
 	}
 	u.drawTabBar()
 	if event.Agent.Status != session.StatusRunning && event.Agent.Status != session.StatusWaitingForApproval {
