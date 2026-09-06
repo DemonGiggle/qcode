@@ -9,6 +9,7 @@ import (
 	"sort"
 	"sync/atomic"
 
+	"qcode/internal/learning"
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
 	"qcode/internal/tools"
@@ -18,19 +19,23 @@ import (
 const maxIdenticalToolCalls = 3
 
 type Agent struct {
-	provider        llm.Provider
-	model           string
-	tools           Toolset
-	trace           *trace.Logger
-	out             io.Writer
-	maxSteps        int
-	messages        []llm.Message
-	contextStatus   atomic.Pointer[contextStatus]
-	contextWindow   int
-	contextOverride int
-	contextUsage    *llm.Usage
-	contextMessages int
-	system          string
+	learningStore     learning.Store
+	learningBudget    int
+	learningContext   string
+	learningSessionID string
+	provider          llm.Provider
+	model             string
+	tools             Toolset
+	trace             *trace.Logger
+	out               io.Writer
+	maxSteps          int
+	messages          []llm.Message
+	contextStatus     atomic.Pointer[contextStatus]
+	contextWindow     int
+	contextOverride   int
+	contextUsage      *llm.Usage
+	contextMessages   int
+	system            string
 }
 
 // Toolset is the complete tool boundary used by the agent loop. Production and
@@ -119,6 +124,8 @@ func (a *Agent) SetSkills(skills []prompt.SkillSummary) {
 // ResetSession discards conversation history while retaining the agent's
 // provider, model, tools, and runtime settings.
 func (a *Agent) ResetSession() {
+	a.learningContext = ""
+	a.learningSessionID = ""
 	defer a.invalidateContextUsage()
 	a.messages = []llm.Message{{Role: "system", Content: a.system}}
 	if resetter, ok := a.tools.(interface{ ResetSession() }); ok {
@@ -171,6 +178,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userText})
 	identicalToolCalls := map[string]int{}
 	for step := 0; step < a.maxSteps; step++ {
+		requestMessages := a.requestMessages(ctx)
 		span := a.trace.Start("llm", a.provider.Name(), map[string]any{"model": a.model, "step": step + 1})
 		wroteText := false
 		thinking := false
@@ -180,7 +188,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		if rendersResponses {
 			lifecycle.BeginResponse()
 		}
-		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Messages: a.messages, Tools: a.tools.EnabledSchemas()}, func(event llm.StreamEvent) {
+		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Messages: requestMessages, Tools: a.tools.EnabledSchemas()}, func(event llm.StreamEvent) {
 			if ctx.Err() != nil {
 				return
 			}

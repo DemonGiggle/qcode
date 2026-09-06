@@ -241,6 +241,10 @@ func (u *UI) Run(ctx context.Context) error {
 		u.display.AddLine("> " + line)
 		u.resetPage()
 		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == "/learn" {
+			u.learn(ctx, strings.TrimSpace(strings.TrimPrefix(line, "/learn")))
+			continue
+		}
 		if len(fields) > 0 && fields[0] == "/diff" {
 			u.expandDiff(fields)
 			continue

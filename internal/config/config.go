@@ -20,8 +20,13 @@ type WebSearch struct {
 	Backend string `toml:"backend"`
 }
 
+type Learning struct {
+	ContextBudget *int `toml:"context_budget"`
+}
+
 // Config contains settings that may be supplied by a qcode config file.
 type Config struct {
+	Learning            Learning  `toml:"learning"`
 	WebSearch           WebSearch `toml:"web_search"`
 	Provider            string    `toml:"provider"`
 	BaseURL             string    `toml:"base_url"`
@@ -98,6 +103,9 @@ func load(paths []string) (Config, string, error) {
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&cfg); err != nil {
 			return Config{}, path, fmt.Errorf("parse config %s: %w", path, err)
+		}
+		if cfg.Learning.ContextBudget != nil && (*cfg.Learning.ContextBudget < 0 || *cfg.Learning.ContextBudget > 12000) {
+			return Config{}, path, fmt.Errorf("parse config %s: learning.context_budget must be between 0 and 12000", path)
 		}
 		if cfg.ContextWindow != nil && *cfg.ContextWindow < 0 {
 			return Config{}, path, fmt.Errorf("parse config %s: context_window must be non-negative", path)

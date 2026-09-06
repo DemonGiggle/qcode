@@ -146,3 +146,16 @@ func TestSearchBackendConfiguration(t *testing.T) {
 		t.Fatalf("backend = %q", opts.searchBackend)
 	}
 }
+
+func TestLearningConfiguration(t *testing.T) {
+	opts := options{learningBudget: 1200}
+	applyConfig(&opts, config.Config{}, nil)
+	if opts.learningBudget != 1200 {
+		t.Fatal("missing configuration changed default")
+	}
+	zero := 0
+	applyConfig(&opts, config.Config{Learning: config.Learning{ContextBudget: &zero}}, nil)
+	if opts.learningBudget != 0 {
+		t.Fatal("zero budget not applied")
+	}
+}

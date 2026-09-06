@@ -30,3 +30,8 @@ max_steps = 32
 # Omitting this section defaults to duckduckgo. Changes require a restart.
 [web_search]
 backend = "duckduckgo"
+
+# Maximum approximate tokens of relevant global learning per model request.
+# Up to three items are retrieved. Set 0 to disable retrieval; /learn still works.
+[learning]
+context_budget = 1200

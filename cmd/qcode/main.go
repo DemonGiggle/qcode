@@ -16,6 +16,7 @@ import (
 	"qcode/internal/agent"
 	"qcode/internal/config"
 	"qcode/internal/demo"
+	"qcode/internal/learning"
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
 	"qcode/internal/skills"
@@ -27,6 +28,7 @@ import (
 var version = "dev"
 
 type options struct {
+	learningBudget      int
 	searchBackend       string
 	provider            string
 	model               string
@@ -51,7 +53,7 @@ func main() {
 }
 
 func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
-	var opts options
+	opts := options{learningBudget: learning.DefaultBudget}
 	configPath := ""
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -160,6 +162,15 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			return err
 		}
 	}
+	var learningStore learning.Store
+	if !opts.demo {
+		dir, err := learning.DefaultDirectory()
+		if err != nil {
+			fmt.Fprintln(stderr, "Learning unavailable:", err)
+		} else {
+			learningStore = learning.New(dir, func(message string) { fmt.Fprintln(stderr, "Learning warning:", message) })
+		}
+	}
 	system := prompt.System
 	if promptText != "" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -167,6 +178,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		logger := newTraceLogger(stderr, opts.jsonEvents)
 		responseWriter := newResponseWriter(stdout)
 		runner := agent.NewWithSystem(provider, opts.model, toolset, logger, responseWriter, opts.maxSteps, system)
+		runner.SetLearning(learningStore, opts.learningBudget)
 		return runner.Run(ctx, promptText)
 	}
 	if stat, statErr := stdin.Stat(); statErr == nil && stat.Mode()&os.ModeCharDevice == 0 {
@@ -183,6 +195,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		logger := newTraceLogger(stderr, opts.jsonEvents)
 		responseWriter := newResponseWriter(stdout)
 		runner := agent.NewWithSystem(provider, opts.model, toolset, logger, responseWriter, opts.maxSteps, system)
+		runner.SetLearning(learningStore, opts.learningBudget)
 		return runner.Run(ctx, promptText)
 	}
 
@@ -198,6 +211,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	}
 	logger := trace.NewAnimated(ui.Writer(), opts.jsonEvents)
 	runner := agent.NewWithSystem(provider, opts.model, toolset, logger, ui.ResponseWriter(), opts.maxSteps, system)
+	runner.SetLearning(learningStore, opts.learningBudget)
 	runner.SetContextWindow(opts.contextWindow)
 	ui.SetRunner(runner)
 	return ui.Run(context.Background())
@@ -214,6 +228,9 @@ func skillSummaries(catalog *skills.Catalog) []prompt.SkillSummary {
 
 func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
 	opts.searchBackend = cfg.WebSearch.Backend
+	if cfg.Learning.ContextBudget != nil {
+		opts.learningBudget = *cfg.Learning.ContextBudget
+	}
 	if !setFlags["provider"] && os.Getenv("QCODE_PROVIDER") == "" && cfg.Provider != "" {
 		opts.provider = cfg.Provider
 	}
