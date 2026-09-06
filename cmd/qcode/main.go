@@ -241,6 +241,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		display, response := ui.AddAgentView(id, currentProvider.Name(), model)
 		wrappedTools := manager.WrapToolset(id, currentToolset, isMain)
 		logger := trace.NewAnimated(display, opts.jsonEvents)
+		logger.SetColor(tui.ColorEnabled(stdout))
 		runner := agent.NewWithSystem(currentProvider, model, wrappedTools, logger, response, opts.maxSteps, system)
 		runner.SetTaskIndicator(false)
 		runner.SetLearning(learningStore, opts.learningBudget)
@@ -313,6 +314,7 @@ func newTraceLogger(out *os.File, jsonOutput bool) *trace.Logger {
 	} else {
 		logger = trace.New(out, jsonOutput)
 	}
+	logger.SetColor(tui.ColorEnabled(out))
 	logger.SetUnicode(tui.UnicodeEnabled())
 	return logger
 }

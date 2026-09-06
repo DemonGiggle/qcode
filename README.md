@@ -7,7 +7,7 @@
 - A full-viewport terminal UI with editable input, per-agent history, full word wrapping, streamed responses, ANSI-colored Markdown (including aligned GFM tables), fixed top tabs and a bottom status bar, cancellable tasks via Ctrl+C, and live prefix-matched slash-command suggestions with descriptions. The normal terminal buffer and scrollback are retained. Use `/model` to fetch the provider's models, search a large catalog by typing, move through matches with Up/Down, and select with Enter. Set `NO_COLOR=1` to disable response styling.
 - Ollama and OpenAI-compatible APIs.
 - `read`, `write`, `edit`, `list`, `search`, `view_image`, `shell`, `web_fetch`, and `web_search` tools.
-- Interactive mode shows a task-level `Waiting` indicator from submission through LLM and local-tool work. While the active tab is running, input is reserved for Ctrl+C cancellation and tab switching; its prompt returns when the task ends. Use `/verbose` to toggle detailed telemetry, where every LLM request and tool call appears as one timestamped entry whose spinner is replaced by elapsed time when it finishes.
+- Interactive mode always records concise colored activity events for tool calls and agent coordination, such as `Reading internal/tui/tui.go`, `Writing README.md`, or `Consulting agent-2`. These events are presentation-only and never enter the next model request. A task-level `Waiting` indicator remains visible while the active tab is running; input is reserved for Ctrl+C cancellation and tab switching until its prompt returns. Use `/verbose` to add detailed timestamped telemetry, including raw tool arguments, without disabling concise activity events.
 - Use Page Up and Page Down to scroll through qcode's output history without leaving the interactive prompt.
 - Use `/new` to discard the current conversation context and start a fresh session without restarting qcode or changing the provider, model, or workspace.
 - Interactive mode supports up to four concurrent agent tabs, including permanent `main`. Use `/agent` to create one, `/agent list`, `/agent switch <id>`, `/agent rename <id> <name>`, `/agent cancel <id>`, and `/agent close <id>`. The tab bar shows the available switch shortcuts when the row has room: Ctrl+PageUp/PageDown or the Alt+, and Alt+. fallbacks. Each agent keeps independent context, model, output, tool settings, and sandbox grants while workspace mutations are serialized.
@@ -83,7 +83,7 @@ can be overridden with `--base-url`. Consult the OpenCode Go model table when
 choosing a model: models assigned to its Responses or Anthropic Messages
 endpoints are not supported by qcode yet.
 
-Pass a prompt for non-interactive use. Assistant text goes to stdout and action events go to stderr:
+Pass a prompt for non-interactive use. Assistant text goes to stdout and concise action events go to stderr. `--json-events` serializes machine-readable trace and activity records as JSON Lines instead of human-readable events:
 
 ```sh
 qcode "explain this repository"
