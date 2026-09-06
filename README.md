@@ -194,6 +194,71 @@ Run the optional live smoke test with
 `QCODE_TEST_WEB_LIVE=1 go test ./internal/tools -run '^TestWebLive$' -v`.
 Ordinary tests use local HTTP fixtures and do not depend on search availability.
 
+## Global learning
+
+Use `/learn` after a conversation to propose durable preferences and reusable
+procedures for future sessions. qcode shows the complete before/after changes
+and asks for approval before saving anything. Answer `y` or `yes` to apply the
+batch; Enter, `n`, or Ctrl+C cancels it. Proposals use a separate model request
+without tools and do not enter conversation history.
+
+- `/learn` proposes additions or updates from recent user/assistant text.
+- `/learn list` shows all global records and IDs.
+- `/learn forget <id>` reviews and deletes a record after approval.
+- `/learn compact` proposes additions, rewrites, or deletions to consolidate
+  duplicates; approval is required and a backup is created before application.
+
+There is one store per OS user on each device, shared across all workspaces.
+V1 has no workspace state, `/learn global` selector, cloud sync, or model
+training. Repository-only facts should be omitted; reusable procedures should
+state the language, framework, or other conditions under which they apply.
+
+Records live in `v1/global/<id>.json` under:
+
+| Platform | Learning directory |
+| --- | --- |
+| Linux | `$XDG_STATE_HOME/qcode/learning`, or `~/.local/state/qcode/learning` |
+| macOS | `~/Library/Application Support/qcode/learning` |
+| Windows | `%LocalAppData%\qcode\learning` |
+
+Writes use private files, an OS-level process lock, and a staged directory swap.
+If any record changes after review, the operation is rejected and must be
+reviewed again. Failed swaps roll back, and interrupted swaps recover on the
+next access. Invalid or unsupported-version records are skipped with warnings
+and preserved. Compaction backups are retained in `v1/backups/`; deleting a
+record does not remove copies from existing backups.
+
+Before each normal model request, qcode ranks global learning against the latest
+user prompt. It selects at most three items, requires meaningful keyword overlap,
+and checks language/framework tags as applicability hints. Weak matches inject
+nothing. Selected learning is reference context and must not override current
+user instructions. It is added only to that request, so repeated model turns do
+not accumulate learning copies in conversation history.
+
+```toml
+[learning]
+context_budget = 1200
+```
+
+The budget is an approximate token estimate based on UTF-8 bytes, including the
+reference preamble; supported values are 0–12000. Set 0 to disable retrieval
+without deleting records or disabling `/learn`. `/new` clears conversation and
+injected context, but retains global learning. One-shot runs can retrieve existing
+learning; mutation commands require the interactive UI. Demo mode does not access
+the learning store.
+
+Extraction uses at most 24 KiB of recent user/assistant text and excludes tool
+outputs, tool arguments, images, and model reasoning. Common credential patterns
+are redacted from extraction input and rejected in proposed records, but this is
+not a complete secret detector: review proposals before approving them. Raw
+transcripts are not written to the learning store.
+
+V1 limits the store to 512 entries, record content to 4096 bytes, a proposal to
+32 changes, and model review input/output to 64 KiB each. When the existing store
+is too large for a review request, `/learn forget` can remove selected records
+without a model call. Oversized or non-regular files introduced outside qcode
+must be repaired before further writes can safely preserve the store.
+
 ## Extending providers
 
 Providers implement the small `llm.Provider` interface in `internal/llm/types.go`. Add an implementation and register its factory in `init`:

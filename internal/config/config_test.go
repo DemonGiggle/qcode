@@ -120,3 +120,24 @@ func TestWebSearchConfig(t *testing.T) {
 		t.Fatal("accepted unknown search configuration field")
 	}
 }
+
+func TestLearningBudgetConfig(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		valid bool
+	}{
+		{"0", true}, {"1200", true}, {"12000", true}, {"-1", false}, {"12001", false},
+	} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, []byte("[learning]\ncontext_budget = "+tc.value+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, _, err := load([]string{path})
+		if (err == nil) != tc.valid {
+			t.Fatalf("value %s: %v", tc.value, err)
+		}
+		if tc.valid && cfg.Learning.ContextBudget == nil {
+			t.Fatal("budget not loaded")
+		}
+	}
+}
