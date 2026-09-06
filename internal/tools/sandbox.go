@@ -15,6 +15,7 @@ import (
 
 // Options controls optional protections around model-triggered tools.
 type Options struct {
+	SearchBackend  string
 	Sandbox        bool
 	AllowNetwork   bool
 	BubblewrapPath string

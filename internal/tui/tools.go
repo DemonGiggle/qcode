@@ -46,11 +46,11 @@ func (u *UI) chooseTools() {
 
 func selectTools(in io.Reader, out interface{ Write([]byte) (int, error) }, names []string, runner toolRunner, color bool) (bool, error) {
 	current := 0
+	statuses := make([]toolStatus, len(names))
+	for i, name := range names {
+		statuses[i] = toolStatus{name: name, enabled: runner.ToolEnabled(name)}
+	}
 	for {
-		statuses := make([]toolStatus, len(names))
-		for i, name := range names {
-			statuses[i] = toolStatus{name: name, enabled: runner.ToolEnabled(name)}
-		}
 		renderToolSelector(out, statuses, current, color)
 		key, err := readToolByte(in)
 		clearToolSelector(out, len(statuses))
@@ -61,10 +61,12 @@ func selectTools(in io.Reader, out interface{ Write([]byte) (int, error) }, name
 		case ctrlC:
 			return false, nil
 		case '\r', '\n':
+			for _, status := range statuses {
+				runner.ToggleTool(status.name, status.enabled)
+			}
 			return true, nil
 		case ' ':
-			name := names[current]
-			runner.ToggleTool(name, !runner.ToolEnabled(name))
+			statuses[current].enabled = !statuses[current].enabled
 		case 0x1b:
 			var tail [2]byte
 			if _, err := io.ReadFull(in, tail[:]); err == nil && tail[0] == '[' {

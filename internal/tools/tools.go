@@ -34,6 +34,7 @@ type Handler func(context.Context, json.RawMessage) (string, error)
 type ExecutionResult = llm.ToolResult
 
 type Registry struct {
+	web       *webTools
 	root      string
 	schemas   []llm.Tool
 	handlers  map[string]Handler
@@ -82,6 +83,17 @@ func NewWithOptions(root string, options Options) (*Registry, error) {
 		}
 		r.sandbox = &sandboxState{bwrap: bwrap, home: home, allowNetwork: options.AllowNetwork, protected: r.protected}
 	}
+	r.web, err = newWebTools(options.SearchBackend)
+	if err != nil {
+		return nil, err
+	}
+	r.add(llm.Tool{Name: "web_fetch", Description: prompt.WebFetchTool, Parameters: objectSchema(map[string]any{
+		"url": stringProperty(prompt.WebURLParameter),
+	}, "url")}, r.webFetch)
+	r.add(llm.Tool{Name: "web_search", Description: prompt.WebSearchTool, Parameters: objectSchema(map[string]any{
+		"query":       stringProperty(prompt.WebQueryParameter),
+		"max_results": integerProperty(prompt.WebResultsParameter),
+	}, "query")}, r.webSearch)
 	r.add(llm.Tool{Name: "read", Description: prompt.ReadTool, Parameters: objectSchema(map[string]any{
 		"path":   stringProperty(prompt.PathParameter),
 		"offset": integerProperty(prompt.OffsetParameter),
@@ -115,6 +127,7 @@ func NewWithOptions(root string, options Options) (*Registry, error) {
 			"path": stringProperty(prompt.AccessPathParameter),
 		}, "path")}, r.requestDirectoryAccess)
 	}
+	r.ResetSession()
 	return r, nil
 }
 
@@ -133,12 +146,13 @@ func (r *Registry) loadSkill(_ context.Context, arguments json.RawMessage) (stri
 
 func (r *Registry) SetDirectoryApprover(approver DirectoryApprover) { r.approver = approver }
 
-// ResetSession removes grants acquired after startup and clears disabled tools.
+// ResetSession removes session grants and restores tool defaults. Web tools
+// require explicit user enablement again in every session.
 func (r *Registry) ResetSession() {
 	r.grantMu.Lock()
 	r.grants = []string{r.root}
 	r.grantMu.Unlock()
-	r.disabled = nil
+	r.disabled = map[string]bool{"web_fetch": true, "web_search": true}
 }
 
 func (r *Registry) add(schema llm.Tool, handler Handler) {
@@ -164,7 +178,7 @@ func (r *Registry) EnableTool(name string) {
 	delete(r.disabled, name)
 }
 
-// DisableTool prevents a tool from being sent to the model.
+// DisableTool prevents a tool from being advertised or executed.
 func (r *Registry) DisableTool(name string) {
 	if r.disabled == nil {
 		r.disabled = make(map[string]bool)
@@ -194,6 +208,9 @@ func (r *Registry) Execute(ctx context.Context, call llm.ToolCall) (string, erro
 func (r *Registry) ExecuteDetailed(ctx context.Context, call llm.ToolCall) (ExecutionResult, error) {
 	if err := ctx.Err(); err != nil {
 		return ExecutionResult{}, err
+	}
+	if !r.IsToolEnabled(call.Name) {
+		return ExecutionResult{}, fmt.Errorf("tool %q is disabled; the user must enable it through /tool for this session", call.Name)
 	}
 	switch call.Name {
 	case "write":

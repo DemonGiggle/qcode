@@ -27,6 +27,7 @@ import (
 var version = "dev"
 
 type options struct {
+	searchBackend       string
 	provider            string
 	model               string
 	baseURL             string
@@ -141,7 +142,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		return err
 	}
 	skillSelection := skills.NewSelection(skillCatalog)
-	registry, err := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, Skills: skillSelection})
+	registry, err := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, Skills: skillSelection, SearchBackend: opts.searchBackend})
 	if err != nil {
 		return err
 	}
@@ -212,6 +213,7 @@ func skillSummaries(catalog *skills.Catalog) []prompt.SkillSummary {
 }
 
 func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
+	opts.searchBackend = cfg.WebSearch.Backend
 	if !setFlags["provider"] && os.Getenv("QCODE_PROVIDER") == "" && cfg.Provider != "" {
 		opts.provider = cfg.Provider
 	}
