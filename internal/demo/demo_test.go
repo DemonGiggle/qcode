@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +65,35 @@ func TestModelsReturnsLargeSearchableCatalog(t *testing.T) {
 	}
 	if models[0] != Model || models[len(models)-1] != "demo-coder-240" {
 		t.Fatalf("model bounds = %q / %q", models[0], models[len(models)-1])
+	}
+}
+
+func TestFakeWindowYieldsRealContextPercentages(t *testing.T) {
+	root := t.TempDir()
+	registry, err := tools.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := newSession(registry.Schemas(), 0)
+	runner := agent.New(session.Provider, Model, session.Tools, trace.New(io.Discard, false), io.Discard, 4)
+	// The scripted provider reports the fake capacity without a completion, so
+	// the status bar shows a percentage instead of CONTEXT unknown.
+	runner.RefreshContext(context.Background())
+	left, known, estimated := runner.ContextRemaining()
+	if !known {
+		t.Fatal("demo context is unknown; the scripted provider must report its fake window")
+	}
+	if !estimated {
+		t.Fatal("demo usage must stay estimated; the scripted provider reports no token usage")
+	}
+	if left <= 0 || left >= 100 {
+		t.Fatalf("fresh demo session = %d%% left; want a partial window", left)
+	}
+	if err := runner.Run(context.Background(), "show me how qcode works"); err != nil {
+		t.Fatal(err)
+	}
+	if grown, _, _ := runner.ContextRemaining(); grown >= left {
+		t.Fatalf("context percentage did not move during the demo: %d%% before, %d%% after", left, grown)
 	}
 }
 

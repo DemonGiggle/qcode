@@ -14,7 +14,11 @@ import (
 
 const (
 	// Model is a display-only model name used by the demo session.
-	Model          = "scripted-demo"
+	Model = "scripted-demo"
+	// ContextWindow is a fake capacity for the scripted model. Token counts
+	// stay real, so this only supplies the status bar's denominator and lets
+	// the displayed percentage move as the demo conversation grows.
+	ContextWindow  = 8192
 	demoModelCount = 240
 	defaultDelay   = 1500 * time.Millisecond
 )
@@ -46,7 +50,16 @@ type Provider struct {
 	delay time.Duration
 }
 
+var _ llm.ContextWindowProvider = (*Provider)(nil)
+
 func (p *Provider) Name() string { return "demo" }
+
+// ContextWindow reports the scripted model's fake capacity so the status bar
+// can divide real token counts by a known limit. It never waits or contacts a
+// network, because context discovery runs before the first completion.
+func (p *Provider) ContextWindow(context.Context, string) (int, error) {
+	return ContextWindow, nil
+}
 
 func (p *Provider) Models(ctx context.Context) ([]string, error) {
 	if err := wait(ctx, p.delay); err != nil {
