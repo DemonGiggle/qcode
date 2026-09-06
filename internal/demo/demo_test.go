@@ -35,7 +35,12 @@ func TestSessionCallsEveryToolThenFinishes(t *testing.T) {
 			t.Errorf("tool call %d = %q, want %q", index, call.Name, schemas[index].Name)
 		}
 		result, executeErr := session.Tools.ExecuteDetailed(context.Background(), call)
-		if executeErr != nil || result.Output == "" {
+		if call.Name == "read" {
+			if executeErr == nil || !strings.Contains(executeErr.Error(), "mocked read failed") {
+				t.Errorf("read error = %v, want mocked failure", executeErr)
+			}
+			result.Output = "ERROR: " + executeErr.Error()
+		} else if executeErr != nil || result.Output == "" {
 			t.Errorf("execute %q = %#v, %v", call.Name, result, executeErr)
 		}
 		request.Messages = append(request.Messages, llm.Message{Role: "tool", Name: call.Name, Content: result.Output})

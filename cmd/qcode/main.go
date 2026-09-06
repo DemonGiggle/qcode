@@ -257,6 +257,13 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if _, err := manager.CreateMain(opts.model); err != nil {
 		return err
 	}
+	if opts.demo {
+		// Seed the scripted collaborator so the demo's delegate_task and
+		// get_agent_result calls exercise successful coordination events.
+		if _, err := manager.Create(opts.model); err != nil {
+			return err
+		}
+	}
 	runner, _ := manager.Agent("main")
 	ui.SetRunner(runner)
 	return ui.Run(context.Background())
