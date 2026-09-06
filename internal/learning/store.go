@@ -57,7 +57,7 @@ type Store interface {
 }
 
 // Approver is supplied only by the interactive host.
-type Approver func(context.Context, string) (bool, error)
+type Approver func(context.Context, []Change) (bool, error)
 
 type Change struct{ Before, After *Learning }
 type Plan struct {

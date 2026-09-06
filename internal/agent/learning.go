@@ -172,8 +172,7 @@ func (a *Agent) Learn(ctx context.Context, arguments string, approve LearningApp
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	review, _ := json.MarshalIndent(plan.Changes, "", "  ")
-	approved, err := approve(ctx, "These changes affect global learning in every workspace.\nReview applicability and remove any secrets by rejecting the proposal.\nBefore is the existing record; After is the replacement (null means deletion).\n\n"+string(review))
+	approved, err := approve(ctx, plan.Changes)
 	if err != nil {
 		return "", err
 	}

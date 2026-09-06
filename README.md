@@ -197,8 +197,9 @@ Ordinary tests use local HTTP fixtures and do not depend on search availability.
 ## Global learning
 
 Use `/learn` after a conversation to propose durable preferences and reusable
-procedures for future sessions. qcode shows the complete before/after changes
-and asks for approval before saving anything. Answer `y` or `yes` to apply the
+procedures for future sessions. qcode shows a compact preview with colored Add, Update, and Remove labels,
+the exact content and tags, and previous text for updates. Storage metadata stays
+out of the preview. qcode asks for approval before saving anything. Answer `y` or `yes` to apply the
 batch; Enter, `n`, or Ctrl+C cancels it. Proposals use a separate model request
 without tools and do not enter conversation history.
 

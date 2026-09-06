@@ -64,9 +64,9 @@ func TestLearningApprovalAndExtractionIsolation(t *testing.T) {
 		a.messages = append(a.messages, llm.Message{Role: "user", Content: "Always run Go tests. api_key = abcdef1234567890"}, llm.Message{Role: "assistant", Content: "I ran focused Go tests.", Thinking: "private reasoning"}, llm.Message{Role: "tool", Content: "private raw output", ToolCallID: "x"})
 		historyLen := len(a.messages)
 		reviews := 0
-		result, err := a.Learn(context.Background(), "", func(ctx context.Context, review string) (bool, error) {
+		result, err := a.Learn(context.Background(), "", func(ctx context.Context, review []learning.Change) (bool, error) {
 			reviews++
-			if !strings.Contains(review, "Before") || !strings.Contains(review, "After") || !strings.Contains(review, "every workspace") {
+			if len(review) != 1 || review[0].Before != nil || review[0].After == nil || review[0].After.Topic != "Go testing" {
 				t.Fatal(review)
 			}
 			snapshot, err := store.Snapshot(ctx)
@@ -111,7 +111,7 @@ func TestLearningRejectsInvalidOrUnavailableApproval(t *testing.T) {
 		a, store, p := newLearningAgent(t)
 		p.response = response
 		a.messages = append(a.messages, llm.Message{Role: "user", Content: "Remember Go tests"})
-		_, err := a.Learn(context.Background(), "", func(context.Context, string) (bool, error) {
+		_, err := a.Learn(context.Background(), "", func(context.Context, []learning.Change) (bool, error) {
 			t.Fatal("invalid proposal reached approval")
 			return true, nil
 		})
@@ -140,7 +140,7 @@ func TestLearningCancellationAndStaleApproval(t *testing.T) {
 	a, store, _ := newLearningAgent(t)
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: "Remember Go testing"})
 	ctx, cancel := context.WithCancel(context.Background())
-	_, err := a.Learn(ctx, "", func(context.Context, string) (bool, error) { cancel(); return true, nil })
+	_, err := a.Learn(ctx, "", func(context.Context, []learning.Change) (bool, error) { cancel(); return true, nil })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel error %v", err)
 	}
@@ -148,7 +148,7 @@ func TestLearningCancellationAndStaleApproval(t *testing.T) {
 	if len(snapshot.Items) != 0 {
 		t.Fatal("saved after cancellation")
 	}
-	_, err = a.Learn(context.Background(), "", func(context.Context, string) (bool, error) { seedLearning(t, store); return true, nil })
+	_, err = a.Learn(context.Background(), "", func(context.Context, []learning.Change) (bool, error) { seedLearning(t, store); return true, nil })
 	if !errors.Is(err, learning.ErrConflict) {
 		t.Fatalf("stale approval error %v", err)
 	}
@@ -166,7 +166,7 @@ func TestLearningListForgetAndCompact(t *testing.T) {
 	if err != nil || !strings.Contains(result, item.ID) || len(p.requests) != 0 {
 		t.Fatalf("list %s %v", result, err)
 	}
-	if _, err := a.Learn(context.Background(), "forget "+item.ID, func(context.Context, string) (bool, error) { return false, nil }); err != nil {
+	if _, err := a.Learn(context.Background(), "forget "+item.ID, func(context.Context, []learning.Change) (bool, error) { return false, nil }); err != nil {
 		t.Fatal(err)
 	}
 	still, _ := store.Snapshot(context.Background())
@@ -175,8 +175,8 @@ func TestLearningListForgetAndCompact(t *testing.T) {
 	}
 	proposal, _ := json.Marshal(map[string]any{"changes": []learning.Draft{{Kind: "update", ID: item.ID, Topic: item.Topic, Content: "For Go tests, begin with the changed package.", Tags: item.Tags}}})
 	p.response = string(proposal)
-	result, err = a.Learn(context.Background(), "compact", func(_ context.Context, review string) (bool, error) {
-		if !strings.Contains(review, item.Content) || !strings.Contains(review, "begin with the changed package") {
+	result, err = a.Learn(context.Background(), "compact", func(_ context.Context, review []learning.Change) (bool, error) {
+		if len(review) != 1 || review[0].Before == nil || review[0].After == nil || review[0].Before.Content != item.Content || !strings.Contains(review[0].After.Content, "begin with the changed package") {
 			t.Fatal("incomplete review")
 		}
 		return true, nil
@@ -187,7 +187,7 @@ func TestLearningListForgetAndCompact(t *testing.T) {
 	if p.requests[0].Messages[0].Content != prompt.LearningCompact || strings.Contains(p.requests[0].Messages[1].Content, `"session"`) {
 		t.Fatal("incorrect compaction input")
 	}
-	if _, err := a.Learn(context.Background(), "forget "+item.ID, func(context.Context, string) (bool, error) { return true, nil }); err != nil {
+	if _, err := a.Learn(context.Background(), "forget "+item.ID, func(context.Context, []learning.Change) (bool, error) { return true, nil }); err != nil {
 		t.Fatal(err)
 	}
 	empty, _ := store.Snapshot(context.Background())
@@ -278,7 +278,7 @@ func TestOversizedLearningStreamCancelsBeforeReview(t *testing.T) {
 	a, store, _ := newLearningAgent(t)
 	a.provider = oversizedLearningProvider{}
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: "Remember Go testing"})
-	_, err := a.Learn(context.Background(), "", func(context.Context, string) (bool, error) {
+	_, err := a.Learn(context.Background(), "", func(context.Context, []learning.Change) (bool, error) {
 		t.Fatal("oversized proposal reached review")
 		return true, nil
 	})
