@@ -8,6 +8,14 @@
 
 qcode is a lightweight, keyboard-driven AI coding assistant that runs entirely in your terminal. One native executable, streaming LLM output, and a compact provider/tool interface.
 
+## 🎬 Demo
+
+![qcode demo: a scripted offline session that streams mocked tools and a report](docs/assets/demo.gif)
+
+The animation was generated with `qcode --demo`: it shows the same scripted,
+offline-safe workflow available locally, without contacting a provider or changing
+your workspace.
+
 ## ✨ Features
 
 - 🖥️ **Full-viewport TUI** with editable input, per-agent history, and ANSI-colored Markdown
