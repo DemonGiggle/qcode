@@ -9,6 +9,9 @@ import (
 )
 
 func (u *UI) chooseSkills() {
+	if !u.activeAgentConfigurable() {
+		return
+	}
 	runner, ok := u.runner.(skillRunner)
 	if !ok || len(u.skills) == 0 {
 		u.printSystemMessage(dim + "No workspace skills are available." + reset)

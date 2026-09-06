@@ -50,9 +50,10 @@ type Response struct {
 
 // ToolResult is the normalized output returned by a tool implementation.
 type ToolResult struct {
-	Output string
-	Diff   string
-	Images []Image
+	Output       string
+	Diff         string
+	Images       []Image
+	ChangedFiles []string
 }
 
 type StreamKind uint8

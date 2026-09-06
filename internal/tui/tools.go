@@ -13,6 +13,9 @@ type toolStatus struct {
 }
 
 func (u *UI) chooseTools() {
+	if !u.activeAgentConfigurable() {
+		return
+	}
 	runner, ok := u.runner.(toolRunner)
 	if !ok {
 		u.printSystemMessage(dim + "Tool selection is unavailable." + reset)

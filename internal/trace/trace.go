@@ -16,12 +16,13 @@ var (
 )
 
 type Logger struct {
-	out      io.Writer
-	json     bool
-	animated bool
-	verbose  bool
-	unicode  bool
-	mu       sync.Mutex
+	out           io.Writer
+	json          bool
+	animated      bool
+	verbose       bool
+	unicode       bool
+	taskIndicator bool
+	mu            sync.Mutex
 }
 
 type Span struct {
@@ -52,13 +53,13 @@ type Task struct {
 }
 
 func New(out io.Writer, jsonOutput bool) *Logger {
-	return &Logger{out: out, json: jsonOutput, verbose: true, unicode: true}
+	return &Logger{out: out, json: jsonOutput, verbose: true, unicode: true, taskIndicator: true}
 }
 
 // NewAnimated creates a logger that updates an in-progress text event in place.
 // JSON output remains a pair of start/end events for machine consumers.
 func NewAnimated(out io.Writer, jsonOutput bool) *Logger {
-	return &Logger{out: out, json: jsonOutput, animated: !jsonOutput, verbose: true, unicode: true}
+	return &Logger{out: out, json: jsonOutput, animated: !jsonOutput, verbose: true, unicode: true, taskIndicator: true}
 }
 
 func (l *Logger) SetUnicode(enabled bool) {
@@ -73,11 +74,20 @@ func (l *Logger) SetVerbose(verbose bool) {
 	l.mu.Unlock()
 }
 
+// SetTaskIndicator controls the compact Waiting animation produced for a
+// running task. Interactive multi-agent UIs render this from manager state so
+// it remains consistent when tabs are switched.
+func (l *Logger) SetTaskIndicator(enabled bool) {
+	l.mu.Lock()
+	l.taskIndicator = enabled
+	l.mu.Unlock()
+}
+
 // BeginTask starts the compact task-level indicator. In verbose and JSON
 // modes, individual spans provide the progress output instead.
 func (l *Logger) BeginTask() *Task {
 	l.mu.Lock()
-	active := l.animated && !l.verbose
+	active := l.animated && !l.verbose && l.taskIndicator
 	frames := l.spinnerFrames()
 	l.mu.Unlock()
 	task := &Task{logger: l, enabled: active, frames: frames}

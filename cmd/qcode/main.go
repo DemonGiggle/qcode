@@ -148,6 +148,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if err != nil {
 		return err
 	}
+	providerConfig := llm.Config{BaseURL: opts.baseURL, APIKey: opts.apiKey, InsecureSkipVerify: opts.dangerSkipTLSVerify}
 	var provider llm.Provider
 	var toolset agent.Toolset = registry
 	if opts.demo {
@@ -157,7 +158,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		opts.provider = provider.Name()
 		opts.model = demo.Model
 	} else {
-		provider, err = llm.New(opts.provider, llm.Config{BaseURL: opts.baseURL, APIKey: opts.apiKey, InsecureSkipVerify: opts.dangerSkipTLSVerify})
+		provider, err = llm.New(opts.provider, providerConfig)
 		if err != nil {
 			return err
 		}
@@ -206,13 +207,56 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if sandboxNotice != "" {
 		ui.SetStartupNotice(sandboxNotice, sandboxChoice)
 	}
-	if sandboxActive {
-		registry.SetDirectoryApprover(ui.ApproveDirectory)
+	manager := agent.NewAgentManager(context.Background(), agent.DefaultMaxAgents)
+	ui.SetAgentManager(manager)
+	mainRegistry := registry
+	mainProvider := provider
+	mainToolset := toolset
+	mainSelection := skillSelection
+	manager.SetFactory(func(id, name, model string, isMain bool) (*agent.Agent, error) {
+		currentProvider := mainProvider
+		currentToolset := mainToolset
+		currentRegistry := mainRegistry
+		currentSelection := mainSelection
+		if !isMain {
+			currentSelection = skills.NewSelection(skillCatalog)
+			createdRegistry, createErr := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, Skills: currentSelection, SearchBackend: opts.searchBackend})
+			if createErr != nil {
+				return nil, createErr
+			}
+			currentRegistry = createdRegistry
+			if opts.demo {
+				session := demo.New(createdRegistry.Schemas())
+				currentProvider = session.Provider
+				currentToolset = session.Tools
+			} else {
+				createdProvider, providerErr := llm.New(opts.provider, providerConfig)
+				if providerErr != nil {
+					return nil, providerErr
+				}
+				currentProvider = createdProvider
+				currentToolset = createdRegistry
+			}
+		}
+		display, response := ui.AddAgentView(id, currentProvider.Name(), model)
+		wrappedTools := manager.WrapToolset(id, currentToolset, isMain)
+		logger := trace.NewAnimated(display, opts.jsonEvents)
+		runner := agent.NewWithSystem(currentProvider, model, wrappedTools, logger, response, opts.maxSteps, system)
+		runner.SetTaskIndicator(false)
+		runner.SetLearning(learningStore, opts.learningBudget)
+		if model == opts.model {
+			runner.SetContextWindow(opts.contextWindow)
+		}
+		ui.SetAgentSkillHandler(id, currentSelection.Set)
+		if sandboxActive {
+			currentRegistry.SetDirectoryApprover(ui.AgentDirectoryApprover(id))
+		}
+		return runner, nil
+	})
+	if _, err := manager.CreateMain(opts.model); err != nil {
+		return err
 	}
-	logger := trace.NewAnimated(ui.Writer(), opts.jsonEvents)
-	runner := agent.NewWithSystem(provider, opts.model, toolset, logger, ui.ResponseWriter(), opts.maxSteps, system)
-	runner.SetLearning(learningStore, opts.learningBudget)
-	runner.SetContextWindow(opts.contextWindow)
+	runner, _ := manager.Agent("main")
 	ui.SetRunner(runner)
 	return ui.Run(context.Background())
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 	"sync/atomic"
 
 	"qcode/internal/learning"
@@ -30,6 +31,9 @@ type Agent struct {
 	out               io.Writer
 	maxSteps          int
 	messages          []llm.Message
+	stateMu           sync.RWMutex
+	requestContext    func() string
+	lastResponse      string
 	contextStatus     atomic.Pointer[contextStatus]
 	contextWindow     int
 	contextOverride   int
@@ -86,6 +90,26 @@ func (a *Agent) SetVerbose(verbose bool) { a.trace.SetVerbose(verbose) }
 
 func (a *Agent) SetUnicode(enabled bool) { a.trace.SetUnicode(enabled) }
 
+// SetTaskIndicator controls the trace-level Waiting animation. Terminal tab
+// UIs can render the shared task state themselves instead.
+func (a *Agent) SetTaskIndicator(enabled bool) { a.trace.SetTaskIndicator(enabled) }
+
+// SetRequestContext installs an ephemeral context source. Its result is added
+// to requests without becoming part of the stored conversation.
+func (a *Agent) SetRequestContext(source func() string) {
+	a.stateMu.Lock()
+	a.requestContext = source
+	a.stateMu.Unlock()
+	a.invalidateContextUsage()
+}
+
+// LastResponse returns the final assistant text from the latest run.
+func (a *Agent) LastResponse() string {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	return a.lastResponse
+}
+
 // ListModels returns the provider's currently available models.
 func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
 	lister, ok := a.provider.(llm.ModelLister)
@@ -124,6 +148,9 @@ func (a *Agent) SetSkills(skills []prompt.SkillSummary) {
 // ResetSession discards conversation history while retaining the agent's
 // provider, model, tools, and runtime settings.
 func (a *Agent) ResetSession() {
+	a.stateMu.Lock()
+	a.lastResponse = ""
+	a.stateMu.Unlock()
 	a.learningContext = ""
 	a.learningSessionID = ""
 	defer a.invalidateContextUsage()
@@ -135,6 +162,9 @@ func (a *Agent) ResetSession() {
 
 // ToolNames returns the names of all registered tools.
 func (a *Agent) ToolNames() []string {
+	if configurable, ok := a.tools.(interface{ ToolNames() []string }); ok {
+		return configurable.ToolNames()
+	}
 	if registry, ok := a.tools.(*tools.Registry); ok {
 		return registry.ToolNames()
 	}
@@ -149,6 +179,10 @@ func (a *Agent) ToolNames() []string {
 // ToggleTool enables or disables a tool by name.
 func (a *Agent) ToggleTool(name string, enabled bool) {
 	defer a.invalidateContextUsage()
+	if configurable, ok := a.tools.(interface{ ToggleTool(string, bool) }); ok {
+		configurable.ToggleTool(name, enabled)
+		return
+	}
 	if registry, ok := a.tools.(*tools.Registry); ok {
 		if enabled {
 			registry.EnableTool(name)
@@ -160,6 +194,9 @@ func (a *Agent) ToggleTool(name string, enabled bool) {
 
 // ToolEnabled reports whether a tool is currently enabled.
 func (a *Agent) ToolEnabled(name string) bool {
+	if configurable, ok := a.tools.(interface{ ToolEnabled(string) bool }); ok {
+		return configurable.ToolEnabled(name)
+	}
 	if registry, ok := a.tools.(*tools.Registry); ok {
 		return registry.IsToolEnabled(name)
 	}
@@ -172,6 +209,9 @@ func (a *Agent) ToolEnabled(name string) bool {
 }
 
 func (a *Agent) Run(ctx context.Context, userText string) error {
+	a.stateMu.Lock()
+	a.lastResponse = ""
+	a.stateMu.Unlock()
 	defer a.publishContext()
 	task := a.trace.BeginTask()
 	defer task.End()
@@ -244,6 +284,9 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		a.contextMessages = len(a.messages)
 		a.RefreshContext(ctx)
 		if len(response.Message.ToolCalls) == 0 {
+			a.stateMu.Lock()
+			a.lastResponse = response.Message.Content
+			a.stateMu.Unlock()
 			return nil
 		}
 		var loadedImages []llm.Image
