@@ -15,16 +15,22 @@ import (
 
 const fileName = "config.toml"
 
+// WebSearch selects the search backend at startup.
+type WebSearch struct {
+	Backend string `toml:"backend"`
+}
+
 // Config contains settings that may be supplied by a qcode config file.
 type Config struct {
-	Provider            string `toml:"provider"`
-	BaseURL             string `toml:"base_url"`
-	APIKey              string `toml:"api_key"`
-	Model               string `toml:"model"`
-	ContextWindow       *int   `toml:"context_window"`
-	MaxSteps            *int   `toml:"max_steps"`
-	Sandbox             *bool  `toml:"sandbox"`
-	DangerSkipTLSVerify *bool  `toml:"danger_skip_tls_verify"`
+	WebSearch           WebSearch `toml:"web_search"`
+	Provider            string    `toml:"provider"`
+	BaseURL             string    `toml:"base_url"`
+	APIKey              string    `toml:"api_key"`
+	Model               string    `toml:"model"`
+	ContextWindow       *int      `toml:"context_window"`
+	MaxSteps            *int      `toml:"max_steps"`
+	Sandbox             *bool     `toml:"sandbox"`
+	DangerSkipTLSVerify *bool     `toml:"danger_skip_tls_verify"`
 }
 
 // Load returns the first configuration found in lookup order. An empty path

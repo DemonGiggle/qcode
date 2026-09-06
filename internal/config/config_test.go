@@ -98,3 +98,25 @@ func TestLoadReturnsEmptyWhenNoFileExists(t *testing.T) {
 		t.Fatalf("load = (%+v, %q, %v), want empty result", cfg, path, err)
 	}
 }
+
+func TestWebSearchConfig(t *testing.T) {
+	for _, tc := range []struct{ content, backend string }{
+		{"", ""}, {"[web_search]\nbackend = \"duckduckgo\"\n", "duckduckgo"},
+	} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, []byte(tc.content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, _, err := load([]string{path})
+		if err != nil || cfg.WebSearch.Backend != tc.backend {
+			t.Fatalf("got %+v, %v", cfg, err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[web_search]\nbackned = \"duckduckgo\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := load([]string{path}); err == nil {
+		t.Fatal("accepted unknown search configuration field")
+	}
+}

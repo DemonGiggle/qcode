@@ -23,3 +23,10 @@ max_steps = 32
 # Set this for custom endpoints or models missing from the bundled catalog.
 # This is a display setting; it does not change the server's context allocation.
 # context_window = 32768
+
+# Web tools start disabled; enable them with /tool in each interactive session.
+# Backend configuration does not enable web tools.
+# Web search backend, read at startup. Currently only duckduckgo is supported.
+# Omitting this section defaults to duckduckgo. Changes require a restart.
+[web_search]
+backend = "duckduckgo"

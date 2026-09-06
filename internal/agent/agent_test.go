@@ -250,7 +250,14 @@ func TestAgentResetSessionDiscardsConversationHistory(t *testing.T) {
 		t.Fatalf("message count before reset = %d, want 3", len(runner.messages))
 	}
 
+	runner.ToggleTool("web_fetch", true)
+	runner.ToggleTool("web_search", true)
 	runner.ResetSession()
+	for _, name := range []string{"web_fetch", "web_search"} {
+		if runner.ToolEnabled(name) {
+			t.Fatalf("%s remained enabled after a new session", name)
+		}
+	}
 
 	if len(runner.messages) != 1 || runner.messages[0].Role != "system" || runner.messages[0].Content != prompt.System {
 		t.Fatalf("messages after reset = %#v, want only the system prompt", runner.messages)

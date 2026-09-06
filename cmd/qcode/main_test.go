@@ -137,3 +137,12 @@ func TestContextWindowConfigPrecedence(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchBackendConfiguration(t *testing.T) {
+	opts := options{provider: "ollama"}
+	cfg := config.Config{Provider: "openai", WebSearch: config.WebSearch{Backend: "duckduckgo"}}
+	applyConfig(&opts, cfg, map[string]bool{"provider": true})
+	if opts.searchBackend != "duckduckgo" {
+		t.Fatalf("backend = %q", opts.searchBackend)
+	}
+}
