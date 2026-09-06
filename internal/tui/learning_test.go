@@ -118,3 +118,31 @@ func TestLearningReviewPreservesUpdatesAndRemovals(t *testing.T) {
 		t.Fatal("untrusted terminal controls passed through")
 	}
 }
+
+func TestLearningListIsReadableAndKeepsForgetID(t *testing.T) {
+	item := learning.Learning{Version: 1, ID: "record-123", Source: "hidden-session", Topic: "Go testing", Content: "Run focused tests first.\nRun the full suite before merging.", Tags: []string{"go", "testing"}}
+	for _, color := range []bool{false, true} {
+		output := formatLearningList([]learning.Learning{item}, 60, color)
+		for _, want := range []string{"Global learning: 1 record(s)", "Use an ID with /learn forget", "<id>.", "1. Go testing", "ID: record-123", "Run focused tests first.", "Run the full suite before merging.", "Tags: go, testing"} {
+			if !strings.Contains(output, want) {
+				t.Fatalf("missing %q: %s", want, output)
+			}
+		}
+		for _, hidden := range []string{item.Source, `"version"`, "created_at"} {
+			if strings.Contains(output, hidden) {
+				t.Fatalf("leaked metadata %q: %s", hidden, output)
+			}
+		}
+		if strings.Contains(output, "\x1b[") != color {
+			t.Fatal("incorrect color behavior")
+		}
+		for _, line := range strings.Split(output, "\n") {
+			if visibleWidth(line) > 60 {
+				t.Fatalf("line exceeds terminal: %q", line)
+			}
+		}
+	}
+	if got := formatLearningList(nil, 80, false); got != "No global learning stored." {
+		t.Fatalf("empty list = %q", got)
+	}
+}

@@ -14,10 +14,28 @@ type learningRunner interface {
 	Learn(context.Context, string, learning.Approver) (string, error)
 }
 
+type learningLister interface {
+	ListLearning(context.Context) ([]learning.Learning, error)
+}
+
 func (u *UI) learn(ctx context.Context, arguments string) {
 	runner, ok := u.runner.(learningRunner)
 	if !ok {
 		u.printSystemMessage(yellow + "Global learning is unavailable." + reset)
+		return
+	}
+	if strings.TrimSpace(arguments) == "list" {
+		lister, ok := runner.(learningLister)
+		if !ok {
+			u.printSystemMessage(yellow + "Global learning is unavailable." + reset)
+			return
+		}
+		items, err := lister.ListLearning(ctx)
+		if err != nil {
+			u.printSystemMessage(yellow + "Learning error: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+			return
+		}
+		u.printSystemMessage(formatLearningList(items, u.width, ColorEnabled(u.out)))
 		return
 	}
 	taskCtx, cancel := context.WithCancel(ctx)
@@ -63,6 +81,40 @@ func learningDisplay(text string) string {
 		lines[i] = sanitizeDiffLine(line, "<ESC>")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// formatLearningList presents stored records as readable terminal text while
+// retaining the ID needed by /learn forget. It intentionally omits storage-only
+// metadata such as timestamps, schema version, and source session IDs.
+func formatLearningList(items []learning.Learning, width int, color bool) string {
+	if len(items) == 0 {
+		return "No global learning stored."
+	}
+	style := func(text, code string) string {
+		if color && code != "" {
+			return code + text + reset
+		}
+		return text
+	}
+	var out strings.Builder
+	line := func(text, code, indent string) {
+		for _, part := range strings.Split(text, "\n") {
+			safe := sanitizeDiffLine(part, "<ESC>")
+			fmt.Fprintln(&out, wrapANSI(indent+style(safe, code), width, indent))
+		}
+	}
+	line(fmt.Sprintf("Global learning: %d record(s)", len(items)), bold, "")
+	line("Available in every workspace. Use an ID with /learn forget <id>.", dim, "")
+	for i, item := range items {
+		out.WriteByte('\n')
+		line(fmt.Sprintf("%d. %s", i+1, item.Topic), bold+cyan, "")
+		line("ID: "+item.ID, dim, "   ")
+		line(item.Content, "", "   ")
+		if len(item.Tags) > 0 {
+			line("Tags: "+strings.Join(item.Tags, ", "), dim, "   ")
+		}
+	}
+	return strings.TrimRight(out.String(), "\n")
 }
 
 // Display the exact content being approved, without storage metadata or JSON.

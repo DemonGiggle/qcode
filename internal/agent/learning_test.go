@@ -163,7 +163,7 @@ func TestLearningListForgetAndCompact(t *testing.T) {
 	snapshot, _ := store.Snapshot(context.Background())
 	item := snapshot.Items[0]
 	result, err := a.Learn(context.Background(), "list", nil)
-	if err != nil || !strings.Contains(result, item.ID) || len(p.requests) != 0 {
+	if err != nil || !strings.Contains(result, item.ID) || strings.Contains(result, `"version"`) || len(p.requests) != 0 {
 		t.Fatalf("list %s %v", result, err)
 	}
 	if _, err := a.Learn(context.Background(), "forget "+item.ID, func(context.Context, []learning.Change) (bool, error) { return false, nil }); err != nil {

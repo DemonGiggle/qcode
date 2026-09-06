@@ -82,11 +82,7 @@ func (a *Agent) Learn(ctx context.Context, arguments string, approve LearningApp
 		return "", err
 	}
 	if action == "list" {
-		if len(snapshot.Items) == 0 {
-			return "No global learning stored.", nil
-		}
-		data, _ := json.MarshalIndent(snapshot.Items, "", "  ")
-		return "Global learning (shared across workspaces):\n" + string(data), nil
+		return formatLearningList(snapshot.Items), nil
 	}
 	if approve == nil {
 		return "", fmt.Errorf("learning changes require interactive user review")
@@ -193,6 +189,34 @@ func (a *Agent) Learn(ctx context.Context, arguments string, approve LearningApp
 		result += "\nCompaction backup: " + backup
 	}
 	return result, nil
+}
+
+// ListLearning returns the reviewed global records for interactive presentation.
+// The terminal UI is responsible for applying its own layout and colors.
+func (a *Agent) ListLearning(ctx context.Context) ([]learning.Learning, error) {
+	if a.learningStore == nil {
+		return nil, fmt.Errorf("global learning is unavailable in this session")
+	}
+	snapshot, err := a.learningStore.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.Items, nil
+}
+
+func formatLearningList(items []learning.Learning) string {
+	if len(items) == 0 {
+		return "No global learning stored."
+	}
+	var out strings.Builder
+	fmt.Fprintf(&out, "Global learning: %d record(s) (shared across workspaces)\n", len(items))
+	for i, item := range items {
+		fmt.Fprintf(&out, "\n%d. %s\n   ID: %s\n   %s\n", i+1, item.Topic, item.ID, item.Content)
+		if len(item.Tags) > 0 {
+			fmt.Fprintf(&out, "   Tags: %s\n", strings.Join(item.Tags, ", "))
+		}
+	}
+	return strings.TrimRight(out.String(), "\n")
 }
 
 func sessionForAction(action string, session []llm.Message) []llm.Message {
