@@ -13,6 +13,7 @@ type slashCommand struct {
 }
 
 var slashCommands = []slashCommand{
+	{name: "/agent", description: "Create, list, switch, rename, cancel, or close agents"},
 	{name: "/clear", description: "Clear the conversation display"},
 	{name: "/diff", description: "Expand a recent file diff"},
 	{name: "/exit", description: "Exit qcode"},
@@ -45,6 +46,12 @@ type slashCommandMenu struct {
 	color   bool
 	visible int
 	width   int
+}
+
+func (m *slashCommandMenu) setWidth(width int) {
+	m.mu.Lock()
+	m.width = width
+	m.mu.Unlock()
 }
 
 func (m *slashCommandMenu) update(commands []slashCommand) {

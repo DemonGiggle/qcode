@@ -4,12 +4,14 @@
 
 ## What is included
 
-- A terminal UI with editable input, history, full word wrapping, streamed responses, ANSI-colored Markdown (including aligned GFM tables), a fixed bottom status bar, cancellable tasks via Ctrl+C, and live prefix-matched slash-command suggestions with descriptions. Use `/model` to fetch the provider's models, search a large catalog by typing, move through matches with Up/Down, and select with Enter. Set `NO_COLOR=1` to disable response styling.
+- A full-viewport terminal UI with editable input, per-agent history, full word wrapping, streamed responses, ANSI-colored Markdown (including aligned GFM tables), fixed top tabs and a bottom status bar, cancellable tasks via Ctrl+C, and live prefix-matched slash-command suggestions with descriptions. The normal terminal buffer and scrollback are retained. Use `/model` to fetch the provider's models, search a large catalog by typing, move through matches with Up/Down, and select with Enter. Set `NO_COLOR=1` to disable response styling.
 - Ollama and OpenAI-compatible APIs.
 - `read`, `write`, `edit`, `list`, `search`, `view_image`, `shell`, `web_fetch`, and `web_search` tools.
 - Interactive mode shows a task-level `Waiting` indicator from submission through LLM and local-tool work. Use `/verbose` to toggle detailed telemetry, where every LLM request and tool call appears as one timestamped entry whose spinner is replaced by elapsed time when it finishes.
 - Use Page Up and Page Down to scroll through qcode's output history without leaving the interactive prompt.
 - Use `/new` to discard the current conversation context and start a fresh session without restarting qcode or changing the provider, model, or workspace.
+- Interactive mode supports up to four concurrent agent tabs, including permanent `main`. Use `/agent` to create one, `/agent list`, `/agent switch <id>`, `/agent rename <id> <name>`, `/agent cancel <id>`, and `/agent close <id>`. Ctrl+PageUp and Ctrl+PageDown switch tabs; Alt+, and Alt+. are fallbacks for terminal emulators that reserve those shortcuts. Each agent keeps independent context, model, output, tool settings, and sandbox grants while workspace mutations are serialized.
+- The main agent receives a bounded roster of other agents and can retrieve relevant handoffs or delegate focused follow-up work. Sub-agent histories are never copied into main context.
 - Successful interactive runs end with a distinct colored `Completed in ...` notice measuring the complete run across every model turn and tool call.
 - Provider-delimited model thinking streams in subtle gray, while the final answer retains normal Markdown styling. Ollama uses `message.thinking`; OpenAI-compatible providers may use `reasoning_content` or `reasoning` deltas.
 - Interactive `write` and `edit` tool calls display numbered, 10-line Codex-style diff previews with a file summary, change counts, guided body, and colored additions, removals, and hunk headers. Use `/diff` or `/diff N` to expand a preview up to the 200-line safety limit; tool results sent back to the model remain plain text.
@@ -300,9 +302,9 @@ start event before execution.
 
 ### Startup and session context
 
-The interactive banner lists enabled and disabled tools, reflecting the current
-session settings. `/clear` redraws this summary, including changes made with
-`/tool`.
+The interactive banner lists enabled and disabled tools for the active agent.
+`/clear` redraws this summary, including changes made with `/tool`. `/new`,
+`/model`, `/skill`, `/tool`, and `/learn` affect only the active tab.
 
 The status bar shows `CONTEXT 73% left`, using the latest completion's input and
 output token counts (not cumulative billed usage). OpenAI and OpenCode Go request

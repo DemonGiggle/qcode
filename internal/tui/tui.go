@@ -16,6 +16,7 @@ import (
 	"golang.org/x/term"
 
 	"qcode/internal/prompt"
+	"qcode/internal/session"
 )
 
 const (
@@ -102,30 +103,63 @@ type readWriter struct {
 	io.Writer
 }
 
+type historyDisplay interface {
+	io.Writer
+	AddLine(string)
+	Clear()
+	Lines() []string
+}
+
+type agentController interface {
+	Events() <-chan session.Event
+	List() []session.Summary
+	Summary(string) (session.Summary, error)
+	Runner(string) (any, bool)
+	Create(string) (session.Summary, error)
+	Start(string, string) error
+	Rename(string, string) error
+	Cancel(string) error
+	Close(string) error
+	Reset(string) error
+	UpdateModel(string, string) error
+	SetWaitingForApproval(string, bool)
+	Shutdown()
+}
+
 type UI struct {
-	terminal       *term.Terminal
-	display        *historyWriter
-	responseWriter *MarkdownWriter
-	commandMenu    slashCommandMenu
-	input          *interruptReader
-	in             *os.File
-	out            *os.File
-	runner         Runner
-	provider       string
-	model          string
-	root           string
-	verbose        bool
-	width          int
-	height         int
-	unicode        bool
-	pageMu         sync.Mutex
-	pageOffset     int
-	pageActive     bool
-	statusActive   bool
-	startupNotice  string
-	startupChoice  bool
-	skills         []prompt.SkillSummary
-	onSkills       func([]string)
+	terminal        *term.Terminal
+	display         historyDisplay
+	responseWriter  *MarkdownWriter
+	commandMenu     slashCommandMenu
+	input           *interruptReader
+	in              *os.File
+	out             *os.File
+	runner          Runner
+	provider        string
+	model           string
+	root            string
+	verbose         bool
+	width           int
+	height          int
+	unicode         bool
+	pageMu          sync.Mutex
+	pageOffset      int
+	pageActive      bool
+	statusActive    bool
+	startupNotice   string
+	startupChoice   bool
+	skills          []prompt.SkillSummary
+	onSkills        func([]string)
+	manager         agentController
+	activeAgent     string
+	views           map[string]*agentView
+	screenMu        sync.Mutex
+	drafts          map[string]string
+	approvalMu      sync.Mutex
+	approvals       map[string][]*approvalRequest
+	tabMu           sync.Mutex
+	pendingTab      int
+	agentEventsDone chan struct{}
 }
 
 // SetSkillCatalog configures the optional /skill selector.
@@ -160,9 +194,13 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 		width:          width,
 		height:         height,
 		unicode:        unicodeEnabled,
+		views:          make(map[string]*agentView),
+		drafts:         make(map[string]string),
+		approvals:      make(map[string][]*approvalRequest),
 	}
 	t.AutoCompleteCallback = u.completeSlashCommand
 	input.setPageHandler(u.showPage)
+	input.setTabHandler(u.requestTabSwitch)
 	u.SetRunner(runner)
 	return u
 }
@@ -170,6 +208,63 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 func (u *UI) Writer() io.Writer { return u.display }
 
 func (u *UI) ResponseWriter() io.Writer { return u.responseWriter }
+
+// AddAgentView creates an isolated output/history buffer for an agent.
+func (u *UI) AddAgentView(id, provider, model string) (io.Writer, io.Writer) {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	history := newHistoryWriter(io.Discard)
+	display := &agentDisplay{ui: u, id: id, history: history}
+	response := NewMarkdownWriter(display, ColorEnabled(u.out), u.width)
+	response.SetUnicode(u.unicode)
+	response.EnableDiffs()
+	u.views[id] = &agentView{id: id, provider: provider, model: model, display: display, response: response}
+	if u.activeAgent == "" || id == "main" {
+		u.activeAgent = id
+		u.display = display
+		u.responseWriter = response
+		u.provider = provider
+		u.model = model
+	}
+	return display, response
+}
+
+func (u *UI) SetAgentSkillHandler(id string, onChange func([]string)) {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	if view := u.views[id]; view != nil {
+		view.onSkills = onChange
+		if id == u.activeAgent {
+			u.onSkills = onChange
+		}
+	}
+}
+
+func (u *UI) RemoveAgentView(id string) {
+	u.screenMu.Lock()
+	delete(u.views, id)
+	delete(u.drafts, id)
+	u.screenMu.Unlock()
+}
+
+func (u *UI) SetAgentManager(manager agentController) {
+	u.manager = manager
+	if manager == nil {
+		return
+	}
+	u.agentEventsDone = make(chan struct{})
+	go u.watchAgentEvents(manager.Events())
+}
+
+func (u *UI) shutdownAgentManager() {
+	if u.manager == nil {
+		return
+	}
+	u.manager.Shutdown()
+	if u.agentEventsDone != nil {
+		<-u.agentEventsDone
+	}
+}
 
 func (u *UI) SetRunner(runner Runner) {
 	u.runner = runner
@@ -193,6 +288,7 @@ func (u *UI) Run(ctx context.Context) error {
 		return fmt.Errorf("terminal UI has no agent runner")
 	}
 	if !term.IsTerminal(int(u.in.Fd())) || !term.IsTerminal(int(u.out.Fd())) {
+		u.shutdownAgentManager()
 		return fmt.Errorf("interactive mode requires a terminal; pass a prompt argument for one-shot mode")
 	}
 	if runner, ok := u.runner.(contextRunner); ok {
@@ -200,14 +296,20 @@ func (u *UI) Run(ctx context.Context) error {
 	}
 	state, err := term.MakeRaw(int(u.in.Fd()))
 	if err != nil {
+		u.shutdownAgentManager()
 		return fmt.Errorf("enable terminal mode: %w", err)
 	}
 	defer func() {
 		u.teardownStatusBar()
 		_ = term.Restore(int(u.in.Fd()), state)
 	}()
+	if u.manager != nil {
+		defer u.shutdownAgentManager()
+	}
 	u.input.start()
 	u.setupStatusBar()
+	stopResize := u.watchResize()
+	defer stopResize()
 
 	u.printHeader()
 	if u.startupNotice != "" {
@@ -226,6 +328,8 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 	}
 	for {
+		u.handlePendingTabSwitch()
+		u.handlePendingApproval(ctx)
 		line, err := u.terminal.ReadLine()
 		u.commandMenu.dismiss(u.out)
 		if err != nil {
@@ -234,6 +338,14 @@ func (u *UI) Run(ctx context.Context) error {
 			}
 			return err
 		}
+		u.tabMu.Lock()
+		tabPending := u.pendingTab != 0
+		u.tabMu.Unlock()
+		if !tabPending {
+			u.screenMu.Lock()
+			u.drafts[u.activeAgent] = ""
+			u.screenMu.Unlock()
+		}
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -241,6 +353,10 @@ func (u *UI) Run(ctx context.Context) error {
 		u.display.AddLine("> " + line)
 		u.resetPage()
 		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == "/agent" {
+			u.handleAgentCommand(ctx, fields)
+			continue
+		}
 		if len(fields) > 0 && fields[0] == "/learn" {
 			u.learn(ctx, strings.TrimSpace(strings.TrimPrefix(line, "/learn")))
 			continue
@@ -290,9 +406,16 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		u.responseWriter.ResetDiffs()
 		started := time.Now()
+		if u.manager != nil {
+			err = u.runActiveTask(ctx, line)
+			if err != nil {
+				u.printSystemMessage(yellow + "error: " + err.Error() + reset)
+			}
+			continue
+		}
 		taskCtx, cancel := context.WithCancel(ctx)
 		u.input.setCancel(cancel)
-		err = u.runner.Run(taskCtx, line)
+		err = u.runActiveTask(taskCtx, line)
 		u.input.setCancel(nil)
 		cancel()
 		u.drawStatusBar()
@@ -383,6 +506,17 @@ func pathContainsForUI(parent, child string) bool {
 }
 
 func (u *UI) startNewSession() {
+	if u.manager != nil {
+		if err := u.manager.Reset(u.activeAgent); err != nil {
+			u.printSystemMessage(yellow + err.Error() + reset)
+			return
+		}
+		u.drawTabBar()
+		u.drawStatusBar()
+		u.responseWriter.ResetDiffs()
+		u.printSystemMessage(green + "New session started; previous context cleared." + reset)
+		return
+	}
 	resetter, ok := u.runner.(sessionRunner)
 	if !ok {
 		u.printSystemMessage(yellow + "Starting a new session is unavailable." + reset)
@@ -395,6 +529,9 @@ func (u *UI) startNewSession() {
 }
 
 func (u *UI) chooseModel(ctx context.Context) {
+	if !u.activeAgentConfigurable() {
+		return
+	}
 	runner, ok := u.runner.(modelRunner)
 	if !ok {
 		u.printSystemMessage(yellow + "Model selection is unavailable." + reset)
@@ -435,6 +572,17 @@ func (u *UI) chooseModel(ctx context.Context) {
 	if !accepted {
 		u.printSystemMessage(dim + "Model selection cancelled." + reset)
 		return
+	}
+	if u.manager != nil {
+		if err := u.manager.UpdateModel(u.activeAgent, selected); err != nil {
+			u.printSystemMessage(yellow + err.Error() + reset)
+			return
+		}
+		u.screenMu.Lock()
+		if view := u.views[u.activeAgent]; view != nil {
+			view.model = selected
+		}
+		u.screenMu.Unlock()
 	}
 	runner.SetModel(selected)
 	if tracker, ok := u.runner.(contextRunner); ok {
@@ -495,6 +643,7 @@ func (u *UI) completeSlashCommand(line string, pos int, key rune) (string, int, 
 		}
 		completed := matches[0].name
 		u.commandMenu.update(matchingSlashCommands(completed))
+		u.rememberDraft(completed)
 		return completed, len(completed), true
 	}
 	if key < 32 || pos < 0 || pos > len(line) {
@@ -503,7 +652,17 @@ func (u *UI) completeSlashCommand(line string, pos int, key rune) (string, int, 
 	inserted := string(key)
 	newLine := line[:pos] + inserted + line[pos:]
 	u.commandMenu.update(matchingSlashCommands(newLine))
+	u.rememberDraft(newLine)
 	return newLine, pos + len(inserted), true
+}
+
+func (u *UI) rememberDraft(line string) {
+	if u.manager == nil {
+		return
+	}
+	u.screenMu.Lock()
+	u.drafts[u.activeAgent] = line
+	u.screenMu.Unlock()
 }
 
 func (u *UI) printCommandHelp() {
@@ -554,13 +713,20 @@ func (u *UI) resetStatusLayout() {
 	if !u.statusActive {
 		return
 	}
-	// Reserve the last row for status and leave the row above it blank.
-	// Conversation output and the editable prompt scroll above both rows.
-	fmt.Fprintf(u.out, "\x1b[1;%dr\x1b[%d;1H", u.height-2, u.height-2)
+	// Reserve the first row for tabs, the last row for status, and leave the
+	// row above status blank. Conversation output scrolls between them.
+	fmt.Fprintf(u.out, "\x1b[2;%dr\x1b[2;1H", u.height-2)
+	u.drawTabBar()
 	u.drawStatusBar()
 }
 
 func (u *UI) drawStatusBar() {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	u.drawStatusBarLocked()
+}
+
+func (u *UI) drawStatusBarLocked() {
 	if !u.statusActive {
 		return
 	}
@@ -663,37 +829,54 @@ func (u *UI) resetPage() {
 	u.pageOffset = 0
 	u.pageActive = false
 	u.pageMu.Unlock()
+	if u.manager != nil {
+		u.screenMu.Lock()
+		if view := u.views[u.activeAgent]; view != nil {
+			view.page = 0
+		}
+		u.screenMu.Unlock()
+	}
 	if !active {
 		return
 	}
 
-	lines := u.visualHistoryLines()
-	pageHeight := u.height - 1
-	if u.statusActive {
-		pageHeight = u.height - 3
-	}
+	u.screenMu.Lock()
+	display := u.display
+	width, height := u.width, u.height
+	u.screenMu.Unlock()
+	lines := visualHistoryLines(display, width)
+	pageHeight := height - 4
 	page, _ := historyPage(lines, pageHeight, 0, 0)
 	var output strings.Builder
-	output.WriteString("\x1b[2J\x1b[H")
+	output.WriteString("\x1b[2;1H\x1b[J")
 	output.WriteString(strings.Join(page, "\n"))
 	if len(page) > 0 {
 		output.WriteByte('\n')
 	}
 	_, _ = u.terminal.Write([]byte(output.String()))
+	u.drawTabBar()
 	u.drawStatusBar()
 }
 
 func (u *UI) showPage(direction int) {
 	u.pageMu.Lock()
-	lines := u.visualHistoryLines()
-	pageSize := u.height - 2
-	if u.statusActive {
-		pageSize = u.height - 3
-	}
+	u.screenMu.Lock()
+	display := u.display
+	width, height := u.width, u.height
+	u.screenMu.Unlock()
+	lines := visualHistoryLines(display, width)
+	pageSize := height - 4
 	page, offset := historyPage(lines, pageSize, u.pageOffset, direction)
 	u.pageOffset = offset
 	u.pageActive = true
 	u.pageMu.Unlock()
+	if u.manager != nil {
+		u.screenMu.Lock()
+		if view := u.views[u.activeAgent]; view != nil {
+			view.page = offset
+		}
+		u.screenMu.Unlock()
+	}
 
 	u.commandMenu.reset()
 	start := len(lines) - offset - len(page) + 1
@@ -702,7 +885,7 @@ func (u *UI) showPage(direction int) {
 		start, end = 0, 0
 	}
 	var output strings.Builder
-	output.WriteString("\x1b[2J\x1b[H")
+	output.WriteString("\x1b[2;1H\x1b[J")
 	output.WriteString(strings.Join(page, "\n"))
 	if len(page) > 0 {
 		output.WriteByte('\n')
@@ -713,16 +896,24 @@ func (u *UI) showPage(direction int) {
 	}
 	fmt.Fprintf(&output, "%s[%d-%d of %d %s PgUp/PgDn]%s\n", dim, start, end, len(lines), separator, reset)
 	_, _ = u.terminal.Write([]byte(output.String()))
+	u.drawTabBar()
 	u.drawStatusBar()
 }
 
-func (u *UI) visualHistoryLines() []string {
-	logical := u.display.Lines()
+func visualHistoryLines(display historyDisplay, width int) []string {
+	logical := display.Lines()
 	visual := make([]string, 0, len(logical))
 	for _, line := range logical {
-		visual = append(visual, strings.Split(wrapANSI(line, u.width, ""), "\n")...)
+		visual = append(visual, strings.Split(wrapANSI(line, width, ""), "\n")...)
 	}
 	return visual
+}
+
+func (u *UI) visualHistoryLines() []string {
+	u.screenMu.Lock()
+	display, width := u.display, u.width
+	u.screenMu.Unlock()
+	return visualHistoryLines(display, width)
 }
 
 func terminalSize(out *os.File) (int, int) {

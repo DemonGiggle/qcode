@@ -10,9 +10,29 @@ const (
 	ctrlC = byte(3)
 	ctrlU = byte(21)
 
-	pageUpSequence   = "\x1b[5~"
-	pageDownSequence = "\x1b[6~"
+	pageUpSequence       = "\x1b[5~"
+	pageDownSequence     = "\x1b[6~"
+	ctrlPageUpSequence   = "\x1b[5;5~"
+	ctrlPageDownSequence = "\x1b[6;5~"
+	rxvtCtrlPageUp       = "\x1b[5^"
+	rxvtCtrlPageDown     = "\x1b[6^"
+	altPreviousTab       = "\x1b,"
+	altNextTab           = "\x1b."
 )
+
+type tabKeySequence struct {
+	value     string
+	direction int
+}
+
+var tabKeySequences = []tabKeySequence{
+	{value: ctrlPageUpSequence, direction: -1},
+	{value: ctrlPageDownSequence, direction: 1},
+	{value: rxvtCtrlPageUp, direction: -1},
+	{value: rxvtCtrlPageDown, direction: 1},
+	{value: altPreviousTab, direction: -1},
+	{value: altNextTab, direction: 1},
+}
 
 // interruptReader owns terminal input so Ctrl+C can cancel an active agent
 // task even while the line editor is not reading. Other input typed while a
@@ -25,6 +45,7 @@ type interruptReader struct {
 	mu      sync.Mutex
 	cancel  context.CancelFunc
 	page    func(int)
+	tab     func(int)
 	err     error
 	pending []byte
 	raw     bool
@@ -50,11 +71,30 @@ func (r *interruptReader) setPageHandler(page func(int)) {
 	r.mu.Unlock()
 }
 
+func (r *interruptReader) setTabHandler(tab func(int)) {
+	r.mu.Lock()
+	r.tab = tab
+	r.mu.Unlock()
+}
+
 func (r *interruptReader) setRaw(raw bool) {
 	r.mu.Lock()
 	r.raw = raw
 	r.pending = nil
 	r.mu.Unlock()
+}
+
+func (r *interruptReader) interruptLine() {
+	r.data <- ctrlU
+	r.data <- '\r'
+}
+
+func (r *interruptReader) inject(data []byte) {
+	go func() {
+		for _, key := range data {
+			r.data <- key
+		}
+	}()
 }
 
 func (r *interruptReader) Read(buffer []byte) (int, error) {
@@ -116,43 +156,50 @@ func (r *interruptReader) route(input []byte) {
 		return
 	}
 	cancel := r.cancel
-	if cancel != nil {
-		r.pending = nil
-		for _, key := range input {
-			if key == ctrlC {
-				cancel()
-				break
-			}
-		}
-		r.mu.Unlock()
-		return
-	}
 	page := r.page
+	tab := r.tab
+	pending := append([]byte(nil), r.pending...)
+	r.pending = nil
 	r.mu.Unlock()
 
-	input = append(r.pending, input...)
-	r.pending = nil
+	input = append(pending, input...)
 	for len(input) > 0 {
+		if direction, length, ok := matchTabKeySequence(input); ok {
+			if tab != nil {
+				tab(direction)
+			}
+			input = input[length:]
+			continue
+		}
 		if len(input) >= len(pageUpSequence) && string(input[:len(pageUpSequence)]) == pageUpSequence {
-			if page != nil {
+			if page != nil && cancel == nil {
 				page(1)
 			}
 			input = input[len(pageUpSequence):]
 			continue
 		}
 		if len(input) >= len(pageDownSequence) && string(input[:len(pageDownSequence)]) == pageDownSequence {
-			if page != nil {
+			if page != nil && cancel == nil {
 				page(-1)
 			}
 			input = input[len(pageDownSequence):]
 			continue
 		}
-		if isPageSequencePrefix(input) {
+		if isKnownSequencePrefix(input) {
+			r.mu.Lock()
 			r.pending = append(r.pending, input...)
+			r.mu.Unlock()
 			return
 		}
 		key := input[0]
 		input = input[1:]
+		if cancel != nil {
+			if key == ctrlC {
+				cancel()
+				return
+			}
+			continue
+		}
 		if key == ctrlC {
 			// Clear the current input and submit an empty line. x/term treats a
 			// raw Ctrl+C as EOF, which would otherwise exit the application.
@@ -164,10 +211,26 @@ func (r *interruptReader) route(input []byte) {
 	}
 }
 
-func isPageSequencePrefix(input []byte) bool {
-	if len(input) >= len(pageUpSequence) {
-		return false
+func matchTabKeySequence(input []byte) (direction, length int, ok bool) {
+	for _, sequence := range tabKeySequences {
+		if len(input) >= len(sequence.value) && string(input[:len(sequence.value)]) == sequence.value {
+			return sequence.direction, len(sequence.value), true
+		}
 	}
+	return 0, 0, false
+}
+
+func isKnownSequencePrefix(input []byte) bool {
 	prefix := string(input)
-	return pageUpSequence[:len(input)] == prefix || pageDownSequence[:len(input)] == prefix
+	for _, sequence := range []string{pageUpSequence, pageDownSequence} {
+		if len(prefix) < len(sequence) && sequence[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	for _, sequence := range tabKeySequences {
+		if len(prefix) < len(sequence.value) && sequence.value[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
 }

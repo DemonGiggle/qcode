@@ -661,8 +661,9 @@ func (r *Registry) writeDetailed(ctx context.Context, arguments json.RawMessage)
 		return ExecutionResult{}, err
 	}
 	return ExecutionResult{
-		Output: fmt.Sprintf("wrote %d bytes to %s", len(args.Content), args.Path),
-		Diff:   unifiedDiff(args.Path, before, []byte(args.Content), existed),
+		Output:       fmt.Sprintf("wrote %d bytes to %s", len(args.Content), args.Path),
+		Diff:         unifiedDiff(args.Path, before, []byte(args.Content), existed),
+		ChangedFiles: []string{args.Path},
 	}, nil
 }
 
@@ -709,7 +710,7 @@ func (r *Registry) editDetailed(ctx context.Context, arguments json.RawMessage) 
 	if err := r.writeFile(path, updated, info.Mode().Perm()); err != nil {
 		return ExecutionResult{}, err
 	}
-	return ExecutionResult{Output: fmt.Sprintf("edited %s", args.Path), Diff: unifiedDiff(args.Path, data, updated, true)}, nil
+	return ExecutionResult{Output: fmt.Sprintf("edited %s", args.Path), Diff: unifiedDiff(args.Path, data, updated, true), ChangedFiles: []string{args.Path}}, nil
 }
 
 func (r *Registry) list(ctx context.Context, arguments json.RawMessage) (string, error) {
@@ -865,6 +866,45 @@ func (r *Registry) shell(ctx context.Context, arguments json.RawMessage) (string
 		text = "command completed with no output"
 	}
 	return text, nil
+}
+
+// WorkspaceState captures only paths Git already considers changed. This
+// keeps shell attribution cheap even in large repositories while detecting
+// edits to files that were dirty before the command through size and mtime.
+func (r *Registry) WorkspaceState(ctx context.Context) map[string]string {
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	cmd.Dir = r.root
+	data, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	state := make(map[string]string)
+	records := bytes.Split(data, []byte{0})
+	for index := 0; index < len(records); index++ {
+		record := records[index]
+		if len(record) < 4 {
+			continue
+		}
+		code := string(record[:2])
+		path := string(record[3:])
+		state[path] = code + fileState(filepath.Join(r.root, filepath.FromSlash(path)))
+		if (record[0] == 'R' || record[0] == 'C' || record[1] == 'R' || record[1] == 'C') && index+1 < len(records) {
+			index++
+			oldPath := string(records[index])
+			if oldPath != "" {
+				state[oldPath] = code + fileState(filepath.Join(r.root, filepath.FromSlash(oldPath)))
+			}
+		}
+	}
+	return state
+}
+
+func fileState(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return ":missing"
+	}
+	return fmt.Sprintf(":%d:%d:%d", info.Size(), info.ModTime().UnixNano(), info.Mode())
 }
 
 type limitedBuffer struct {

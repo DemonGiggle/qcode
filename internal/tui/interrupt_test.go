@@ -76,6 +76,50 @@ func TestInterruptReaderRoutesPageKeys(t *testing.T) {
 	}
 }
 
+func TestInterruptReaderRoutesTabKeysDuringTask(t *testing.T) {
+	reader := newInterruptReader(nil)
+	var directions []int
+	reader.setTabHandler(func(direction int) { directions = append(directions, direction) })
+	cancelled := false
+	reader.setCancel(func() { cancelled = true })
+
+	reader.route([]byte(ctrlPageUpSequence + ctrlPageDownSequence + rxvtCtrlPageUp + rxvtCtrlPageDown + altPreviousTab + altNextTab + "discarded"))
+	want := []int{-1, 1, -1, 1, -1, 1}
+	if len(directions) != len(want) {
+		t.Fatalf("tab directions = %v", directions)
+	}
+	for index := range want {
+		if directions[index] != want[index] {
+			t.Fatalf("tab directions = %v", directions)
+		}
+	}
+	if cancelled {
+		t.Fatal("tab navigation cancelled the task")
+	}
+	select {
+	case key := <-reader.data:
+		t.Fatalf("task input leaked to line editor as %q", key)
+	default:
+	}
+}
+
+func TestInterruptReaderRecognizesSplitTabSequences(t *testing.T) {
+	for _, sequence := range tabKeySequences {
+		t.Run(sequence.value, func(t *testing.T) {
+			reader := newInterruptReader(nil)
+			var direction int
+			reader.setTabHandler(func(value int) { direction = value })
+
+			for index := range sequence.value {
+				reader.route([]byte(sequence.value[index : index+1]))
+			}
+			if direction != sequence.direction {
+				t.Fatalf("direction = %d, want %d", direction, sequence.direction)
+			}
+		})
+	}
+}
+
 func TestInterruptReaderRecognizesSplitPageSequence(t *testing.T) {
 	reader := newInterruptReader(nil)
 	called := 0
@@ -109,15 +153,17 @@ func TestInterruptReaderRawModeForwardsControlAndPageKeys(t *testing.T) {
 	reader := newInterruptReader(nil)
 	called := false
 	reader.setPageHandler(func(int) { called = true })
+	reader.setTabHandler(func(int) { called = true })
 	reader.setRaw(true)
 	reader.route([]byte{ctrlC})
 	reader.route([]byte(pageUpSequence))
+	reader.route([]byte(altNextTab))
 
-	buffer := make([]byte, 1+len(pageUpSequence))
+	buffer := make([]byte, 1+len(pageUpSequence)+len(altNextTab))
 	if _, err := io.ReadFull(reader, buffer); err != nil {
 		t.Fatal(err)
 	}
-	if buffer[0] != ctrlC || string(buffer[1:]) != pageUpSequence || called {
+	if buffer[0] != ctrlC || string(buffer[1:]) != pageUpSequence+altNextTab || called {
 		t.Fatalf("raw input = %q, page called = %v", buffer, called)
 	}
 }

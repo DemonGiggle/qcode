@@ -32,6 +32,7 @@ type MarkdownWriter struct {
 	inFence  bool
 	thinking bool
 	diffs    bool
+	stateMu  sync.Mutex
 	diffMu   sync.Mutex
 	diffList []string
 	buffer   bytes.Buffer
@@ -46,11 +47,29 @@ func NewMarkdownWriter(out io.Writer, enabled bool, width ...int) *MarkdownWrite
 	return writer
 }
 
-func (w *MarkdownWriter) SetUnicode(enabled bool) { w.unicode = enabled }
+func (w *MarkdownWriter) SetUnicode(enabled bool) {
+	w.stateMu.Lock()
+	w.unicode = enabled
+	w.stateMu.Unlock()
+}
 
-func (w *MarkdownWriter) EnableDiffs() { w.diffs = true }
+func (w *MarkdownWriter) SetWidth(width int) {
+	w.stateMu.Lock()
+	w.width = width
+	w.stateMu.Unlock()
+}
 
-func (w *MarkdownWriter) DiffEnabled() bool { return w.diffs }
+func (w *MarkdownWriter) EnableDiffs() {
+	w.stateMu.Lock()
+	w.diffs = true
+	w.stateMu.Unlock()
+}
+
+func (w *MarkdownWriter) DiffEnabled() bool {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	return w.diffs
+}
 
 // StreamChunkCompletesLine reports whether writing a provider chunk will
 // produce visible output instead of only extending the Markdown line buffer.
@@ -59,6 +78,8 @@ func (w *MarkdownWriter) StreamChunkCompletesLine(text string) bool {
 }
 
 func (w *MarkdownWriter) WriteDiff(diff string) {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
 	if !w.diffs || diff == "" {
 		return
 	}
@@ -77,6 +98,8 @@ func (w *MarkdownWriter) ResetDiffs() {
 
 // WriteStoredDiff expands a numbered diff. Number zero selects the latest.
 func (w *MarkdownWriter) WriteStoredDiff(number int) (int, int, bool) {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
 	w.diffMu.Lock()
 	total := len(w.diffList)
 	if number == 0 {
@@ -379,15 +402,23 @@ func sanitizeDiffLine(line, escapeLabel string) string {
 }
 
 func (w *MarkdownWriter) BeginResponse() {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
 	w.active = true
 	w.inFence = false
 	w.buffer.Reset()
 	w.table = nil
 }
 
-func (w *MarkdownWriter) BeginThinking() { w.thinking = true }
+func (w *MarkdownWriter) BeginThinking() {
+	w.stateMu.Lock()
+	w.thinking = true
+	w.stateMu.Unlock()
+}
 
 func (w *MarkdownWriter) EndThinking() {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
 	if !w.thinking {
 		return
 	}
@@ -400,6 +431,8 @@ func (w *MarkdownWriter) EndThinking() {
 }
 
 func (w *MarkdownWriter) EndResponse() {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
 	if !w.active {
 		return
 	}
@@ -418,6 +451,8 @@ func (w *MarkdownWriter) EndResponse() {
 }
 
 func (w *MarkdownWriter) Write(data []byte) (int, error) {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
 	if !w.active || (!w.enabled && w.width <= 0) {
 		return w.out.Write(data)
 	}

@@ -3,9 +3,14 @@ package tui
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/term"
+
+	"qcode/internal/session"
 )
 
 type resettableRunner struct {
@@ -21,7 +26,7 @@ func TestMatchingSlashCommands(t *testing.T) {
 		want []string
 	}{
 		{line: "", want: nil},
-		{line: "/", want: []string{"/clear", "/diff", "/exit", "/help", "/learn", "/model", "/new", "/skill", "/quit", "/tool", "/verbose"}},
+		{line: "/", want: []string{"/agent", "/clear", "/diff", "/exit", "/help", "/learn", "/model", "/new", "/skill", "/quit", "/tool", "/verbose"}},
 		{line: "/d", want: []string{"/diff"}},
 		{line: "/h", want: []string{"/help"}},
 		{line: "/m", want: []string{"/model"}},
@@ -148,6 +153,52 @@ func TestStatusBarFitsTerminalWidth(t *testing.T) {
 	}
 	if !strings.Contains(got, "…") {
 		t.Fatalf("truncated status bar has no ellipsis: %q", got)
+	}
+}
+
+func TestTabBarShowsActiveAgentAndStatuses(t *testing.T) {
+	summaries := []session.Summary{
+		{ID: "main", Name: "main", Status: session.StatusIdle},
+		{ID: "agent-1", Name: "review", Status: session.StatusRunning},
+		{ID: "agent-2", Name: "tests", Status: session.StatusCompleted},
+	}
+	got := tabBar(summaries, "agent-1", nil, 80, false, false)
+	if !strings.Contains(got, "[main -]") || !strings.Contains(got, "*[review >]") || !strings.Contains(got, "[tests +]") {
+		t.Fatalf("tab bar = %q", got)
+	}
+	if visibleWidth(got) > 80 {
+		t.Fatalf("tab bar width = %d", visibleWidth(got))
+	}
+}
+
+func TestTabBarKeepsActiveAgentOnNarrowScreen(t *testing.T) {
+	summaries := []session.Summary{
+		{ID: "main", Name: "main", Status: session.StatusIdle},
+		{ID: "agent-1", Name: "first-long-agent", Status: session.StatusCompleted},
+		{ID: "agent-2", Name: "active", Status: session.StatusRunning},
+		{ID: "agent-3", Name: "third-long-agent", Status: session.StatusFailed},
+	}
+	got := tabBar(summaries, "agent-2", nil, 24, false, false)
+	if !strings.Contains(got, "m") || !strings.Contains(got, "active") || !strings.Contains(got, ">") || visibleWidth(got) > 24 {
+		t.Fatalf("narrow tab bar = %q (width %d)", got, visibleWidth(got))
+	}
+}
+
+func TestAgentDisplayIsolatesBackgroundOutput(t *testing.T) {
+	var terminalOutput bytes.Buffer
+	terminal := term.NewTerminal(readWriter{Reader: strings.NewReader(""), Writer: &terminalOutput}, "> ")
+	u := &UI{terminal: terminal, activeAgent: "main"}
+	mainHistory := newHistoryWriter(io.Discard)
+	workerHistory := newHistoryWriter(io.Discard)
+	mainDisplay := &agentDisplay{ui: u, id: "main", history: mainHistory}
+	workerDisplay := &agentDisplay{ui: u, id: "agent-1", history: workerHistory}
+	_, _ = workerDisplay.Write([]byte("background\n"))
+	_, _ = mainDisplay.Write([]byte("foreground\n"))
+	if strings.Contains(terminalOutput.String(), "background") || !strings.Contains(terminalOutput.String(), "foreground") {
+		t.Fatalf("terminal output = %q", terminalOutput.String())
+	}
+	if got := strings.Join(workerHistory.Lines(), "\n"); !strings.Contains(got, "background") {
+		t.Fatalf("worker history = %q", got)
 	}
 }
 

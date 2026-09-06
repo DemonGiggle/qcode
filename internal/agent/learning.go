@@ -48,8 +48,15 @@ func (a *Agent) requestMessages(ctx context.Context) []llm.Message {
 	}
 	a.learningContext = extra
 	messages := append([]llm.Message(nil), a.messages...)
-	if extra != "" && len(messages) > 0 {
-		messages[0].Content += extra
+	a.stateMu.RLock()
+	contextSource := a.requestContext
+	a.stateMu.RUnlock()
+	dynamic := ""
+	if contextSource != nil {
+		dynamic = contextSource()
+	}
+	if len(messages) > 0 {
+		messages[0].Content += extra + dynamic
 	}
 	return messages
 }
