@@ -121,7 +121,26 @@ func TestAgentManagerShutdownCancelsAndCleansUp(t *testing.T) {
 	}
 }
 
-func TestAgentManagerCancellationAndFailedReset(t *testing.T) {
+func waitManagerFailure(t *testing.T, manager *AgentManager, id string) AgentSummary {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		summary, err := manager.Summary(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if summary.Status == StatusIdle && strings.Contains(summary.Error, "provider failed") {
+			return summary
+		}
+		select {
+		case <-manager.Events():
+		case <-deadline:
+			t.Fatalf("agent %s did not become reusable after failure: %+v", id, summary)
+		}
+	}
+}
+
+func TestAgentManagerCancellationAndFailureReuse(t *testing.T) {
 	manager := newTestManager(t, 2)
 	worker, _ := manager.Create("worker-model")
 	if err := manager.Start(worker.ID, "block"); err != nil {
@@ -139,18 +158,30 @@ func TestAgentManagerCancellationAndFailedReset(t *testing.T) {
 	if err := manager.Start(worker.ID, "fail"); err != nil {
 		t.Fatal(err)
 	}
-	failed := waitManagerStatus(t, manager, worker.ID, StatusFailed)
+	failed := waitManagerFailure(t, manager, worker.ID)
 	if !strings.Contains(failed.Error, "provider failed") {
 		t.Fatalf("failure = %+v", failed)
 	}
-	if err := manager.Start(worker.ID, "blocked"); err == nil || !strings.Contains(err.Error(), "/new") {
-		t.Fatalf("failed reuse error = %v", err)
+	if err := manager.Start(worker.ID, "recovered"); err != nil {
+		t.Fatalf("failed worker was not reusable: %v", err)
 	}
-	if err := manager.Reset(worker.ID); err != nil {
+	completed := waitManagerStatus(t, manager, worker.ID, StatusCompleted)
+	if completed.LastOutcome != "handled recovered" || completed.Error != "" {
+		t.Fatalf("recovered worker = %+v", completed)
+	}
+
+	if err := manager.Start("main", "fail"); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := manager.Summary(worker.ID); got.Status != StatusIdle || got.LastOutcome != "" {
-		t.Fatalf("reset summary = %+v", got)
+	if failed = waitManagerFailure(t, manager, "main"); !strings.Contains(failed.Error, "provider failed") {
+		t.Fatalf("main failure = %+v", failed)
+	}
+	if err := manager.Start("main", "recovered"); err != nil {
+		t.Fatalf("failed main was not reusable: %v", err)
+	}
+	completed = waitManagerStatus(t, manager, "main", StatusCompleted)
+	if completed.LastOutcome != "handled recovered" || completed.Error != "" {
+		t.Fatalf("recovered main = %+v", completed)
 	}
 }
 

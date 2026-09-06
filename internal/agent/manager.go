@@ -246,9 +246,6 @@ func (m *AgentManager) Start(id, task string) error {
 		status := s.summary.Status
 		m.mu.Unlock()
 		return fmt.Errorf("agent %q is %s", id, status)
-	case StatusFailed:
-		m.mu.Unlock()
-		return fmt.Errorf("agent %q failed; switch to it and run /new before reusing it", id)
 	}
 	runCtx, cancel := context.WithCancel(m.ctx)
 	s.cancel = cancel
@@ -287,7 +284,10 @@ func (m *AgentManager) finish(id string, err error, outcome string) {
 		s.summary.Status = StatusCancelled
 		s.summary.Error = ""
 	} else {
-		s.summary.Status = StatusFailed
+		// Provider, network, and tool errors are routinely transient. Keep the
+		// error for the tab and roster, but leave every agent ready for its next
+		// prompt without requiring a session reset.
+		s.summary.Status = StatusIdle
 		s.summary.Error = truncateUTF8(err.Error(), 1024)
 	}
 	m.emitLocked(s.summary, duration)
