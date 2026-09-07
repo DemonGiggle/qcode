@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"qcode/internal/llm"
+	"qcode/internal/prompt"
 	"qcode/internal/trace"
 )
 
@@ -19,7 +20,7 @@ type compactingProvider struct {
 func (*compactingProvider) Name() string { return "compacting" }
 func (p *compactingProvider) Complete(_ context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
 	p.requests = append(p.requests, request)
-	if request.Messages[0].Content == compactionInstructions {
+	if request.Messages[0].Content == prompt.ConversationCompact {
 		return llm.Response{Message: llm.Message{Role: "assistant", Content: "User chose Go. Work remains: tests."}}, nil
 	}
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}, Usage: &llm.Usage{InputTokens: 900}}, nil
@@ -116,7 +117,7 @@ func TestCompactPreservesSystemSummaryAndRecentToolHistory(t *testing.T) {
 	if err != nil || result != "Conversation compacted." {
 		t.Fatalf("compact = %q, %v", result, err)
 	}
-	if len(p.requests) != 1 || p.requests[0].Messages[0].Content != compactionInstructions {
+	if len(p.requests) != 1 || p.requests[0].Messages[0].Content != prompt.ConversationCompact {
 		t.Fatal("compaction request missing instructions")
 	}
 	if a.messages[0].Role != "system" || a.messages[0].Content != "system instructions" || a.messages[1].Role != "user" || !strings.Contains(a.messages[1].Content, "User chose Go") {
@@ -141,7 +142,7 @@ func TestAutoCompactOnlyRunsForKnownCapacity(t *testing.T) {
 	if err := a.Run(context.Background(), "next"); err != nil {
 		t.Fatal(err)
 	}
-	if len(p.requests) != 2 || p.requests[0].Messages[0].Content != compactionInstructions {
+	if len(p.requests) != 2 || p.requests[0].Messages[0].Content != prompt.ConversationCompact {
 		t.Fatalf("requests = %+v", p.requests)
 	}
 	p = &compactingProvider{}
@@ -173,7 +174,7 @@ func TestManualCompactWorksWhenAutomaticCompactionIsDisabled(t *testing.T) {
 	if _, err := a.Compact(context.Background()); err != nil {
 		t.Fatalf("manual compaction unavailable: %v", err)
 	}
-	if len(p.requests) != 2 || p.requests[1].Messages[0].Content != compactionInstructions {
+	if len(p.requests) != 2 || p.requests[1].Messages[0].Content != prompt.ConversationCompact {
 		t.Fatal("manual compaction did not run")
 	}
 }

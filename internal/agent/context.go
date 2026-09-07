@@ -7,9 +7,8 @@ import (
 	"time"
 
 	"qcode/internal/llm"
+	"qcode/internal/prompt"
 )
-
-const compactionInstructions = `Summarize this conversation for its future continuation. Preserve the user's goals, decisions, constraints, completed work, important facts, and unresolved work. Keep tool calls and results only when they are needed to understand a current state. Be concise and do not invent facts.`
 
 // Compact replaces older conversation turns with a model-produced continuation
 // summary while retaining the system prompt and a recent, tool-consistent tail.
@@ -17,7 +16,7 @@ func (a *Agent) Compact(ctx context.Context) (string, error) {
 	if len(a.messages) <= 1 {
 		return "Conversation is already compact.", nil
 	}
-	request := llm.Request{Model: a.model, Messages: append([]llm.Message{{Role: "system", Content: compactionInstructions}}, a.messages[1:]...)}
+	request := llm.Request{Model: a.model, Messages: append([]llm.Message{{Role: "system", Content: prompt.ConversationCompact}}, a.messages[1:]...)}
 	response, err := a.provider.Complete(ctx, request, nil)
 	if err != nil {
 		return "", err
