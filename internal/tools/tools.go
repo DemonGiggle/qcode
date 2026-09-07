@@ -34,17 +34,18 @@ type Handler func(context.Context, json.RawMessage) (string, error)
 type ExecutionResult = llm.ToolResult
 
 type Registry struct {
-	web       *webTools
-	root      string
-	schemas   []llm.Tool
-	handlers  map[string]Handler
-	sandbox   *sandboxState
-	grantMu   sync.RWMutex
-	grants    []string
-	approver  DirectoryApprover
-	protected []string
-	skills    SkillLoader
-	disabled  map[string]bool
+	web                   *webTools
+	root                  string
+	schemas               []llm.Tool
+	handlers              map[string]Handler
+	sandbox               *sandboxState
+	insecureSkipTLSVerify bool
+	grantMu               sync.RWMutex
+	grants                []string
+	approver              DirectoryApprover
+	protected             []string
+	skills                SkillLoader
+	disabled              map[string]bool
 }
 
 // DirectoryApprover asks the interactive host to approve an additional
@@ -63,7 +64,7 @@ func NewWithOptions(root string, options Options) (*Registry, error) {
 	if canonical, evalErr := filepath.EvalSymlinks(abs); evalErr == nil {
 		abs = canonical
 	}
-	r := &Registry{root: abs, handlers: map[string]Handler{}, grants: []string{abs}, skills: options.Skills}
+	r := &Registry{root: abs, handlers: map[string]Handler{}, grants: []string{abs}, skills: options.Skills, insecureSkipTLSVerify: options.InsecureSkipTLSVerify}
 	if options.Sandbox {
 		bwrap := options.BubblewrapPath
 		if bwrap == "" {
@@ -81,9 +82,9 @@ func NewWithOptions(root string, options Options) (*Registry, error) {
 				r.protected = append(r.protected, canonical)
 			}
 		}
-		r.sandbox = &sandboxState{bwrap: bwrap, home: home, allowNetwork: options.AllowNetwork, protected: r.protected}
+		r.sandbox = &sandboxState{bwrap: bwrap, home: home, allowNetwork: options.AllowNetwork, insecureSkipTLSVerify: options.InsecureSkipTLSVerify, protected: r.protected}
 	}
-	r.web, err = newWebTools(options.SearchBackend)
+	r.web, err = newWebTools(options.SearchBackend, options.InsecureSkipTLSVerify)
 	if err != nil {
 		return nil, err
 	}
@@ -844,6 +845,9 @@ func (r *Registry) shell(ctx context.Context, arguments json.RawMessage) (string
 	if r.sandbox == nil {
 		configureShellCancellation(cmd)
 	}
+	if r.insecureSkipTLSVerify {
+		cmd.Env = shellEnvironment()
+	}
 	cmd.Dir = r.root
 	var output limitedBuffer
 	cmd.Stdout = &output
@@ -866,6 +870,25 @@ func (r *Registry) shell(ctx context.Context, arguments json.RawMessage) (string
 		text = "command completed with no output"
 	}
 	return text, nil
+}
+
+func shellEnvironment() []string {
+	values := os.Environ()
+	configured := make(map[string]bool, len(insecureTLSEnvironment))
+	for _, variable := range insecureTLSEnvironment {
+		configured[variable.name] = true
+	}
+	result := make([]string, 0, len(values)+len(insecureTLSEnvironment))
+	for _, value := range values {
+		name, _, _ := strings.Cut(value, "=")
+		if !configured[name] {
+			result = append(result, value)
+		}
+	}
+	for _, variable := range insecureTLSEnvironment {
+		result = append(result, variable.name+"="+variable.value)
+	}
+	return result
 }
 
 // WorkspaceState captures only paths Git already considers changed. This

@@ -140,6 +140,23 @@ func TestShellCapturesOutput(t *testing.T) {
 	}
 }
 
+func TestShellInsecureTLSVerifyEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses POSIX shell variable expansion")
+	}
+	registry, err := NewWithOptions(t.TempDir(), Options{InsecureSkipTLSVerify: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := call(t, registry, "shell", map[string]any{"command": "printf '%s' \"$QCODE_INSECURE_SKIP_TLS_VERIFY,$GIT_SSL_NO_VERIFY,$NODE_TLS_REJECT_UNAUTHORIZED,$NPM_CONFIG_STRICT_SSL,$PYTHONHTTPSVERIFY\""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "true,true,0,false,0" {
+		t.Fatalf("shell TLS environment = %q", result)
+	}
+}
+
 func TestCancelledToolDoesNotModifyWorkspace(t *testing.T) {
 	root := t.TempDir()
 	registry, err := New(root)

@@ -15,12 +15,13 @@ import (
 
 // Options controls optional protections around model-triggered tools.
 type Options struct {
-	SearchBackend  string
-	Sandbox        bool
-	AllowNetwork   bool
-	BubblewrapPath string
-	ProtectedPaths []string
-	Skills         SkillLoader
+	SearchBackend         string
+	Sandbox               bool
+	AllowNetwork          bool
+	InsecureSkipTLSVerify bool
+	BubblewrapPath        string
+	ProtectedPaths        []string
+	Skills                SkillLoader
 }
 
 // SkillLoader supplies previously discovered workspace skill instructions.
@@ -31,10 +32,24 @@ type SkillLoader interface {
 }
 
 type sandboxState struct {
-	bwrap        string
-	home         string
-	allowNetwork bool
-	protected    []string
+	bwrap                 string
+	home                  string
+	allowNetwork          bool
+	insecureSkipTLSVerify bool
+	protected             []string
+}
+
+type environmentVariable struct{ name, value string }
+
+// These are the documented opt-outs understood by common command-line TLS
+// clients. QCODE_INSECURE_SKIP_TLS_VERIFY gives scripts a portable qcode
+// signal; arbitrary programs still need to opt in themselves.
+var insecureTLSEnvironment = []environmentVariable{
+	{"QCODE_INSECURE_SKIP_TLS_VERIFY", "true"},
+	{"GIT_SSL_NO_VERIFY", "true"},
+	{"NODE_TLS_REJECT_UNAUTHORIZED", "0"},
+	{"NPM_CONFIG_STRICT_SSL", "false"},
+	{"PYTHONHTTPSVERIFY", "0"},
 }
 
 // WorkspaceExposesHome reports whether making root writable would expose the
@@ -161,6 +176,11 @@ func (s sandboxState) arguments(root string, grants []string, command ...string)
 	for _, name := range []string{"TERM", "LANG", "LC_ALL", "LC_CTYPE", "COLORTERM", "NO_COLOR"} {
 		if value := os.Getenv(name); value != "" {
 			args = append(args, "--setenv", name, value)
+		}
+	}
+	if s.insecureSkipTLSVerify {
+		for _, variable := range insecureTLSEnvironment {
+			args = append(args, "--setenv", variable.name, variable.value)
 		}
 	}
 	args = append(args, "--")

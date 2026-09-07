@@ -144,7 +144,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		return err
 	}
 	skillSelection := skills.NewSelection(skillCatalog)
-	registry, err := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, Skills: skillSelection, SearchBackend: opts.searchBackend})
+	registry, err := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, Skills: skillSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
 	if err != nil {
 		return err
 	}
@@ -220,7 +220,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		currentSelection := mainSelection
 		if !isMain {
 			currentSelection = skills.NewSelection(skillCatalog)
-			createdRegistry, createErr := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, Skills: currentSelection, SearchBackend: opts.searchBackend})
+			createdRegistry, createErr := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, Skills: currentSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
 			if createErr != nil {
 				return nil, createErr
 			}

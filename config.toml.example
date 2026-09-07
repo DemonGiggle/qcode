@@ -16,7 +16,8 @@ max_steps = 32
 # Optional provider API key. Prefer an environment variable on shared systems.
 # api_key = "your-api-key"
 
-# Skip TLS certificate verification for provider connections (insecure).
+# Skip TLS certificate verification for qcode HTTP clients (insecure). Shell
+# commands receive opt-out settings for common clients but may need their own flags.
 # danger_skip_tls_verify = true
 
 # Context capacity in tokens for the status bar (0 = automatic).

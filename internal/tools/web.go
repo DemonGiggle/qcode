@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,7 +32,7 @@ type webTools struct {
 	slots   chan struct{}
 }
 
-func newWebTools(backend string) (*webTools, error) {
+func newWebTools(backend string, insecureSkipTLSVerify bool) (*webTools, error) {
 	if backend != "" && backend != "duckduckgo" {
 		return nil, fmt.Errorf("unsupported web_search.backend %q; supported backend: duckduckgo", backend)
 	}
@@ -41,6 +42,9 @@ func newWebTools(backend string) (*webTools, error) {
 		MaxIdleConns: 2, MaxIdleConnsPerHost: 2, MaxConnsPerHost: 2,
 		IdleConnTimeout: 30 * time.Second, TLSHandshakeTimeout: 10 * time.Second,
 		ResponseHeaderTimeout: 10 * time.Second, MaxResponseHeaderBytes: 32 * 1024,
+	}
+	if insecureSkipTLSVerify {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 	client := &http.Client{Transport: transport, Timeout: webTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {

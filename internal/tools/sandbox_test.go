@@ -42,6 +42,17 @@ func TestSandboxArgumentsCanAllowNetwork(t *testing.T) {
 	}
 }
 
+func TestSandboxArgumentsSetInsecureTLSEnvironment(t *testing.T) {
+	state := sandboxState{home: "/home/ada", insecureSkipTLSVerify: true}
+	arguments := strings.Join(state.arguments("/work", []string{"/work"}, "/bin/true"), "\x00")
+	for _, variable := range insecureTLSEnvironment {
+		want := "--setenv\x00" + variable.name + "\x00" + variable.value
+		if !strings.Contains(arguments, want) {
+			t.Fatalf("sandbox arguments lack %q: %q", want, arguments)
+		}
+	}
+}
+
 func TestSandboxMasksProtectedConfig(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(configPath, []byte("api_key = \"secret\""), 0o600); err != nil {

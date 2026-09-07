@@ -42,6 +42,32 @@ func fixtureWeb(t *testing.T, handler http.HandlerFunc) *Registry {
 	return r
 }
 
+// Keep production URL checks, but direct a public fixture hostname to a TLS
+// server with an untrusted certificate.
+func tlsFixtureWeb(t *testing.T, insecureSkipTLSVerify bool, handler http.HandlerFunc) *Registry {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(handler)
+	server.Listener = listener
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	r, err := NewWithOptions(t.TempDir(), Options{InsecureSkipTLSVerify: insecureSkipTLSVerify})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.EnableTool("web_fetch")
+	r.EnableTool("web_search")
+	transport := r.web.client.Transport.(*http.Transport)
+	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+	}
+	t.Cleanup(transport.CloseIdleConnections)
+	return r
+}
+
 type fixtureTransport struct{ base *http.Transport }
 
 func (f fixtureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -127,6 +153,36 @@ func TestWebFetch(t *testing.T) {
 				t.Fatal("invalid output bounds or UTF-8")
 			}
 		})
+	}
+}
+
+func TestWebTLSVerificationOverride(t *testing.T) {
+	handler := func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/fetch":
+			w.Header().Set("Content-Type", "text/plain")
+			io.WriteString(w, "insecure fetch")
+		case "/html/":
+			w.Header().Set("Content-Type", "text/html")
+			io.WriteString(w, ddgFixture)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}
+
+	verified := tlsFixtureWeb(t, false, handler)
+	if _, err := callWeb(verified, context.Background(), "web_fetch", map[string]any{"url": "https://fixture.example/fetch"}); err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("verified request error = %v, want certificate verification failure", err)
+	}
+
+	insecure := tlsFixtureWeb(t, true, handler)
+	out, err := callWeb(insecure, context.Background(), "web_fetch", map[string]any{"url": "https://fixture.example/fetch"})
+	if err != nil || !strings.Contains(out, "insecure fetch") {
+		t.Fatalf("insecure fetch = %q, %v", out, err)
+	}
+	out, err = callWeb(insecure, context.Background(), "web_search", map[string]any{"query": "Go documentation"})
+	if err != nil || !strings.Contains(out, "https://go.dev/doc/") {
+		t.Fatalf("insecure search = %q, %v", out, err)
 	}
 }
 
