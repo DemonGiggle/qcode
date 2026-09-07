@@ -172,14 +172,14 @@ func (r *interruptReader) route(input []byte) {
 			continue
 		}
 		if len(input) >= len(pageUpSequence) && string(input[:len(pageUpSequence)]) == pageUpSequence {
-			if page != nil && cancel == nil {
+			if page != nil {
 				page(1)
 			}
 			input = input[len(pageUpSequence):]
 			continue
 		}
 		if len(input) >= len(pageDownSequence) && string(input[:len(pageDownSequence)]) == pageDownSequence {
-			if page != nil && cancel == nil {
+			if page != nil {
 				page(-1)
 			}
 			input = input[len(pageDownSequence):]

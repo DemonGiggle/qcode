@@ -175,7 +175,7 @@ type agentView struct {
 	model    string
 	display  *agentDisplay
 	response *MarkdownWriter
-	page     int
+	viewport viewport
 	unseen   bool
 	onSkills func([]string)
 }
@@ -203,15 +203,16 @@ func (d *agentDisplay) Write(data []byte) (int, error) {
 	d.ui.screenMu.Lock()
 	defer d.ui.screenMu.Unlock()
 	_, _ = d.history.Write(data)
-	if d.ui.activeAgent == d.id && d.ui.terminal != nil {
+	if d.ui.activeAgent == d.id && d.ui.terminal != nil && (!d.ui.statusActive || !d.ui.activeViewportLocked().browsing) {
 		return d.ui.terminal.Write(data)
 	}
 	return len(data), nil
 }
 
-func (d *agentDisplay) AddLine(line string) { d.history.AddLine(line) }
-func (d *agentDisplay) Clear()              { d.history.Clear() }
-func (d *agentDisplay) Lines() []string     { return d.history.Lines() }
+func (d *agentDisplay) AddLine(line string)       { d.history.AddLine(line) }
+func (d *agentDisplay) Clear()                    { d.history.Clear() }
+func (d *agentDisplay) Lines() []string           { return d.history.Lines() }
+func (d *agentDisplay) Snapshot() historySnapshot { return d.history.Snapshot() }
 
 func (u *UI) watchAgentEvents(events <-chan session.Event) {
 	defer close(u.agentEventsDone)
@@ -319,12 +320,7 @@ func (u *UI) switchAgent(id string) error {
 	view.model = summary.Model
 	u.runner = runner
 	u.onSkills = view.onSkills
-	page := view.page
 	u.screenMu.Unlock()
-	u.pageMu.Lock()
-	u.pageOffset = page
-	u.pageActive = page > 0
-	u.pageMu.Unlock()
 	u.SetRunner(runner)
 	u.updateActiveCancellation()
 	u.repaintActive()
@@ -429,31 +425,73 @@ func (u *UI) handlePendingTabSwitch() {
 
 func (u *UI) repaintActive() {
 	u.screenMu.Lock()
-	statusActive := u.statusActive
-	display := u.display
-	width, height := u.width, u.height
-	u.screenMu.Unlock()
-	if !statusActive {
+	defer u.screenMu.Unlock()
+	u.repaintActiveLocked(0)
+}
+
+func (u *UI) activeViewportLocked() *viewport {
+	if view := u.views[u.activeAgent]; view != nil {
+		return &view.viewport
+	}
+	return &u.viewport
+}
+
+// Lock order: screenMu -> history / terminal. Markdown locks must be acquired
+// outside screenMu. The line editor releases its lock before UI callbacks.
+func (u *UI) repaintActiveLocked(direction int) {
+	if !u.statusActive || u.terminal == nil {
 		return
 	}
-	lines := visualHistoryLines(display, width)
-	pageHeight := max(1, height-4)
-	u.pageMu.Lock()
-	offset := u.pageOffset
-	u.pageMu.Unlock()
-	page, _ := historyPage(lines, pageHeight, offset, 0)
-	u.screenMu.Lock()
-	defer u.screenMu.Unlock()
+	snapshot := u.display.Snapshot()
+	rows := historyRows(snapshot, u.width)
+	v := u.activeViewportLocked()
+	page := v.page(rows, max(1, u.height-4), direction)
 	u.taskIndicatorText = ""
 	var output strings.Builder
-	output.WriteString("\x1b[2;1H\x1b[J")
-	if len(page) > 0 {
-		output.WriteString(strings.Join(page, "\n"))
-		output.WriteByte('\n')
+	output.WriteString("\x1b[0m\x1b[2;1H\x1b[J")
+	for i, row := range page {
+		if i > 0 {
+			output.WriteByte('\n')
+		}
+		output.WriteString(row.text)
+	}
+	if v.browsing {
+		if len(page) < u.height-3 {
+			output.WriteByte('\n')
+		}
+	} else {
+		output.WriteString(snapshot.style)
+		// Reestablish the unfinished line's cursor as well as its contents, so
+		// a carriage-return rewrite continues in the same place after paging.
+		last := snapshot.lines[len(snapshot.lines)-1]
+		for i := len(page) - 1; i >= 0; i-- {
+			row := page[i]
+			if row.position.line == last.id && row.position.column <= snapshot.cursor {
+				plain := plainHistoryText(last.text)
+				column := visibleWidth(plain[row.position.column:min(snapshot.cursor, len(plain))])
+				// At the right edge, preserve the terminal's pending wrap.
+				if column < u.width {
+					fmt.Fprintf(&output, "\x1b[%d;%dH", i+2, column+1)
+				}
+				break
+			}
+		}
 	}
 	_, _ = u.terminal.Write([]byte(output.String()))
 	u.drawTabBarLocked()
 	u.drawStatusBarLocked()
+	u.drawNavigationLocked()
+	if !v.browsing && u.out != nil {
+		fmt.Fprint(u.out, snapshot.style)
+	}
+}
+
+func (u *UI) drawNavigationLocked() {
+	if !u.statusActive || !u.activeViewportLocked().browsing {
+		return
+	}
+	message := truncateDiffLine("History paused | PgUp/PgDn | PgDn to bottom resumes", u.width, u.unicode)
+	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s%s%s\x1b[u", u.height-1, dim, message, reset)
 }
 
 func (u *UI) drawTabBar() {

@@ -25,6 +25,7 @@ type historyWriter struct {
 	cursor  int
 	pending []byte
 	style   string
+	baseID  uint64
 }
 
 func newHistoryWriter(out io.Writer) *historyWriter {
@@ -49,12 +50,42 @@ func (w *historyWriter) AddLine(line string) {
 
 func (w *historyWriter) Clear() {
 	w.mu.Lock()
+	w.baseID += uint64(len(w.lines) + 1)
 	w.lines = nil
 	w.current = nil
 	w.cursor = 0
 	w.pending = nil
 	w.style = ""
 	w.mu.Unlock()
+}
+
+type historyLine struct {
+	id   uint64
+	text string
+}
+
+type historySnapshot struct {
+	lines []historyLine
+	style string
+	// Byte position in the unstyled unfinished line (carriage returns and
+	// progress rewrites may leave the cursor before its end).
+	cursor int
+}
+
+// Snapshot includes the unfinished line without committing it. IDs survive
+// retention trimming, so a viewport can keep reading the same logical line.
+func (w *historyWriter) Snapshot() historySnapshot {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	s := historySnapshot{style: w.style}
+	for _, cell := range w.current[:min(w.cursor, len(w.current))] {
+		s.cursor += len(string(cell.char))
+	}
+	for i, line := range w.lines {
+		s.lines = append(s.lines, historyLine{w.baseID + uint64(i), line})
+	}
+	s.lines = append(s.lines, historyLine{w.baseID + uint64(len(w.lines)), renderHistoryCells(w.current)})
+	return s
 }
 
 func (w *historyWriter) Lines() []string {
@@ -145,6 +176,15 @@ func ansiSequenceLength(data []byte) (int, bool) {
 }
 
 func (w *historyWriter) commit(line []historyCell) {
+	w.lines = append(w.lines, renderHistoryCells(line))
+	if len(w.lines) > maxHistoryLines {
+		drop := maxHistoryLines / 5
+		w.lines = append([]string(nil), w.lines[drop:]...)
+		w.baseID += uint64(drop)
+	}
+}
+
+func renderHistoryCells(line []historyCell) string {
 	var rendered strings.Builder
 	active := ""
 	for _, cell := range line {
@@ -160,36 +200,5 @@ func (w *historyWriter) commit(line []historyCell) {
 	if active != "" {
 		rendered.WriteString(reset)
 	}
-	w.lines = append(w.lines, rendered.String())
-	if len(w.lines) > maxHistoryLines {
-		drop := maxHistoryLines / 5
-		w.lines = append([]string(nil), w.lines[drop:]...)
-	}
-}
-
-func historyPage(lines []string, pageSize, offset, direction int) ([]string, int) {
-	if pageSize < 1 {
-		pageSize = 1
-	}
-	maxOffset := len(lines) - pageSize
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
-	if direction > 0 {
-		offset += pageSize
-	} else if direction < 0 {
-		offset -= pageSize
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	if offset > maxOffset {
-		offset = maxOffset
-	}
-	end := len(lines) - offset
-	start := end - pageSize
-	if start < 0 {
-		start = 0
-	}
-	return append([]string(nil), lines[start:end]...), offset
+	return rendered.String()
 }

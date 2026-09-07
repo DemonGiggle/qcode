@@ -17,11 +17,13 @@ The following UI-focused commands are available in interactive mode. Feature-spe
 
 ## Activity events
 
-Interactive mode always records concise colored activity events for tool calls and agent coordination, such as `Reading internal/tui/tui.go`, `Writing README.md`, or `Consulting agent-2`. These events are presentation-only and never enter the next model request. A task-level `Waiting` indicator remains visible while the active tab is running; input is reserved for Ctrl+C cancellation and tab switching until its prompt returns.
+Interactive mode always records concise colored activity events for tool calls and agent coordination, such as `Reading internal/tui/tui.go`, `Writing README.md`, or `Consulting agent-2`. These events are presentation-only and never enter the next model request. A task-level indicator remains visible while the active tab is running; Page Up/Page Down, Ctrl+C cancellation, and tab switching remain available until its prompt returns.
 
 ## Scrolling
 
-Use Page Up and Page Down to scroll through qcode's output history without leaving the interactive prompt.
+Use Page Up and Page Down to scroll through qcode's output history, including while an agent is running. Scrolling back pauses the live view: new output is still recorded, but the page you are reading stays in place. Page Down to the latest content resumes live output.
+
+Each agent tab remembers its reading position across tab switches and terminal resizing. Completion and cancellation do not force a paused view to the bottom. Directory approval requests return to live output so the question is visible before you answer. History is bounded; if the content you were reading is evicted, the next repaint shows the oldest retained content.
 
 ## Thinking streams
 
