@@ -1,6 +1,7 @@
 # Scroll history during agent runs
 
-Status: planned; implementation has not started.
+Status: implemented in PR #16. The sections below record the design and validation
+criteria used for the implementation.
 
 ## Problem and intended behavior
 

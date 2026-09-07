@@ -26,10 +26,11 @@ func (u *UI) watchResize() func() {
 
 func (u *UI) resize() {
 	width, height := terminalSize(u.out)
+	u.screenMu.Lock()
 	if width == u.width && height == u.height {
+		u.screenMu.Unlock()
 		return
 	}
-	u.screenMu.Lock()
 	u.width, u.height = width, height
 	views := make([]*agentView, 0, len(u.views))
 	for _, view := range u.views {
@@ -38,6 +39,9 @@ func (u *UI) resize() {
 	u.screenMu.Unlock()
 	for _, view := range views {
 		view.response.SetWidth(width)
+	}
+	if len(views) == 0 {
+		u.responseWriter.SetWidth(width)
 	}
 	u.commandMenu.setWidth(width)
 	u.screenMu.Lock()

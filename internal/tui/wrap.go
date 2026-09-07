@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"unicode/utf8"
+
+	"github.com/mattn/go-runewidth"
 )
 
 type displayUnit struct {
@@ -89,7 +91,11 @@ func displayUnits(text string) []displayUnit {
 		if space {
 			raw = " "
 		}
-		units = append(units, displayUnit{raw: raw, width: 1, space: space})
+		columns := runewidth.RuneWidth(r)
+		if space {
+			columns = 1
+		}
+		units = append(units, displayUnit{raw: raw, width: columns, space: space})
 		index += size
 	}
 	return units

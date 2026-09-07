@@ -47,27 +47,14 @@ func TestHistoryWriterPreservesFinalStyleAfterProgressRewrite(t *testing.T) {
 	}
 }
 
-func TestHistoryPageMovesAndClamps(t *testing.T) {
-	lines := []string{"1", "2", "3", "4", "5", "6", "7"}
-	page, offset := historyPage(lines, 3, 0, 1)
-	if !reflect.DeepEqual(page, []string{"2", "3", "4"}) || offset != 3 {
-		t.Fatalf("first page = %v, offset = %d", page, offset)
-	}
-	page, offset = historyPage(lines, 3, offset, 1)
-	if !reflect.DeepEqual(page, []string{"1", "2", "3"}) || offset != 4 {
-		t.Fatalf("top page = %v, offset = %d", page, offset)
-	}
-	page, offset = historyPage(lines, 3, offset, -1)
-	if !reflect.DeepEqual(page, []string{"4", "5", "6"}) || offset != 1 {
-		t.Fatalf("down page = %v, offset = %d", page, offset)
-	}
-}
-
 func TestVisualHistoryLinesUseFullWordWrap(t *testing.T) {
 	history := newHistoryWriter(&bytes.Buffer{})
 	history.AddLine("alpha beta gamma")
-	u := UI{display: history, width: 10}
-	if got := u.visualHistoryLines(); !reflect.DeepEqual(got, []string{"alpha beta", "gamma"}) {
+	var got []string
+	for _, row := range historyRows(history.Snapshot(), 10) {
+		got = append(got, plainHistoryText(row.text))
+	}
+	if !reflect.DeepEqual(got, []string{"alpha beta", "gamma", ""}) {
 		t.Fatalf("visual history = %#v", got)
 	}
 }

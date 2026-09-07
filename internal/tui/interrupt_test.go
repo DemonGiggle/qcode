@@ -103,6 +103,27 @@ func TestInterruptReaderRoutesTabKeysDuringTask(t *testing.T) {
 	}
 }
 
+func TestInterruptReaderPagesDuringTaskWithoutLeakingInput(t *testing.T) {
+	reader := newInterruptReader(nil)
+	var directions []int
+	reader.setPageHandler(func(d int) { directions = append(directions, d) })
+	cancelled := false
+	reader.setCancel(func() { cancelled = true })
+	for _, key := range []byte(pageUpSequence + pageDownSequence + "discarded") {
+		reader.route([]byte{key})
+	}
+	if len(directions) != 2 || directions[0] != 1 || directions[1] != -1 || cancelled {
+		t.Fatalf("directions=%v cancelled=%v", directions, cancelled)
+	}
+	if len(reader.data) != 0 {
+		t.Fatal("navigation or typing leaked into next prompt")
+	}
+	reader.route([]byte{ctrlC})
+	if !cancelled {
+		t.Fatal("paging prevented cancellation")
+	}
+}
+
 func TestInterruptReaderRecognizesSplitTabSequences(t *testing.T) {
 	for _, sequence := range tabKeySequences {
 		t.Run(sequence.value, func(t *testing.T) {

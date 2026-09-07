@@ -110,6 +110,7 @@ type historyDisplay interface {
 	AddLine(string)
 	Clear()
 	Lines() []string
+	Snapshot() historySnapshot
 }
 
 type agentController interface {
@@ -144,9 +145,7 @@ type UI struct {
 	width             int
 	height            int
 	unicode           bool
-	pageMu            sync.Mutex
-	pageOffset        int
-	pageActive        bool
+	viewport          viewport
 	statusActive      bool
 	startupNotice     string
 	startupChoice     bool
@@ -179,7 +178,7 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	width, height := terminalSize(out)
 	unicodeEnabled := UnicodeEnabled()
 	t.SetSize(width, height)
-	display := newHistoryWriter(t)
+	display := &agentDisplay{history: newHistoryWriter(io.Discard)}
 	responseWriter := NewMarkdownWriter(display, ColorEnabled(out), width)
 	responseWriter.SetUnicode(unicodeEnabled)
 	responseWriter.EnableDiffs()
@@ -203,6 +202,7 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 		approvals:      make(map[string][]*approvalRequest),
 		uiEvents:       make(chan struct{}, 1),
 	}
+	display.ui = u
 	t.AutoCompleteCallback = u.completeSlashCommand
 	input.setPageHandler(u.showPage)
 	input.setTabHandler(u.requestTabSwitch)
@@ -471,6 +471,7 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 	if err := ctx.Err(); err != nil {
 		return "", false, err
 	}
+	u.resetPage()
 	u.printSystemMessage(yellow + "Additional directory access requested: " + sanitizeDiffLine(requested, "<ESC>") + reset)
 	u.terminal.SetPrompt(yellow + "Directory to grant (Enter for " + sanitizeDiffLine(proposed, "<ESC>") + "): " + reset)
 	line, err := u.readLine()
@@ -841,96 +842,20 @@ func gradientLine(line string) string {
 }
 
 func (u *UI) resetPage() {
-	u.pageMu.Lock()
-	active := u.pageActive
-	u.pageOffset = 0
-	u.pageActive = false
-	u.pageMu.Unlock()
-	if u.manager != nil {
-		u.screenMu.Lock()
-		if view := u.views[u.activeAgent]; view != nil {
-			view.page = 0
-		}
-		u.screenMu.Unlock()
-	}
-	if !active {
-		return
-	}
-
 	u.screenMu.Lock()
-	display := u.display
-	width, height := u.width, u.height
-	u.screenMu.Unlock()
-	lines := visualHistoryLines(display, width)
-	pageHeight := height - 4
-	page, _ := historyPage(lines, pageHeight, 0, 0)
-	var output strings.Builder
-	output.WriteString("\x1b[2;1H\x1b[J")
-	output.WriteString(strings.Join(page, "\n"))
-	if len(page) > 0 {
-		output.WriteByte('\n')
+	defer u.screenMu.Unlock()
+	v := u.activeViewportLocked()
+	if v.browsing {
+		v.browsing = false
+		u.repaintActiveLocked(0)
 	}
-	_, _ = u.terminal.Write([]byte(output.String()))
-	u.drawTabBar()
-	u.drawStatusBar()
 }
 
 func (u *UI) showPage(direction int) {
-	u.pageMu.Lock()
-	u.screenMu.Lock()
-	display := u.display
-	width, height := u.width, u.height
-	u.screenMu.Unlock()
-	lines := visualHistoryLines(display, width)
-	pageSize := height - 4
-	page, offset := historyPage(lines, pageSize, u.pageOffset, direction)
-	u.pageOffset = offset
-	u.pageActive = true
-	u.pageMu.Unlock()
-	if u.manager != nil {
-		u.screenMu.Lock()
-		if view := u.views[u.activeAgent]; view != nil {
-			view.page = offset
-		}
-		u.screenMu.Unlock()
-	}
-
 	u.commandMenu.reset()
-	start := len(lines) - offset - len(page) + 1
-	end := len(lines) - offset
-	if len(page) == 0 {
-		start, end = 0, 0
-	}
-	var output strings.Builder
-	output.WriteString("\x1b[2;1H\x1b[J")
-	output.WriteString(strings.Join(page, "\n"))
-	if len(page) > 0 {
-		output.WriteByte('\n')
-	}
-	separator := "·"
-	if !u.unicode {
-		separator = "-"
-	}
-	fmt.Fprintf(&output, "%s[%d-%d of %d %s PgUp/PgDn]%s\n", dim, start, end, len(lines), separator, reset)
-	_, _ = u.terminal.Write([]byte(output.String()))
-	u.drawTabBar()
-	u.drawStatusBar()
-}
-
-func visualHistoryLines(display historyDisplay, width int) []string {
-	logical := display.Lines()
-	visual := make([]string, 0, len(logical))
-	for _, line := range logical {
-		visual = append(visual, strings.Split(wrapANSI(line, width, ""), "\n")...)
-	}
-	return visual
-}
-
-func (u *UI) visualHistoryLines() []string {
 	u.screenMu.Lock()
-	display, width := u.display, u.width
-	u.screenMu.Unlock()
-	return visualHistoryLines(display, width)
+	defer u.screenMu.Unlock()
+	u.repaintActiveLocked(direction)
 }
 
 func terminalSize(out *os.File) (int, int) {

@@ -81,6 +81,12 @@ func (u *UI) drawTaskIndicator() {
 	if u.activeAgent != id || !u.statusActive || u.height < 4 {
 		return
 	}
+	if u.activeViewportLocked().browsing {
+		message = truncateDiffLine("History paused | PgUp/PgDn | PgDn to bottom resumes", u.width, u.unicode)
+		if summary.Status == session.StatusRunning {
+			message = truncateDiffLine("Running | History paused | PgUp/PgDn | Ctrl+C cancel", u.width, u.unicode)
+		}
+	}
 	if u.taskIndicatorText == message {
 		return
 	}
