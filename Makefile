@@ -3,7 +3,7 @@ VERSION ?= $(shell sh ./scripts/version.sh)
 GO ?= go
 BUILD_FLAGS := -trimpath -ldflags=-s\ -w\ -X\ main.version=$(VERSION)
 
-.PHONY: build test release clean
+.PHONY: build test eval release clean
 
 build:
 	mkdir -p bin
@@ -11,6 +11,10 @@ build:
 
 test:
 	$(GO) test ./...
+
+eval: build
+	cd tools/qcode-tester && $(GO) test ./...
+	cd tools/qcode-tester && $(GO) run ./cmd/qcode-tester --qcode-bin ../../bin/qcode
 
 release:
 	VERSION=$(VERSION) ./scripts/build-all.sh
