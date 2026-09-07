@@ -25,6 +25,11 @@ max_steps = 32
 # This is a display setting; it does not change the server's context allocation.
 # context_window = 32768
 
+# Compact the conversation automatically after this percentage of a known
+# context window is used (1-99, default 80). Manual /compact remains available.
+# auto_compact_threshold = 80
+# disable_auto_compact = true
+
 # Web tools start disabled; enable them with /tool in each interactive session.
 # Backend configuration does not enable web tools.
 # Web search backend, read at startup. Currently only duckduckgo is supported.

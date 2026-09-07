@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"qcode/internal/agent"
 	"qcode/internal/config"
 )
 
@@ -135,6 +136,22 @@ func TestContextWindowConfigPrecedence(t *testing.T) {
 				t.Fatalf("got %d want %d", tc.opts.contextWindow, tc.want)
 			}
 		})
+	}
+}
+
+func TestAutoCompactConfigPrecedence(t *testing.T) {
+	threshold := 70
+	disabled := true
+	cfg := config.Config{AutoCompactThreshold: &threshold, DisableAutoCompact: &disabled}
+	opts := options{autoCompactThreshold: agent.DefaultAutoCompactThreshold}
+	applyConfig(&opts, cfg, nil)
+	if opts.autoCompactThreshold != 70 || !opts.disableAutoCompact {
+		t.Fatalf("config = %+v", opts)
+	}
+	opts = options{autoCompactThreshold: agent.DefaultAutoCompactThreshold, disableAutoCompact: false}
+	applyConfig(&opts, cfg, map[string]bool{"disable-auto-compact": true})
+	if opts.disableAutoCompact {
+		t.Fatal("explicit flag was overridden by config")
 	}
 }
 

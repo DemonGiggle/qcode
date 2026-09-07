@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,6 +79,36 @@ func TestLoadRejectsNonPositiveMaxSteps(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "max_steps must be greater than zero") {
 		t.Fatalf("load error = %v, want max_steps validation error", err)
 	}
+}
+
+func TestAutoCompactConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		valid bool
+	}{
+		{"1", true}, {"80", true}, {"99", true}, {"0", false}, {"100", false},
+	} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, []byte("auto_compact_threshold = "+tc.value+"\ndisable_auto_compact = true\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, _, err := load([]string{path})
+		if (err == nil) != tc.valid {
+			t.Fatalf("value %s: %v", tc.value, err)
+		}
+		if tc.valid && (cfg.AutoCompactThreshold == nil || *cfg.AutoCompactThreshold != mustInt(t, tc.value) || cfg.DisableAutoCompact == nil || !*cfg.DisableAutoCompact) {
+			t.Fatalf("config = %+v", cfg)
+		}
+	}
+}
+
+func mustInt(t *testing.T, value string) int {
+	t.Helper()
+	var result int
+	if _, err := fmt.Sscan(value, &result); err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 func TestLoadRejectsUnknownFields(t *testing.T) {

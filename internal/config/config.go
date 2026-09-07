@@ -26,16 +26,18 @@ type Learning struct {
 
 // Config contains settings that may be supplied by a qcode config file.
 type Config struct {
-	Learning            Learning  `toml:"learning"`
-	WebSearch           WebSearch `toml:"web_search"`
-	Provider            string    `toml:"provider"`
-	BaseURL             string    `toml:"base_url"`
-	APIKey              string    `toml:"api_key"`
-	Model               string    `toml:"model"`
-	ContextWindow       *int      `toml:"context_window"`
-	MaxSteps            *int      `toml:"max_steps"`
-	Sandbox             *bool     `toml:"sandbox"`
-	DangerSkipTLSVerify *bool     `toml:"danger_skip_tls_verify"`
+	Learning             Learning  `toml:"learning"`
+	WebSearch            WebSearch `toml:"web_search"`
+	Provider             string    `toml:"provider"`
+	BaseURL              string    `toml:"base_url"`
+	APIKey               string    `toml:"api_key"`
+	Model                string    `toml:"model"`
+	ContextWindow        *int      `toml:"context_window"`
+	AutoCompactThreshold *int      `toml:"auto_compact_threshold"`
+	DisableAutoCompact   *bool     `toml:"disable_auto_compact"`
+	MaxSteps             *int      `toml:"max_steps"`
+	Sandbox              *bool     `toml:"sandbox"`
+	DangerSkipTLSVerify  *bool     `toml:"danger_skip_tls_verify"`
 }
 
 // Load returns the first configuration found in lookup order. An empty path
@@ -109,6 +111,9 @@ func load(paths []string) (Config, string, error) {
 		}
 		if cfg.ContextWindow != nil && *cfg.ContextWindow < 0 {
 			return Config{}, path, fmt.Errorf("parse config %s: context_window must be non-negative", path)
+		}
+		if cfg.AutoCompactThreshold != nil && (*cfg.AutoCompactThreshold < 1 || *cfg.AutoCompactThreshold > 99) {
+			return Config{}, path, fmt.Errorf("parse config %s: auto_compact_threshold must be between 1 and 99", path)
 		}
 		if cfg.MaxSteps != nil && *cfg.MaxSteps <= 0 {
 			return Config{}, path, fmt.Errorf("parse config %s: max_steps must be greater than zero", path)

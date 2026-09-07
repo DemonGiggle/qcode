@@ -19,27 +19,33 @@ import (
 
 const maxIdenticalToolCalls = 3
 
+// DefaultAutoCompactThreshold is the percentage of a known context window
+// used before the next request is compacted.
+const DefaultAutoCompactThreshold = 80
+
 type Agent struct {
-	learningStore     learning.Store
-	learningBudget    int
-	learningContext   string
-	learningSessionID string
-	provider          llm.Provider
-	model             string
-	tools             Toolset
-	trace             *trace.Logger
-	out               io.Writer
-	maxSteps          int
-	messages          []llm.Message
-	stateMu           sync.RWMutex
-	requestContext    func() string
-	lastResponse      string
-	contextStatus     atomic.Pointer[contextStatus]
-	contextWindow     int
-	contextOverride   int
-	contextUsage      *llm.Usage
-	contextMessages   int
-	system            string
+	learningStore        learning.Store
+	learningBudget       int
+	learningContext      string
+	learningSessionID    string
+	provider             llm.Provider
+	model                string
+	tools                Toolset
+	trace                *trace.Logger
+	out                  io.Writer
+	maxSteps             int
+	messages             []llm.Message
+	stateMu              sync.RWMutex
+	requestContext       func() string
+	lastResponse         string
+	contextStatus        atomic.Pointer[contextStatus]
+	contextWindow        int
+	contextOverride      int
+	contextUsage         *llm.Usage
+	contextMessages      int
+	autoCompact          bool
+	autoCompactThreshold int
+	system               string
 }
 
 // Toolset is the complete tool boundary used by the agent loop. Production and
@@ -83,10 +89,19 @@ func NewWithSystem(provider llm.Provider, model string, toolset Toolset, logger 
 	if system == "" {
 		system = prompt.System
 	}
-	return &Agent{provider: provider, model: model, tools: toolset, trace: logger, out: out, maxSteps: maxSteps, system: system, messages: []llm.Message{{Role: "system", Content: system}}}
+	return &Agent{provider: provider, model: model, tools: toolset, trace: logger, out: out, maxSteps: maxSteps, system: system, messages: []llm.Message{{Role: "system", Content: system}}, autoCompact: true, autoCompactThreshold: DefaultAutoCompactThreshold}
 }
 
 func (a *Agent) SetVerbose(verbose bool) { a.trace.SetVerbose(verbose) }
+
+// SetAutoCompact configures automatic compaction. Manual compaction remains
+// available regardless of this setting.
+func (a *Agent) SetAutoCompact(enabled bool, threshold int) {
+	a.autoCompact = enabled
+	if threshold >= 1 && threshold <= 99 {
+		a.autoCompactThreshold = threshold
+	}
+}
 
 func (a *Agent) SetUnicode(enabled bool) { a.trace.SetUnicode(enabled) }
 
@@ -215,6 +230,14 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 	defer a.publishContext()
 	task := a.trace.BeginTask()
 	defer task.End()
+	if a.shouldAutoCompact() {
+		fmt.Fprintln(a.out, "Compacting conversation to make room for the next request...")
+		if _, err := a.Compact(ctx); err != nil {
+			fmt.Fprintln(a.out, "Conversation compaction failed:", err)
+		} else {
+			fmt.Fprintln(a.out, "Conversation compacted.")
+		}
+	}
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userText})
 	identicalToolCalls := map[string]int{}
 	for step := 0; step < a.maxSteps; step++ {
