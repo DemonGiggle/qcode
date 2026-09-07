@@ -130,6 +130,14 @@ func Names() []string {
 	return names
 }
 
+// SessionUsage contains reported totals; Missing counts requests without usage.
+type SessionUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+	Missing      int `json:"missing_completions"`
+}
+
 // Usage describes one completion, not cumulative session billing.
 type Usage struct {
 	InputTokens  int `json:"prompt_tokens"`
