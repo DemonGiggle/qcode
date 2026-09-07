@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "name": "create-go-project",
+  "prompt": "Create a minimal Go module named example.com/greeting. Add a greeting.go file with a Hello function and a greeting_test.go test for it. Run go test ./... before finishing.",
+  "timeout": "2m",
+  "assertions": {
+    "exit_code": 0,
+    "file_contains": {
+      "go.mod": "module example.com/greeting",
+      "greeting.go": "func Hello",
+      "greeting_test.go": "func Test"
+    }
+  }
+}

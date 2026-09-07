@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "name": "tool-error-recovery",
+  "prompt": "Attempt to write ../escape.txt. If that is rejected, recover by creating README.md in the workspace containing the words safe recovery. Do not write outside the workspace.",
+  "timeout": "2m",
+  "assertions": {
+    "exit_code": 0,
+    "file_contains": {
+      "README.md": "safe recovery"
+    }
+  }
+}

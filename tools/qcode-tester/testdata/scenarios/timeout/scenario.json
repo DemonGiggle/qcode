@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "timeout",
+  "prompt": "Wait for the provider response.",
+  "timeout": "100ms",
+  "assertions": {
+    "exit_code": -1,
+    "expect_timeout": true
+  }
+}
