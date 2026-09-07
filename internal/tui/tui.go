@@ -88,6 +88,10 @@ type contextRunner interface {
 	RefreshContext(context.Context)
 }
 
+type compactionRunner interface {
+	Compact(context.Context) (string, error)
+}
+
 type sessionRunner interface {
 	ResetSession()
 }
@@ -392,6 +396,9 @@ func (u *UI) Run(ctx context.Context) error {
 			u.resetStatusLayout()
 			u.printHeader()
 			continue
+		case "/compact":
+			u.compactConversation(ctx)
+			continue
 		case "/help":
 			u.printCommandHelp()
 			continue
@@ -544,6 +551,22 @@ func (u *UI) startNewSession() {
 	u.drawStatusBar()
 	u.responseWriter.ResetDiffs()
 	u.printSystemMessage(green + "New session started; previous context cleared." + reset)
+}
+
+func (u *UI) compactConversation(ctx context.Context) {
+	runner, ok := u.runner.(compactionRunner)
+	if !ok {
+		u.printSystemMessage(yellow + "Conversation compaction is unavailable." + reset)
+		return
+	}
+	u.printSystemMessage(dim + "Compacting conversation..." + reset)
+	result, err := runner.Compact(ctx)
+	u.drawStatusBar()
+	if err != nil {
+		u.printSystemMessage(yellow + "Conversation compaction failed: " + err.Error() + reset)
+		return
+	}
+	u.printSystemMessage(green + result + reset)
 }
 
 func (u *UI) chooseModel(ctx context.Context) {

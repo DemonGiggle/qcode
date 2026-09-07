@@ -3,10 +3,50 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"qcode/internal/llm"
+	"qcode/internal/prompt"
 )
+
+// Compact replaces older conversation turns with a model-produced continuation
+// summary while retaining the system prompt and a recent, tool-consistent tail.
+func (a *Agent) Compact(ctx context.Context) (string, error) {
+	if len(a.messages) <= 1 {
+		return "Conversation is already compact.", nil
+	}
+	request := llm.Request{Model: a.model, Messages: append([]llm.Message{{Role: "system", Content: prompt.ConversationCompact}}, a.messages[1:]...)}
+	response, err := a.provider.Complete(ctx, request, nil)
+	if err != nil {
+		return "", err
+	}
+	summary := response.Message.Content
+	if summary == "" {
+		return "", fmt.Errorf("compaction produced no summary")
+	}
+	start := len(a.messages) - 6
+	if start < 1 {
+		start = 1
+	}
+	for start > 1 && a.messages[start].Role == "tool" {
+		start--
+	}
+	recent := append([]llm.Message(nil), a.messages[start:]...)
+	a.messages = append([]llm.Message{{Role: "system", Content: a.system}, {Role: "user", Content: "Conversation summary from earlier turns:\n" + summary}}, recent...)
+	a.contextUsage = nil
+	a.contextMessages = 0
+	a.publishContext()
+	return "Conversation compacted.", nil
+}
+
+func (a *Agent) shouldAutoCompact() bool {
+	if !a.autoCompact || len(a.messages) <= 1 {
+		return false
+	}
+	remaining, known, _ := a.ContextRemaining()
+	return known && 100-remaining >= a.autoCompactThreshold
+}
 
 type contextStatus struct {
 	remaining        int

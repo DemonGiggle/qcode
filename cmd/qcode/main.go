@@ -28,21 +28,23 @@ import (
 var version = "dev"
 
 type options struct {
-	learningBudget      int
-	searchBackend       string
-	provider            string
-	model               string
-	baseURL             string
-	apiKey              string
-	root                string
-	contextWindow       int
-	maxSteps            int
-	jsonEvents          bool
-	listProviders       bool
-	showVersion         bool
-	demo                bool
-	sandbox             bool
-	dangerSkipTLSVerify bool
+	learningBudget       int
+	searchBackend        string
+	provider             string
+	model                string
+	baseURL              string
+	apiKey               string
+	root                 string
+	contextWindow        int
+	autoCompactThreshold int
+	disableAutoCompact   bool
+	maxSteps             int
+	jsonEvents           bool
+	listProviders        bool
+	showVersion          bool
+	demo                 bool
+	sandbox              bool
+	dangerSkipTLSVerify  bool
 }
 
 func main() {
@@ -53,7 +55,7 @@ func main() {
 }
 
 func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
-	opts := options{learningBudget: learning.DefaultBudget}
+	opts := options{learningBudget: learning.DefaultBudget, autoCompactThreshold: agent.DefaultAutoCompactThreshold}
 	configPath := ""
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -63,6 +65,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	flags.StringVar(&opts.apiKey, "api-key", firstEnv("QCODE_API_KEY", "OPENAI_API_KEY"), "API key (prefer QCODE_API_KEY or OPENAI_API_KEY)")
 	flags.StringVar(&opts.root, "cwd", ".", "workspace root")
 	flags.IntVar(&opts.contextWindow, "context-window", 0, "model context capacity in tokens for status display (0: automatic)")
+	flags.BoolVar(&opts.disableAutoCompact, "disable-auto-compact", false, "disable automatic conversation compaction")
 	flags.IntVar(&opts.maxSteps, "max-steps", 32, "maximum model turns per request")
 	flags.BoolVar(&opts.jsonEvents, "json-events", false, "emit action events as JSON Lines")
 	flags.BoolVar(&opts.listProviders, "list-providers", false, "list built-in providers")
@@ -248,6 +251,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		if model == opts.model {
 			runner.SetContextWindow(opts.contextWindow)
 		}
+		runner.SetAutoCompact(!opts.disableAutoCompact, opts.autoCompactThreshold)
 		ui.SetAgentSkillHandler(id, currentSelection.Set)
 		if sandboxActive {
 			currentRegistry.SetDirectoryApprover(ui.AgentDirectoryApprover(id))
@@ -296,6 +300,12 @@ func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
 	// A configured capacity belongs to the configured model and provider.
 	if providerConfigApplies && (cfg.Model == "" || cfg.Model == opts.model) && !setFlags["context-window"] && cfg.ContextWindow != nil {
 		opts.contextWindow = *cfg.ContextWindow
+	}
+	if cfg.AutoCompactThreshold != nil {
+		opts.autoCompactThreshold = *cfg.AutoCompactThreshold
+	}
+	if !setFlags["disable-auto-compact"] && cfg.DisableAutoCompact != nil {
+		opts.disableAutoCompact = *cfg.DisableAutoCompact
 	}
 	if providerConfigApplies && !setFlags["base-url"] && os.Getenv("QCODE_BASE_URL") == "" && cfg.BaseURL != "" {
 		opts.baseURL = cfg.BaseURL
