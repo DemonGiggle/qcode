@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -112,6 +113,7 @@ func NewWithOptions(root string, options Options) (*Registry, error) {
 	})}, r.list)
 	r.add(llm.Tool{Name: "search", Description: prompt.SearchTool, Parameters: objectSchema(map[string]any{
 		"pattern": stringProperty(prompt.PatternParameter), "path": stringProperty(prompt.SearchPathParameter), "max_results": integerProperty(prompt.MaxResultsParameter),
+		"offset": integerProperty(prompt.SearchOffsetParameter),
 	}, "pattern")}, r.search)
 	r.add(llm.Tool{Name: "shell", Description: prompt.ShellTool, Parameters: objectSchema(map[string]any{
 		"command": stringProperty(prompt.CommandParameter), "timeout_ms": integerProperty(prompt.TimeoutParameter),
@@ -586,16 +588,11 @@ func (r *Registry) read(ctx context.Context, arguments json.RawMessage) (string,
 	if err != nil {
 		return "", err
 	}
-	data, err := r.readFile(path)
+	file, err := r.openFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		return "", err
 	}
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	if bytes.IndexByte(data, 0) >= 0 {
-		return "", errors.New("file appears to be binary; use view_image for supported image files")
-	}
+	defer file.Close()
 	offset := int(args.Offset)
 	if offset < 1 {
 		offset = int(args.Line)
@@ -610,25 +607,46 @@ func (r *Registry) read(ctx context.Context, arguments json.RawMessage) (string,
 	if limit > 2000 {
 		limit = 2000
 	}
-	lines := strings.Split(string(data), "\n")
-	if offset > len(lines) {
-		return "", fmt.Errorf("offset %d is beyond end of file (%d lines total)", offset, len(lines))
-	}
-	end := offset - 1 + limit
-	if end > len(lines) {
-		end = len(lines)
-	}
 	var out strings.Builder
-	for i := offset - 1; i < end; i++ {
+	scanner := textScanner(file)
+	number, emitted := 0, 0
+	for scanner.Scan() {
+		number++
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&out, "%6d\t%s\n", i+1, lines[i])
+		if strings.IndexByte(scanner.Text(), 0) >= 0 {
+			return "", errors.New("file appears to be binary; use view_image for supported image files")
+		}
+		if number < offset {
+			continue
+		}
+		line := fmt.Sprintf("%6d\t%s\n", number, scanner.Text())
+		if emitted >= limit || out.Len()+len(line) > maxOutput-512 && emitted > 0 {
+			fmt.Fprintf(&out, "[use offset=%d to continue]\n", number)
+			return out.String(), nil
+		}
+		if len(line) > maxOutput-512 {
+			return "", fmt.Errorf("line %d exceeds the output budget; use shell to extract a bounded portion of this line", number)
+		}
+		out.WriteString(line)
+		emitted++
 	}
-	if end < len(lines) {
-		fmt.Fprintf(&out, "[showing lines %d-%d of %d; use offset=%d to continue]\n", offset, end, len(lines), end+1)
+	if err := scanner.Err(); err != nil {
+		return out.String(), fmt.Errorf("read incomplete near line %d (maximum line size 1 MiB): %w", number+1, err)
 	}
-	return truncate(out.String()), nil
+	if number < offset && !(number == 0 && offset == 1) {
+		return "", fmt.Errorf("offset %d is beyond end of file (%d lines total)", offset, number)
+	}
+	return out.String(), nil
+}
+
+// Bound memory by line size rather than file size. Oversized lines produce an
+// explicit incomplete-result error instead of silently excluding large files.
+func textScanner(r io.Reader) *bufio.Scanner {
+	s := bufio.NewScanner(r)
+	s.Buffer(make([]byte, 64*1024), 1024*1024)
+	return s
 }
 
 func (r *Registry) write(ctx context.Context, arguments json.RawMessage) (string, error) {
@@ -754,6 +772,7 @@ func (r *Registry) search(ctx context.Context, arguments json.RawMessage) (strin
 	var args struct {
 		Pattern, Path string
 		MaxResults    int `json:"max_results"`
+		Offset        int `json:"offset"`
 	}
 	if err := decode(arguments, &args); err != nil {
 		return "", err
@@ -772,12 +791,18 @@ func (r *Registry) search(ctx context.Context, arguments json.RawMessage) (strin
 	if args.MaxResults > 1000 {
 		args.MaxResults = 1000
 	}
+	if args.Offset < 0 {
+		return "", errors.New("offset must be non-negative")
+	}
 	var matches []string
+	seen, size, skipped := 0, 0, 0
+	more := false
 	err = filepath.WalkDir(path, func(file string, entry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if walkErr != nil {
+			skipped++
 			return nil
 		}
 		if entry.IsDir() {
@@ -786,35 +811,66 @@ func (r *Registry) search(ctx context.Context, arguments json.RawMessage) (strin
 			}
 			return nil
 		}
-		if len(matches) >= args.MaxResults {
-			return fs.SkipAll
-		}
 		info, infoErr := entry.Info()
-		if infoErr != nil || info.Size() > 2*1024*1024 {
+		if infoErr != nil || !info.Mode().IsRegular() {
+			skipped++
 			return nil
 		}
-		data, readErr := r.readFile(file)
-		if readErr != nil || bytes.IndexByte(data, 0) >= 0 {
+		input, readErr := r.openFile(file, os.O_RDONLY, 0)
+		if readErr != nil {
+			skipped++
 			return nil
 		}
-		for number, line := range strings.Split(string(data), "\n") {
-			if re.MatchString(line) {
-				rel, _ := filepath.Rel(r.root, file)
-				matches = append(matches, rel+":"+strconv.Itoa(number+1)+":"+line)
-				if len(matches) >= args.MaxResults {
-					break
-				}
+		defer input.Close()
+		scanner := textScanner(input)
+		number := 0
+		for scanner.Scan() {
+			number++
+			if err := ctx.Err(); err != nil {
+				return err
 			}
+			line := scanner.Text()
+			if strings.IndexByte(line, 0) >= 0 {
+				skipped++
+				return nil
+			}
+			if re.MatchString(line) {
+				seen++
+				if seen <= args.Offset {
+					continue
+				}
+				rel, _ := filepath.Rel(r.root, file)
+				if len(line) > 2048 {
+					line = "[matching line text omitted: exceeds 2048 bytes; use read or shell for a bounded excerpt]"
+				}
+				match := rel + ":" + strconv.Itoa(number) + ":" + line
+				if len(matches) >= args.MaxResults || size+len(match)+1 > maxOutput-512 {
+					more = true
+					return fs.SkipAll
+				}
+				matches = append(matches, match)
+				size += len(match) + 1
+			}
+		}
+		if scanner.Err() != nil {
+			skipped++
 		}
 		return nil
 	})
 	if err != nil {
 		return "", err
 	}
-	if len(matches) == 0 {
-		return "no matches", nil
+	result := strings.Join(matches, "\n")
+	if result == "" {
+		result = "no matches"
 	}
-	return truncate(strings.Join(matches, "\n")), nil
+	if more {
+		result += fmt.Sprintf("\n[more matches: repeat search with the same path and pattern and offset=%d; offsets count matching lines, not file lines]", args.Offset+len(matches))
+	}
+	if skipped > 0 {
+		result += fmt.Sprintf("\n[incomplete search: %d files or paths skipped or partially scanned (binary, non-regular, unreadable, or line exceeds 1 MiB); use shell for further inspection]", skipped)
+	}
+	return result, nil
 }
 
 func (r *Registry) shell(ctx context.Context, arguments json.RawMessage) (string, error) {

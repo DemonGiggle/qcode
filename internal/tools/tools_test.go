@@ -60,6 +60,65 @@ func TestFileToolWorkflow(t *testing.T) {
 	}
 }
 
+func TestLargeFileSearchPagesAndTargetedRead(t *testing.T) {
+	root := t.TempDir()
+	data := strings.Repeat("padding\n", 310000) + "WON_EI first\ncontext\nWON_EI second\n"
+	if err := os.WriteFile(filepath.Join(root, "large.txt"), []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := call(t, r, "search", map[string]any{"pattern": "WON_EI", "max_results": 1})
+	if err != nil || !strings.Contains(first, "large.txt:310001:WON_EI first") || !strings.Contains(first, "offset=1") {
+		t.Fatalf("first page: %q, %v", first, err)
+	}
+	second, err := call(t, r, "search", map[string]any{"pattern": "WON_EI", "max_results": 1, "offset": 1})
+	if err != nil || !strings.Contains(second, "large.txt:310003:WON_EI second") || strings.Contains(second, "more matches") {
+		t.Fatalf("second page: %q, %v", second, err)
+	}
+	excerpt, err := call(t, r, "read", map[string]any{"path": "large.txt", "offset": 310001, "limit": 2})
+	if err != nil || !strings.Contains(excerpt, "context") || !strings.Contains(excerpt, "offset=310003") || strings.Contains(excerpt, "padding") {
+		t.Fatalf("excerpt: %q, %v", excerpt, err)
+	}
+}
+
+func TestReadOutputBudgetContinuesWithoutDroppingLines(t *testing.T) {
+	root := t.TempDir()
+	data := strings.Repeat("x", 40000) + "\nsecond\n" + strings.Repeat("y", 40000) + "\n"
+	if err := os.WriteFile(filepath.Join(root, "wide.txt"), []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := call(t, r, "read", map[string]any{"path": "wide.txt"})
+	if err != nil || len(result) > maxOutput || !strings.Contains(result, "offset=3") || !strings.Contains(result, "second") {
+		t.Fatalf("read length %d, err %v", len(result), err)
+	}
+	result, err = call(t, r, "read", map[string]any{"path": "wide.txt", "offset": 3})
+	if err != nil || !strings.Contains(result, strings.Repeat("y", 40000)) {
+		t.Fatalf("continuation length %d, err %v", len(result), err)
+	}
+}
+
+func TestSearchReportsIncompleteScan(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "long.txt"), []byte(strings.Repeat("x", 2*1024*1024)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := call(t, r, "search", map[string]any{"pattern": "WON_EI"})
+	if err != nil || !strings.Contains(result, "incomplete search") {
+		t.Fatalf("search: %q, %v", result, err)
+	}
+}
+
 func TestFileToolsRejectParentEscape(t *testing.T) {
 	registry, err := New(t.TempDir())
 	if err != nil {
