@@ -35,8 +35,7 @@ var tabKeySequences = []tabKeySequence{
 }
 
 // interruptReader owns terminal input so Ctrl+C can cancel an active agent
-// task even while the line editor is not reading. Other input typed while a
-// task is active is discarded instead of leaking into the next prompt.
+// task while ordinary input remains available for queued prompts.
 type interruptReader struct {
 	source io.Reader
 	data   chan byte
@@ -198,7 +197,6 @@ func (r *interruptReader) route(input []byte) {
 				cancel()
 				return
 			}
-			continue
 		}
 		if key == ctrlC {
 			// Clear the current input and submit an empty line. x/term treats a

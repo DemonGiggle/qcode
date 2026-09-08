@@ -124,6 +124,7 @@ type agentController interface {
 	Runner(string) (any, bool)
 	Create(string) (session.Summary, error)
 	Start(string, string) error
+	Submit(string, string) (session.Submission, error)
 	Rename(string, string) error
 	Cancel(string) error
 	Close(string) error
@@ -362,12 +363,6 @@ func (u *UI) Run(ctx context.Context) error {
 		u.reportSave(u.saveSession(false))
 		u.handlePendingTabSwitch()
 		u.handlePendingApproval(ctx)
-		if u.activeAgentRunning() {
-			if err := u.waitForAgentEvent(ctx); err != nil {
-				return err
-			}
-			continue
-		}
 		line, err := u.readLine()
 		u.commandMenu.dismiss(u.out)
 		if err != nil {

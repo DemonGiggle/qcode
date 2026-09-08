@@ -6,6 +6,14 @@ Use `/agent` to create one, `/agent list`, `/agent switch <id>`, `/agent rename 
 
 The tab bar shows the available switch shortcuts when the row has room: Ctrl+PageUp/PageDown or the Alt+, and Alt+. fallbacks. Each agent keeps independent context, model, output, tool settings, and sandbox grants while workspace mutations are serialized.
 
+## Prompt queues
+
+Each agent has an independent FIFO prompt queue. Submitting another prompt while an agent is running adds it to that agent's queue instead of returning a busy error. The tab and task indicator show the pending count, and the transcript marks a newly accepted pending prompt as `Queued #N`. Input remains editable while work runs, so prompts can be added without waiting or blocking tab navigation and directory approvals.
+
+Only one prompt runs in an agent at a time. The next prompt starts automatically after the current one completes, fails, or is cancelled. Queues are not global, so a slow sub-agent does not delay prompts sent to `main` or another agent.
+
+The in-process manager exposes asynchronous submission, synchronous submission-and-wait, and completed-result lookup by request ID. One-shot command-line input uses the synchronous path; the TUI uses asynchronous submission and keeps its event loop responsive. Request IDs are unique within one manager lifetime. Each agent accepts up to 16 waiting prompts, and the manager retains the latest 128 complete, untruncated results in memory. Agent roster and delegation handoff previews remain bounded as described below.
+
 ## How the main agent talks to sub-agents
 
 The main agent receives three orchestrator tools that sub-agents do not have:
@@ -13,7 +21,7 @@ The main agent receives three orchestrator tools that sub-agents do not have:
 | Tool | Purpose |
 |------|---------|
 | `list_agents` | Returns the current status of all agents (outcomes and files stripped for brevity) |
-| `delegate_task` | Starts focused work in another agent asynchronously |
+| `delegate_task` | Queues focused work in another agent asynchronously |
 | `get_agent_result` | Retrieves a specific agent's status and latest completed handoff |
 
 ### Roster injection

@@ -28,7 +28,7 @@ After a crash, recovery uses the latest successful checkpoint and marks unfinish
 
 ## Activity events
 
-Interactive mode always records concise colored activity events for tool calls and agent coordination, such as `Reading internal/tui/tui.go`, `Writing README.md`, or `Consulting agent-2`. These events are presentation-only and never enter the next model request. A task-level indicator remains visible while the active tab is running; Page Up/Page Down, Ctrl+C cancellation, and tab switching remain available until its prompt returns.
+Interactive mode always records concise colored activity events for tool calls and agent coordination, such as `Reading internal/tui/tui.go`, `Writing README.md`, or `Consulting agent-2`. These events are presentation-only and never enter the next model request. A task-level indicator remains visible while the active tab is running and includes its queued prompt count. The input remains editable: another submitted prompt is marked `Queued #N` and runs in FIFO order. Page Up/Page Down, Ctrl+C cancellation of the running prompt, and tab switching remain available.
 
 ## Scrolling
 

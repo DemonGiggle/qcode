@@ -43,17 +43,17 @@ func TestInterruptReaderKeepsApplicationOpenWhenIdle(t *testing.T) {
 	_ = writer.Close()
 }
 
-func TestInterruptReaderDiscardsOtherInputDuringTask(t *testing.T) {
+func TestInterruptReaderKeepsOtherInputDuringTask(t *testing.T) {
 	reader := newInterruptReader(nil)
 	reader.setCancel(func() {})
-	reader.route([]byte("ignored"))
+	reader.route([]byte("queued"))
 	reader.setCancel(nil)
 	reader.route([]byte("kept"))
-	buffer := make([]byte, 4)
+	buffer := make([]byte, len("queuedkept"))
 	if _, err := io.ReadFull(reader, buffer); err != nil {
 		t.Fatal(err)
 	}
-	if string(buffer) != "kept" {
+	if string(buffer) != "queuedkept" {
 		t.Fatalf("input = %q", buffer)
 	}
 }
@@ -76,14 +76,14 @@ func TestInterruptReaderRoutesPageKeys(t *testing.T) {
 	}
 }
 
-func TestInterruptReaderRoutesTabKeysDuringTask(t *testing.T) {
+func TestInterruptReaderRoutesTabKeysAndTypingDuringTask(t *testing.T) {
 	reader := newInterruptReader(nil)
 	var directions []int
 	reader.setTabHandler(func(direction int) { directions = append(directions, direction) })
 	cancelled := false
 	reader.setCancel(func() { cancelled = true })
 
-	reader.route([]byte(ctrlPageUpSequence + ctrlPageDownSequence + rxvtCtrlPageUp + rxvtCtrlPageDown + altPreviousTab + altNextTab + "discarded"))
+	reader.route([]byte(ctrlPageUpSequence + ctrlPageDownSequence + rxvtCtrlPageUp + rxvtCtrlPageDown + altPreviousTab + altNextTab + "queued"))
 	want := []int{-1, 1, -1, 1, -1, 1}
 	if len(directions) != len(want) {
 		t.Fatalf("tab directions = %v", directions)
@@ -96,27 +96,27 @@ func TestInterruptReaderRoutesTabKeysDuringTask(t *testing.T) {
 	if cancelled {
 		t.Fatal("tab navigation cancelled the task")
 	}
-	select {
-	case key := <-reader.data:
-		t.Fatalf("task input leaked to line editor as %q", key)
-	default:
+	buffer := make([]byte, len("queued"))
+	if _, err := io.ReadFull(reader, buffer); err != nil || string(buffer) != "queued" {
+		t.Fatalf("queued input = %q, %v", buffer, err)
 	}
 }
 
-func TestInterruptReaderPagesDuringTaskWithoutLeakingInput(t *testing.T) {
+func TestInterruptReaderPagesDuringTaskAndKeepsTyping(t *testing.T) {
 	reader := newInterruptReader(nil)
 	var directions []int
 	reader.setPageHandler(func(d int) { directions = append(directions, d) })
 	cancelled := false
 	reader.setCancel(func() { cancelled = true })
-	for _, key := range []byte(pageUpSequence + pageDownSequence + "discarded") {
+	for _, key := range []byte(pageUpSequence + pageDownSequence + "queued") {
 		reader.route([]byte{key})
 	}
 	if len(directions) != 2 || directions[0] != 1 || directions[1] != -1 || cancelled {
 		t.Fatalf("directions=%v cancelled=%v", directions, cancelled)
 	}
-	if len(reader.data) != 0 {
-		t.Fatal("navigation or typing leaked into next prompt")
+	buffer := make([]byte, len("queued"))
+	if _, err := io.ReadFull(reader, buffer); err != nil || string(buffer) != "queued" {
+		t.Fatalf("queued input = %q, %v", buffer, err)
 	}
 	reader.route([]byte{ctrlC})
 	if !cancelled {
