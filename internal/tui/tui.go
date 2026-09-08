@@ -135,6 +135,11 @@ type agentController interface {
 }
 
 type UI struct {
+	fixedInput        bool
+	inputText         string
+	inputLabel        string
+	inputPosition     int
+	inputFrame        string
 	terminal          *lineedit.Terminal
 	display           historyDisplay
 	responseWriter    *MarkdownWriter
@@ -347,6 +352,9 @@ func (u *UI) Run(ctx context.Context) error {
 		defer func() { u.shutdownAgentManager(); u.closeSession() }()
 	}
 	u.input.start()
+	u.fixedInput = true
+	u.inputLabel = inputPrompt
+	u.terminal.RenderInput = u.renderInput
 	u.setupStatusBar()
 	stopResize := u.watchResize()
 	defer stopResize()
@@ -401,7 +409,11 @@ func (u *UI) Run(ctx context.Context) error {
 			u.resumeSession()
 			continue
 		}
-		u.display.AddLine("> " + line)
+		if u.fixedInput {
+			u.display.AddLine(reset + "\n> " + line)
+		} else {
+			u.display.AddLine("> " + line)
+		}
 		u.resetPage()
 		fields := strings.Fields(line)
 		if len(fields) > 0 && fields[0] == "/agent" {
@@ -668,8 +680,10 @@ func (u *UI) chooseModel(ctx context.Context) {
 	}
 	u.printSystemMessage(dim + "Type to search; use Up/Down to move, Enter to select, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
+	u.beginRawSelector()
 	selected, accepted, selectErr := selectModel(u.input, u.terminal, models, u.model, visible, u.width, ColorEnabled(u.out))
 	u.input.setRaw(false)
+	u.endRawSelector()
 	if selectErr != nil {
 		u.printSystemMessage(yellow + "Unable to select model: " + selectErr.Error() + reset)
 		return
@@ -742,6 +756,15 @@ func formatRunDuration(duration time.Duration) string {
 }
 
 func (u *UI) completeSlashCommand(line string, pos int, key rune) (string, int, bool) {
+	if u.fixedInput {
+		if key == '\t' {
+			matches := matchingSlashCommands(line)
+			if len(matches) > 0 {
+				return matches[0].name, len(matches[0].name), true
+			}
+		}
+		return line, pos, false
+	}
 	if key == '\t' {
 		matches := matchingSlashCommands(line)
 		if len(matches) == 0 {

@@ -19,7 +19,11 @@ func (u *UI) chooseSkills() {
 	}
 	u.printSystemMessage(dim + "Use Up/Down to move, Space to toggle, Enter to apply, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
-	defer u.input.setRaw(false)
+	u.beginRawSelector()
+	defer func() {
+		u.input.setRaw(false)
+		u.endRawSelector()
+	}()
 	names, summaries, accepted, err := selectSkills(u.input, u.terminal, u.skills, ColorEnabled(u.out))
 	if err != nil {
 		return

@@ -3,8 +3,20 @@ package tui
 import (
 	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestGradientHistoryKeepsOnlyCurrentForeground(t *testing.T) {
+	w := newHistoryWriter(&bytes.Buffer{})
+	_, _ = w.Write([]byte("\x1b[1m" + strings.Repeat("\x1b[38;5;50m#\x1b[38;5;60m#", 100)))
+	if w.style != "\x1b[1m\x1b[38;5;60m" {
+		t.Fatalf("accumulated style: %q", w.style)
+	}
+	if len(w.Snapshot().lines[0].text) > 10000 {
+		t.Fatal("gradient styles expanded superlinearly")
+	}
+}
 
 func TestHistoryWriterRecordsStyledPersistentOutput(t *testing.T) {
 	var output bytes.Buffer

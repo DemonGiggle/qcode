@@ -41,6 +41,9 @@ var vt100EscapeCodes = EscapeCodes{
 // Terminal contains the state for running a VT100 terminal that is capable of
 // reading lines of input.
 type Terminal struct {
+	// RenderInput replaces inline echo with an externally positioned editor.
+	// It is invoked without the editor lock; pos is a rune index.
+	RenderInput func(prompt, line string, pos int)
 	// AutoCompleteCallback, if non-null, is called for each keypress with
 	// the full input line and the current position of the cursor (in
 	// bytes, as an index into |line|). If it returns ok=false, the key
@@ -668,6 +671,9 @@ func writeWithCRLF(w io.Writer, buf []byte) (n int, err error) {
 func (t *Terminal) Write(buf []byte) (n int, err error) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
+	if t.RenderInput != nil {
+		return writeWithCRLF(t.c, buf)
+	}
 
 	if t.cursorX == 0 && t.cursorY == 0 {
 		// This is the easy case: there's nothing on the screen that we
@@ -740,7 +746,9 @@ func (t *Terminal) ReadLine() (line string, err error) {
 func (t *Terminal) readLine() (line string, err error) {
 	// t.lock must be held at this point
 
-	if t.cursorX == 0 && t.cursorY == 0 {
+	if t.RenderInput != nil {
+		t.renderInput()
+	} else if t.cursorX == 0 && t.cursorY == 0 {
 		t.writeLine(t.prompt)
 		t.c.Write(t.outBuf)
 		t.outBuf = t.outBuf[:0]
@@ -788,8 +796,12 @@ func (t *Terminal) readLine() (line string, err error) {
 		} else {
 			t.remainder = nil
 		}
-		t.c.Write(t.outBuf)
-		t.outBuf = t.outBuf[:0]
+		if t.RenderInput != nil {
+			t.renderInput()
+		} else {
+			t.c.Write(t.outBuf)
+			t.outBuf = t.outBuf[:0]
+		}
 		if lineOk {
 			if t.echo {
 				t.historyIndex = -1
@@ -816,6 +828,18 @@ func (t *Terminal) readLine() (line string, err error) {
 
 		t.remainder = t.inBuf[:n+len(t.remainder)]
 	}
+}
+
+func (t *Terminal) renderInput() {
+	t.outBuf = t.outBuf[:0]
+	prompt, line, pos := string(t.prompt), string(t.line), t.pos
+	if !t.echo {
+		line, pos = "", 0
+	}
+	render := t.RenderInput
+	t.lock.Unlock()
+	render(prompt, line, pos)
+	t.lock.Lock()
 }
 
 // SetPrompt sets the prompt to be used when reading subsequent lines.
@@ -857,6 +881,9 @@ func (t *Terminal) SetSize(width, height int) error {
 
 	oldWidth := t.termWidth
 	t.termWidth, t.termHeight = width, height
+	if t.RenderInput != nil {
+		return nil
+	}
 
 	switch {
 	case width == oldWidth:
