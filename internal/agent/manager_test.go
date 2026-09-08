@@ -25,6 +25,8 @@ func (*managerProvider) Complete(ctx context.Context, request llm.Request, _ llm
 		return llm.Response{}, ctx.Err()
 	case "fail":
 		return llm.Response{}, errors.New("provider failed")
+	case "long":
+		return llm.Response{Message: llm.Message{Role: "assistant", Content: strings.Repeat("result", 1000)}}, nil
 	default:
 		return llm.Response{Message: llm.Message{Role: "assistant", Content: "handled " + prompt}}, nil
 	}
@@ -147,9 +149,6 @@ func TestAgentManagerCancellationAndFailureReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitManagerStatus(t, manager, worker.ID, StatusRunning)
-	if err := manager.Start(worker.ID, "busy"); err == nil || !strings.Contains(err.Error(), "running") {
-		t.Fatalf("busy error = %v", err)
-	}
 	if err := manager.Cancel(worker.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -182,6 +181,194 @@ func TestAgentManagerCancellationAndFailureReuse(t *testing.T) {
 	completed = waitManagerStatus(t, manager, "main", StatusCompleted)
 	if completed.LastOutcome != "handled recovered" || completed.Error != "" {
 		t.Fatalf("recovered main = %+v", completed)
+	}
+}
+
+type queueProvider struct {
+	started chan string
+	release chan struct{}
+}
+
+func (*queueProvider) Name() string { return "queue-test" }
+
+func (p *queueProvider) Complete(ctx context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	prompt := request.Messages[len(request.Messages)-1].Content
+	select {
+	case p.started <- prompt:
+	case <-ctx.Done():
+		return llm.Response{}, ctx.Err()
+	}
+	select {
+	case <-p.release:
+		return llm.Response{Message: llm.Message{Role: "assistant", Content: "handled " + prompt}}, nil
+	case <-ctx.Done():
+		return llm.Response{}, ctx.Err()
+	}
+}
+
+func newQueueTestManager(t *testing.T, maximum int, provider *queueProvider) *AgentManager {
+	t.Helper()
+	manager := NewAgentManager(context.Background(), maximum)
+	manager.SetFactory(func(id, name, model string, main bool) (*Agent, error) {
+		return New(provider, model, manager.WrapToolset(id, &managerToolset{}, main), trace.New(io.Discard, false), io.Discard, 4), nil
+	})
+	if _, err := manager.CreateMain("model"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Shutdown)
+	return manager
+}
+
+func waitPromptResult(t *testing.T, manager *AgentManager, requestID string) (PromptResult, error) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		result, err := manager.GetResult(requestID)
+		if !errors.Is(err, ErrRequestPending) {
+			return result, err
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("request %s did not complete", requestID)
+	return PromptResult{}, nil
+}
+
+func TestAgentPromptQueueIsFIFO(t *testing.T) {
+	provider := &queueProvider{started: make(chan string, 4), release: make(chan struct{}, 4)}
+	manager := newQueueTestManager(t, 1, provider)
+
+	first, err := manager.Submit("main", "first")
+	if err != nil || first.QueuePosition != 0 {
+		t.Fatalf("first submission = %+v, %v", first, err)
+	}
+	second, err := manager.Submit("main", "second")
+	if err != nil || second.QueuePosition != 1 {
+		t.Fatalf("second submission = %+v, %v", second, err)
+	}
+	if summary, _ := manager.Summary("main"); summary.QueueDepth != 1 {
+		t.Fatalf("queue depth = %d, want 1", summary.QueueDepth)
+	}
+	if got := <-provider.started; got != "first" {
+		t.Fatalf("first started prompt = %q", got)
+	}
+	select {
+	case got := <-provider.started:
+		t.Fatalf("queued prompt started early: %q", got)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if _, err := manager.GetResult(second.RequestID); !errors.Is(err, ErrRequestPending) {
+		t.Fatalf("pending result error = %v", err)
+	}
+
+	provider.release <- struct{}{}
+	if result, err := waitPromptResult(t, manager, first.RequestID); err != nil || result.Response != "handled first" {
+		t.Fatalf("first result = %+v, %v", result, err)
+	}
+	if got := <-provider.started; got != "second" {
+		t.Fatalf("second started prompt = %q", got)
+	}
+	provider.release <- struct{}{}
+	if result, err := waitPromptResult(t, manager, second.RequestID); err != nil || result.Response != "handled second" {
+		t.Fatalf("second result = %+v, %v", result, err)
+	}
+	if summary, _ := manager.Summary("main"); summary.QueueDepth != 0 {
+		t.Fatalf("final queue depth = %d", summary.QueueDepth)
+	}
+}
+
+func TestAgentPromptQueueContinuesAfterCancellation(t *testing.T) {
+	manager := newTestManager(t, 1)
+	first, err := manager.Submit("main", "block")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.Submit("main", "after-cancel")
+	if err != nil || second.QueuePosition != 1 {
+		t.Fatalf("queued submission = %+v, %v", second, err)
+	}
+	if err := manager.Cancel("main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := waitPromptResult(t, manager, first.RequestID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled result error = %v", err)
+	}
+	result, err := waitPromptResult(t, manager, second.RequestID)
+	if err != nil || result.Response != "handled after-cancel" {
+		t.Fatalf("next result = %+v, %v", result, err)
+	}
+}
+
+func TestSubmitAndWaitReturnsCompleteResult(t *testing.T) {
+	provider := &queueProvider{started: make(chan string, 1), release: make(chan struct{}, 1)}
+	manager := newQueueTestManager(t, 1, provider)
+	provider.release <- struct{}{}
+	result, err := manager.SubmitAndWait(context.Background(), "main", "sync")
+	if err != nil || result.Response != "handled sync" || result.RequestID == "" || result.TargetID != "main" {
+		t.Fatalf("sync result = %+v, %v", result, err)
+	}
+}
+
+func TestAgentPromptQueuesAreIndependent(t *testing.T) {
+	provider := &queueProvider{started: make(chan string, 4), release: make(chan struct{}, 4)}
+	manager := newQueueTestManager(t, 2, provider)
+	worker, err := manager.Create("model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Submit("main", "main-work"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Submit(worker.ID, "worker-work"); err != nil {
+		t.Fatal(err)
+	}
+	started := map[string]bool{<-provider.started: true, <-provider.started: true}
+	if !started["main-work"] || !started["worker-work"] {
+		t.Fatalf("started prompts = %v", started)
+	}
+	provider.release <- struct{}{}
+	provider.release <- struct{}{}
+}
+
+func TestPromptQueueLimitAndStableTargetErrors(t *testing.T) {
+	provider := &queueProvider{started: make(chan string, 4), release: make(chan struct{}, 4)}
+	manager := newQueueTestManager(t, 2, provider)
+	manager.queueLimit = 1
+	if _, err := manager.Submit("missing", "work"); !errors.Is(err, ErrUnknownAgent) {
+		t.Fatalf("unknown agent error = %v", err)
+	}
+	worker, _ := manager.Create("model")
+	if err := manager.Close(worker.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Submit(worker.ID, "work"); !errors.Is(err, ErrClosedAgent) {
+		t.Fatalf("closed agent error = %v", err)
+	}
+	if _, err := manager.Submit("main", "first"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Submit("main", "second"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Submit("main", "overflow"); !errors.Is(err, ErrPromptQueueFull) {
+		t.Fatalf("queue full error = %v", err)
+	}
+}
+
+func TestPromptResultsRemainFullAndBounded(t *testing.T) {
+	manager := newTestManager(t, 1)
+	manager.resultLimit = 1
+	first, err := manager.SubmitAndWait(context.Background(), "main", "long")
+	if err != nil || len(first.Response) <= maxHandoffBytes {
+		t.Fatalf("full result length = %d, err = %v", len(first.Response), err)
+	}
+	if summary, _ := manager.Summary("main"); len(summary.LastOutcome) > maxHandoffBytes {
+		t.Fatalf("handoff length = %d", len(summary.LastOutcome))
+	}
+	if _, err := manager.SubmitAndWait(context.Background(), "main", "next"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.GetResult(first.RequestID); !errors.Is(err, ErrRequestNotFound) {
+		t.Fatalf("evicted result error = %v", err)
 	}
 }
 

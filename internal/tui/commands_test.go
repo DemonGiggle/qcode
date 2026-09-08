@@ -170,11 +170,11 @@ func TestStatusBarFitsTerminalWidth(t *testing.T) {
 func TestTabBarShowsActiveAgentAndStatuses(t *testing.T) {
 	summaries := []session.Summary{
 		{ID: "main", Name: "main", Status: session.StatusIdle},
-		{ID: "agent-1", Name: "review", Status: session.StatusRunning},
+		{ID: "agent-1", Name: "review", Status: session.StatusRunning, QueueDepth: 2},
 		{ID: "agent-2", Name: "tests", Status: session.StatusCompleted},
 	}
 	got := tabBar(summaries, "agent-1", nil, 80, false, false)
-	if !strings.Contains(got, "[main -]") || !strings.Contains(got, "*[review >]") || !strings.Contains(got, "[tests +]") {
+	if !strings.Contains(got, "[main -]") || !strings.Contains(got, "*[review > +2]") || !strings.Contains(got, "[tests +]") {
 		t.Fatalf("tab bar = %q", got)
 	}
 	if visibleWidth(got) > 80 {
@@ -231,6 +231,35 @@ func TestAgentDisplayIsolatesBackgroundOutput(t *testing.T) {
 	}
 	if got := strings.Join(workerHistory.Lines(), "\n"); !strings.Contains(got, "background") {
 		t.Fatalf("worker history = %q", got)
+	}
+}
+
+type queuedSubmissionManager struct {
+	agentController
+	prompt string
+}
+
+func (m *queuedSubmissionManager) Submit(_ string, prompt string) (session.Submission, error) {
+	m.prompt = prompt
+	return session.Submission{RequestID: "request-2", TargetID: "main", QueuePosition: 2}, nil
+}
+
+func (*queuedSubmissionManager) Summary(string) (session.Summary, error) {
+	return session.Summary{ID: "main", Status: session.StatusRunning, QueueDepth: 2}, nil
+}
+
+func TestRunActiveTaskShowsQueuedPosition(t *testing.T) {
+	manager := &queuedSubmissionManager{}
+	history := newHistoryWriter(io.Discard)
+	u := &UI{
+		manager: manager, activeAgent: "main", display: history,
+		input: newInterruptReader(nil),
+	}
+	if err := u.runActiveTask(context.Background(), "second prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if manager.prompt != "second prompt" || !strings.Contains(strings.Join(history.Lines(), "\n"), "Queued #2") {
+		t.Fatalf("prompt = %q, history = %q", manager.prompt, history.Lines())
 	}
 }
 

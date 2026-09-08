@@ -234,6 +234,7 @@ func (m *AgentManager) RestoreAgents(saved []session.SavedAgent, nextID int) err
 			s.summary.Status = StatusCancelled
 			s.summary.Error = "Interrupted when the previous process ended"
 		}
+		s.summary.QueueDepth = 0
 	}
 	m.nextID = nextID
 	return nil

@@ -37,9 +37,13 @@ func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 			if item.ID == u.activeAgent {
 				marker = "*"
 			}
+			status := string(item.Status)
+			if item.QueueDepth > 0 {
+				status += fmt.Sprintf(" (%d queued)", item.QueueDepth)
+			}
 			lines = append(lines, fmt.Sprintf("%s %-9s %-18s %-20s %s", marker,
 				sanitizeDiffLine(item.ID, "<ESC>"), sanitizeDiffLine(item.Name, "<ESC>"),
-				sanitizeDiffLine(item.Model, "<ESC>"), item.Status))
+				sanitizeDiffLine(item.Model, "<ESC>"), status))
 		}
 		u.printSystemMessage(strings.Join(lines, "\n"))
 	case "switch":
@@ -409,9 +413,7 @@ func (u *UI) requestTabSwitch(direction int) {
 	u.pendingTab = direction
 	u.tabMu.Unlock()
 	u.signalUIEvent()
-	if !u.activeAgentRunning() {
-		u.input.interruptLine()
-	}
+	u.input.interruptLine()
 }
 
 func (u *UI) handlePendingTabSwitch() {
@@ -603,6 +605,9 @@ func renderTabs(summaries []session.Summary, active string, views map[string]*ag
 		if name != "" {
 			label = fmt.Sprintf("[%s %s]", name, indicator)
 		}
+		if summary.QueueDepth > 0 {
+			label = strings.TrimSuffix(label, "]") + fmt.Sprintf(" +%d]", summary.QueueDepth)
+		}
 		if color {
 			if summary.ID == active {
 				label = cyan + bold + label + reset
@@ -660,8 +665,12 @@ func (u *UI) runActiveTask(ctx context.Context, line string) error {
 	if u.manager == nil {
 		return u.runner.Run(ctx, line)
 	}
-	if err := u.manager.Start(u.activeAgent, line); err != nil {
+	submission, err := u.manager.Submit(u.activeAgent, line)
+	if err != nil {
 		return err
+	}
+	if submission.QueuePosition > 0 {
+		u.printSystemMessage(fmt.Sprintf("%sQueued #%d%s", dim, submission.QueuePosition, reset))
 	}
 	u.updateActiveCancellation()
 	u.drawTaskIndicator()

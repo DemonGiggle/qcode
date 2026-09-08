@@ -124,6 +124,7 @@ type agentController interface {
 	Runner(string) (any, bool)
 	Create(string) (session.Summary, error)
 	Start(string, string) error
+	Submit(string, string) (session.Submission, error)
 	Rename(string, string) error
 	Cancel(string) error
 	Close(string) error
@@ -168,6 +169,9 @@ type UI struct {
 	agentEventsDone   chan struct{}
 	uiEvents          chan struct{}
 	taskIndicatorText string
+	demoPrompts       []string
+	demoPromptDelay   time.Duration
+	demoQueueDelay    time.Duration
 	persistence       *sessionPersistence
 	sessionHost       *UI
 }
@@ -310,6 +314,15 @@ func (u *UI) SetStartupNotice(message string, requireChoice bool) {
 	u.startupChoice = requireChoice
 }
 
+// SetDemoPromptScript configures prompts that are injected into the line
+// editor after the interactive UI starts. It is used only by --demo to make
+// the asynchronous prompt queue visible in a deterministic recording.
+func (u *UI) SetDemoPromptScript(prompts []string, firstDelay, queueDelay time.Duration) {
+	u.demoPrompts = append([]string(nil), prompts...)
+	u.demoPromptDelay = firstDelay
+	u.demoQueueDelay = queueDelay
+}
+
 func (u *UI) Run(ctx context.Context) error {
 	if u.runner == nil {
 		return fmt.Errorf("terminal UI has no agent runner")
@@ -358,16 +371,12 @@ func (u *UI) Run(ctx context.Context) error {
 			return nil
 		}
 	}
+	stopDemoScript := u.startDemoPromptScript(ctx)
+	defer stopDemoScript()
 	for {
 		u.reportSave(u.saveSession(false))
 		u.handlePendingTabSwitch()
 		u.handlePendingApproval(ctx)
-		if u.activeAgentRunning() {
-			if err := u.waitForAgentEvent(ctx); err != nil {
-				return err
-			}
-			continue
-		}
 		line, err := u.readLine()
 		u.commandMenu.dismiss(u.out)
 		if err != nil {
@@ -473,6 +482,38 @@ func (u *UI) Run(ctx context.Context) error {
 		} else {
 			u.printSystemMessage(fmt.Sprintf("%s%sCompleted in %s%s", magenta, bold, formatRunDuration(time.Since(started)), reset))
 		}
+	}
+}
+
+func (u *UI) startDemoPromptScript(ctx context.Context) func() {
+	if len(u.demoPrompts) == 0 || u.input == nil {
+		return func() {}
+	}
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		for index, prompt := range u.demoPrompts {
+			delay := u.demoQueueDelay
+			if index == 0 {
+				delay = u.demoPromptDelay
+			}
+			timer := time.NewTimer(delay)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-done:
+				timer.Stop()
+				return
+			}
+			u.input.inject([]byte(strings.TrimSpace(prompt) + "\r"))
+		}
+	}()
+	return func() {
+		close(done)
+		<-stopped
 	}
 }
 

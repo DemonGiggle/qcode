@@ -17,14 +17,27 @@ import (
 )
 
 const (
-	DefaultMaxAgents = 4
-	maxHandoffBytes  = 4 * 1024
-	maxRosterBytes   = 2 * 1024
+	DefaultMaxAgents        = 4
+	DefaultPromptQueueLimit = 16
+	DefaultResultLimit      = 128
+	maxHandoffBytes         = 4 * 1024
+	maxRosterBytes          = 2 * 1024
+)
+
+var (
+	ErrManagerClosed   = errors.New("agent manager is shutting down")
+	ErrUnknownAgent    = errors.New("unknown agent")
+	ErrClosedAgent     = errors.New("closed agent")
+	ErrPromptQueueFull = errors.New("prompt queue is full")
+	ErrRequestNotFound = errors.New("prompt request not found")
+	ErrRequestPending  = errors.New("prompt request is pending")
 )
 
 type Status = session.Status
 type AgentSummary = session.Summary
 type ManagerEvent = session.Event
+type Submission = session.Submission
+type PromptResult = session.PromptResult
 
 const (
 	StatusIdle               = session.StatusIdle
@@ -42,24 +55,41 @@ type managedSession struct {
 	runner  *Agent
 	cancel  context.CancelFunc
 	started time.Time
+	active  *promptRequest
+	queue   []*promptRequest
+}
+
+type promptRequest struct {
+	id       string
+	targetID string
+	prompt   string
+	done     chan struct{}
+	result   PromptResult
+	err      error
 }
 
 // AgentManager owns independent agent lifecycles and the shared workspace
 // mutation lock. Terminal presentation remains the UI's responsibility.
 type AgentManager struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	mu        sync.RWMutex
-	workspace sync.Mutex
-	sessions  map[string]*managedSession
-	order     []string
-	nextID    int
-	max       int
-	factory   SessionFactory
-	events    chan ManagerEvent
-	wg        sync.WaitGroup
-	shutdown  bool
-	stopOnce  sync.Once
+	ctx           context.Context
+	cancel        context.CancelFunc
+	mu            sync.RWMutex
+	workspace     sync.Mutex
+	sessions      map[string]*managedSession
+	closed        map[string]struct{}
+	order         []string
+	nextID        int
+	nextRequestID uint64
+	max           int
+	queueLimit    int
+	resultLimit   int
+	results       map[string]*promptRequest
+	resultOrder   []string
+	factory       SessionFactory
+	events        chan ManagerEvent
+	wg            sync.WaitGroup
+	shutdown      bool
+	stopOnce      sync.Once
 }
 
 func NewAgentManager(ctx context.Context, maxAgents int) *AgentManager {
@@ -69,7 +99,9 @@ func NewAgentManager(ctx context.Context, maxAgents int) *AgentManager {
 	managerCtx, cancel := context.WithCancel(ctx)
 	return &AgentManager{
 		ctx: managerCtx, cancel: cancel, max: maxAgents,
-		sessions: make(map[string]*managedSession), events: make(chan ManagerEvent, 32),
+		queueLimit: DefaultPromptQueueLimit, resultLimit: DefaultResultLimit,
+		sessions: make(map[string]*managedSession), closed: make(map[string]struct{}),
+		results: make(map[string]*promptRequest), events: make(chan ManagerEvent, 32),
 	}
 }
 
@@ -228,57 +260,125 @@ func (m *AgentManager) Reset(id string) error {
 }
 
 func (m *AgentManager) Start(id, task string) error {
+	_, err := m.Submit(id, task)
+	return err
+}
+
+// Submit appends a prompt to the target agent's FIFO and returns immediately.
+func (m *AgentManager) Submit(id, task string) (Submission, error) {
+	_, submission, err := m.submit(id, task)
+	return submission, err
+}
+
+// SubmitAndWait appends a prompt, then waits for that prompt's full result.
+// Cancelling the wait does not remove or cancel the accepted prompt.
+func (m *AgentManager) SubmitAndWait(ctx context.Context, id, task string) (PromptResult, error) {
+	req, _, err := m.submit(id, task)
+	if err != nil {
+		return PromptResult{}, err
+	}
+	select {
+	case <-req.done:
+		return req.result, req.err
+	case <-ctx.Done():
+		return PromptResult{}, ctx.Err()
+	}
+}
+
+// GetResult returns a completed prompt result without consuming it.
+func (m *AgentManager) GetResult(requestID string) (PromptResult, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	req, ok := m.results[requestID]
+	if ok {
+		return req.result, req.err
+	}
+	for _, s := range m.sessions {
+		if s.active != nil && s.active.id == requestID {
+			return PromptResult{}, ErrRequestPending
+		}
+		for _, queued := range s.queue {
+			if queued.id == requestID {
+				return PromptResult{}, ErrRequestPending
+			}
+		}
+	}
+	return PromptResult{}, ErrRequestNotFound
+}
+
+func (m *AgentManager) submit(id, task string) (*promptRequest, Submission, error) {
 	if strings.TrimSpace(task) == "" {
-		return fmt.Errorf("task must not be empty")
+		return nil, Submission{}, fmt.Errorf("task must not be empty")
 	}
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.shutdown {
-		m.mu.Unlock()
-		return fmt.Errorf("agent manager is shutting down")
+		return nil, Submission{}, ErrManagerClosed
 	}
 	s, ok := m.sessions[id]
 	if !ok {
-		m.mu.Unlock()
-		return fmt.Errorf("unknown agent %q", id)
+		if _, closed := m.closed[id]; closed {
+			return nil, Submission{}, fmt.Errorf("%w %q", ErrClosedAgent, id)
+		}
+		return nil, Submission{}, fmt.Errorf("%w %q", ErrUnknownAgent, id)
 	}
-	switch s.summary.Status {
-	case StatusRunning, StatusWaitingForApproval:
-		status := s.summary.Status
-		m.mu.Unlock()
-		return fmt.Errorf("agent %q is %s", id, status)
+	if s.active != nil && len(s.queue) >= m.queueLimit {
+		return nil, Submission{}, fmt.Errorf("%w for agent %q (limit %d)", ErrPromptQueueFull, id, m.queueLimit)
 	}
+	m.nextRequestID++
+	req := &promptRequest{
+		id: fmt.Sprintf("request-%d", m.nextRequestID), targetID: id,
+		prompt: strings.TrimSpace(task), done: make(chan struct{}),
+	}
+	position := 0
+	if s.active == nil {
+		m.startRequestLocked(id, s, req)
+	} else {
+		s.queue = append(s.queue, req)
+		position = len(s.queue)
+		s.summary.QueueDepth = len(s.queue)
+		m.emitLocked(s.summary, 0)
+	}
+	return req, Submission{RequestID: req.id, TargetID: id, QueuePosition: position}, nil
+}
+
+func (m *AgentManager) startRequestLocked(id string, s *managedSession, req *promptRequest) {
 	runCtx, cancel := context.WithCancel(m.ctx)
+	s.active = req
 	s.cancel = cancel
 	s.started = time.Now()
 	s.summary.Status = StatusRunning
-	s.summary.CurrentTask = truncateUTF8(task, 512)
+	s.summary.QueueDepth = len(s.queue)
+	s.summary.CurrentTask = truncateUTF8(req.prompt, 512)
 	s.summary.ChangedFiles = nil
 	s.summary.Error = ""
 	runner := s.runner
 	m.wg.Add(1)
 	m.emitLocked(s.summary, 0)
-	m.mu.Unlock()
 	go func() {
 		defer m.wg.Done()
-		err := runner.Run(runCtx, task)
+		err := runner.Run(runCtx, req.prompt)
 		cancel()
-		m.finish(id, err, runner.LastResponse())
+		m.finish(id, req, err, runner.LastResponse())
 	}()
-	return nil
 }
 
-func (m *AgentManager) finish(id string, err error, outcome string) {
+func (m *AgentManager) finish(id string, req *promptRequest, err error, outcome string) {
 	m.mu.Lock()
 	s := m.sessions[id]
-	if s == nil {
+	if s == nil || s.active != req {
 		m.mu.Unlock()
 		return
 	}
+	fullOutcome := outcome
+	m.storeResultLocked(req, PromptResult{RequestID: req.id, TargetID: id, Response: fullOutcome}, err)
+	close(req.done)
+	s.active = nil
 	s.cancel = nil
 	duration := time.Since(s.started)
 	if err == nil {
 		s.summary.Status = StatusCompleted
-		s.summary.LastOutcome = truncateUTF8(strings.TrimSpace(outcome), maxHandoffBytes)
+		s.summary.LastOutcome = truncateUTF8(strings.TrimSpace(fullOutcome), maxHandoffBytes)
 		s.summary.Error = ""
 	} else if errors.Is(err, context.Canceled) {
 		s.summary.Status = StatusCancelled
@@ -290,8 +390,25 @@ func (m *AgentManager) finish(id string, err error, outcome string) {
 		s.summary.Status = StatusIdle
 		s.summary.Error = truncateUTF8(err.Error(), 1024)
 	}
+	s.summary.QueueDepth = len(s.queue)
 	m.emitLocked(s.summary, duration)
+	if !m.shutdown && len(s.queue) > 0 {
+		next := s.queue[0]
+		s.queue = s.queue[1:]
+		m.startRequestLocked(id, s, next)
+	}
 	m.mu.Unlock()
+}
+
+func (m *AgentManager) storeResultLocked(req *promptRequest, result PromptResult, err error) {
+	req.result = result
+	req.err = err
+	m.results[req.id] = req
+	m.resultOrder = append(m.resultOrder, req.id)
+	for len(m.resultOrder) > m.resultLimit {
+		delete(m.results, m.resultOrder[0])
+		m.resultOrder = m.resultOrder[1:]
+	}
 }
 
 func (m *AgentManager) Cancel(id string) error {
@@ -325,6 +442,7 @@ func (m *AgentManager) Close(id string) error {
 		return fmt.Errorf("agent %q is %s", id, s.summary.Status)
 	}
 	delete(m.sessions, id)
+	m.closed[id] = struct{}{}
 	for i, candidate := range m.order {
 		if candidate == id {
 			m.order = append(m.order[:i], m.order[i+1:]...)
@@ -412,6 +530,14 @@ func (m *AgentManager) Shutdown() {
 	m.stopOnce.Do(func() {
 		m.mu.Lock()
 		m.shutdown = true
+		for id, s := range m.sessions {
+			for _, req := range s.queue {
+				m.storeResultLocked(req, PromptResult{RequestID: req.id, TargetID: id}, context.Canceled)
+				close(req.done)
+			}
+			s.queue = nil
+			s.summary.QueueDepth = 0
+		}
 		m.mu.Unlock()
 		m.cancel()
 		m.wg.Wait()

@@ -59,6 +59,28 @@ func TestSessionCallsEveryToolThenFinishes(t *testing.T) {
 	}
 }
 
+func TestSessionRespondsDirectlyToQueuedFollowUp(t *testing.T) {
+	schemas := []llm.Tool{{Name: "read"}}
+	session := newSession(schemas, 0)
+	request := llm.Request{
+		Tools: schemas,
+		Messages: []llm.Message{
+			{Role: "system", Content: "system"},
+			{Role: "user", Content: "first prompt"},
+			{Role: "assistant", Content: "first response"},
+			{Role: "user", Content: "queued prompt"},
+		},
+	}
+
+	response, err := session.Provider.Complete(context.Background(), request, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Message.ToolCalls) != 0 || !strings.Contains(response.Message.Content, "FIFO order") {
+		t.Fatalf("queued response = %#v, want a direct FIFO response", response.Message)
+	}
+}
+
 func TestModelsReturnsLargeSearchableCatalog(t *testing.T) {
 	session := newSession(nil, 0)
 	models, err := session.Provider.Models(context.Background())

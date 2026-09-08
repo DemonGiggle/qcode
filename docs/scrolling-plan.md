@@ -60,7 +60,8 @@ inverse lock order rather than wrapping existing functions indiscriminately.
 
 Keep the input reader responsible for recognizing keys and cancellation.
 Allow page navigation regardless of task cancellation state, preserve raw
-selector input, and keep unrelated typing discarded during a running task.
+selector input, and forward ordinary typing to the prompt editor while a task
+is running so the agent queue can accept another prompt.
 Navigation callbacks must perform bounded work and must not wait for the agent.
 
 ### Layout and lifecycle

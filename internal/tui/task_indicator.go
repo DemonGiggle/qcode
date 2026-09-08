@@ -79,7 +79,7 @@ func (u *UI) drawTaskIndicator() {
 	if err != nil {
 		return
 	}
-	message := taskIndicatorMessage(summary.Status, u.unicode, time.Now())
+	message := taskIndicatorMessage(summary.Status, summary.QueueDepth, u.unicode, time.Now())
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
 	if u.manager != manager || u.activeAgent != id || !u.statusActive || u.height < 4 {
@@ -98,7 +98,7 @@ func (u *UI) drawTaskIndicator() {
 	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", u.height-1, message)
 }
 
-func taskIndicatorMessage(status session.Status, unicodeEnabled bool, now time.Time) string {
+func taskIndicatorMessage(status session.Status, queueDepth int, unicodeEnabled bool, now time.Time) string {
 	if status != session.StatusRunning {
 		return ""
 	}
@@ -107,5 +107,9 @@ func taskIndicatorMessage(status session.Status, unicodeEnabled bool, now time.T
 		frames = []string{"|", "/", "-", "\\"}
 	}
 	frame := frames[int(now.UnixMilli()/100)%len(frames)]
-	return dim + "Waiting (" + frame + ")  Ctrl+C to cancel" + reset
+	queued := ""
+	if queueDepth > 0 {
+		queued = fmt.Sprintf(" · %d queued", queueDepth)
+	}
+	return dim + "Waiting (" + frame + ")" + queued + "  Ctrl+C to cancel" + reset
 }

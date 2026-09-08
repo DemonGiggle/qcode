@@ -178,16 +178,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		}
 	}
 	system := prompt.System
-	if promptText != "" {
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-		defer stop()
-		logger := newTraceLogger(stderr, opts.jsonEvents)
-		responseWriter := newResponseWriter(stdout)
-		runner := agent.NewWithSystem(provider, opts.model, toolset, logger, responseWriter, opts.maxSteps, system)
-		runner.SetLearning(learningStore, opts.learningBudget)
-		return runner.Run(ctx, promptText)
-	}
-	if stat, statErr := stdin.Stat(); statErr == nil && stat.Mode()&os.ModeCharDevice == 0 {
+	if promptText == "" && stdinPiped {
 		data, readErr := io.ReadAll(stdin)
 		if readErr != nil {
 			return readErr
@@ -196,19 +187,20 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		if promptText == "" {
 			return errors.New("stdin contained no prompt")
 		}
+	}
+	if promptText != "" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
-		logger := newTraceLogger(stderr, opts.jsonEvents)
-		responseWriter := newResponseWriter(stdout)
-		runner := agent.NewWithSystem(provider, opts.model, toolset, logger, responseWriter, opts.maxSteps, system)
-		runner.SetLearning(learningStore, opts.learningBudget)
-		return runner.Run(ctx, promptText)
+		return runOneShot(ctx, promptText, provider, opts.model, toolset, stderr, stdout, opts.jsonEvents, opts.maxSteps, system, learningStore, opts.learningBudget)
 	}
 
 	// Terminal output must go through term.Terminal so asynchronous-looking stream
 	// updates do not corrupt the editable input line.
 	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
 	ui.SetSkillCatalog(skillSummaries(skillCatalog), skillSelection.Set)
+	if opts.demo {
+		ui.SetDemoPromptScript(demo.InteractivePrompts(), demo.InteractivePromptDelay, demo.InteractiveQueueDelay)
+	}
 	if sandboxNotice != "" {
 		ui.SetStartupNotice(sandboxNotice, sandboxChoice)
 	}
@@ -324,6 +316,23 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		}
 	}
 	return ui.Run(context.Background())
+}
+
+func runOneShot(ctx context.Context, promptText string, provider llm.Provider, model string, toolset agent.Toolset, stderr, stdout *os.File, jsonEvents bool, maxSteps int, system string, learningStore learning.Store, learningBudget int) error {
+	manager := agent.NewAgentManager(ctx, 1)
+	defer manager.Shutdown()
+	manager.SetFactory(func(id, name, model string, main bool) (*agent.Agent, error) {
+		logger := newTraceLogger(stderr, jsonEvents)
+		responseWriter := newResponseWriter(stdout)
+		runner := agent.NewWithSystem(provider, model, toolset, logger, responseWriter, maxSteps, system)
+		runner.SetLearning(learningStore, learningBudget)
+		return runner, nil
+	})
+	if _, err := manager.CreateMain(model); err != nil {
+		return err
+	}
+	_, err := manager.SubmitAndWait(ctx, "main", promptText)
+	return err
 }
 
 func skillSummaries(catalog *skills.Catalog) []prompt.SkillSummary {

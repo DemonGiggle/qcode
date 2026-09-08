@@ -21,7 +21,25 @@ const (
 	ContextWindow  = 8192
 	demoModelCount = 240
 	defaultDelay   = 1500 * time.Millisecond
+
+	// InteractivePromptDelay controls when the automatic interactive demo
+	// submits its first prompt after the UI is ready.
+	InteractivePromptDelay = 800 * time.Millisecond
+	// InteractiveQueueDelay controls the gap between the first prompt and the
+	// follow-up prompts that demonstrate asynchronous queueing.
+	InteractiveQueueDelay = 650 * time.Millisecond
 )
+
+// InteractivePrompts returns the prompts used by a no-argument --demo run.
+// The latter two arrive while the first prompt is still working, so the TUI
+// visibly demonstrates that input remains available and is queued FIFO.
+func InteractivePrompts() []string {
+	return []string{
+		"Give me a quick tour of qcode",
+		"While that runs, explain the prompt queue",
+		"Then summarize the async input behavior",
+	}
+}
 
 // Session contains both mocked boundaries needed by the normal agent loop.
 type Session struct {
@@ -78,6 +96,15 @@ func (p *Provider) Complete(ctx context.Context, request llm.Request, onText llm
 		return llm.Response{}, err
 	}
 	if toolResultsSinceLastUser(request.Messages) == 0 && len(request.Tools) > 0 {
+		if hasPreviousUserPrompt(request.Messages) {
+			message := `## Queued prompt complete
+
+This prompt was accepted while the previous prompt was running, then executed in FIFO order. The TUI stayed responsive so another prompt could be entered immediately.`
+			if onText != nil {
+				onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: message})
+			}
+			return llm.Response{Message: llm.Message{Role: "assistant", Content: message}}, nil
+		}
 		if onText != nil {
 			onText(llm.StreamEvent{Kind: llm.StreamThinking, Text: "Demo mode: planning a safe, mocked tour of every available tool.\n"})
 		}
@@ -114,6 +141,19 @@ The mocked LLM connection succeeded and all %d available tools ran. Use Page Up 
 		onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: message})
 	}
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: message}}, nil
+}
+
+func hasPreviousUserPrompt(messages []llm.Message) bool {
+	seen := 0
+	for _, message := range messages {
+		if message.Role == "user" {
+			seen++
+			if seen > 1 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func toolResultsSinceLastUser(messages []llm.Message) int {
