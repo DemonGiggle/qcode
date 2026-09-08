@@ -10,7 +10,7 @@ qcode is a lightweight, keyboard-driven AI coding assistant that runs entirely i
 
 ## 🎬 Demo
 
-![qcode demo: a scripted offline session that streams mocked tools and a report](docs/assets/demo.gif)
+![qcode demo: a scripted offline session that streams mocked tools, a report, and queued prompts](docs/assets/demo.gif)
 
 ## ✨ Features
 

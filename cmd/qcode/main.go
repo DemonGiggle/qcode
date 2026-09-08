@@ -198,6 +198,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	// updates do not corrupt the editable input line.
 	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
 	ui.SetSkillCatalog(skillSummaries(skillCatalog), skillSelection.Set)
+	if opts.demo {
+		ui.SetDemoPromptScript(demo.InteractivePrompts(), demo.InteractivePromptDelay, demo.InteractiveQueueDelay)
+	}
 	if sandboxNotice != "" {
 		ui.SetStartupNotice(sandboxNotice, sandboxChoice)
 	}
