@@ -28,10 +28,10 @@ func (u *UI) chooseSkills() {
 		u.printSystemMessage(dim + "Skill selection cancelled." + reset)
 		return
 	}
-	runner.SetSkills(summaries)
 	if u.onSkills != nil {
 		u.onSkills(names)
 	}
+	runner.SetSkills(summaries)
 	u.printSystemMessage(fmt.Sprintf("%sSkills enabled: %d%s", green, len(names), reset))
 }
 

@@ -47,6 +47,10 @@ type Agent struct {
 	autoCompact          bool
 	autoCompactThreshold int
 	system               string
+	endpoint             string
+	selectedSkills       []prompt.SkillSummary
+	pendingImages        []llm.Image
+	checkpoint           atomic.Pointer[[]byte]
 }
 
 // Toolset is the complete tool boundary used by the agent loop. Production and
@@ -90,7 +94,9 @@ func NewWithSystem(provider llm.Provider, model string, toolset Toolset, logger 
 	if system == "" {
 		system = prompt.System
 	}
-	return &Agent{provider: provider, model: model, tools: toolset, trace: logger, out: out, maxSteps: maxSteps, system: system, messages: []llm.Message{{Role: "system", Content: system}}, autoCompact: true, autoCompactThreshold: DefaultAutoCompactThreshold}
+	a := &Agent{provider: provider, model: model, tools: toolset, trace: logger, out: out, maxSteps: maxSteps, system: system, messages: []llm.Message{{Role: "system", Content: system}}, autoCompact: true, autoCompactThreshold: DefaultAutoCompactThreshold}
+	a.publishContext()
+	return a
 }
 
 func (a *Agent) SetVerbose(verbose bool) { a.trace.SetVerbose(verbose) }
@@ -98,6 +104,7 @@ func (a *Agent) SetVerbose(verbose bool) { a.trace.SetVerbose(verbose) }
 // SetAutoCompact configures automatic compaction. Manual compaction remains
 // available regardless of this setting.
 func (a *Agent) SetAutoCompact(enabled bool, threshold int) {
+	defer a.publishCheckpoint()
 	a.autoCompact = enabled
 	if threshold >= 1 && threshold <= 99 {
 		a.autoCompactThreshold = threshold
@@ -154,6 +161,7 @@ func (a *Agent) SetModel(model string) {
 
 // SetSkills replaces the user-selected skills advertised to the model.
 func (a *Agent) SetSkills(skills []prompt.SkillSummary) {
+	a.selectedSkills = append([]prompt.SkillSummary(nil), skills...)
 	defer a.invalidateContextUsage()
 	a.system = prompt.SystemWithSkills(skills)
 	if len(a.messages) > 0 && a.messages[0].Role == "system" {
@@ -164,6 +172,7 @@ func (a *Agent) SetSkills(skills []prompt.SkillSummary) {
 // ResetSession discards conversation history while retaining the agent's
 // provider, model, tools, and runtime settings.
 func (a *Agent) ResetSession() {
+	a.pendingImages = nil
 	a.stateMu.Lock()
 	a.lastResponse = ""
 	a.sessionUsage = llm.SessionUsage{}
@@ -226,6 +235,7 @@ func (a *Agent) ToolEnabled(name string) bool {
 }
 
 func (a *Agent) Run(ctx context.Context, userText string) error {
+	a.repairInterruptedCalls()
 	a.stateMu.Lock()
 	a.lastResponse = ""
 	a.stateMu.Unlock()
@@ -241,9 +251,11 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		}
 	}
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userText})
+	a.publishContext()
 	identicalToolCalls := map[string]int{}
 	for step := 0; step < a.maxSteps; step++ {
 		requestMessages := a.requestMessages(ctx)
+		a.publishContext()
 		span := a.trace.Start("llm", a.provider.Name(), map[string]any{"model": a.model, "step": step + 1})
 		wroteText := false
 		thinking := false
@@ -305,6 +317,11 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		if err != nil {
 			return err
 		}
+		for index := range response.Message.ToolCalls {
+			if response.Message.ToolCalls[index].ID == "" {
+				response.Message.ToolCalls[index].ID = fmt.Sprintf("call_%d_%d", step+1, index+1)
+			}
+		}
 		a.messages = append(a.messages, response.Message)
 		a.contextUsage = response.Usage
 		a.contextMessages = len(a.messages)
@@ -315,7 +332,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			a.stateMu.Unlock()
 			return nil
 		}
-		var loadedImages []llm.Image
+		a.pendingImages = nil
 		for index, call := range response.Message.ToolCalls {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -356,15 +373,17 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			}
 			a.messages = append(a.messages, llm.Message{Role: "tool", Content: result, Name: call.Name, ToolCallID: call.ID})
 			if len(execution.Images) > 0 {
-				loadedImages = append(loadedImages, execution.Images...)
+				a.pendingImages = append(a.pendingImages, execution.Images...)
 			}
+			a.publishContext()
 		}
-		if len(loadedImages) > 0 {
+		if len(a.pendingImages) > 0 {
 			a.messages = append(a.messages, llm.Message{
 				Role:    "user",
 				Content: "Image data loaded by the requested tool calls.",
-				Images:  loadedImages,
+				Images:  a.pendingImages,
 			})
+			a.pendingImages = nil
 		}
 	}
 	return fmt.Errorf("agent stopped after %d model steps", a.maxSteps)

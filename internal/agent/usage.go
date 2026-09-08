@@ -10,6 +10,7 @@ func (a *Agent) SessionUsage() llm.SessionUsage {
 }
 
 func (a *Agent) recordUsage(usage *llm.Usage) {
+	defer a.publishCheckpoint()
 	a.stateMu.Lock()
 	if usage == nil {
 		a.sessionUsage.Missing++

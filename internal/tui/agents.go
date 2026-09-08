@@ -217,11 +217,16 @@ func (d *agentDisplay) Snapshot() historySnapshot { return d.history.Snapshot() 
 func (u *UI) watchAgentEvents(events <-chan session.Event) {
 	defer close(u.agentEventsDone)
 	for event := range events {
+		if event.Barrier != nil {
+			close(event.Barrier)
+			continue
+		}
 		u.handleAgentEvent(event)
 	}
 }
 
 func (u *UI) handleAgentEvent(event session.Event) {
+	defer u.requestSessionSave()
 	u.signalUIEvent()
 	u.screenMu.Lock()
 	view := u.views[event.Agent.ID]
@@ -331,6 +336,9 @@ func (u *UI) switchAgent(id string) error {
 // is active, keeping all terminal reads on the UI goroutine.
 func (u *UI) AgentDirectoryApprover(id string) func(context.Context, string, string) (string, bool, error) {
 	return func(ctx context.Context, requested, proposed string) (string, bool, error) {
+		if u.sessionHost != nil {
+			return u.sessionHost.AgentDirectoryApprover(id)(ctx, requested, proposed)
+		}
 		request := &approvalRequest{ctx: ctx, requested: requested, proposed: proposed, result: make(chan approvalResult, 1)}
 		u.screenMu.Lock()
 		active := u.activeAgent == id

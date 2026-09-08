@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"qcode/internal/learning"
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
+	"qcode/internal/session"
 	"qcode/internal/skills"
 	"qcode/internal/tools"
 	"qcode/internal/trace"
@@ -216,48 +218,63 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	mainProvider := provider
 	mainToolset := toolset
 	mainSelection := skillSelection
-	manager.SetFactory(func(id, name, model string, isMain bool) (*agent.Agent, error) {
-		currentProvider := mainProvider
-		currentToolset := mainToolset
-		currentRegistry := mainRegistry
-		currentSelection := mainSelection
-		if !isMain {
-			currentSelection = skills.NewSelection(skillCatalog)
-			createdRegistry, createErr := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, Skills: currentSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
-			if createErr != nil {
-				return nil, createErr
-			}
-			currentRegistry = createdRegistry
-			if opts.demo {
-				session := demo.New(createdRegistry.Schemas())
-				currentProvider = session.Provider
-				currentToolset = session.Tools
-			} else {
-				createdProvider, providerErr := llm.New(opts.provider, providerConfig)
-				if providerErr != nil {
-					return nil, providerErr
+	configureFactory := func(ui *tui.UI, manager *agent.AgentManager, saved map[string]agent.SavedState) {
+		manager.SetFactory(func(id, name, model string, isMain bool) (*agent.Agent, error) {
+			currentProvider := mainProvider
+			currentToolset := mainToolset
+			currentRegistry := mainRegistry
+			currentSelection := mainSelection
+			currentEndpoint := providerConfig.BaseURL
+			if !isMain || saved != nil {
+				currentSelection = skills.NewSelection(skillCatalog)
+				createdRegistry, createErr := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, Skills: currentSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
+				if createErr != nil {
+					return nil, createErr
 				}
-				currentProvider = createdProvider
-				currentToolset = createdRegistry
+				currentRegistry = createdRegistry
+				if opts.demo {
+					session := demo.New(createdRegistry.Schemas())
+					currentProvider = session.Provider
+					currentToolset = session.Tools
+				} else {
+					providerName, connection := opts.provider, providerConfig
+					state, ok := saved[id]
+					if !ok {
+						state, ok = saved["main"]
+					}
+					if ok {
+						providerName = state.Provider
+						connection.BaseURL = state.Endpoint
+					}
+					currentEndpoint = connection.BaseURL
+					createdProvider, providerErr := llm.New(providerName, connection)
+					if providerErr != nil {
+						return nil, providerErr
+					}
+					currentProvider = createdProvider
+					currentToolset = createdRegistry
+				}
 			}
-		}
-		display, response := ui.AddAgentView(id, currentProvider.Name(), model)
-		wrappedTools := manager.WrapToolset(id, currentToolset, isMain)
-		logger := trace.NewAnimated(display, opts.jsonEvents)
-		logger.SetColor(tui.ColorEnabled(stdout))
-		runner := agent.NewWithSystem(currentProvider, model, wrappedTools, logger, response, opts.maxSteps, system)
-		runner.SetTaskIndicator(false)
-		runner.SetLearning(learningStore, opts.learningBudget)
-		if model == opts.model {
-			runner.SetContextWindow(opts.contextWindow)
-		}
-		runner.SetAutoCompact(!opts.disableAutoCompact, opts.autoCompactThreshold)
-		ui.SetAgentSkillHandler(id, currentSelection.Set)
-		if sandboxActive {
-			currentRegistry.SetDirectoryApprover(ui.AgentDirectoryApprover(id))
-		}
-		return runner, nil
-	})
+			display, response := ui.AddAgentView(id, currentProvider.Name(), model)
+			wrappedTools := manager.WrapToolset(id, currentToolset, isMain)
+			logger := trace.NewAnimated(display, opts.jsonEvents)
+			logger.SetColor(tui.ColorEnabled(stdout))
+			runner := agent.NewWithSystem(currentProvider, model, wrappedTools, logger, response, opts.maxSteps, system)
+			runner.SetTaskIndicator(false)
+			runner.SetLearning(learningStore, opts.learningBudget)
+			if model == opts.model {
+				runner.SetContextWindow(opts.contextWindow)
+			}
+			runner.SetAutoCompact(!opts.disableAutoCompact, opts.autoCompactThreshold)
+			runner.SetEndpoint(currentEndpoint)
+			ui.SetAgentSkillHandler(id, currentSelection.Set)
+			if sandboxActive {
+				currentRegistry.SetDirectoryApprover(ui.AgentDirectoryApprover(id))
+			}
+			return runner, nil
+		})
+	}
+	configureFactory(ui, manager, nil)
 	if _, err := manager.CreateMain(opts.model); err != nil {
 		return err
 	}
@@ -270,6 +287,42 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	}
 	runner, _ := manager.Agent("main")
 	ui.SetRunner(runner)
+	if !opts.demo {
+		directory, err := session.DefaultDirectory()
+		if err != nil {
+			return err
+		}
+		store, err := session.Open(directory, root)
+		if err != nil {
+			return err
+		}
+		if err := ui.EnableSessions(store, func(snap session.Snapshot) (*tui.UI, error) {
+			staged := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
+			staged.SetSkillCatalog(skillSummaries(skillCatalog), nil)
+			restored := agent.NewAgentManager(context.Background(), agent.DefaultMaxAgents)
+			saved := map[string]agent.SavedState{}
+			for _, item := range snap.Agents {
+				var state agent.SavedState
+				if err := json.Unmarshal(item.State, &state); err != nil {
+					return nil, err
+				}
+				saved[item.Summary.ID] = state
+			}
+			configureFactory(staged, restored, saved)
+			if err := restored.RestoreAgents(snap.Agents, snap.NextID); err != nil {
+				restored.Shutdown()
+				return nil, err
+			}
+			staged.SetDetachedAgentManager(restored)
+			if err := staged.RestorePresentation(snap.Presentation); err != nil {
+				restored.Shutdown()
+				return nil, err
+			}
+			return staged, nil
+		}); err != nil {
+			return err
+		}
+	}
 	return ui.Run(context.Background())
 }
 

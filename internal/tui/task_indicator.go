@@ -8,27 +8,32 @@ import (
 	"qcode/internal/session"
 )
 
-// watchTaskIndicator redraws the shared task indicator for whichever tab is
-// active. Agent output never owns this row, which keeps background and main
-// tabs visually consistent.
+// watchTaskIndicator refreshes the status bar and shared task indicator for
+// whichever tab is active, including while input or a tool is blocking.
 func (u *UI) watchTaskIndicator() func() {
-	if u.manager == nil {
-		return func() {}
-	}
 	done := make(chan struct{})
+	stopped := make(chan struct{})
 	go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
+		defer close(stopped)
+		indicatorTicker := time.NewTicker(100 * time.Millisecond)
+		defer indicatorTicker.Stop()
+		statusTicker := time.NewTicker(2 * time.Second)
+		defer statusTicker.Stop()
 		for {
 			select {
-			case <-ticker.C:
+			case <-statusTicker.C:
+				u.refreshStatusBar()
+			case <-indicatorTicker.C:
 				u.drawTaskIndicator()
 			case <-done:
 				return
 			}
 		}
 	}()
-	return func() { close(done) }
+	return func() {
+		close(done)
+		<-stopped
+	}
 }
 
 func (u *UI) signalUIEvent() {
@@ -51,34 +56,33 @@ func (u *UI) waitForAgentEvent(ctx context.Context) error {
 }
 
 func (u *UI) activeAgentRunning() bool {
-	if u.manager == nil {
-		return false
-	}
 	u.screenMu.Lock()
 	id := u.activeAgent
+	manager := u.manager
 	u.screenMu.Unlock()
-	summary, err := u.manager.Summary(id)
+	if manager == nil {
+		return false
+	}
+	summary, err := manager.Summary(id)
 	return err == nil && summary.Status == session.StatusRunning
 }
 
 func (u *UI) drawTaskIndicator() {
-	if u.manager == nil {
-		return
-	}
 	u.screenMu.Lock()
 	id, height, active := u.activeAgent, u.height, u.statusActive
+	manager := u.manager
 	u.screenMu.Unlock()
-	if !active || height < 4 {
+	if manager == nil || !active || height < 4 {
 		return
 	}
-	summary, err := u.manager.Summary(id)
+	summary, err := manager.Summary(id)
 	if err != nil {
 		return
 	}
 	message := taskIndicatorMessage(summary.Status, u.unicode, time.Now())
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
-	if u.activeAgent != id || !u.statusActive || u.height < 4 {
+	if u.manager != manager || u.activeAgent != id || !u.statusActive || u.height < 4 {
 		return
 	}
 	if u.activeViewportLocked().browsing {

@@ -46,6 +46,7 @@ type Registry struct {
 	protected             []string
 	skills                SkillLoader
 	disabled              map[string]bool
+	restoreWarnings       []string
 }
 
 // DirectoryApprover asks the interactive host to approve an additional

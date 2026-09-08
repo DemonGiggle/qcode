@@ -79,6 +79,27 @@ func TestOpenCodeGoReusesSessionIDForAllRequests(t *testing.T) {
 	}
 }
 
+func TestOpenCodeGoRestoresSessionIdentity(t *testing.T) {
+	first, err := newOpenCodeGo(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := newOpenCodeGo(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := first.(*openAIProvider), second.(*openAIProvider)
+	if err := b.RestoreSessionIdentity(a.SessionIdentity()); err != nil {
+		t.Fatal(err)
+	}
+	if b.SessionIdentity() != a.SessionIdentity() {
+		t.Fatal("routing identity changed")
+	}
+	if err := b.RestoreSessionIdentity("invalid\r\nheader"); err == nil {
+		t.Fatal("invalid identity accepted")
+	}
+}
+
 func TestOpenCodeGoAllowsBaseURLOverride(t *testing.T) {
 	provider, err := newOpenCodeGo(Config{BaseURL: "http://go.test/custom/"})
 	if err != nil {
