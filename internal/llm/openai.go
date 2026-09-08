@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,20 @@ type openAIProvider struct {
 	name      string
 	userAgent string
 	sessionID string
+}
+
+// SessionIdentity preserves the non-secret routing identity used by OpenCode Go.
+func (p *openAIProvider) SessionIdentity() string { return p.sessionID }
+func (p *openAIProvider) RestoreSessionIdentity(id string) error {
+	if id == "" {
+		return nil
+	}
+	data, err := hex.DecodeString(strings.ReplaceAll(id, "-", ""))
+	if p.name != "opencode-go" || err != nil || len(data) != 16 || len(id) != 36 || id[8] != '-' || id[13] != '-' || id[18] != '-' || id[23] != '-' {
+		return fmt.Errorf("invalid provider session identity")
+	}
+	p.sessionID = id
+	return nil
 }
 
 func init() {

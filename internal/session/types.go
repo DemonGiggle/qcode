@@ -29,4 +29,6 @@ type Summary struct {
 type Event struct {
 	Agent    Summary
 	Duration time.Duration
+	// Barrier is acknowledged after earlier presentation events are drained.
+	Barrier chan struct{}
 }

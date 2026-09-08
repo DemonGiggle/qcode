@@ -13,6 +13,7 @@ import (
 // Compact replaces older conversation turns with a model-produced continuation
 // summary while retaining the system prompt and a recent, tool-consistent tail.
 func (a *Agent) Compact(ctx context.Context) (string, error) {
+	defer a.publishCheckpoint()
 	if len(a.messages) <= 1 {
 		return "Conversation is already compact.", nil
 	}
@@ -108,6 +109,7 @@ func (a *Agent) publishContext() {
 	}
 	state.remaining = max(0, min(100, state.remaining))
 	a.contextStatus.Store(state)
+	a.publishCheckpoint()
 }
 
 // Local estimates include serialized tool definitions and message overhead.

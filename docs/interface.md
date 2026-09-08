@@ -10,10 +10,21 @@ The following UI-focused commands are available in interactive mode. Feature-spe
 
 - `/model` fetches the provider's models. Search a large catalog by typing, move through matches with Up/Down, and select with Enter.
 - `/new` discards the current conversation context and resets session token totals without restarting qcode or changing the provider, model, or workspace.
+- `/resume` opens saved sessions for this workspace. Use Up/Down and Enter to restore, or Escape to cancel. Each entry shows its latest main-agent conversation preview (up to two lines) and how long ago you left it, newest first. Finish or cancel running agents before switching. Sessions open in another process cannot be selected.
 - `/clear` redraws the interactive banner, which lists enabled and disabled tools for the active agent.
 - `/verbose` adds detailed timestamped telemetry, including raw tool arguments, without disabling concise activity events.
 - `/diff` and `/diff N` expand the latest write/edit diff preview (see below).
 - `/tool` enables or disables the web tools independently; see [Web tools](web-tools.md).
+
+## Saved sessions
+
+Interactive sessions autosave changed state every two seconds and after agent events and commands, with a final save on clean exit or session switch. Each launch starts a separate session; resuming continues the selected session. Empty launches and demo/one-shot runs are not saved. `/new` still resets only the active agent within the current saved session.
+
+Resume restores all agent tabs and models, conversation messages and images, retained styled output (including events, errors, thinking, and diffs), expandable diff data, drafts, reading positions, tool/skill settings, context accounting, and token totals. Existing directory grants are restored when their paths remain valid under current protections; discarded grants produce a notice. Provider credentials come from current configuration and are not saved. The retained history limit remains 5,000 lines per tab; terminal dimensions can change wrapping.
+
+Sessions live outside the workspace: `$XDG_STATE_HOME/qcode/sessions` on Linux (default `~/.local/state/qcode/sessions`), `~/Library/Application Support/qcode/sessions` on macOS, and `%AppData%/qcode/sessions` on Windows. Canonical workspace paths identify session groups, so symlink aliases share sessions and separate worktrees do not. Snapshots contain conversation and tool output and use private file permissions where supported. Sessions are retained without automatic deletion.
+
+After a crash, recovery uses the latest successful checkpoint and marks unfinished agents interrupted. It preserves saved output but never automatically reruns tools or model requests. Unresolved tool results are marked as having an unknown outcome before the next user-directed run. Files on disk and external processes are not rolled back. Session-save errors are shown; a failed save prevents switching away from the current session.
 
 ## Activity events
 

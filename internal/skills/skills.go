@@ -42,6 +42,19 @@ func NewSelection(catalog *Catalog) *Selection {
 	return &Selection{catalog: catalog, enabled: map[string]bool{}}
 }
 
+func (s *Selection) Selected() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var names []string
+	for name, enabled := range s.enabled {
+		if enabled {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 func (s *Selection) Set(names []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

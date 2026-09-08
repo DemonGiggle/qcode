@@ -151,6 +151,7 @@ type UI struct {
 	unicode           bool
 	viewport          viewport
 	statusActive      bool
+	statusBarText     string
 	startupNotice     string
 	startupChoice     bool
 	skills            []prompt.SkillSummary
@@ -167,6 +168,8 @@ type UI struct {
 	agentEventsDone   chan struct{}
 	uiEvents          chan struct{}
 	taskIndicatorText string
+	persistence       *sessionPersistence
+	sessionHost       *UI
 }
 
 // SetSkillCatalog configures the optional /skill selector.
@@ -224,6 +227,9 @@ func (u *UI) readLine() (string, error) {
 
 // AddAgentView creates an isolated output/history buffer for an agent.
 func (u *UI) AddAgentView(id, provider, model string) (io.Writer, io.Writer) {
+	if u.sessionHost != nil {
+		return u.sessionHost.AddAgentView(id, provider, model)
+	}
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
 	history := newHistoryWriter(io.Discard)
@@ -243,6 +249,10 @@ func (u *UI) AddAgentView(id, provider, model string) (io.Writer, io.Writer) {
 }
 
 func (u *UI) SetAgentSkillHandler(id string, onChange func([]string)) {
+	if u.sessionHost != nil {
+		u.sessionHost.SetAgentSkillHandler(id, onChange)
+		return
+	}
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
 	if view := u.views[id]; view != nil {
@@ -261,7 +271,9 @@ func (u *UI) RemoveAgentView(id string) {
 }
 
 func (u *UI) SetAgentManager(manager agentController) {
+	u.screenMu.Lock()
 	u.manager = manager
+	u.screenMu.Unlock()
 	if manager == nil {
 		return
 	}
@@ -280,7 +292,9 @@ func (u *UI) shutdownAgentManager() {
 }
 
 func (u *UI) SetRunner(runner Runner) {
+	u.screenMu.Lock()
 	u.runner = runner
+	u.screenMu.Unlock()
 	if configurable, ok := runner.(verboseRunner); ok {
 		configurable.SetVerbose(u.verbose)
 	}
@@ -317,7 +331,7 @@ func (u *UI) Run(ctx context.Context) error {
 		_ = term.Restore(int(u.in.Fd()), state)
 	}()
 	if u.manager != nil {
-		defer u.shutdownAgentManager()
+		defer func() { u.shutdownAgentManager(); u.closeSession() }()
 	}
 	u.input.start()
 	u.setupStatusBar()
@@ -325,6 +339,8 @@ func (u *UI) Run(ctx context.Context) error {
 	defer stopResize()
 	stopTaskIndicator := u.watchTaskIndicator()
 	defer stopTaskIndicator()
+	stopSessions := u.watchSessions()
+	defer stopSessions()
 
 	u.printHeader()
 	if u.startupNotice != "" {
@@ -343,6 +359,7 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 	}
 	for {
+		u.reportSave(u.saveSession(false))
 		u.handlePendingTabSwitch()
 		u.handlePendingApproval(ctx)
 		if u.activeAgentRunning() {
@@ -369,6 +386,10 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		line = strings.TrimSpace(line)
 		if line == "" {
+			continue
+		}
+		if line == "/resume" {
+			u.resumeSession()
 			continue
 		}
 		u.display.AddLine("> " + line)
@@ -417,7 +438,9 @@ func (u *UI) Run(ctx context.Context) error {
 			u.startNewSession()
 			continue
 		case "/verbose":
+			u.screenMu.Lock()
 			u.verbose = !u.verbose
+			u.screenMu.Unlock()
 			if configurable, ok := u.runner.(verboseRunner); ok {
 				configurable.SetVerbose(u.verbose)
 			}
@@ -629,7 +652,9 @@ func (u *UI) chooseModel(ctx context.Context) {
 	if tracker, ok := u.runner.(contextRunner); ok {
 		tracker.RefreshContext(ctx)
 	}
+	u.screenMu.Lock()
 	u.model = selected
+	u.screenMu.Unlock()
 	u.drawStatusBar()
 	u.printSystemMessage(fmt.Sprintf("%sModel: %s%s", green, selected, reset))
 }
@@ -768,10 +793,24 @@ func (u *UI) drawStatusBar() {
 }
 
 func (u *UI) drawStatusBarLocked() {
+	u.renderStatusBarLocked(true)
+}
+
+func (u *UI) refreshStatusBar() {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	u.renderStatusBarLocked(false)
+}
+
+func (u *UI) renderStatusBarLocked(force bool) {
 	if !u.statusActive {
 		return
 	}
 	bar := statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel())
+	if !force && bar == u.statusBarText {
+		return
+	}
+	u.statusBarText = bar
 	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", u.height, bar)
 }
 

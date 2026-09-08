@@ -22,6 +22,7 @@ var slashCommands = []slashCommand{
 	{name: "/learn", description: "Review global learning; list, forget <id>, or compact"},
 	{name: "/model", description: "Select a provider model"},
 	{name: "/new", description: "Start a session with fresh context"},
+	{name: "/resume", description: "Restore a saved session for this workspace"},
 	{name: "/skill", description: "Select workspace skills"},
 	{name: "/quit", description: "Exit qcode"},
 	{name: "/tool", description: "Toggle available tools"},

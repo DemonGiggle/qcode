@@ -405,6 +405,7 @@ func (w *MarkdownWriter) BeginResponse() {
 	w.stateMu.Lock()
 	defer w.stateMu.Unlock()
 	w.active = true
+	w.thinking = false
 	w.inFence = false
 	w.buffer.Reset()
 	w.table = nil

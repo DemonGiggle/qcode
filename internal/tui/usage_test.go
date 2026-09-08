@@ -1,10 +1,44 @@
 package tui
 
 import (
+	"os"
 	"qcode/internal/llm"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestStatusBarRefreshesWhileIdleWithoutManager(t *testing.T) {
+	out, err := os.CreateTemp(t.TempDir(), "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	u := &UI{out: out, runner: tokenRunner{}, width: 120, height: 24, statusActive: true}
+	u.drawStatusBar()
+	initial, _ := out.Stat()
+	u.refreshStatusBar()
+	unchanged, _ := out.Stat()
+	if unchanged.Size() != initial.Size() {
+		t.Fatal("unchanged status was repainted")
+	}
+	u.runner = tokenRunner{usage: llm.SessionUsage{InputTokens: 1200, OutputTokens: 340, TotalTokens: 1540}}
+	stop := u.watchTaskIndicator()
+	defer stop()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		u.screenMu.Lock()
+		updated := strings.Contains(u.statusBarText, "I:1.2K O:340")
+		u.screenMu.Unlock()
+		if updated {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("status did not refresh without a UI event")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 type tokenRunner struct {
 	statusRunner
