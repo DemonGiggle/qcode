@@ -219,7 +219,7 @@ func (u *UI) saveSessionLocked(left bool) error {
 			}
 		}
 	}
-	if !hasContent && p.current.Saved.IsZero() {
+	if !hasContent {
 		return nil
 	}
 	// Stable tab ordering also prevents spurious saves from map iteration order.

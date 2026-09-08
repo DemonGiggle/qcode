@@ -174,3 +174,25 @@ func TestEmptyLaunchNotSaved(t *testing.T) {
 		t.Fatalf("saved empty launch: %v %v", entries, err)
 	}
 }
+
+func TestEmptySessionDoesNotSaveAfterPreviousSnapshot(t *testing.T) {
+	u, m := persistenceUI(t)
+	m.agents = m.agents[:1]
+	delete(u.views, "agent-1")
+	m.agents[0].State = json.RawMessage(`{"Messages":[{"Role":"system","Content":"system"}]}`)
+	store, _ := session.Open(t.TempDir(), u.root)
+	if err := u.EnableSessions(store, nil); err != nil {
+		t.Fatal(err)
+	}
+	defer u.closeSession()
+
+	// A prior save must not make a later empty session eligible for saving.
+	u.persistence.current.Saved = time.Now().UTC()
+	if err := u.saveSession(false); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := store.List()
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("saved empty session after previous snapshot: %v %v", entries, err)
+	}
+}
