@@ -1,6 +1,7 @@
 package lineedit
 
 import (
+	"bytes"
 	"io"
 	"strconv"
 	"strings"
@@ -9,6 +10,47 @@ import (
 
 	"github.com/mattn/go-runewidth"
 )
+
+type keyReader struct{ io.Reader }
+
+func (r keyReader) Read(p []byte) (int, error) { return r.Reader.Read(p[:min(1, len(p))]) }
+
+func TestExternalInputRenderingKeepsEditsOutOfOutput(t *testing.T) {
+	var output bytes.Buffer
+	terminal := NewTerminal(readWriter{keyReader{strings.NewReader("/help\x7f\r")}, &output}, "> ")
+	var states []string
+	terminal.RenderInput = func(prompt, line string, pos int) {
+		// Calling a locking method verifies callbacks run outside the editor lock.
+		terminal.SetPrompt(prompt)
+		states = append(states, line)
+	}
+	line, err := terminal.ReadLine()
+	if err != nil || line != "/hel" {
+		t.Fatalf("line=%q err=%v", line, err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("inline echo escaped external renderer: %q", output.String())
+	}
+	if len(states) < 2 {
+		t.Fatal("input was not rendered")
+	}
+	if !strings.Contains(strings.Join(states, "|"), "/help|/hel|") {
+		t.Fatalf("deletion did not refresh input: %q", states)
+	}
+}
+
+func TestExternalRendererDoesNotExposePassword(t *testing.T) {
+	terminal := NewTerminal(readWriter{keyReader{strings.NewReader("secret\r")}, io.Discard}, "> ")
+	terminal.RenderInput = func(_, line string, pos int) {
+		if line != "" || pos != 0 {
+			t.Fatal("password exposed to renderer")
+		}
+	}
+	password, err := terminal.ReadPassword("Password: ")
+	if err != nil || password != "secret" {
+		t.Fatalf("password=%q err=%v", password, err)
+	}
+}
 
 // screen interprets the editor's output as a terminal would, including delayed
 // wrapping. Assertions concern visible cells, not just the submitted string.

@@ -28,7 +28,11 @@ func (u *UI) chooseTools() {
 	}
 	u.printSystemMessage(dim + "Use Up/Down to move, Space to toggle, Enter to apply, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
-	defer u.input.setRaw(false)
+	u.beginRawSelector()
+	defer func() {
+		u.input.setRaw(false)
+		u.endRawSelector()
+	}()
 	accepted, err := selectTools(u.input, u.terminal, names, runner, ColorEnabled(u.out))
 	if err != nil {
 		return

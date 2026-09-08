@@ -369,8 +369,10 @@ func (u *UI) resumeSession() {
 		return
 	}
 	u.input.setRaw(true)
+	u.beginRawSelector()
 	id, accepted, err := u.selectSession(choices)
 	u.input.setRaw(false)
+	u.endRawSelector()
 	u.repaintActive()
 	if err != nil {
 		u.printSystemMessage(err.Error())

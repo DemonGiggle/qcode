@@ -2,6 +2,7 @@ package tui
 
 import (
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -115,7 +116,7 @@ func (w *historyWriter) record(data []byte) {
 				} else if hasANSIReset(parameters) {
 					w.style = sequence
 				} else {
-					w.style += sequence
+					w.style = appendHistoryStyle(w.style, sequence)
 				}
 			}
 			data = data[length:]
@@ -149,6 +150,36 @@ func (w *historyWriter) record(data []byte) {
 		}
 		w.cursor++
 	}
+}
+
+// Replacing a foreground color must not retain every previous color. Gradient
+// banners otherwise expand quadratically when history is repainted per frame.
+func appendHistoryStyle(style, sequence string) string {
+	foreground := func(s string) bool {
+		if !strings.HasPrefix(s, "\x1b[") || !strings.HasSuffix(s, "m") {
+			return false
+		}
+		p := s[2 : len(s)-1]
+		if strings.HasPrefix(p, "38;") {
+			return true
+		}
+		n, err := strconv.Atoi(p)
+		return err == nil && (n >= 30 && n <= 39 || n >= 90 && n <= 97)
+	}
+	var b strings.Builder
+	for len(style) > 0 {
+		n, ok := ansiSequenceLength([]byte(style))
+		if !ok || n == 0 {
+			break
+		}
+		old := style[:n]
+		if old != sequence && !(foreground(sequence) && foreground(old)) {
+			b.WriteString(old)
+		}
+		style = style[n:]
+	}
+	b.WriteString(sequence)
+	return b.String()
 }
 
 func hasANSIReset(parameters string) bool {

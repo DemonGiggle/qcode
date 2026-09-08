@@ -128,8 +128,10 @@ func (u *UI) selectAgentModel(ctx context.Context, runner modelRunner) (string, 
 	visible := min(12, max(3, u.height-6))
 	u.printSystemMessage(dim + "Type to search; use Up/Down to move, Enter to select, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
+	u.beginRawSelector()
 	selected, accepted, selectErr := selectModel(u.input, u.terminal, models, u.model, visible, u.width, ColorEnabled(u.out))
 	u.input.setRaw(false)
+	u.endRawSelector()
 	return selected, accepted, selectErr
 }
 
@@ -207,6 +209,12 @@ func (d *agentDisplay) Write(data []byte) (int, error) {
 	d.ui.screenMu.Lock()
 	defer d.ui.screenMu.Unlock()
 	_, _ = d.history.Write(data)
+	if d.ui.fixedInput {
+		if d.ui.activeAgent == d.id {
+			d.ui.paintFixedLocked(0)
+		}
+		return len(data), nil
+	}
 	if d.ui.activeAgent == d.id && d.ui.terminal != nil && (!d.ui.statusActive || !d.ui.activeViewportLocked().browsing) {
 		return d.ui.terminal.Write(data)
 	}
@@ -449,6 +457,10 @@ func (u *UI) activeViewportLocked() *viewport {
 // Lock order: screenMu -> history / terminal. Markdown locks must be acquired
 // outside screenMu. The line editor releases its lock before UI callbacks.
 func (u *UI) repaintActiveLocked(direction int) {
+	if u.fixedInput {
+		u.paintFixedLocked(direction)
+		return
+	}
 	if !u.statusActive || u.terminal == nil {
 		return
 	}

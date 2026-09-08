@@ -68,6 +68,12 @@ func (u *UI) activeAgentRunning() bool {
 }
 
 func (u *UI) drawTaskIndicator() {
+	if u.fixedInput {
+		u.screenMu.Lock()
+		u.paintFixedLocked(0)
+		u.screenMu.Unlock()
+		return
+	}
 	u.screenMu.Lock()
 	id, height, active := u.activeAgent, u.height, u.statusActive
 	manager := u.manager
