@@ -9,7 +9,7 @@ Set `NO_COLOR=1` to disable response styling. UTF-8 terminals use Unicode interf
 The following UI-focused commands are available in interactive mode. Feature-specific commands (`/agent`, `/skill`, `/learn`) are documented in their respective topic pages.
 
 - `/model` fetches the provider's models. Search a large catalog by typing, move through matches with Up/Down, and select with Enter.
-- `/new` discards the current conversation context and starts a fresh session without restarting qcode or changing the provider, model, or workspace.
+- `/new` discards the current conversation context and resets session token totals without restarting qcode or changing the provider, model, or workspace.
 - `/clear` redraws the interactive banner, which lists enabled and disabled tools for the active agent.
 - `/verbose` adds detailed timestamped telemetry, including raw tool arguments, without disabling concise activity events.
 - `/diff` and `/diff N` expand the latest write/edit diff preview (see below).

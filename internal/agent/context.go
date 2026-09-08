@@ -18,6 +18,7 @@ func (a *Agent) Compact(ctx context.Context) (string, error) {
 	}
 	request := llm.Request{Model: a.model, Messages: append([]llm.Message{{Role: "system", Content: prompt.ConversationCompact}}, a.messages[1:]...)}
 	response, err := a.provider.Complete(ctx, request, nil)
+	a.recordUsage(response.Usage)
 	if err != nil {
 		return "", err
 	}

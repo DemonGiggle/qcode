@@ -726,7 +726,7 @@ func (u *UI) printHeader() {
 	fmt.Fprintf(u.display, "\r\n")
 	u.printToolSummary()
 	if !u.statusActive {
-		fmt.Fprintf(u.display, "%s\r\n", statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel()))
+		fmt.Fprintf(u.display, "%s\r\n", statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel()))
 	}
 }
 
@@ -771,7 +771,7 @@ func (u *UI) drawStatusBarLocked() {
 	if !u.statusActive {
 		return
 	}
-	bar := statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel())
+	bar := statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel())
 	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", u.height, bar)
 }
 
@@ -791,20 +791,36 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 	root = sanitizeDiffLine(root, "<ESC>")
 
 	if !color {
-		bar := fmt.Sprintf("[PROVIDER %s] [MODEL %s] [WORKSPACE %s]", provider, model, root)
+		parts := []string{
+			provider,
+			"[MODEL " + model + "]",
+		}
 		if len(contextLabel) > 0 {
-			bar = "[CONTEXT " + contextLabel[0] + "] " + bar
+			parts = append(parts, "[CTX "+contextLabel[0]+"]")
+		}
+		parts = append(parts, "[WS "+root+"]")
+		if len(contextLabel) > 1 {
+			parts = append(parts, "[TOK "+contextLabel[1]+"]")
+		}
+		bar := strings.Join(parts, " ")
+		if width > 0 && visibleWidth(bar) > width {
+			if dynamic := compactStatusBar(contextLabel, false, unicodeEnabled); dynamic != "" && visibleWidth(dynamic) <= width {
+				return dynamic
+			}
 		}
 		return truncateDiffLine(bar, width, unicodeEnabled)
 	}
 
 	segments := []string{
-		statusSegment("PROVIDER", provider, cyan),
+		statusValue(provider, cyan),
 		statusSegment("MODEL", model, magenta),
-		statusSegment("WORKSPACE", root, blue),
 	}
 	if len(contextLabel) > 0 {
-		segments = append([]string{statusSegment("CONTEXT", contextLabel[0], green)}, segments...)
+		segments = append(segments, statusSegment("CTX", contextLabel[0], green))
+	}
+	segments = append(segments, statusSegment("WS", root, blue))
+	if len(contextLabel) > 1 {
+		segments = append(segments, statusSegment("TOK", contextLabel[1], cyan))
 	}
 	separator := dim + "  │  " + reset
 	if !unicodeEnabled {
@@ -812,13 +828,42 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 	}
 	bar := strings.Join(segments, separator)
 	if width > 0 && visibleWidth(bar) > width {
+		if dynamic := compactStatusBar(contextLabel, true, unicodeEnabled); dynamic != "" && visibleWidth(dynamic) <= width {
+			return dynamic + reset
+		}
 		bar = truncateDiffLine(bar, width, unicodeEnabled)
 	}
 	return bar + reset
 }
 
+func compactStatusBar(labels []string, color, unicodeEnabled bool) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	separator := "  │  "
+	if !unicodeEnabled {
+		separator = "  |  "
+	}
+	segments := []string{statusSegment("CTX", labels[0], green)}
+	if len(labels) > 1 {
+		segments = append(segments, statusSegment("TOK", labels[1], cyan))
+	}
+	if !color {
+		parts := []string{"[CTX " + labels[0] + "]"}
+		if len(labels) > 1 {
+			parts = append(parts, "[TOK "+labels[1]+"]")
+		}
+		return strings.Join(parts, " ")
+	}
+	return strings.Join(segments, separator)
+}
+
 func statusSegment(label, value, color string) string {
 	return color + bold + label + reset + " " + color + value + reset
+}
+
+func statusValue(value, color string) string {
+	return color + bold + value + reset
 }
 
 func headerLogo(width int) []string {

@@ -42,6 +42,7 @@ type Agent struct {
 	contextWindow        int
 	contextOverride      int
 	contextUsage         *llm.Usage
+	sessionUsage         llm.SessionUsage
 	contextMessages      int
 	autoCompact          bool
 	autoCompactThreshold int
@@ -165,6 +166,7 @@ func (a *Agent) SetSkills(skills []prompt.SkillSummary) {
 func (a *Agent) ResetSession() {
 	a.stateMu.Lock()
 	a.lastResponse = ""
+	a.sessionUsage = llm.SessionUsage{}
 	a.stateMu.Unlock()
 	a.learningContext = ""
 	a.learningSessionID = ""
@@ -295,6 +297,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		if rendersResponses {
 			lifecycle.EndResponse()
 		}
+		a.recordUsage(response.Usage)
 		span.End(err)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr

@@ -6,6 +6,8 @@ import (
 	"io"
 	"sync"
 	"time"
+
+	"qcode/internal/llm"
 )
 
 const timestampLayout = "15:04:05"
@@ -86,6 +88,13 @@ type ActivitySpan struct {
 	mu       sync.Mutex
 	ended    bool
 	frames   []string
+}
+
+// Usage emits structured accounting even when verbose tracing is disabled.
+func (l *Logger) Usage(provider, model string, usage *llm.Usage, session llm.SessionUsage) {
+	if l.json {
+		l.writeJSON("usage", "llm", provider, time.Now(), 0, map[string]any{"model": model, "usage": usage, "session_usage": session})
+	}
 }
 
 func New(out io.Writer, jsonOutput bool) *Logger {

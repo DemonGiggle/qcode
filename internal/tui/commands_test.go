@@ -123,7 +123,15 @@ func TestGradientLineSkipsDarkestPaletteShades(t *testing.T) {
 
 func TestStatusBarPlainFallback(t *testing.T) {
 	got := statusBar("ollama", "qwen", "~/code", 80, true, false)
-	want := "[PROVIDER ollama] [MODEL qwen] [WORKSPACE ~/code]"
+	want := "ollama [MODEL qwen] [WS ~/code]"
+	if got != want {
+		t.Fatalf("status bar = %q, want %q", got, want)
+	}
+}
+
+func TestStatusBarSegmentOrder(t *testing.T) {
+	got := statusBar("ollama", "qwen", "~/code", 120, true, false, "73% left", "I:1.2K O:340")
+	want := "ollama [MODEL qwen] [CTX 73% left] [WS ~/code] [TOK I:1.2K O:340]"
 	if got != want {
 		t.Fatalf("status bar = %q, want %q", got, want)
 	}
@@ -135,6 +143,9 @@ func TestStatusBarUsesColoredSegments(t *testing.T) {
 		if !strings.Contains(got, sequence) {
 			t.Fatalf("status bar %q does not contain color %q", got, sequence)
 		}
+	}
+	if !strings.Contains(got, cyan+bold+"ollama"+reset) {
+		t.Fatalf("provider is not bold in status bar: %q", got)
 	}
 	for _, background := range []string{"\x1b[40m", "\x1b[41m", "\x1b[42m", "\x1b[43m", "\x1b[44m", "\x1b[45m", "\x1b[46m", "\x1b[47m"} {
 		if strings.Contains(got, background) {
