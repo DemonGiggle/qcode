@@ -31,14 +31,15 @@ func (u *UI) chooseSkills() {
 		u.printSystemMessage(dim + "No workspace skills are available." + reset)
 		return
 	}
-	u.printSystemMessage(dim + "Use Up/Down to move, Space to toggle, Enter to apply, or Ctrl+C to cancel." + reset)
+	u.printSystemMessage(dim + "Use Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
 	defer func() {
 		u.input.setRaw(false)
 		u.endRawSelector()
 	}()
-	names, summaries, accepted, err := selectSkills(u.input, u.terminal, u.skills, ColorEnabled(u.out))
+	visible := min(12, max(3, u.height-6))
+	names, summaries, accepted, err := selectSkills(u.input, u.terminal, u.skills, visible, u.width, ColorEnabled(u.out))
 	if err != nil {
 		return
 	}
@@ -122,20 +123,27 @@ func (u *UI) listSkills() {
 	u.printSystemMessage(strings.Join(lines, "\n"))
 }
 
-func selectSkills(in io.Reader, out interface{ Write([]byte) (int, error) }, skills []prompt.SkillSummary, color bool) ([]string, []prompt.SkillSummary, bool, error) {
+func selectSkills(in io.Reader, out io.Writer, skills []prompt.SkillSummary, visible, width int, color bool) ([]string, []prompt.SkillSummary, bool, error) {
+	if len(skills) == 0 {
+		return nil, nil, false, nil
+	}
+	visible = selectorVisible(len(skills), visible)
 	selected := make(map[int]bool)
 	current := 0
+	start := 0
+	renderSkillSelector(out, skills, selected, current, start, visible, width, color)
 	for {
-		renderSkillSelector(out, skills, selected, current, color)
-		key, err := readSkillByte(in)
-		clearSkillSelector(out, len(skills))
+		key, err := readSelectorKey(in)
 		if err != nil {
+			clearSelector(out, visible)
 			return nil, nil, false, err
 		}
 		switch key {
-		case ctrlC:
+		case string([]byte{ctrlC}):
+			clearSelector(out, visible)
 			return nil, nil, false, nil
-		case '\r', '\n':
+		case "\r", "\n":
+			clearSelector(out, visible)
 			names := make([]string, 0, len(selected))
 			summaries := make([]prompt.SkillSummary, 0, len(selected))
 			for i, skill := range skills {
@@ -145,51 +153,63 @@ func selectSkills(in io.Reader, out interface{ Write([]byte) (int, error) }, ski
 				}
 			}
 			return names, summaries, true, nil
-		case ' ':
+		case " ":
 			selected[current] = !selected[current]
-		case 0x1b:
-			var tail [2]byte
-			if _, err := io.ReadFull(in, tail[:]); err == nil && tail[0] == '[' {
-				if tail[1] == 'A' {
-					current = (current - 1 + len(skills)) % len(skills)
-				}
-				if tail[1] == 'B' {
-					current = (current + 1) % len(skills)
-				}
+			replaceSelectorRow(out, visible, current-start, renderSkillLine(skills[current], selected[current], true, width, color))
+			continue
+		case arrowUpSequence, arrowDownSequence, selectorPageUp, selectorPageDown:
+			oldCurrent, oldStart := current, start
+			switch key {
+			case arrowUpSequence:
+				current = (current - 1 + len(skills)) % len(skills)
+				start = selectorStart(current, len(skills), visible, start)
+			case arrowDownSequence:
+				current = (current + 1) % len(skills)
+				start = selectorStart(current, len(skills), visible, start)
+			case selectorPageUp:
+				current, start = selectorPage(current, start, len(skills), visible, -1)
+			case selectorPageDown:
+				current, start = selectorPage(current, start, len(skills), visible, 1)
+			}
+			if start != oldStart {
+				clearSelector(out, visible)
+				renderSkillSelector(out, skills, selected, current, start, visible, width, color)
+			} else if current != oldCurrent {
+				replaceSelectorRow(out, visible, oldCurrent-start, renderSkillLine(skills[oldCurrent], selected[oldCurrent], false, width, color))
+				replaceSelectorRow(out, visible, current-start, renderSkillLine(skills[current], selected[current], true, width, color))
 			}
 		}
 	}
 }
 
-func readSkillByte(input io.Reader) (byte, error) {
-	var buffer [1]byte
-	_, err := io.ReadFull(input, buffer[:])
-	return buffer[0], err
+func renderSkillSelector(out io.Writer, skills []prompt.SkillSummary, selected map[int]bool, current, start, visible, width int, color bool) {
+	for row := 0; row < visible; row++ {
+		i := start + row
+		line := ""
+		if i < len(skills) {
+			line = renderSkillLine(skills[i], selected[i], i == current, width, color)
+		}
+		fmt.Fprintln(out, line)
+	}
 }
 
-func renderSkillSelector(out interface{ Write([]byte) (int, error) }, skills []prompt.SkillSummary, selected map[int]bool, current int, color bool) {
-	for i, skill := range skills {
-		box := "[ ]"
-		if selected[i] {
-			box = "[x]"
-		}
-		prefix := "  "
-		if i == current {
-			prefix = "> "
-		}
-		line := fmt.Sprintf("%s%s %-18s %s", prefix, box, skill.Name, skill.Description)
-		if color && i == current {
-			line = cyan + line + reset
-		}
-		fmt.Fprintln(out, strings.TrimSpace(line))
+func renderSkillLine(skill prompt.SkillSummary, selected, current bool, width int, color bool) string {
+	box := "[ ]"
+	if selected {
+		box = "[x]"
 	}
-}
-func clearSkillSelector(out interface{ Write([]byte) (int, error) }, rows int) {
-	for range rows {
-		// The selector leaves the cursor on the line after its final item.
-		// Move up and erase one row at a time, ending at the first row so the
-		// next render replaces the selector in place. Moving back down between
-		// rows can scroll the terminal when the selector reaches the bottom.
-		fmt.Fprint(out, "\x1b[1A\r\x1b[2K")
+	prefix := "  "
+	if current {
+		prefix = "> "
 	}
+	name := sanitizeDiffLine(skill.Name, "<ESC>")
+	description := sanitizeDiffLine(skill.Description, "<ESC>")
+	line := fmt.Sprintf("%s%s %-18s %s", prefix, box, name, description)
+	if width > 0 {
+		line = truncateDiffLine(line, width, false)
+	}
+	if color && current {
+		line = cyan + line + reset
+	}
+	return line
 }

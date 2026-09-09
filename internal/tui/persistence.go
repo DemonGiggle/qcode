@@ -457,51 +457,15 @@ func (u *UI) activateRestoredTab() {
 
 func (u *UI) selectSession(entries []session.Entry) (string, bool, error) {
 	selected := 0
-	for {
-		u.screenMu.Lock()
-		if u.height < 7 || u.width < 20 {
-			u.screenMu.Unlock()
-			return "", false, fmt.Errorf("enlarge the terminal to at least 20 columns and 7 rows to select a session")
-		}
-		fmt.Fprint(u.out, "\x1b[s\x1b[2;1H")
-		rows := max(1, (u.height-4)/3)
-		start := selected / rows * rows
-		fmt.Fprintf(u.out, "\x1b[2K%s\r\n", truncateDiffLine("Resume session | Up/Down, Enter, Esc", u.width, u.unicode))
-		for row := 0; row < rows; row++ {
-			i := start + row
-			if i >= len(entries) {
-				fmt.Fprint(u.out, "\x1b[2K\r\n\x1b[2K\r\n\x1b[2K\r\n")
-				continue
-			}
-			e := entries[i]
-			marker := "  "
-			if i == selected {
-				marker = "> "
-			}
-			busy := ""
-			if e.Busy {
-				busy = " (open elsewhere)"
-			}
-			if e.Problem != "" {
-				busy = " (unavailable)"
-			}
-			fmt.Fprintf(u.out, "\x1b[2K%s\r\n", truncateDiffLine(marker+e.ID[:8]+"  "+relativeDeparture(session.Departure(e.Snapshot), time.Now())+busy, u.width, u.unicode))
-			preview := strings.Join(strings.Fields(plainHistoryText(e.Preview)), " ")
-			if e.Problem != "" {
-				preview = e.Problem
-			}
-			preview = sanitizeDiffLine(preview, "<ESC>")
-			lines := strings.Split(wrapANSI(preview, max(1, u.width-2), ""), "\n")
-			for j := 0; j < 2; j++ {
-				line := ""
-				if j < len(lines) {
-					line = lines[j]
-				}
-				fmt.Fprintf(u.out, "\x1b[2K  %s\r\n", line)
-			}
-		}
-		fmt.Fprint(u.out, "\x1b[u")
+	u.screenMu.Lock()
+	if u.height < 7 || u.width < 20 {
 		u.screenMu.Unlock()
+		return "", false, fmt.Errorf("enlarge the terminal to at least 20 columns and 7 rows to select a session")
+	}
+	rows := max(1, (u.height-4)/3)
+	u.renderSessionSelectorLocked(entries, selected, rows)
+	u.screenMu.Unlock()
+	for {
 		var b [1]byte
 		if _, err := io.ReadFull(u.input, b[:]); err != nil {
 			return "", false, err
@@ -514,6 +478,7 @@ func (u *UI) selectSession(entries []session.Entry) (string, bool, error) {
 		case ctrlC:
 			return "", false, nil
 		case 27:
+			oldSelected := selected
 			// interruptReader already owns the byte stream. A short timeout makes
 			// a lone Escape cancel without leaving a blocked reader behind.
 			select {
@@ -527,6 +492,19 @@ func (u *UI) selectSession(entries []session.Entry) (string, bool, error) {
 						selected = (selected + len(entries) - 1) % len(entries)
 					} else if key == 'B' {
 						selected = (selected + 1) % len(entries)
+					} else if key == '5' || key == '6' {
+						select {
+						case terminator := <-u.input.data:
+							if terminator == '~' {
+								direction := -1
+								if key == '6' {
+									direction = 1
+								}
+								selected = min(len(entries)-1, max(0, selected+direction*rows))
+							}
+						case <-time.After(80 * time.Millisecond):
+							return "", false, nil
+						}
 					}
 				case <-time.After(80 * time.Millisecond):
 					return "", false, nil
@@ -534,6 +512,66 @@ func (u *UI) selectSession(entries []session.Entry) (string, bool, error) {
 			case <-time.After(80 * time.Millisecond):
 				return "", false, nil
 			}
+			if selected != oldSelected {
+				u.screenMu.Lock()
+				oldStart, newStart := oldSelected/rows*rows, selected/rows*rows
+				if oldStart != newStart {
+					u.renderSessionSelectorLocked(entries, selected, rows)
+				} else {
+					u.renderSessionEntryLocked(entries[oldSelected], oldSelected-oldStart, false)
+					u.renderSessionEntryLocked(entries[selected], selected-newStart, true)
+				}
+				u.screenMu.Unlock()
+			}
 		}
+	}
+}
+
+func (u *UI) renderSessionSelectorLocked(entries []session.Entry, selected, rows int) {
+	start := selected / rows * rows
+	fmt.Fprint(u.out, "\x1b[s\x1b[2;1H")
+	fmt.Fprintf(u.out, "\x1b[2K%s\r\n", truncateDiffLine("Resume session | Up/Down, PgUp/PgDn, Enter, Esc", u.width, u.unicode))
+	for row := 0; row < rows; row++ {
+		i := start + row
+		if i >= len(entries) {
+			fmt.Fprint(u.out, "\x1b[2K\r\n\x1b[2K\r\n\x1b[2K\r\n")
+			continue
+		}
+		u.writeSessionEntryLocked(entries[i], i == selected)
+	}
+	fmt.Fprint(u.out, "\x1b[u")
+}
+
+func (u *UI) renderSessionEntryLocked(entry session.Entry, row int, selected bool) {
+	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H", 3+row*3)
+	u.writeSessionEntryLocked(entry, selected)
+	fmt.Fprint(u.out, "\x1b[u")
+}
+
+func (u *UI) writeSessionEntryLocked(entry session.Entry, selected bool) {
+	marker := "  "
+	if selected {
+		marker = "> "
+	}
+	busy := ""
+	if entry.Busy {
+		busy = " (open elsewhere)"
+	}
+	if entry.Problem != "" {
+		busy = " (unavailable)"
+	}
+	fmt.Fprintf(u.out, "\x1b[2K%s\r\n", truncateDiffLine(marker+entry.ID[:8]+"  "+relativeDeparture(session.Departure(entry.Snapshot), time.Now())+busy, u.width, u.unicode))
+	preview := strings.Join(strings.Fields(plainHistoryText(entry.Preview)), " ")
+	if entry.Problem != "" {
+		preview = entry.Problem
+	}
+	preview = sanitizeDiffLine(preview, "<ESC>")
+	lines := strings.Split(wrapANSI(preview, max(1, u.width-2), ""), "\n")
+	for j := 0; j < 2; j++ {
+		line := ""
+		if j < len(lines) {
+			line = lines[j]
+		}
+		fmt.Fprintf(u.out, "\x1b[2K  %s\r\n", line)
 	}
 }

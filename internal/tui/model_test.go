@@ -19,7 +19,7 @@ func TestSelectModelFiltersThenSelects(t *testing.T) {
 	if !accepted || selected != "gamma-code" {
 		t.Fatalf("selection = %q, %v", selected, accepted)
 	}
-	if !strings.Contains(output.String(), "Select model (2/3)  Search: code") {
+	if !strings.Contains(output.String(), "Select model (2/3) | Up/Down, PgUp/PgDn | Search: code") {
 		t.Fatalf("selector did not show filtered count: %q", output.String())
 	}
 }
@@ -46,5 +46,20 @@ func TestSelectModelCanCancel(t *testing.T) {
 	selected, accepted, err := selectModel(strings.NewReader(string([]byte{ctrlC})), &bytes.Buffer{}, []string{"one"}, "", 1, 80, false)
 	if err != nil || accepted || selected != "" {
 		t.Fatalf("selection = %q, %v, %v", selected, accepted, err)
+	}
+}
+
+func TestSelectModelSupportsPageNavigation(t *testing.T) {
+	models := make([]string, 30)
+	for i := range models {
+		models[i] = fmt.Sprintf("model-%02d", i)
+	}
+	var output bytes.Buffer
+	selected, accepted, err := selectModel(strings.NewReader(selectorPageDown+"\r"), &output, models, "", 5, 80, false)
+	if err != nil || !accepted || selected != "model-05" {
+		t.Fatalf("selection = %q, accepted = %v, err = %v", selected, accepted, err)
+	}
+	if lines := strings.Count(output.String(), "\n"); lines != 12 {
+		t.Fatalf("rendered lines = %d, want two bounded six-row renders", lines)
 	}
 }

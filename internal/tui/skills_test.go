@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -15,19 +16,15 @@ func TestSkillSelectorRefreshReplacesExistingRows(t *testing.T) {
 	}
 	var output bytes.Buffer
 
-	renderSkillSelector(&output, skills, map[int]bool{}, 0, false)
-	clearSkillSelector(&output, len(skills))
-	renderSkillSelector(&output, skills, map[int]bool{1: true}, 1, false)
+	renderSkillSelector(&output, skills, map[int]bool{}, 0, 0, 2, 80, false)
+	replaceSelectorRow(&output, 2, 0, renderSkillLine(skills[0], false, false, 80, false))
+	replaceSelectorRow(&output, 2, 1, renderSkillLine(skills[1], true, true, 80, false))
 
 	got := output.String()
-	wantClear := "\x1b[1A\r\x1b[2K\x1b[1A\r\x1b[2K"
-	if !strings.Contains(got, wantClear) {
-		t.Fatalf("refresh clear sequence = %q, want %q", got, wantClear)
+	if clears := strings.Count(got, "\x1b[2K"); clears != 2 {
+		t.Fatalf("row clears = %d, want 2: %q", clears, got)
 	}
-	if strings.Contains(got, "\x1b[1B") {
-		t.Fatalf("refresh must not move downward: %q", got)
-	}
-	if !strings.HasSuffix(got, "> [x] test               Run tests\n") {
+	if !strings.Contains(got, "\x1b[2K> [x] test               Run tests\x1b[u") {
 		t.Fatalf("refreshed selector = %q, want updated selection", got)
 	}
 }
@@ -100,7 +97,7 @@ func TestSelectSkillsNavigatesTogglesAndKeepsCatalogOrder(t *testing.T) {
 	input := strings.NewReader(" \x1b[B \x1b[A\r")
 	var output bytes.Buffer
 
-	names, summaries, accepted, err := selectSkills(input, &output, skills, false)
+	names, summaries, accepted, err := selectSkills(input, &output, skills, 3, 80, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +110,23 @@ func TestSelectSkillsNavigatesTogglesAndKeepsCatalogOrder(t *testing.T) {
 	if got, want := summaries[0].Name+","+summaries[1].Name, "first,second"; got != want {
 		t.Fatalf("summaries = %q, want %q", got, want)
 	}
-	if got := strings.Count(output.String(), "\x1b[1A\r\x1b[2K"); got != 15 {
-		t.Fatalf("clear operations = %d, want 15 (three rows after five key presses)", got)
+	if got := strings.Count(output.String(), "\n"); got != 3 {
+		t.Fatalf("rendered lines = %d, want one initial three-row render", got)
+	}
+}
+
+func TestSelectSkillsPagesThroughBoundedViewport(t *testing.T) {
+	skills := make([]prompt.SkillSummary, 30)
+	for i := range skills {
+		skills[i] = prompt.SkillSummary{Name: fmt.Sprintf("skill-%02d", i), Description: strings.Repeat("description ", 20)}
+	}
+	var output bytes.Buffer
+	names, _, accepted, err := selectSkills(strings.NewReader(selectorPageDown+" \r"), &output, skills, 5, 40, false)
+	if err != nil || !accepted || len(names) != 1 || names[0] != "skill-05" {
+		t.Fatalf("names = %v, accepted = %v, err = %v", names, accepted, err)
+	}
+	if lines := strings.Count(output.String(), "\n"); lines != 10 {
+		t.Fatalf("rendered lines = %d, want two bounded five-row pages", lines)
 	}
 }
 
@@ -124,7 +136,7 @@ func TestSelectSkillsCancelsAndIgnoresUnknownKeys(t *testing.T) {
 	input := strings.NewReader("x\x7f\x1b[Z" + string([]byte{ctrlC}))
 	var output bytes.Buffer
 
-	names, summaries, accepted, err := selectSkills(input, &output, skills, false)
+	names, summaries, accepted, err := selectSkills(input, &output, skills, 1, 80, false)
 	if err != nil {
 		t.Fatal(err)
 	}

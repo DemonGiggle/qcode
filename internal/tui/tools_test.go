@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"bytes"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -23,7 +25,7 @@ func TestToolSelectionRequiresApply(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runner := selectionRunner{"web_fetch": false, "web_search": false}
-			accepted, err := selectTools(strings.NewReader(tc.input), io.Discard, runner.ToolNames(), runner, false)
+			accepted, err := selectTools(strings.NewReader(tc.input), io.Discard, runner.ToolNames(), runner, 2, 80, false)
 			if accepted != tc.accepted || (err != nil) != tc.failure {
 				t.Fatalf("accepted %v, error %v", accepted, err)
 			}
@@ -34,5 +36,21 @@ func TestToolSelectionRequiresApply(t *testing.T) {
 				t.Fatal("enabled an unselected tool")
 			}
 		})
+	}
+}
+
+func TestToolSelectionPagesThroughBoundedViewport(t *testing.T) {
+	names := make([]string, 30)
+	runner := selectionRunner{}
+	for i := range names {
+		names[i] = fmt.Sprintf("tool-%02d", i)
+	}
+	var output bytes.Buffer
+	accepted, err := selectTools(strings.NewReader(selectorPageDown+" \r"), &output, names, runner, 5, 40, false)
+	if err != nil || !accepted || !runner["tool-05"] {
+		t.Fatalf("accepted = %v, enabled = %v, err = %v", accepted, runner["tool-05"], err)
+	}
+	if lines := strings.Count(output.String(), "\n"); lines != 10 {
+		t.Fatalf("rendered lines = %d, want two bounded five-row pages", lines)
 	}
 }
