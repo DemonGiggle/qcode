@@ -146,11 +146,11 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if configPath != "" {
 		protectedPaths = append(protectedPaths, configPath)
 	}
-	skillCatalog, err := skills.Discover(root, configuredSkillPaths...)
-	if err != nil {
-		return err
+	skillLocations := skills.Locations(root, configuredSkillPaths...)
+	loadSkills := func() ([]prompt.SkillSummary, []tui.SkillInfo, error) {
+		return skillCatalogData(root, configuredSkillPaths...)
 	}
-	skillSelection := skills.NewSelection(skillCatalog)
+	skillSelection := skills.NewLazySelection(root, configuredSkillPaths...)
 	registry, err := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, Skills: skillSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
 	if err != nil {
 		return err
@@ -199,9 +199,8 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	// Terminal output must go through term.Terminal so asynchronous-looking stream
 	// updates do not corrupt the editable input line.
 	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
-	ui.SetSkillCatalog(skillSummaries(skillCatalog), skillSelection.Set)
-	ui.SetSkillInfo(skillInfos(skillCatalog))
-	ui.SetSkillLocations(skillCatalog.Locations())
+	ui.SetSkillCatalogLoader(loadSkills)
+	ui.SetSkillLocations(skillLocations)
 	if opts.demo {
 		ui.SetDemoPromptScript(demo.InteractivePrompts(), demo.InteractivePromptDelay, demo.InteractiveQueueDelay)
 	}
@@ -222,7 +221,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			currentSelection := mainSelection
 			currentEndpoint := providerConfig.BaseURL
 			if !isMain || saved != nil {
-				currentSelection = skills.NewSelection(skillCatalog)
+				currentSelection = skills.NewLazySelection(root, configuredSkillPaths...)
 				createdRegistry, createErr := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, Skills: currentSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
 				if createErr != nil {
 					return nil, createErr
@@ -294,9 +293,8 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		}
 		if err := ui.EnableSessions(store, func(snap session.Snapshot) (*tui.UI, error) {
 			staged := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
-			staged.SetSkillCatalog(skillSummaries(skillCatalog), nil)
-			staged.SetSkillInfo(skillInfos(skillCatalog))
-			staged.SetSkillLocations(skillCatalog.Locations())
+			staged.SetSkillCatalogLoader(loadSkills)
+			staged.SetSkillLocations(skillLocations)
 			restored := agent.NewAgentManager(context.Background(), agent.DefaultMaxAgents)
 			saved := map[string]agent.SavedState{}
 			for _, item := range snap.Agents {
@@ -357,6 +355,14 @@ func skillInfos(catalog *skills.Catalog) []tui.SkillInfo {
 		infos[i] = tui.SkillInfo{Name: skill.Name, Description: skill.Description, Path: skill.Path()}
 	}
 	return infos
+}
+
+func skillCatalogData(root string, customPaths ...string) ([]prompt.SkillSummary, []tui.SkillInfo, error) {
+	catalog, err := skills.Discover(root, customPaths...)
+	if err != nil {
+		return nil, nil, err
+	}
+	return skillSummaries(catalog), skillInfos(catalog), nil
 }
 
 func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {

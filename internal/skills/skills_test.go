@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -100,6 +101,36 @@ func TestDiscoverIncludesCustomSkillsAndKeepsMissingLocations(t *testing.T) {
 	locations := catalog.Locations()
 	if len(locations) < 5 || locations[len(locations)-2] != custom || locations[len(locations)-1] != missing {
 		t.Fatalf("locations = %#v, want custom and missing paths retained", locations)
+	}
+}
+
+func TestDiscoverReadsOnlySkillDescriptionPrefix(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	large := "# Large skill\n" + strings.Repeat("x", maxFileSize)
+	writeSkill(t, root, ".qcode/skills/large/SKILL.md", large)
+
+	catalog, err := Discover(root)
+	if err != nil {
+		t.Fatalf("Discover() rejected large skill: %v", err)
+	}
+	if items := catalog.Skills(); len(items) != 1 || items[0].Description != "Large skill" {
+		t.Fatalf("skills = %#v", items)
+	}
+	if _, err := catalog.Load("large"); err == nil || !strings.Contains(err.Error(), "exceeds the 64 KiB limit") {
+		t.Fatalf("Load(large) error = %v", err)
+	}
+}
+
+func TestLazySelectionDefersDiscoveryUntilLoad(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	selection := NewLazySelection(root)
+	selection.Set([]string{"review"})
+	writeSkill(t, root, ".qcode/skills/review/SKILL.md", "Review instructions")
+
+	if got, err := selection.Load("review"); err != nil || got != "Review instructions" {
+		t.Fatalf("Load(review) = %q, %v", got, err)
 	}
 }
 

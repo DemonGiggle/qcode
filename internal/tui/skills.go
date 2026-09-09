@@ -23,6 +23,9 @@ func (u *UI) chooseSkills() {
 		return
 	}
 	u.printSystemMessage(u.skillLocationHint(ColorEnabled(u.out)))
+	if !u.ensureSkillCatalog() {
+		return
+	}
 	runner, ok := u.runner.(skillRunner)
 	if !ok || len(u.skills) == 0 {
 		u.printSystemMessage(dim + "No workspace skills are available." + reset)
@@ -89,6 +92,9 @@ func formatSkillLocationHint(locations []string, color bool) string {
 }
 
 func (u *UI) listSkills() {
+	if !u.ensureSkillCatalog() {
+		return
+	}
 	color := u.out != nil && ColorEnabled(u.out)
 	if len(u.skillInfos) == 0 {
 		u.printSystemMessage(u.skillLocationHint(color))

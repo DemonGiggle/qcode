@@ -98,6 +98,8 @@ type sessionRunner interface {
 
 type skillRunner interface{ SetSkills([]prompt.SkillSummary) }
 
+type skillCatalogLoader func() ([]prompt.SkillSummary, []SkillInfo, error)
+
 type toolRunner interface {
 	ToggleTool(name string, enabled bool)
 	ToolEnabled(name string) bool
@@ -135,52 +137,53 @@ type agentController interface {
 }
 
 type UI struct {
-	fixedInput        bool
-	inputText         string
-	inputLabel        string
-	inputPosition     int
-	inputFrame        string
-	terminal          *lineedit.Terminal
-	display           historyDisplay
-	responseWriter    *MarkdownWriter
-	commandMenu       slashCommandMenu
-	input             *interruptReader
-	in                *os.File
-	out               *os.File
-	runner            Runner
-	provider          string
-	model             string
-	root              string
-	verbose           bool
-	width             int
-	height            int
-	unicode           bool
-	viewport          viewport
-	statusActive      bool
-	statusBarText     string
-	startupNotice     string
-	startupChoice     bool
-	skills            []prompt.SkillSummary
-	skillInfos        []SkillInfo
-	skillLocations    []string
-	onSkills          func([]string)
-	manager           agentController
-	activeAgent       string
-	views             map[string]*agentView
-	screenMu          sync.Mutex
-	drafts            map[string]string
-	approvalMu        sync.Mutex
-	approvals         map[string][]*approvalRequest
-	tabMu             sync.Mutex
-	pendingTab        int
-	agentEventsDone   chan struct{}
-	uiEvents          chan struct{}
-	taskIndicatorText string
-	demoPrompts       []string
-	demoPromptDelay   time.Duration
-	demoQueueDelay    time.Duration
-	persistence       *sessionPersistence
-	sessionHost       *UI
+	fixedInput         bool
+	inputText          string
+	inputLabel         string
+	inputPosition      int
+	inputFrame         string
+	terminal           *lineedit.Terminal
+	display            historyDisplay
+	responseWriter     *MarkdownWriter
+	commandMenu        slashCommandMenu
+	input              *interruptReader
+	in                 *os.File
+	out                *os.File
+	runner             Runner
+	provider           string
+	model              string
+	root               string
+	verbose            bool
+	width              int
+	height             int
+	unicode            bool
+	viewport           viewport
+	statusActive       bool
+	statusBarText      string
+	startupNotice      string
+	startupChoice      bool
+	skills             []prompt.SkillSummary
+	skillInfos         []SkillInfo
+	skillLocations     []string
+	skillCatalogLoader skillCatalogLoader
+	onSkills           func([]string)
+	manager            agentController
+	activeAgent        string
+	views              map[string]*agentView
+	screenMu           sync.Mutex
+	drafts             map[string]string
+	approvalMu         sync.Mutex
+	approvals          map[string][]*approvalRequest
+	tabMu              sync.Mutex
+	pendingTab         int
+	agentEventsDone    chan struct{}
+	uiEvents           chan struct{}
+	taskIndicatorText  string
+	demoPrompts        []string
+	demoPromptDelay    time.Duration
+	demoQueueDelay     time.Duration
+	persistence        *sessionPersistence
+	sessionHost        *UI
 }
 
 // SetSkillCatalog configures the optional /skill selector.
@@ -202,6 +205,26 @@ func (u *UI) SetSkillInfo(infos []SkillInfo) {
 // selector. Missing directories are intentionally retained in this list.
 func (u *UI) SetSkillLocations(locations []string) {
 	u.skillLocations = append([]string(nil), locations...)
+}
+
+// SetSkillCatalogLoader defers skill discovery until /skill or /skills needs
+// the catalog. The loader may refresh the catalog on each command invocation.
+func (u *UI) SetSkillCatalogLoader(loader skillCatalogLoader) {
+	u.skillCatalogLoader = loader
+}
+
+func (u *UI) ensureSkillCatalog() bool {
+	if u.skillCatalogLoader == nil {
+		return true
+	}
+	summaries, infos, err := u.skillCatalogLoader()
+	if err != nil {
+		u.printSystemMessage(yellow + "Cannot discover skills: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+		return false
+	}
+	u.SetSkillCatalog(summaries, u.onSkills)
+	u.SetSkillInfo(infos)
+	return true
 }
 
 func New(in, out *os.File, runner Runner, provider, model, root string) *UI {

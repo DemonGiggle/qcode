@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	fileName    = "SKILL.md"
-	maxFileSize = 64 * 1024
+	fileName            = "SKILL.md"
+	maxFileSize         = 64 * 1024
+	maxDescriptionBytes = 8 * 1024
 )
 
 // Skill is a discovered instruction bundle. Name and Description are safe to
@@ -34,13 +35,22 @@ type Catalog struct {
 
 // Selection makes only user-enabled skills available to the tool.
 type Selection struct {
-	catalog *Catalog
-	mu      sync.RWMutex
-	enabled map[string]bool
+	catalog     *Catalog
+	root        string
+	customPaths []string
+	mu          sync.RWMutex
+	enabled     map[string]bool
 }
 
 func NewSelection(catalog *Catalog) *Selection {
 	return &Selection{catalog: catalog, enabled: map[string]bool{}}
+}
+
+// NewLazySelection defers skill discovery until a selected skill is loaded.
+// This keeps application startup independent of the number and size of skill
+// files.
+func NewLazySelection(root string, customPaths ...string) *Selection {
+	return &Selection{root: root, customPaths: append([]string(nil), customPaths...), enabled: map[string]bool{}}
 }
 
 func (s *Selection) Selected() []string {
@@ -57,11 +67,18 @@ func (s *Selection) Selected() []string {
 }
 
 func (s *Selection) Set(names []string) {
+	s.mu.RLock()
+	catalog := s.catalog
+	s.mu.RUnlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.enabled = map[string]bool{}
 	for _, name := range names {
-		for _, skill := range s.catalog.skills {
+		if catalog == nil {
+			s.enabled[name] = true
+			continue
+		}
+		for _, skill := range catalog.skills {
 			if name == skill.Name {
 				s.enabled[name] = true
 				break
@@ -77,7 +94,39 @@ func (s *Selection) Load(name string) (string, error) {
 	if !enabled {
 		return "", fmt.Errorf("skill %q is not enabled for this session", name)
 	}
-	return s.catalog.Load(name)
+	catalog, err := s.catalogForLoad()
+	if err != nil {
+		return "", err
+	}
+	return catalog.Load(name)
+}
+
+func (s *Selection) catalogForLoad() (*Catalog, error) {
+	s.mu.RLock()
+	catalog := s.catalog
+	root := s.root
+	customPaths := append([]string(nil), s.customPaths...)
+	s.mu.RUnlock()
+	if catalog != nil {
+		return catalog, nil
+	}
+	if root == "" {
+		return nil, fmt.Errorf("no skills are available")
+	}
+	return Discover(root, customPaths...)
+}
+
+// Locations returns the built-in and configured skill directories without
+// reading any directories or skill files. Missing locations are included so
+// callers can show users every path qcode will check on demand.
+func Locations(_ string, customPaths ...string) []string {
+	locations := []string{"~/.qcode/skills", ".agents/skills", ".qcode/skills"}
+	for _, configured := range customPaths {
+		if configured = strings.TrimSpace(configured); configured != "" {
+			locations = append(locations, configured)
+		}
+	}
+	return locations
 }
 
 // Discover finds skills in the built-in locations and any custom paths. A
@@ -125,9 +174,8 @@ func Discover(root string, customPaths ...string) (*Catalog, error) {
 		sources = append(sources, struct{ base, label string }{filepath.Clean(base), configured})
 	}
 	byName := make(map[string]Skill)
-	locations := make([]string, 0, len(sources))
+	locations := Locations(abs, customPaths...)
 	for _, source := range sources {
-		locations = append(locations, source.label)
 		base := source.base
 		if resolved, err := filepath.EvalSymlinks(base); err == nil {
 			base = resolved
@@ -240,7 +288,12 @@ func (c *Catalog) Load(name string) (string, error) {
 }
 
 func description(path string) (string, error) {
-	data, err := readSkill(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxDescriptionBytes))
 	if err != nil {
 		return "", err
 	}

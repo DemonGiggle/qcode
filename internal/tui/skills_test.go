@@ -74,6 +74,22 @@ func TestListSkillsIncludesDescriptionAndPath(t *testing.T) {
 	}
 }
 
+func TestListSkillsLoadsCatalogOnDemand(t *testing.T) {
+	var output bytes.Buffer
+	loads := 0
+	u := UI{
+		display: newHistoryWriter(&output),
+		skillCatalogLoader: func() ([]prompt.SkillSummary, []SkillInfo, error) {
+			loads++
+			return []prompt.SkillSummary{{Name: "review", Description: "Review code"}}, []SkillInfo{{Name: "review", Description: "Review code", Path: "/skills/review/SKILL.md"}}, nil
+		},
+	}
+	u.listSkills()
+	if loads != 1 || !strings.Contains(output.String(), "/skills/review/SKILL.md") {
+		t.Fatalf("loads = %d, output = %q", loads, output.String())
+	}
+}
+
 func TestSelectSkillsNavigatesTogglesAndKeepsCatalogOrder(t *testing.T) {
 	skills := []prompt.SkillSummary{
 		{Name: "first", Description: "First skill"},
