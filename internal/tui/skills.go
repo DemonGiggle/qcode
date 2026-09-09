@@ -9,15 +9,6 @@ import (
 	"qcode/internal/prompt"
 )
 
-// SkillInfo contains the safe display fields for a discovered skill. The
-// location is kept separate from prompt.SkillSummary so it never enters the
-// model's system prompt.
-type SkillInfo struct {
-	Name        string
-	Description string
-	Path        string
-}
-
 func (u *UI) chooseSkills() {
 	if !u.activeAgentConfigurable() {
 		return
@@ -100,37 +91,6 @@ func formatSkillLocationHint(locations []string, color bool) string {
 		}
 	}
 	return strings.Join(lines, "\n")
-}
-
-func (u *UI) listSkills() {
-	if !u.ensureSkillCatalog() {
-		return
-	}
-	color := u.out != nil && ColorEnabled(u.out)
-	if len(u.skillInfos) == 0 {
-		u.printSystemMessage(u.skillLocationHint(color))
-		u.printSystemMessage(dim + "No skills were found." + reset)
-		return
-	}
-	lines := []string{"Skills found:"}
-	for _, skill := range u.skillInfos {
-		name := sanitizeDiffLine(skill.Name, "<ESC>")
-		description := sanitizeDiffLine(skill.Description, "<ESC>")
-		path := sanitizeDiffLine(skill.Path, "<ESC>")
-		if color {
-			lines = append(lines, "  "+cyan+name+reset+"  "+description)
-		} else {
-			lines = append(lines, "  "+name+"  "+description)
-		}
-		if skill.Path != "" {
-			if color {
-				lines = append(lines, "    "+dim+path+reset)
-			} else {
-				lines = append(lines, "    "+path)
-			}
-		}
-	}
-	u.printSystemMessage(strings.Join(lines, "\n"))
 }
 
 func selectSkills(in io.Reader, out io.Writer, skills []prompt.SkillSummary, initial map[int]bool, visible, width int, color bool) ([]string, []prompt.SkillSummary, bool, error) {

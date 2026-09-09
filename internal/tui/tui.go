@@ -102,7 +102,7 @@ type selectedSkillsRunner interface {
 	SelectedSkills() []prompt.SkillSummary
 }
 
-type skillCatalogLoader func() ([]prompt.SkillSummary, []SkillInfo, error)
+type skillCatalogLoader func() ([]prompt.SkillSummary, error)
 
 type toolRunner interface {
 	ToggleTool(name string, enabled bool)
@@ -167,7 +167,6 @@ type UI struct {
 	startupNotice      string
 	startupChoice      bool
 	skills             []prompt.SkillSummary
-	skillInfos         []SkillInfo
 	skillLocations     []string
 	skillCatalogLoader skillCatalogLoader
 	onSkills           func([]string)
@@ -193,16 +192,7 @@ type UI struct {
 // SetSkillCatalog configures the optional /skill selector.
 func (u *UI) SetSkillCatalog(skills []prompt.SkillSummary, onChange func([]string)) {
 	u.skills = append([]prompt.SkillSummary(nil), skills...)
-	u.skillInfos = make([]SkillInfo, len(skills))
-	for i, skill := range skills {
-		u.skillInfos[i] = SkillInfo{Name: skill.Name, Description: skill.Description}
-	}
 	u.onSkills = onChange
-}
-
-// SetSkillInfo configures the paths shown by /skills for discovered skills.
-func (u *UI) SetSkillInfo(infos []SkillInfo) {
-	u.skillInfos = append([]SkillInfo(nil), infos...)
 }
 
 // SetSkillLocations configures the directories shown by /skill before its
@@ -211,8 +201,8 @@ func (u *UI) SetSkillLocations(locations []string) {
 	u.skillLocations = append([]string(nil), locations...)
 }
 
-// SetSkillCatalogLoader defers skill discovery until /skill or /skills needs
-// the catalog. The loader may refresh the catalog on each command invocation.
+// SetSkillCatalogLoader defers skill discovery until /skill needs the catalog.
+// The loader may refresh the catalog on each command invocation.
 func (u *UI) SetSkillCatalogLoader(loader skillCatalogLoader) {
 	u.skillCatalogLoader = loader
 }
@@ -221,13 +211,12 @@ func (u *UI) ensureSkillCatalog() bool {
 	if u.skillCatalogLoader == nil {
 		return true
 	}
-	summaries, infos, err := u.skillCatalogLoader()
+	summaries, err := u.skillCatalogLoader()
 	if err != nil {
 		u.printSystemMessage(yellow + "Cannot discover skills: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 		return false
 	}
 	u.SetSkillCatalog(summaries, u.onSkills)
-	u.SetSkillInfo(infos)
 	return true
 }
 
@@ -473,10 +462,6 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		if line == "/resume" {
 			u.resumeSession()
-			continue
-		}
-		if line == "/skills" {
-			u.listSkills()
 			continue
 		}
 		if u.fixedInput {

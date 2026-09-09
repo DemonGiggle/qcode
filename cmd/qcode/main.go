@@ -147,7 +147,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		protectedPaths = append(protectedPaths, configPath)
 	}
 	skillLocations := skills.Locations(root, configuredSkillPaths...)
-	loadSkills := func() ([]prompt.SkillSummary, []tui.SkillInfo, error) {
+	loadSkills := func() ([]prompt.SkillSummary, error) {
 		return skillCatalogData(root, configuredSkillPaths...)
 	}
 	skillSelection := skills.NewLazySelection(root, configuredSkillPaths...)
@@ -348,21 +348,12 @@ func skillSummaries(catalog *skills.Catalog) []prompt.SkillSummary {
 	return summaries
 }
 
-func skillInfos(catalog *skills.Catalog) []tui.SkillInfo {
-	available := catalog.Skills()
-	infos := make([]tui.SkillInfo, len(available))
-	for i, skill := range available {
-		infos[i] = tui.SkillInfo{Name: skill.Name, Description: skill.Description, Path: skill.Path()}
-	}
-	return infos
-}
-
-func skillCatalogData(root string, customPaths ...string) ([]prompt.SkillSummary, []tui.SkillInfo, error) {
+func skillCatalogData(root string, customPaths ...string) ([]prompt.SkillSummary, error) {
 	catalog, err := skills.Discover(root, customPaths...)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return skillSummaries(catalog), skillInfos(catalog), nil
+	return skillSummaries(catalog), nil
 }
 
 func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
