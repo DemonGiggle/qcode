@@ -48,6 +48,7 @@ func TestTimestampUsesLocalTime(t *testing.T) {
 
 	var output bytes.Buffer
 	logger := New(&output, false)
+	logger.SetColor(true)
 	logger.writeCompleted(&Span{kind: "llm", name: "ollama", start: at}, time.Second, nil, false)
 	if got := output.String(); got != "[15:40:48] start llm ollama (1s)\n" {
 		t.Fatalf("text event = %q", got)
@@ -149,12 +150,116 @@ func TestActivityUsesCategoryColorsAndKeepsCompletedLine(t *testing.T) {
 	}
 }
 
+func TestActivityOutputPreviewIsIndentedMutedAndLimited(t *testing.T) {
+	var output bytes.Buffer
+	logger := New(&output, false)
+	logger.SetColor(true)
+	activity := logger.StartActivity(Activity{Action: "read", Start: "Reading x.go", Completed: "Read x.go", Category: ActivityRead})
+	activity.EndWithOutput(nil, "first line\nsecond line\nthird line\nfourth line")
+
+	got := output.String()
+	if strings.Count(got, "\n") != 4 {
+		t.Fatalf("activity preview line count = %d: %q", strings.Count(got, "\n"), got)
+	}
+	for _, line := range []string{"first line", "second line"} {
+		if !strings.Contains(got, traceDim+"  "+line+traceReset+"\n") {
+			t.Errorf("missing muted indented line %q: %q", line, got)
+		}
+	}
+	if !strings.Contains(got, traceDim+"  third line…"+traceReset+"\n") {
+		t.Errorf("missing muted truncated line: %q", got)
+	}
+	if strings.Contains(got, traceCyan+"  first line") {
+		t.Fatalf("output preview used the activity accent: %q", got)
+	}
+	if strings.Contains(got, "fourth line") || !strings.Contains(got, "third line…") {
+		t.Fatalf("output preview did not mark omitted lines: %q", got)
+	}
+}
+
+func TestActivityOutputPreviewNormalizesReadLineNumbers(t *testing.T) {
+	var output bytes.Buffer
+	logger := New(&output, false)
+	activity := logger.StartActivity(Activity{Action: "read", Start: "Reading x.go", Completed: "Read x.go", Category: ActivityRead})
+	activity.EndWithOutput(nil, "      12\tmodule github.com/example/project\n      13\t\n      14\tgo 1.21")
+
+	got := output.String()
+	if !strings.Contains(got, "  12 | module github.com/example/project\n") {
+		t.Fatalf("line number was not normalized: %q", got)
+	}
+	if !strings.Contains(got, "  14 | go 1.21\n") {
+		t.Fatalf("second line number was not normalized: %q", got)
+	}
+	if strings.Contains(got, "       12") {
+		t.Fatalf("read padding leaked into preview: %q", got)
+	}
+}
+
+func TestActivityBlocksHaveOneSeparatorBetweenCalls(t *testing.T) {
+	var output bytes.Buffer
+	logger := New(&output, false)
+	logger.SetColor(true)
+	first := logger.StartActivity(Activity{Action: "read", Start: "Reading one.go", Completed: "Read one.go", Category: ActivityRead})
+	first.EndWithOutput(nil, "first")
+	second := logger.StartActivity(Activity{Action: "read", Start: "Reading two.go", Completed: "Read two.go", Category: ActivityRead})
+	second.EndWithOutput(nil, "second")
+
+	got := output.String()
+	if !strings.Contains(got, traceDim+"  first"+traceReset+"\n\n") || !strings.Contains(got, "\n\n"+traceGreen+"✓") {
+		t.Fatalf("activity blocks have no single separator: %q", got)
+	}
+	if strings.HasSuffix(got, "\n\n") {
+		t.Fatalf("activity output has a trailing separator: %q", got)
+	}
+}
+
+func TestActivitySeparatorCanPrecedeResponseWithoutTrailingBlank(t *testing.T) {
+	var output bytes.Buffer
+	logger := New(&output, false)
+	activity := logger.StartActivity(Activity{Action: "read", Start: "Reading one.go", Completed: "Read one.go", Category: ActivityRead})
+	activity.EndWithOutput(nil, "first")
+	logger.SeparateActivity()
+	output.WriteString("response\n")
+
+	got := output.String()
+	if !strings.Contains(got, "  first\n\nresponse\n") {
+		t.Fatalf("response was not separated from activity: %q", got)
+	}
+	if strings.HasSuffix(got, "\n\n") {
+		t.Fatalf("separator was left trailing: %q", got)
+	}
+}
+
+func TestActivityOutputPreviewSanitizesAndTruncates(t *testing.T) {
+	var output bytes.Buffer
+	logger := New(&output, false)
+	logger.SetColor(true)
+	logger.SetUnicode(false)
+	logger.SetWidth(12)
+	activity := logger.StartActivity(Activity{Action: "read", Start: "Reading x.go", Completed: "Read x.go", Category: ActivityRead})
+	activity.EndWithOutput(nil, "\x1b[31m0123456789abcdef\x1b[0m\nsecond\nthird\nfourth")
+
+	got := output.String()
+	if strings.Contains(got, "\x1b[31m") {
+		t.Fatalf("output preview retained terminal color sequence: %q", got)
+	}
+	if !strings.Contains(got, traceDim+"  0123456..."+traceReset+"\n") {
+		t.Fatalf("long output was not truncated: %q", got)
+	}
+	if !strings.Contains(got, traceDim+"  third..."+traceReset+"\n") {
+		t.Fatalf("ASCII omission marker missing: %q", got)
+	}
+	if strings.Count(got, "\n") != 4 {
+		t.Fatalf("truncated preview line count = %d: %q", strings.Count(got, "\n"), got)
+	}
+}
+
 func TestActivityJSONIsSafeAndStructured(t *testing.T) {
 	var output bytes.Buffer
 	logger := New(&output, true)
 	logger.SetColor(true)
 	activity := logger.StartActivity(Activity{Action: "read", Start: "Reading x.go", Completed: "Read x.go", Category: ActivityRead})
-	activity.End(assertionError("denied"))
+	activity.EndWithOutput(assertionError("denied"), "secret tool output")
 	lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n"))
 	if len(lines) != 2 {
 		t.Fatalf("lines = %d", len(lines))
@@ -175,6 +280,9 @@ func TestActivityJSONIsSafeAndStructured(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "denied") {
 		t.Fatalf("activity JSON leaked detailed error: %q", output.String())
+	}
+	if strings.Contains(output.String(), "secret tool output") {
+		t.Fatalf("activity JSON leaked tool output: %q", output.String())
 	}
 }
 

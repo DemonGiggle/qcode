@@ -82,6 +82,8 @@ type imageProvider struct {
 
 type skillProvider struct{ calls int }
 
+type whitespaceToolProvider struct{ calls int }
+
 type skillToolset struct{}
 
 func (*skillToolset) Schemas() []llm.Tool {
@@ -203,6 +205,18 @@ func (p *skillProvider) Complete(_ context.Context, _ llm.Request, _ llm.StreamC
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
 }
 
+func (p *whitespaceToolProvider) Name() string { return "whitespace-tool" }
+func (p *whitespaceToolProvider) Complete(_ context.Context, _ llm.Request, onText llm.StreamCallback) (llm.Response, error) {
+	p.calls++
+	if p.calls == 1 {
+		onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: "\n\n"})
+		return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{
+			Name: "skill", Arguments: json.RawMessage(`{"name":"review"}`),
+		}}}}, nil
+	}
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
+}
+
 func TestAgentEmitsActivityWhenSkillIsLoaded(t *testing.T) {
 	provider := &skillProvider{}
 	var output, events bytes.Buffer
@@ -215,6 +229,21 @@ func TestAgentEmitsActivityWhenSkillIsLoaded(t *testing.T) {
 	}
 	if !strings.Contains(events.String(), "Loaded skill review") {
 		t.Fatalf("activity = %q", events.String())
+	}
+	if !strings.Contains(events.String(), "skill instructions") {
+		t.Fatalf("tool output preview = %q", events.String())
+	}
+}
+
+func TestAgentDropsWhitespaceOnlyProviderPaddingBeforeToolActivity(t *testing.T) {
+	provider := &whitespaceToolProvider{}
+	var output, events bytes.Buffer
+	runner := New(provider, "test", &skillToolset{}, trace.New(&events, false), &output, 2)
+	if err := runner.Run(context.Background(), "review this"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(events.String(), "\n\n") {
+		t.Fatalf("provider padding created a blank activity row: %q", events.String())
 	}
 }
 

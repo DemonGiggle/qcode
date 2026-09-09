@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -263,6 +264,8 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		a.publishContext()
 		span := a.trace.Start("llm", a.provider.Name(), map[string]any{"model": a.model, "step": step + 1})
 		wroteText := false
+		visibleText := false
+		separatedActivity := false
 		thinking := false
 		lifecycle, rendersResponses := a.out.(responseLifecycle)
 		thinkingOutput, stylesThinking := a.out.(thinkingLifecycle)
@@ -277,10 +280,21 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			if event.Text == "" {
 				return
 			}
+			// Providers sometimes emit whitespace-only content while preparing a
+			// tool call. Do not turn that protocol padding into blank transcript
+			// rows before the next activity event.
+			if !visibleText && strings.TrimSpace(event.Text) == "" {
+				return
+			}
+			visibleText = true
 			willRenderLine := keepsWaiting && (lineStreamer.StreamChunkCompletesLine(event.Text) || (event.Kind == llm.StreamOutput && thinking))
 			if willRenderLine || !keepsWaiting && !wroteText {
 				task.Suspend()
 				span.Suspend()
+			}
+			if !separatedActivity && (willRenderLine || !keepsWaiting) {
+				a.trace.SeparateActivity()
+				separatedActivity = true
 			}
 			if event.Kind == llm.StreamThinking && !thinking {
 				if stylesThinking {
@@ -304,6 +318,10 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		if keepsWaiting && wroteText {
 			task.Suspend()
 			span.Suspend()
+		}
+		if wroteText && !separatedActivity {
+			a.trace.SeparateActivity()
+			separatedActivity = true
 		}
 		if thinking && stylesThinking {
 			thinkingOutput.EndThinking()
@@ -356,7 +374,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": arguments})
 			execution, toolErr := a.tools.ExecuteDetailed(ctx, call)
 			toolSpan.End(toolErr)
-			activity.End(toolErr)
+			activity.EndWithOutput(toolErr, execution.Output)
 			if err := ctx.Err(); err != nil {
 				return err
 			}

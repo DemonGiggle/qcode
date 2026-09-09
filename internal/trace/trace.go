@@ -4,8 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
+
+	"github.com/mattn/go-runewidth"
 
 	"qcode/internal/llm"
 )
@@ -18,14 +22,16 @@ var (
 )
 
 type Logger struct {
-	out           io.Writer
-	json          bool
-	animated      bool
-	verbose       bool
-	color         bool
-	unicode       bool
-	taskIndicator bool
-	mu            sync.Mutex
+	out                      io.Writer
+	json                     bool
+	animated                 bool
+	verbose                  bool
+	color                    bool
+	unicode                  bool
+	taskIndicator            bool
+	width                    int
+	activitySeparatorPending bool
+	mu                       sync.Mutex
 }
 
 type Span struct {
@@ -125,6 +131,30 @@ func (l *Logger) SetColor(enabled bool) {
 	l.mu.Lock()
 	l.color = enabled
 	l.mu.Unlock()
+}
+
+// SetWidth sets the terminal width used to keep activity output previews on
+// one screen line. A non-positive width uses a conservative default.
+func (l *Logger) SetWidth(width int) {
+	l.mu.Lock()
+	if width < 0 {
+		width = 0
+	}
+	l.width = width
+	l.mu.Unlock()
+}
+
+// SeparateActivity inserts the pending activity separator before another
+// human-readable response is written. It is a no-op until an activity has
+// completed, so the final activity in a run does not leave a trailing blank.
+func (l *Logger) SeparateActivity() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.activitySeparatorPending {
+		return
+	}
+	fmt.Fprintln(l.out)
+	l.activitySeparatorPending = false
 }
 
 // SetTaskIndicator controls the compact Waiting animation produced for a
@@ -272,8 +302,17 @@ func (s *Span) stopAnimation() {
 	<-s.done
 }
 
-// End finalizes an activity as a single persistent terminal-history line.
+// End finalizes an activity as a persistent terminal-history event without an
+// output preview.
 func (s *ActivitySpan) End(err error) {
+	s.EndWithOutput(err, "")
+}
+
+// EndWithOutput finalizes an activity and, for human-readable output, shows a
+// compact preview of the tool output below the completed activity line.
+// Structured JSON activity events intentionally omit the preview because tool
+// output can contain arbitrary user data.
+func (s *ActivitySpan) EndWithOutput(err error, output string) {
 	if s == nil {
 		return
 	}
@@ -297,7 +336,7 @@ func (s *ActivitySpan) End(err error) {
 		s.logger.writeJSON("end", "activity", s.activity.Action, time.Now(), duration, fields)
 		return
 	}
-	s.logger.writeActivityCompleted(s, duration, err, s.stop != nil)
+	s.logger.writeActivityCompleted(s, duration, err, s.stop != nil, output)
 }
 
 func (s *ActivitySpan) animate() {
@@ -460,11 +499,14 @@ func (l *Logger) writeCompleted(s *Span, duration time.Duration, fields map[stri
 	fmt.Fprintln(l.out)
 }
 
-func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration, err error, clearLine bool) {
+func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration, err error, clearLine bool, output ...string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if clearLine {
 		fmt.Fprint(l.out, "\r\x1b[2K")
+	}
+	if l.activitySeparatorPending {
+		fmt.Fprintln(l.out)
 	}
 	marker := "OK"
 	if l.unicode {
@@ -484,6 +526,171 @@ func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration,
 	fmt.Fprint(l.out, l.style(l.activityColor(s.activity.Category), message))
 	fmt.Fprint(l.out, l.style(traceDim, " ("+duration.Round(time.Millisecond).String()+")"))
 	fmt.Fprintln(l.out)
+	preview := ""
+	if len(output) > 0 {
+		preview = output[0]
+	}
+	for _, line := range l.activityOutputLines(preview) {
+		fmt.Fprintln(l.out, l.style(traceDim, "  "+line))
+	}
+	l.activitySeparatorPending = true
+}
+
+const (
+	maxActivityPreviewLines    = 3
+	activityOutputIndent       = 2
+	activityOutputDefaultWidth = 120
+)
+
+// activityOutputLines returns at most three non-empty, terminal-safe output
+// lines. It must be called while l.mu is held.
+func (l *Logger) activityOutputLines(output string) []string {
+	output = sanitizeActivityOutput(output)
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+
+	rawLines := strings.Split(strings.ReplaceAll(output, "\r", "\n"), "\n")
+	lines := make([]string, 0, maxActivityPreviewLines)
+	nonEmptyLines := 0
+	for _, line := range rawLines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		line = normalizeActivityOutputLine(line)
+		nonEmptyLines++
+		if len(lines) < maxActivityPreviewLines {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+
+	width := l.width
+	if width <= 0 {
+		width = activityOutputDefaultWidth
+	}
+	contentWidth := width - activityOutputIndent
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+	more := nonEmptyLines > len(lines)
+	for index := range lines {
+		lines[index] = truncateActivityLine(lines[index], contentWidth, l.unicode, more && index == len(lines)-1)
+	}
+	return lines
+}
+
+// sanitizeActivityOutput removes terminal control sequences before output is
+// written into the activity history. Newlines are retained for line splitting;
+// other control characters are discarded or expanded to spaces.
+func sanitizeActivityOutput(output string) string {
+	var builder strings.Builder
+	state := byte(0)
+	for _, r := range output {
+		switch state {
+		case 1: // ESC introducer
+			switch r {
+			case '[':
+				state = 2
+			case ']':
+				state = 3
+			default:
+				state = 0
+			}
+		case 2: // CSI sequence
+			if r >= '@' && r <= '~' {
+				state = 0
+			}
+		case 3: // OSC sequence
+			if r == '\a' {
+				state = 0
+			} else if r == '\x1b' {
+				state = 4
+			}
+		case 4: // OSC terminated by ST (ESC \\)
+			if r == '\\' {
+				state = 0
+			} else if r != '\x1b' {
+				state = 3
+			}
+		default:
+			if r == '\x1b' {
+				state = 1
+				continue
+			}
+			switch r {
+			case '\n':
+				builder.WriteRune(r)
+			case '\r':
+				builder.WriteRune(r)
+			case '\t':
+				builder.WriteRune(r)
+			default:
+				if !unicode.IsControl(r) {
+					builder.WriteRune(r)
+				}
+			}
+		}
+	}
+	return builder.String()
+}
+
+// normalizeActivityOutputLine gives numbered read results the same outer
+// indentation as every other preview while retaining the useful line number
+// and source indentation: "      12\tvalue" becomes "12 | value".
+func normalizeActivityOutputLine(line string) string {
+	index := 0
+	for index < len(line) && (line[index] == ' ' || line[index] == '\t') {
+		index++
+	}
+	digitStart := index
+	for index < len(line) && line[index] >= '0' && line[index] <= '9' {
+		index++
+	}
+	if index > digitStart && index < len(line) && line[index] == '\t' {
+		return line[digitStart:index] + " | " + strings.ReplaceAll(line[index+1:], "\t", "    ")
+	}
+	return strings.ReplaceAll(line, "\t", "    ")
+}
+
+func truncateActivityLine(line string, width int, unicodeEnabled, forceEllipsis bool) string {
+	if width <= 0 {
+		return line
+	}
+	if !forceEllipsis && runewidth.StringWidth(line) <= width {
+		return line
+	}
+	suffix := "..."
+	if unicodeEnabled {
+		suffix = "…"
+	}
+	suffixWidth := runewidth.StringWidth(suffix)
+	if suffixWidth >= width {
+		return takeActivityWidth(suffix, width)
+	}
+	return takeActivityWidth(line, width-suffixWidth) + suffix
+}
+
+func takeActivityWidth(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	var builder strings.Builder
+	used := 0
+	for _, r := range value {
+		unit := runewidth.RuneWidth(r)
+		if unit < 0 {
+			unit = 0
+		}
+		if used+unit > width {
+			break
+		}
+		builder.WriteRune(r)
+		used += unit
+	}
+	return builder.String()
 }
 
 func (l *Logger) writeJSON(event, kind, name string, at time.Time, duration time.Duration, fields map[string]any) {
