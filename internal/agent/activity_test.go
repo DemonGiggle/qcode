@@ -23,6 +23,8 @@ func TestToolActivityUsesAllowlistedSummaries(t *testing.T) {
 		category  trace.ActivityCategory
 	}{
 		{"read", activityCall("read", `{"path":"internal/agent/agent.go"}`), "Reading internal/agent/agent.go", "Read internal/agent/agent.go", trace.ActivityRead},
+		{"read range", activityCall("read", `{"path":"internal/agent/agent.go","offset":120,"limit":61}`), "Reading internal/agent/agent.go:120-180", "Read internal/agent/agent.go:120-180", trace.ActivityRead},
+		{"read range with decimal string", activityCall("read", `{"path":"internal/agent/agent.go","offset":"120.0","limit":"2.0"}`), "Reading internal/agent/agent.go:120-121", "Read internal/agent/agent.go:120-121", trace.ActivityRead},
 		{"write", activityCall("write", `{"path":"README.md","content":"secret"}`), "Writing README.md", "Wrote README.md", trace.ActivityWrite},
 		{"web search", activityCall("web_search", `{"query":"Go context compaction"}`), `Searching web for "Go context compaction"`, `Searched web for "Go context compaction"`, trace.ActivityRead},
 		{"fetch", activityCall("web_fetch", `{"url":"https://example.test/path?token=secret#fragment"}`), "Fetching example.test", "Fetched example.test", trace.ActivityRead},
@@ -48,6 +50,11 @@ func TestToolActivitySanitizesAndBoundsTargets(t *testing.T) {
 	got = toolActivity(activityCall("read", `{"path":"`+long+`"}`))
 	if !strings.HasSuffix(got.Start, "…") || len([]rune(got.Start)) > len([]rune("Reading "))+maxActivityTargetRunes+1 {
 		t.Fatalf("bounded activity = %q", got.Start)
+	}
+	long = strings.Repeat("x", maxActivityTargetRunes)
+	got = toolActivity(activityCall("read", `{"path":"`+long+`","offset":120,"limit":2}`))
+	if !strings.HasSuffix(got.Start, ":120-121") {
+		t.Fatalf("read range was hidden by path truncation: %q", got.Start)
 	}
 }
 

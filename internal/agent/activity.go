@@ -2,7 +2,9 @@ package agent
 
 import (
 	"encoding/json"
+	"math"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -38,7 +40,8 @@ func toolActivity(call llm.ToolCall) trace.Activity {
 
 	switch call.Name {
 	case "read":
-		return activity("read", "Reading "+target(path, "file"), "Read "+target(path, "file"), trace.ActivityRead)
+		readTarget := readActivityTarget(path, call.Arguments)
+		return activity("read", "Reading "+target(readTarget, "file"), "Read "+target(readTarget, "file"), trace.ActivityRead)
 	case "write":
 		return activity("write", "Writing "+target(path, "file"), "Wrote "+target(path, "file"), trace.ActivityWrite)
 	case "edit":
@@ -82,6 +85,38 @@ func toolActivity(call llm.ToolCall) trace.Activity {
 	}
 }
 
+// readActivityTarget adds the requested one-based line window when the call
+// explicitly selects one. This makes separate reads of the same file
+// distinguishable without exposing file content.
+func readActivityTarget(path string, arguments json.RawMessage) string {
+	offset, hasOffset := activityInteger(arguments, "offset")
+	line, hasLine := activityInteger(arguments, "line")
+	limit, hasLimit := activityInteger(arguments, "limit")
+	if !hasOffset && !hasLine && !hasLimit {
+		return path
+	}
+	if offset < 1 {
+		offset = line
+	}
+	if offset < 1 {
+		offset = 1
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	end := offset + limit - 1
+	if end < offset { // Prevent an overflow from producing a misleading range.
+		end = int(^uint(0) >> 1)
+	}
+	suffix := ":" + strconv.Itoa(offset) + "-" + strconv.Itoa(end)
+	// Reserve room for the range so a long path cannot make the useful part of
+	// the activity title disappear when it is truncated for the terminal.
+	return truncateActivityTarget(path, maxActivityTargetRunes-utf8.RuneCountInString(suffix)-1) + suffix
+}
+
 func activity(action, start, completed string, category trace.ActivityCategory) trace.Activity {
 	return trace.Activity{Action: action, Start: start, Completed: completed, Category: category}
 }
@@ -96,6 +131,32 @@ func activityArgument(arguments json.RawMessage, key string) string {
 		return ""
 	}
 	return value
+}
+
+// activityInteger accepts the same integral number encodings as the read
+// tool, including local models that serialize an integer as a decimal string.
+func activityInteger(arguments json.RawMessage, key string) (int, bool) {
+	var values map[string]json.RawMessage
+	if json.Unmarshal(arguments, &values) != nil {
+		return 0, false
+	}
+	data, ok := values[key]
+	if !ok {
+		return 0, false
+	}
+	value := strings.TrimSpace(string(data))
+	if len(value) > 0 && value[0] == '"' {
+		if json.Unmarshal(data, &value) != nil {
+			return 0, false
+		}
+	}
+	number, err := strconv.ParseFloat(value, 64)
+	maxInt := int64(^uint(0) >> 1)
+	minInt := -maxInt - 1
+	if err != nil || math.IsInf(number, 0) || math.IsNaN(number) || math.Trunc(number) != number || number < float64(minInt) || number > float64(maxInt) {
+		return 0, false
+	}
+	return int(number), true
 }
 
 func activityURL(value string) string {
