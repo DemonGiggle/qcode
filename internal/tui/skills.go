@@ -32,6 +32,7 @@ func (u *UI) chooseSkills() {
 			initial[i] = selected[skill.Name]
 		}
 	}
+	u.printSystemMessage(formatSkillSelection("Currently enabled", selectedSkillNames(u.skills, initial), u.width, u.unicode, ColorEnabled(u.out), dim))
 	u.printSystemMessage(dim + "Type to filter. Use Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
@@ -52,7 +53,7 @@ func (u *UI) chooseSkills() {
 		u.onSkills(names)
 	}
 	runner.SetSkills(summaries)
-	u.printSystemMessage(fmt.Sprintf("%sSkills enabled: %d%s", green, len(names), reset))
+	u.printSystemMessage(formatSkillSelection("Skills enabled", names, u.width, u.unicode, ColorEnabled(u.out), green))
 }
 
 func (u *UI) skillLocationHint(color bool) string {
@@ -91,6 +92,45 @@ func formatSkillLocationHint(locations []string, color bool) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func selectedSkillNames(skills []prompt.SkillSummary, selected map[int]bool) []string {
+	names := make([]string, 0, len(selected))
+	for i, skill := range skills {
+		if selected[i] {
+			names = append(names, skill.Name)
+		}
+	}
+	return names
+}
+
+func skillSelectionValue(names []string) string {
+	clean := make([]string, 0, len(names))
+	for _, name := range names {
+		clean = append(clean, sanitizeDiffLine(name, "<ESC>"))
+	}
+	if len(clean) == 0 {
+		return "none"
+	}
+	return strings.Join(clean, ", ")
+}
+
+func formatSkillSelection(label string, names []string, width int, unicode, color bool, labelColor string) string {
+	value := skillSelectionValue(names)
+	plain := label + ": none"
+	if len(names) > 0 {
+		plain = fmt.Sprintf("%s (%d): %s", label, len(names), value)
+	}
+	if !color {
+		return truncateDiffLine(plain, width, unicode)
+	}
+	styled := labelColor + label + reset
+	if len(names) == 0 {
+		styled += ": " + dim + "none" + reset
+	} else {
+		styled += fmt.Sprintf(" (%d): %s%s%s", len(names), cyan, value, reset)
+	}
+	return truncateDiffLine(styled, width, unicode)
 }
 
 func selectSkills(in io.Reader, out io.Writer, skills []prompt.SkillSummary, initial map[int]bool, visible, width int, color bool) ([]string, []prompt.SkillSummary, bool, error) {
@@ -137,6 +177,7 @@ func selectSkills(in io.Reader, out io.Writer, skills []prompt.SkillSummary, ini
 			}
 			index := matches[current]
 			selected[index] = !selected[index]
+			replaceSelectorRow(out, rows, 0, renderSkillHeader(skills, matches, selected, query, width, color))
 			replaceSelectorRow(out, rows, 1+current-start, renderSkillLine(skills[index], selected[index], true, width, color))
 			continue
 		case arrowUpSequence, arrowDownSequence, selectorPageUp, selectorPageDown:
@@ -201,11 +242,7 @@ func matchingSkillIndices(skills []prompt.SkillSummary, query string) []int {
 }
 
 func renderSkillSelector(out io.Writer, skills []prompt.SkillSummary, matches []int, selected map[int]bool, current, start, visible, width int, query string, color bool) {
-	header := fmt.Sprintf("Select skills (%d/%d) | Filter: %s", len(matches), len(skills), query)
-	if width > 0 {
-		header = truncateDiffLine(header, width, false)
-	}
-	fmt.Fprintln(out, header)
+	fmt.Fprintln(out, renderSkillHeader(skills, matches, selected, query, width, color))
 	for row := 0; row < visible; row++ {
 		matchIndex := start + row
 		if matchIndex >= len(matches) {
@@ -219,6 +256,19 @@ func renderSkillSelector(out io.Writer, skills []prompt.SkillSummary, matches []
 		i := matches[matchIndex]
 		fmt.Fprintln(out, renderSkillLine(skills[i], selected[i], matchIndex == current, width, color))
 	}
+}
+
+func renderSkillHeader(skills []prompt.SkillSummary, matches []int, selected map[int]bool, query string, width int, color bool) string {
+	enabled := skillSelectionValue(selectedSkillNames(skills, selected))
+	header := fmt.Sprintf("Select skills (%d/%d) | Enabled: %s | Filter: %s", len(matches), len(skills), enabled, sanitizeDiffLine(query, "<ESC>"))
+	if color {
+		prefix := fmt.Sprintf("Select skills (%d/%d) | Enabled: ", len(matches), len(skills))
+		header = dim + prefix + reset + cyan + enabled + reset + dim + " | Filter: " + reset + sanitizeDiffLine(query, "<ESC>")
+	}
+	if width > 0 {
+		header = truncateDiffLine(header, width, false)
+	}
+	return header
 }
 
 func renderSkillLine(skill prompt.SkillSummary, selected, current bool, width int, color bool) string {

@@ -58,6 +58,35 @@ func TestSkillLocationHintSanitizesWorkspace(t *testing.T) {
 	}
 }
 
+func TestFormatSkillSelection(t *testing.T) {
+	plain := formatSkillSelection("Currently enabled", []string{"review", "deploy"}, 80, false, false, "")
+	if plain != "Currently enabled (2): review, deploy" {
+		t.Fatalf("plain summary = %q", plain)
+	}
+	if got := formatSkillSelection("Skills enabled", nil, 80, false, false, ""); got != "Skills enabled: none" {
+		t.Fatalf("empty summary = %q", got)
+	}
+	colored := formatSkillSelection("Skills enabled", []string{"review"}, 80, false, true, green)
+	if !strings.Contains(colored, green+"Skills enabled"+reset) || !strings.Contains(colored, cyan+"review"+reset) {
+		t.Fatalf("colored summary = %q", colored)
+	}
+}
+
+func TestRenderSkillHeaderShowsEnabledNames(t *testing.T) {
+	skills := []prompt.SkillSummary{{Name: "review"}, {Name: "deploy"}}
+	header := renderSkillHeader(skills, []int{0, 1}, map[int]bool{1: true}, "", 80, false)
+	if !strings.Contains(header, "Enabled: deploy") || !strings.Contains(header, "Filter:") {
+		t.Fatalf("skill header = %q", header)
+	}
+}
+
+func TestFormatSkillSelectionTruncatesToWidth(t *testing.T) {
+	got := formatSkillSelection("Currently enabled", []string{"a-very-long-skill-name", "another-skill"}, 24, false, false, "")
+	if visibleWidth(got) > 24 || !strings.Contains(got, "...") {
+		t.Fatalf("truncated summary width = %d, value = %q", visibleWidth(got), got)
+	}
+}
+
 func TestSelectSkillsNavigatesTogglesAndKeepsCatalogOrder(t *testing.T) {
 	skills := []prompt.SkillSummary{
 		{Name: "first", Description: "First skill"},
@@ -130,7 +159,7 @@ func TestSelectSkillsFiltersByNameAndDescription(t *testing.T) {
 	if err != nil || !accepted || strings.Join(names, ",") != "deploy" {
 		t.Fatalf("names = %v, accepted = %v, err = %v", names, accepted, err)
 	}
-	if !strings.Contains(output.String(), "Select skills (1/3) | Filter: publish") {
+	if !strings.Contains(output.String(), "Select skills (1/3) | Enabled: none | Filter: publish") {
 		t.Fatalf("filtered selector = %q", output.String())
 	}
 }
