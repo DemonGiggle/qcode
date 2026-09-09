@@ -169,6 +169,11 @@ func (a *Agent) SetSkills(skills []prompt.SkillSummary) {
 	}
 }
 
+// SelectedSkills returns the skills currently advertised to the model.
+func (a *Agent) SelectedSkills() []prompt.SkillSummary {
+	return append([]prompt.SkillSummary(nil), a.selectedSkills...)
+}
+
 // ResetSession discards conversation history while retaining the agent's
 // provider, model, tools, and runtime settings.
 func (a *Agent) ResetSession() {

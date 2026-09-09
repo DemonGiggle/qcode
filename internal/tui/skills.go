@@ -31,6 +31,16 @@ func (u *UI) chooseSkills() {
 		u.printSystemMessage(dim + "No workspace skills are available." + reset)
 		return
 	}
+	initial := make(map[int]bool)
+	if selectedRunner, ok := runner.(selectedSkillsRunner); ok {
+		selected := make(map[string]bool)
+		for _, skill := range selectedRunner.SelectedSkills() {
+			selected[skill.Name] = true
+		}
+		for i, skill := range u.skills {
+			initial[i] = selected[skill.Name]
+		}
+	}
 	u.printSystemMessage(dim + "Type to filter. Use Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
@@ -39,7 +49,7 @@ func (u *UI) chooseSkills() {
 		u.endRawSelector()
 	}()
 	visible := min(12, max(3, u.height-6))
-	names, summaries, accepted, err := selectSkills(u.input, u.terminal, u.skills, visible, u.width, ColorEnabled(u.out))
+	names, summaries, accepted, err := selectSkills(u.input, u.terminal, u.skills, initial, visible, u.width, ColorEnabled(u.out))
 	if err != nil {
 		return
 	}
@@ -123,12 +133,17 @@ func (u *UI) listSkills() {
 	u.printSystemMessage(strings.Join(lines, "\n"))
 }
 
-func selectSkills(in io.Reader, out io.Writer, skills []prompt.SkillSummary, visible, width int, color bool) ([]string, []prompt.SkillSummary, bool, error) {
+func selectSkills(in io.Reader, out io.Writer, skills []prompt.SkillSummary, initial map[int]bool, visible, width int, color bool) ([]string, []prompt.SkillSummary, bool, error) {
 	if len(skills) == 0 {
 		return nil, nil, false, nil
 	}
 	visible = selectorVisible(len(skills), visible)
-	selected := make(map[int]bool)
+	selected := make(map[int]bool, len(initial))
+	for index, enabled := range initial {
+		if enabled {
+			selected[index] = true
+		}
+	}
 	current := 0
 	start := 0
 	query := ""

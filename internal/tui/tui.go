@@ -98,6 +98,10 @@ type sessionRunner interface {
 
 type skillRunner interface{ SetSkills([]prompt.SkillSummary) }
 
+type selectedSkillsRunner interface {
+	SelectedSkills() []prompt.SkillSummary
+}
+
 type skillCatalogLoader func() ([]prompt.SkillSummary, []SkillInfo, error)
 
 type toolRunner interface {

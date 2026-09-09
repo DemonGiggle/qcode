@@ -98,7 +98,7 @@ func TestSelectSkillsNavigatesTogglesAndKeepsCatalogOrder(t *testing.T) {
 	input := strings.NewReader(" \x1b[B \x1b[A\r")
 	var output bytes.Buffer
 
-	names, summaries, accepted, err := selectSkills(input, &output, skills, 3, 80, false)
+	names, summaries, accepted, err := selectSkills(input, &output, skills, nil, 3, 80, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,13 +116,31 @@ func TestSelectSkillsNavigatesTogglesAndKeepsCatalogOrder(t *testing.T) {
 	}
 }
 
+func TestSelectSkillsKeepsExistingSelection(t *testing.T) {
+	skills := []prompt.SkillSummary{
+		{Name: "first", Description: "First skill"},
+		{Name: "second", Description: "Second skill"},
+	}
+	var output bytes.Buffer
+	names, summaries, accepted, err := selectSkills(strings.NewReader("\r"), &output, skills, map[int]bool{0: true}, 3, 80, false)
+	if err != nil || !accepted {
+		t.Fatalf("accepted = %v, err = %v", accepted, err)
+	}
+	if got := strings.Join(names, ","); got != "first" {
+		t.Fatalf("names = %q, want existing selection", got)
+	}
+	if len(summaries) != 1 || summaries[0].Name != "first" {
+		t.Fatalf("summaries = %v", summaries)
+	}
+}
+
 func TestSelectSkillsPagesThroughBoundedViewport(t *testing.T) {
 	skills := make([]prompt.SkillSummary, 30)
 	for i := range skills {
 		skills[i] = prompt.SkillSummary{Name: fmt.Sprintf("skill-%02d", i), Description: strings.Repeat("description ", 20)}
 	}
 	var output bytes.Buffer
-	names, _, accepted, err := selectSkills(strings.NewReader(selectorPageDown+" \r"), &output, skills, 5, 40, false)
+	names, _, accepted, err := selectSkills(strings.NewReader(selectorPageDown+" \r"), &output, skills, nil, 5, 40, false)
 	if err != nil || !accepted || len(names) != 1 || names[0] != "skill-05" {
 		t.Fatalf("names = %v, accepted = %v, err = %v", names, accepted, err)
 	}
@@ -138,7 +156,7 @@ func TestSelectSkillsFiltersByNameAndDescription(t *testing.T) {
 		{Name: "deploy", Description: "Publish a release"},
 	}
 	var output bytes.Buffer
-	names, _, accepted, err := selectSkills(strings.NewReader("publish \r"), &output, skills, 3, 80, false)
+	names, _, accepted, err := selectSkills(strings.NewReader("publish \r"), &output, skills, nil, 3, 80, false)
 	if err != nil || !accepted || strings.Join(names, ",") != "deploy" {
 		t.Fatalf("names = %v, accepted = %v, err = %v", names, accepted, err)
 	}
@@ -153,7 +171,7 @@ func TestSelectSkillsCancelsAndIgnoresUnknownKeys(t *testing.T) {
 	input := strings.NewReader("x\x7f\x1b[Z" + string([]byte{ctrlC}))
 	var output bytes.Buffer
 
-	names, summaries, accepted, err := selectSkills(input, &output, skills, 1, 80, false)
+	names, summaries, accepted, err := selectSkills(input, &output, skills, nil, 1, 80, false)
 	if err != nil {
 		t.Fatal(err)
 	}
