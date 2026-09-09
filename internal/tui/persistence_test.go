@@ -144,17 +144,17 @@ func TestResumeSwapsSavedTabsAndPreservesCurrentSession(t *testing.T) {
 	}
 }
 
-func TestSessionPickerEscapeAndBusyEntry(t *testing.T) {
+func TestSessionPickerCancelsAfterBusyEntry(t *testing.T) {
 	u, _ := persistenceUI(t)
 	entries := []session.Entry{{Snapshot: session.Snapshot{ID: strings.Repeat("a", 32), Preview: "preview", Saved: time.Now()}, Busy: true}}
 	u.input.data <- '\r'
-	u.input.data <- 27
+	u.input.data <- ctrlC
 	if _, accepted, err := u.selectSession(entries); accepted || err != nil {
 		t.Fatalf("busy entry accepted: %v %v", accepted, err)
 	}
 }
 
-func TestMatchingSessionIndicesFiltersPreviewAndID(t *testing.T) {
+func TestMatchingSessionIndicesFiltersUsefulSessionDetails(t *testing.T) {
 	entries := []session.Entry{
 		{Snapshot: session.Snapshot{ID: "a1b2c3d4", Preview: "Review the deployment plan"}},
 		{Snapshot: session.Snapshot{ID: "e5f6g7h8", Preview: "Investigate a test failure"}},
@@ -162,8 +162,26 @@ func TestMatchingSessionIndicesFiltersPreviewAndID(t *testing.T) {
 	if got := matchingSessionIndices(entries, "deployment"); !reflect.DeepEqual(got, []int{0}) {
 		t.Fatalf("preview matches = %v", got)
 	}
-	if got := matchingSessionIndices(entries, "g7h8"); !reflect.DeepEqual(got, []int{1}) {
-		t.Fatalf("ID matches = %v", got)
+	if got := matchingSessionIndices(entries, "g7h8"); len(got) != 0 {
+		t.Fatalf("opaque ID matched = %v", got)
+	}
+}
+
+func TestSessionSelectorLineUsesTimeAgentsAndPreviewWithoutID(t *testing.T) {
+	entry := session.Entry{Snapshot: session.Snapshot{
+		ID:      "fead69f5000000000000000000000000",
+		Saved:   time.Date(2026, time.September, 9, 14, 32, 0, 0, time.Local),
+		Preview: "Fix terminal input flicker",
+		Agents:  []session.SavedAgent{{}, {}},
+	}}
+	line := renderSessionLine(entry, true, 120, false)
+	for _, want := range []string{"> ", "Sep 09 14:32", "2 agents", "Fix terminal input flicker"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("session line missing %q: %q", want, line)
+		}
+	}
+	if strings.Contains(line, "fead69f5") {
+		t.Fatalf("session ID leaked into selector: %q", line)
 	}
 }
 

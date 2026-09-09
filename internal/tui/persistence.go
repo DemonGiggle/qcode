@@ -324,20 +324,6 @@ func (u *UI) closeSession() {
 	session.Release(u.persistence.lock)
 }
 
-func relativeDeparture(t, now time.Time) string {
-	d := now.Sub(t)
-	if d < time.Minute {
-		return "just now"
-	}
-	if d < time.Hour {
-		return fmt.Sprintf("%d minutes ago", int(d.Minutes()))
-	}
-	if d < 24*time.Hour {
-		return fmt.Sprintf("%d hours ago", int(d.Hours()))
-	}
-	return fmt.Sprintf("%d days ago", int(d.Hours()/24))
-}
-
 func (u *UI) resumeSession() {
 	p := u.persistence
 	if p == nil {
@@ -456,106 +442,89 @@ func (u *UI) activateRestoredTab() {
 }
 
 func (u *UI) selectSession(entries []session.Entry) (string, bool, error) {
-	selected := 0
-	query := ""
-	matches := matchingSessionIndices(entries, query)
-	u.screenMu.Lock()
 	if u.height < 7 || u.width < 20 {
-		u.screenMu.Unlock()
 		return "", false, fmt.Errorf("enlarge the terminal to at least 20 columns and 7 rows to select a session")
 	}
-	rows := max(1, (u.height-4)/3)
-	u.renderSessionSelectorLocked(entries, matches, selected, rows, query)
-	u.screenMu.Unlock()
+	visible := min(12, max(3, u.height-6))
+	return selectSession(u.input, u.terminal, entries, visible, u.width, ColorEnabled(u.out))
+}
+
+func selectSession(in io.Reader, out io.Writer, entries []session.Entry, visible, width int, color bool) (string, bool, error) {
+	if len(entries) == 0 {
+		return "", false, nil
+	}
+	visible = selectorVisible(len(entries), visible)
+	rows := visible + 1
+	query := ""
+	matches := matchingSessionIndices(entries, query)
+	selected, start := 0, 0
+	renderSessionSelector(out, entries, matches, selected, start, visible, width, query, color)
 	for {
-		var b [1]byte
-		if _, err := io.ReadFull(u.input, b[:]); err != nil {
+		key, err := readSelectorKey(in)
+		if err != nil {
+			clearSelector(out, rows)
 			return "", false, err
 		}
-		switch b[0] {
-		case '\r', '\n':
+		switch key {
+		case "\r", "\n":
 			if len(matches) == 0 {
 				continue
 			}
 			entry := entries[matches[selected]]
 			if !entry.Busy && entry.Problem == "" {
+				clearSelector(out, rows)
 				return entry.ID, true, nil
 			}
 			continue
-		case ctrlC:
+		case string([]byte{ctrlC}), "\x1b":
+			clearSelector(out, rows)
 			return "", false, nil
-		case 27:
+		case arrowUpSequence, arrowDownSequence, selectorPageUp, selectorPageDown:
 			if len(matches) == 0 {
 				continue
 			}
-			oldSelected := selected
-			// interruptReader already owns the byte stream. A short timeout makes
-			// a lone Escape cancel without leaving a blocked reader behind.
-			select {
-			case next := <-u.input.data:
-				if next != '[' {
-					return "", false, nil
-				}
-				select {
-				case key := <-u.input.data:
-					if key == 'A' {
-						selected = (selected + len(matches) - 1) % len(matches)
-					} else if key == 'B' {
-						selected = (selected + 1) % len(matches)
-					} else if key == '5' || key == '6' {
-						select {
-						case terminator := <-u.input.data:
-							if terminator == '~' {
-								direction := -1
-								if key == '6' {
-									direction = 1
-								}
-								selected = min(len(matches)-1, max(0, selected+direction*rows))
-							}
-						case <-time.After(80 * time.Millisecond):
-							return "", false, nil
-						}
-					}
-				case <-time.After(80 * time.Millisecond):
-					return "", false, nil
-				}
-			case <-time.After(80 * time.Millisecond):
-				return "", false, nil
+			oldSelected, oldStart := selected, start
+			switch key {
+			case arrowUpSequence:
+				selected = (selected + len(matches) - 1) % len(matches)
+				start = selectorStart(selected, len(matches), visible, start)
+			case arrowDownSequence:
+				selected = (selected + 1) % len(matches)
+				start = selectorStart(selected, len(matches), visible, start)
+			case selectorPageUp:
+				selected, start = selectorPage(selected, start, len(matches), visible, -1)
+			case selectorPageDown:
+				selected, start = selectorPage(selected, start, len(matches), visible, 1)
 			}
-			if selected != oldSelected {
-				u.screenMu.Lock()
-				oldStart, newStart := oldSelected/rows*rows, selected/rows*rows
-				if oldStart != newStart {
-					u.renderSessionSelectorLocked(entries, matches, selected, rows, query)
-				} else {
-					u.renderSessionEntryLocked(entries[matches[oldSelected]], oldSelected-oldStart, false)
-					u.renderSessionEntryLocked(entries[matches[selected]], selected-newStart, true)
-				}
-				u.screenMu.Unlock()
+			if start != oldStart {
+				clearSelector(out, rows)
+				renderSessionSelector(out, entries, matches, selected, start, visible, width, query, color)
+			} else if selected != oldSelected {
+				replaceSelectorRow(out, rows, 1+oldSelected-start, renderSessionLine(entries[matches[oldSelected]], false, width, color))
+				replaceSelectorRow(out, rows, 1+selected-start, renderSessionLine(entries[matches[selected]], true, width, color))
 			}
 			continue
-		case 8, 127:
+		case string([]byte{8}), string([]byte{127}):
 			if query == "" {
 				continue
 			}
 			query = query[:len(query)-1]
 			matches = matchingSessionIndices(entries, query)
-			selected = 0
-		case ctrlU:
+			selected, start = 0, 0
+		case string([]byte{ctrlU}):
 			query = ""
 			matches = matchingSessionIndices(entries, query)
-			selected = 0
+			selected, start = 0, 0
 		default:
-			if b[0] < 32 || b[0] > 126 {
+			if len(key) != 1 || key[0] < 32 || key[0] > 126 {
 				continue
 			}
-			query += string(b[0])
+			query += key
 			matches = matchingSessionIndices(entries, query)
-			selected = 0
+			selected, start = 0, 0
 		}
-		u.screenMu.Lock()
-		u.renderSessionSelectorLocked(entries, matches, selected, rows, query)
-		u.screenMu.Unlock()
+		clearSelector(out, rows)
+		renderSessionSelector(out, entries, matches, selected, start, visible, width, query, color)
 	}
 }
 
@@ -563,7 +532,7 @@ func matchingSessionIndices(entries []session.Entry, query string) []int {
 	query = strings.ToLower(query)
 	matches := make([]int, 0, len(entries))
 	for i, entry := range entries {
-		text := entry.ID + " " + entry.Preview + " " + entry.Problem
+		text := sessionEntryLabel(entry)
 		if strings.Contains(strings.ToLower(text), query) {
 			matches = append(matches, i)
 		}
@@ -571,56 +540,64 @@ func matchingSessionIndices(entries []session.Entry, query string) []int {
 	return matches
 }
 
-func (u *UI) renderSessionSelectorLocked(entries []session.Entry, matches []int, selected, rows int, query string) {
-	start := selected / rows * rows
-	fmt.Fprint(u.out, "\x1b[s\x1b[2;1H")
-	header := fmt.Sprintf("Resume session (%d/%d) | Filter: %s | Up/Down, PgUp/PgDn, Enter, Esc", len(matches), len(entries), query)
-	fmt.Fprintf(u.out, "\x1b[2K%s\r\n", truncateDiffLine(header, u.width, u.unicode))
-	for row := 0; row < rows; row++ {
+func renderSessionSelector(out io.Writer, entries []session.Entry, matches []int, selected, start, visible, width int, query string, color bool) {
+	header := fmt.Sprintf("Resume session (%d/%d) | Filter: %s", len(matches), len(entries), query)
+	if width > 0 {
+		header = truncateDiffLine(header, width, false)
+	}
+	fmt.Fprintln(out, header)
+	for row := 0; row < visible; row++ {
 		matchIndex := start + row
 		if matchIndex >= len(matches) {
 			if row == 0 && len(matches) == 0 {
-				fmt.Fprint(u.out, "\x1b[2K  No matching sessions\r\n\x1b[2K\r\n\x1b[2K\r\n")
-				continue
+				fmt.Fprintln(out, "  No matching sessions")
+			} else {
+				fmt.Fprintln(out)
 			}
-			fmt.Fprint(u.out, "\x1b[2K\r\n\x1b[2K\r\n\x1b[2K\r\n")
 			continue
 		}
-		u.writeSessionEntryLocked(entries[matches[matchIndex]], matchIndex == selected)
+		fmt.Fprintln(out, renderSessionLine(entries[matches[matchIndex]], matchIndex == selected, width, color))
 	}
-	fmt.Fprint(u.out, "\x1b[u")
 }
 
-func (u *UI) renderSessionEntryLocked(entry session.Entry, row int, selected bool) {
-	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H", 3+row*3)
-	u.writeSessionEntryLocked(entry, selected)
-	fmt.Fprint(u.out, "\x1b[u")
-}
-
-func (u *UI) writeSessionEntryLocked(entry session.Entry, selected bool) {
+func renderSessionLine(entry session.Entry, selected bool, width int, color bool) string {
 	marker := "  "
 	if selected {
 		marker = "> "
 	}
-	busy := ""
+	line := marker + sessionEntryLabel(entry)
+	if width > 0 {
+		line = truncateDiffLine(line, width, false)
+	}
+	if !color {
+		return line
+	}
 	if entry.Busy {
-		busy = " (open elsewhere)"
+		return dim + line + reset
 	}
 	if entry.Problem != "" {
-		busy = " (unavailable)"
+		return yellow + line + reset
 	}
-	fmt.Fprintf(u.out, "\x1b[2K%s\r\n", truncateDiffLine(marker+entry.ID[:8]+"  "+relativeDeparture(session.Departure(entry.Snapshot), time.Now())+busy, u.width, u.unicode))
+	if selected {
+		return cyan + bold + line + reset
+	}
+	return line
+}
+
+func sessionEntryLabel(entry session.Entry) string {
+	when := session.Departure(entry.Snapshot).In(time.Local).Format("Jan 02 15:04")
+	agents := "1 agent"
+	if len(entry.Agents) != 1 {
+		agents = fmt.Sprintf("%d agents", len(entry.Agents))
+	}
 	preview := strings.Join(strings.Fields(plainHistoryText(entry.Preview)), " ")
+	if preview == "" {
+		preview = "Untitled session"
+	}
 	if entry.Problem != "" {
-		preview = entry.Problem
+		preview = "Unavailable: " + entry.Problem
+	} else if entry.Busy {
+		preview = "Open elsewhere: " + preview
 	}
-	preview = sanitizeDiffLine(preview, "<ESC>")
-	lines := strings.Split(wrapANSI(preview, max(1, u.width-2), ""), "\n")
-	for j := 0; j < 2; j++ {
-		line := ""
-		if j < len(lines) {
-			line = lines[j]
-		}
-		fmt.Fprintf(u.out, "\x1b[2K  %s\r\n", line)
-	}
+	return sanitizeDiffLine(when+" · "+agents+" · "+preview, "<ESC>")
 }
