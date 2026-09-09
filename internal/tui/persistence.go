@@ -457,13 +457,15 @@ func (u *UI) activateRestoredTab() {
 
 func (u *UI) selectSession(entries []session.Entry) (string, bool, error) {
 	selected := 0
+	query := ""
+	matches := matchingSessionIndices(entries, query)
 	u.screenMu.Lock()
 	if u.height < 7 || u.width < 20 {
 		u.screenMu.Unlock()
 		return "", false, fmt.Errorf("enlarge the terminal to at least 20 columns and 7 rows to select a session")
 	}
 	rows := max(1, (u.height-4)/3)
-	u.renderSessionSelectorLocked(entries, selected, rows)
+	u.renderSessionSelectorLocked(entries, matches, selected, rows, query)
 	u.screenMu.Unlock()
 	for {
 		var b [1]byte
@@ -472,12 +474,20 @@ func (u *UI) selectSession(entries []session.Entry) (string, bool, error) {
 		}
 		switch b[0] {
 		case '\r', '\n':
-			if !entries[selected].Busy && entries[selected].Problem == "" {
-				return entries[selected].ID, true, nil
+			if len(matches) == 0 {
+				continue
 			}
+			entry := entries[matches[selected]]
+			if !entry.Busy && entry.Problem == "" {
+				return entry.ID, true, nil
+			}
+			continue
 		case ctrlC:
 			return "", false, nil
 		case 27:
+			if len(matches) == 0 {
+				continue
+			}
 			oldSelected := selected
 			// interruptReader already owns the byte stream. A short timeout makes
 			// a lone Escape cancel without leaving a blocked reader behind.
@@ -489,9 +499,9 @@ func (u *UI) selectSession(entries []session.Entry) (string, bool, error) {
 				select {
 				case key := <-u.input.data:
 					if key == 'A' {
-						selected = (selected + len(entries) - 1) % len(entries)
+						selected = (selected + len(matches) - 1) % len(matches)
 					} else if key == 'B' {
-						selected = (selected + 1) % len(entries)
+						selected = (selected + 1) % len(matches)
 					} else if key == '5' || key == '6' {
 						select {
 						case terminator := <-u.input.data:
@@ -500,7 +510,7 @@ func (u *UI) selectSession(entries []session.Entry) (string, bool, error) {
 								if key == '6' {
 									direction = 1
 								}
-								selected = min(len(entries)-1, max(0, selected+direction*rows))
+								selected = min(len(matches)-1, max(0, selected+direction*rows))
 							}
 						case <-time.After(80 * time.Millisecond):
 							return "", false, nil
@@ -516,28 +526,67 @@ func (u *UI) selectSession(entries []session.Entry) (string, bool, error) {
 				u.screenMu.Lock()
 				oldStart, newStart := oldSelected/rows*rows, selected/rows*rows
 				if oldStart != newStart {
-					u.renderSessionSelectorLocked(entries, selected, rows)
+					u.renderSessionSelectorLocked(entries, matches, selected, rows, query)
 				} else {
-					u.renderSessionEntryLocked(entries[oldSelected], oldSelected-oldStart, false)
-					u.renderSessionEntryLocked(entries[selected], selected-newStart, true)
+					u.renderSessionEntryLocked(entries[matches[oldSelected]], oldSelected-oldStart, false)
+					u.renderSessionEntryLocked(entries[matches[selected]], selected-newStart, true)
 				}
 				u.screenMu.Unlock()
 			}
+			continue
+		case 8, 127:
+			if query == "" {
+				continue
+			}
+			query = query[:len(query)-1]
+			matches = matchingSessionIndices(entries, query)
+			selected = 0
+		case ctrlU:
+			query = ""
+			matches = matchingSessionIndices(entries, query)
+			selected = 0
+		default:
+			if b[0] < 32 || b[0] > 126 {
+				continue
+			}
+			query += string(b[0])
+			matches = matchingSessionIndices(entries, query)
+			selected = 0
 		}
+		u.screenMu.Lock()
+		u.renderSessionSelectorLocked(entries, matches, selected, rows, query)
+		u.screenMu.Unlock()
 	}
 }
 
-func (u *UI) renderSessionSelectorLocked(entries []session.Entry, selected, rows int) {
+func matchingSessionIndices(entries []session.Entry, query string) []int {
+	query = strings.ToLower(query)
+	matches := make([]int, 0, len(entries))
+	for i, entry := range entries {
+		text := entry.ID + " " + entry.Preview + " " + entry.Problem
+		if strings.Contains(strings.ToLower(text), query) {
+			matches = append(matches, i)
+		}
+	}
+	return matches
+}
+
+func (u *UI) renderSessionSelectorLocked(entries []session.Entry, matches []int, selected, rows int, query string) {
 	start := selected / rows * rows
 	fmt.Fprint(u.out, "\x1b[s\x1b[2;1H")
-	fmt.Fprintf(u.out, "\x1b[2K%s\r\n", truncateDiffLine("Resume session | Up/Down, PgUp/PgDn, Enter, Esc", u.width, u.unicode))
+	header := fmt.Sprintf("Resume session (%d/%d) | Filter: %s | Up/Down, PgUp/PgDn, Enter, Esc", len(matches), len(entries), query)
+	fmt.Fprintf(u.out, "\x1b[2K%s\r\n", truncateDiffLine(header, u.width, u.unicode))
 	for row := 0; row < rows; row++ {
-		i := start + row
-		if i >= len(entries) {
+		matchIndex := start + row
+		if matchIndex >= len(matches) {
+			if row == 0 && len(matches) == 0 {
+				fmt.Fprint(u.out, "\x1b[2K  No matching sessions\r\n\x1b[2K\r\n\x1b[2K\r\n")
+				continue
+			}
 			fmt.Fprint(u.out, "\x1b[2K\r\n\x1b[2K\r\n\x1b[2K\r\n")
 			continue
 		}
-		u.writeSessionEntryLocked(entries[i], i == selected)
+		u.writeSessionEntryLocked(entries[matches[matchIndex]], matchIndex == selected)
 	}
 	fmt.Fprint(u.out, "\x1b[u")
 }

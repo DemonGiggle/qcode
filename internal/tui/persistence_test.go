@@ -154,6 +154,19 @@ func TestSessionPickerEscapeAndBusyEntry(t *testing.T) {
 	}
 }
 
+func TestMatchingSessionIndicesFiltersPreviewAndID(t *testing.T) {
+	entries := []session.Entry{
+		{Snapshot: session.Snapshot{ID: "a1b2c3d4", Preview: "Review the deployment plan"}},
+		{Snapshot: session.Snapshot{ID: "e5f6g7h8", Preview: "Investigate a test failure"}},
+	}
+	if got := matchingSessionIndices(entries, "deployment"); !reflect.DeepEqual(got, []int{0}) {
+		t.Fatalf("preview matches = %v", got)
+	}
+	if got := matchingSessionIndices(entries, "g7h8"); !reflect.DeepEqual(got, []int{1}) {
+		t.Fatalf("ID matches = %v", got)
+	}
+}
+
 func TestEmptyLaunchNotSaved(t *testing.T) {
 	u, m := persistenceUI(t)
 	m.agents = m.agents[:1]

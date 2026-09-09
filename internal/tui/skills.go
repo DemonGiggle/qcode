@@ -31,7 +31,7 @@ func (u *UI) chooseSkills() {
 		u.printSystemMessage(dim + "No workspace skills are available." + reset)
 		return
 	}
-	u.printSystemMessage(dim + "Use Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, or Ctrl+C to cancel." + reset)
+	u.printSystemMessage(dim + "Type to filter. Use Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
 	defer func() {
@@ -131,19 +131,22 @@ func selectSkills(in io.Reader, out io.Writer, skills []prompt.SkillSummary, vis
 	selected := make(map[int]bool)
 	current := 0
 	start := 0
-	renderSkillSelector(out, skills, selected, current, start, visible, width, color)
+	query := ""
+	matches := matchingSkillIndices(skills, query)
+	rows := visible + 1
+	renderSkillSelector(out, skills, matches, selected, current, start, visible, width, query, color)
 	for {
 		key, err := readSelectorKey(in)
 		if err != nil {
-			clearSelector(out, visible)
+			clearSelector(out, rows)
 			return nil, nil, false, err
 		}
 		switch key {
 		case string([]byte{ctrlC}):
-			clearSelector(out, visible)
+			clearSelector(out, rows)
 			return nil, nil, false, nil
 		case "\r", "\n":
-			clearSelector(out, visible)
+			clearSelector(out, rows)
 			names := make([]string, 0, len(selected))
 			summaries := make([]prompt.SkillSummary, 0, len(selected))
 			for i, skill := range skills {
@@ -154,42 +157,92 @@ func selectSkills(in io.Reader, out io.Writer, skills []prompt.SkillSummary, vis
 			}
 			return names, summaries, true, nil
 		case " ":
-			selected[current] = !selected[current]
-			replaceSelectorRow(out, visible, current-start, renderSkillLine(skills[current], selected[current], true, width, color))
+			if len(matches) == 0 {
+				continue
+			}
+			index := matches[current]
+			selected[index] = !selected[index]
+			replaceSelectorRow(out, rows, 1+current-start, renderSkillLine(skills[index], selected[index], true, width, color))
 			continue
 		case arrowUpSequence, arrowDownSequence, selectorPageUp, selectorPageDown:
+			if len(matches) == 0 {
+				continue
+			}
 			oldCurrent, oldStart := current, start
 			switch key {
 			case arrowUpSequence:
-				current = (current - 1 + len(skills)) % len(skills)
-				start = selectorStart(current, len(skills), visible, start)
+				current = (current - 1 + len(matches)) % len(matches)
+				start = selectorStart(current, len(matches), visible, start)
 			case arrowDownSequence:
-				current = (current + 1) % len(skills)
-				start = selectorStart(current, len(skills), visible, start)
+				current = (current + 1) % len(matches)
+				start = selectorStart(current, len(matches), visible, start)
 			case selectorPageUp:
-				current, start = selectorPage(current, start, len(skills), visible, -1)
+				current, start = selectorPage(current, start, len(matches), visible, -1)
 			case selectorPageDown:
-				current, start = selectorPage(current, start, len(skills), visible, 1)
+				current, start = selectorPage(current, start, len(matches), visible, 1)
 			}
 			if start != oldStart {
-				clearSelector(out, visible)
-				renderSkillSelector(out, skills, selected, current, start, visible, width, color)
+				clearSelector(out, rows)
+				renderSkillSelector(out, skills, matches, selected, current, start, visible, width, query, color)
 			} else if current != oldCurrent {
-				replaceSelectorRow(out, visible, oldCurrent-start, renderSkillLine(skills[oldCurrent], selected[oldCurrent], false, width, color))
-				replaceSelectorRow(out, visible, current-start, renderSkillLine(skills[current], selected[current], true, width, color))
+				oldIndex, index := matches[oldCurrent], matches[current]
+				replaceSelectorRow(out, rows, 1+oldCurrent-start, renderSkillLine(skills[oldIndex], selected[oldIndex], false, width, color))
+				replaceSelectorRow(out, rows, 1+current-start, renderSkillLine(skills[index], selected[index], true, width, color))
 			}
+			continue
+		case string([]byte{8}), string([]byte{127}):
+			if query == "" {
+				continue
+			}
+			query = query[:len(query)-1]
+			matches = matchingSkillIndices(skills, query)
+			current, start = 0, 0
+		case string([]byte{ctrlU}):
+			query = ""
+			matches = matchingSkillIndices(skills, query)
+			current, start = 0, 0
+		default:
+			if len(key) != 1 || key[0] < 32 || key[0] > 126 {
+				continue
+			}
+			query += key
+			matches = matchingSkillIndices(skills, query)
+			current, start = 0, 0
 		}
+		clearSelector(out, rows)
+		renderSkillSelector(out, skills, matches, selected, current, start, visible, width, query, color)
 	}
 }
 
-func renderSkillSelector(out io.Writer, skills []prompt.SkillSummary, selected map[int]bool, current, start, visible, width int, color bool) {
-	for row := 0; row < visible; row++ {
-		i := start + row
-		line := ""
-		if i < len(skills) {
-			line = renderSkillLine(skills[i], selected[i], i == current, width, color)
+func matchingSkillIndices(skills []prompt.SkillSummary, query string) []int {
+	query = strings.ToLower(query)
+	matches := make([]int, 0, len(skills))
+	for i, skill := range skills {
+		if strings.Contains(strings.ToLower(skill.Name), query) || strings.Contains(strings.ToLower(skill.Description), query) {
+			matches = append(matches, i)
 		}
-		fmt.Fprintln(out, line)
+	}
+	return matches
+}
+
+func renderSkillSelector(out io.Writer, skills []prompt.SkillSummary, matches []int, selected map[int]bool, current, start, visible, width int, query string, color bool) {
+	header := fmt.Sprintf("Select skills (%d/%d) | Filter: %s", len(matches), len(skills), query)
+	if width > 0 {
+		header = truncateDiffLine(header, width, false)
+	}
+	fmt.Fprintln(out, header)
+	for row := 0; row < visible; row++ {
+		matchIndex := start + row
+		if matchIndex >= len(matches) {
+			if row == 0 && len(matches) == 0 {
+				fmt.Fprintln(out, "  No matching skills")
+			} else {
+				fmt.Fprintln(out)
+			}
+			continue
+		}
+		i := matches[matchIndex]
+		fmt.Fprintln(out, renderSkillLine(skills[i], selected[i], matchIndex == current, width, color))
 	}
 }
 

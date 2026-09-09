@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"io"
+	"strings"
 )
 
 // toolStatus describes a single tool's enabled/disabled state for display.
@@ -25,7 +26,7 @@ func (u *UI) chooseTools() {
 		u.printSystemMessage(dim + "No tools are available." + reset)
 		return
 	}
-	u.printSystemMessage(dim + "Use Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, or Ctrl+C to cancel." + reset)
+	u.printSystemMessage(dim + "Type to filter. Use Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
 	defer func() {
@@ -62,60 +63,113 @@ func selectTools(in io.Reader, out io.Writer, names []string, runner toolRunner,
 	for i, name := range names {
 		statuses[i] = toolStatus{name: name, enabled: runner.ToolEnabled(name)}
 	}
-	renderToolSelector(out, statuses, current, start, visible, width, color)
+	query := ""
+	matches := matchingToolIndices(statuses, query)
+	rows := visible + 1
+	renderToolSelector(out, statuses, matches, current, start, visible, width, query, color)
 	for {
 		key, err := readSelectorKey(in)
 		if err != nil {
-			clearSelector(out, visible)
+			clearSelector(out, rows)
 			return false, err
 		}
 		switch key {
 		case string([]byte{ctrlC}):
-			clearSelector(out, visible)
+			clearSelector(out, rows)
 			return false, nil
 		case "\r", "\n":
-			clearSelector(out, visible)
+			clearSelector(out, rows)
 			for _, status := range statuses {
 				runner.ToggleTool(status.name, status.enabled)
 			}
 			return true, nil
 		case " ":
-			statuses[current].enabled = !statuses[current].enabled
-			replaceSelectorRow(out, visible, current-start, renderToolLine(statuses[current], true, width, color))
+			if len(matches) == 0 {
+				continue
+			}
+			index := matches[current]
+			statuses[index].enabled = !statuses[index].enabled
+			replaceSelectorRow(out, rows, 1+current-start, renderToolLine(statuses[index], true, width, color))
 			continue
 		case arrowUpSequence, arrowDownSequence, selectorPageUp, selectorPageDown:
+			if len(matches) == 0 {
+				continue
+			}
 			oldCurrent, oldStart := current, start
 			switch key {
 			case arrowUpSequence:
-				current = (current - 1 + len(names)) % len(names)
-				start = selectorStart(current, len(names), visible, start)
+				current = (current - 1 + len(matches)) % len(matches)
+				start = selectorStart(current, len(matches), visible, start)
 			case arrowDownSequence:
-				current = (current + 1) % len(names)
-				start = selectorStart(current, len(names), visible, start)
+				current = (current + 1) % len(matches)
+				start = selectorStart(current, len(matches), visible, start)
 			case selectorPageUp:
-				current, start = selectorPage(current, start, len(names), visible, -1)
+				current, start = selectorPage(current, start, len(matches), visible, -1)
 			case selectorPageDown:
-				current, start = selectorPage(current, start, len(names), visible, 1)
+				current, start = selectorPage(current, start, len(matches), visible, 1)
 			}
 			if start != oldStart {
-				clearSelector(out, visible)
-				renderToolSelector(out, statuses, current, start, visible, width, color)
+				clearSelector(out, rows)
+				renderToolSelector(out, statuses, matches, current, start, visible, width, query, color)
 			} else if current != oldCurrent {
-				replaceSelectorRow(out, visible, oldCurrent-start, renderToolLine(statuses[oldCurrent], false, width, color))
-				replaceSelectorRow(out, visible, current-start, renderToolLine(statuses[current], true, width, color))
+				oldIndex, index := matches[oldCurrent], matches[current]
+				replaceSelectorRow(out, rows, 1+oldCurrent-start, renderToolLine(statuses[oldIndex], false, width, color))
+				replaceSelectorRow(out, rows, 1+current-start, renderToolLine(statuses[index], true, width, color))
 			}
+			continue
+		case string([]byte{8}), string([]byte{127}):
+			if query == "" {
+				continue
+			}
+			query = query[:len(query)-1]
+			matches = matchingToolIndices(statuses, query)
+			current, start = 0, 0
+		case string([]byte{ctrlU}):
+			query = ""
+			matches = matchingToolIndices(statuses, query)
+			current, start = 0, 0
+		default:
+			if len(key) != 1 || key[0] < 32 || key[0] > 126 {
+				continue
+			}
+			query += key
+			matches = matchingToolIndices(statuses, query)
+			current, start = 0, 0
 		}
+		clearSelector(out, rows)
+		renderToolSelector(out, statuses, matches, current, start, visible, width, query, color)
 	}
 }
 
-func renderToolSelector(out io.Writer, statuses []toolStatus, current, start, visible, width int, color bool) {
-	for row := 0; row < visible; row++ {
-		i := start + row
-		line := ""
-		if i < len(statuses) {
-			line = renderToolLine(statuses[i], i == current, width, color)
+func matchingToolIndices(statuses []toolStatus, query string) []int {
+	query = strings.ToLower(query)
+	matches := make([]int, 0, len(statuses))
+	for i, tool := range statuses {
+		if strings.Contains(strings.ToLower(tool.name), query) {
+			matches = append(matches, i)
 		}
-		fmt.Fprintln(out, line)
+	}
+	return matches
+}
+
+func renderToolSelector(out io.Writer, statuses []toolStatus, matches []int, current, start, visible, width int, query string, color bool) {
+	header := fmt.Sprintf("Select tools (%d/%d) | Filter: %s", len(matches), len(statuses), query)
+	if width > 0 {
+		header = truncateDiffLine(header, width, false)
+	}
+	fmt.Fprintln(out, header)
+	for row := 0; row < visible; row++ {
+		matchIndex := start + row
+		if matchIndex >= len(matches) {
+			if row == 0 && len(matches) == 0 {
+				fmt.Fprintln(out, "  No matching tools")
+			} else {
+				fmt.Fprintln(out)
+			}
+			continue
+		}
+		i := matches[matchIndex]
+		fmt.Fprintln(out, renderToolLine(statuses[i], matchIndex == current, width, color))
 	}
 }
 

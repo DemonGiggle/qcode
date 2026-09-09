@@ -16,9 +16,10 @@ func TestSkillSelectorRefreshReplacesExistingRows(t *testing.T) {
 	}
 	var output bytes.Buffer
 
-	renderSkillSelector(&output, skills, map[int]bool{}, 0, 0, 2, 80, false)
-	replaceSelectorRow(&output, 2, 0, renderSkillLine(skills[0], false, false, 80, false))
-	replaceSelectorRow(&output, 2, 1, renderSkillLine(skills[1], true, true, 80, false))
+	matches := matchingSkillIndices(skills, "")
+	renderSkillSelector(&output, skills, matches, map[int]bool{}, 0, 0, 2, 80, "", false)
+	replaceSelectorRow(&output, 3, 1, renderSkillLine(skills[0], false, false, 80, false))
+	replaceSelectorRow(&output, 3, 2, renderSkillLine(skills[1], true, true, 80, false))
 
 	got := output.String()
 	if clears := strings.Count(got, "\x1b[2K"); clears != 2 {
@@ -110,8 +111,8 @@ func TestSelectSkillsNavigatesTogglesAndKeepsCatalogOrder(t *testing.T) {
 	if got, want := summaries[0].Name+","+summaries[1].Name, "first,second"; got != want {
 		t.Fatalf("summaries = %q, want %q", got, want)
 	}
-	if got := strings.Count(output.String(), "\n"); got != 3 {
-		t.Fatalf("rendered lines = %d, want one initial three-row render", got)
+	if got := strings.Count(output.String(), "\n"); got != 4 {
+		t.Fatalf("rendered lines = %d, want one initial header and three-row render", got)
 	}
 }
 
@@ -125,8 +126,24 @@ func TestSelectSkillsPagesThroughBoundedViewport(t *testing.T) {
 	if err != nil || !accepted || len(names) != 1 || names[0] != "skill-05" {
 		t.Fatalf("names = %v, accepted = %v, err = %v", names, accepted, err)
 	}
-	if lines := strings.Count(output.String(), "\n"); lines != 10 {
-		t.Fatalf("rendered lines = %d, want two bounded five-row pages", lines)
+	if lines := strings.Count(output.String(), "\n"); lines != 12 {
+		t.Fatalf("rendered lines = %d, want two bounded five-row pages with headers", lines)
+	}
+}
+
+func TestSelectSkillsFiltersByNameAndDescription(t *testing.T) {
+	skills := []prompt.SkillSummary{
+		{Name: "review", Description: "Review code"},
+		{Name: "test", Description: "Run tests"},
+		{Name: "deploy", Description: "Publish a release"},
+	}
+	var output bytes.Buffer
+	names, _, accepted, err := selectSkills(strings.NewReader("publish \r"), &output, skills, 3, 80, false)
+	if err != nil || !accepted || strings.Join(names, ",") != "deploy" {
+		t.Fatalf("names = %v, accepted = %v, err = %v", names, accepted, err)
+	}
+	if !strings.Contains(output.String(), "Select skills (1/3) | Filter: publish") {
+		t.Fatalf("filtered selector = %q", output.String())
 	}
 }
 

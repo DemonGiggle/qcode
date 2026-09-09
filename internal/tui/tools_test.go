@@ -50,7 +50,20 @@ func TestToolSelectionPagesThroughBoundedViewport(t *testing.T) {
 	if err != nil || !accepted || !runner["tool-05"] {
 		t.Fatalf("accepted = %v, enabled = %v, err = %v", accepted, runner["tool-05"], err)
 	}
-	if lines := strings.Count(output.String(), "\n"); lines != 10 {
-		t.Fatalf("rendered lines = %d, want two bounded five-row pages", lines)
+	if lines := strings.Count(output.String(), "\n"); lines != 12 {
+		t.Fatalf("rendered lines = %d, want two bounded five-row pages with headers", lines)
+	}
+}
+
+func TestToolSelectionFiltersByName(t *testing.T) {
+	runner := selectionRunner{"web_fetch": false, "web_search": false, "shell": false}
+	names := []string{"web_fetch", "web_search", "shell"}
+	var output bytes.Buffer
+	accepted, err := selectTools(strings.NewReader("search \r"), &output, names, runner, 3, 80, false)
+	if err != nil || !accepted || !runner["web_search"] || runner["web_fetch"] {
+		t.Fatalf("accepted = %v, runner = %v, err = %v", accepted, runner, err)
+	}
+	if !strings.Contains(output.String(), "Select tools (1/3) | Filter: search") {
+		t.Fatalf("filtered selector = %q", output.String())
 	}
 }
