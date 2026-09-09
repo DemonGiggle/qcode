@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -73,6 +74,37 @@ func TestPrintSystemMessageHasBlankLinesAroundIt(t *testing.T) {
 
 	if got, want := output.String(), "\nCompleted in 1.25s\n\n"; got != want {
 		t.Fatalf("system message output = %q, want %q", got, want)
+	}
+}
+
+func TestExitMessageHighlightsResumeCommand(t *testing.T) {
+	plain := exitMessage(false)
+	if strings.Contains(plain, "\x1b[") || !strings.Contains(plain, "+-----------------------------------------------------------+") || !strings.Contains(plain, "type /resume to resume it") {
+		t.Fatalf("plain exit message = %q", plain)
+	}
+	colored := exitMessage(true)
+	if !strings.Contains(colored, cyan+"+") || !strings.Contains(colored, green+"Session saved!"+reset) || !strings.Contains(colored, bold+yellow+"/resume"+reset) {
+		t.Fatalf("colored exit message = %q", colored)
+	}
+}
+
+func TestPrintExitMessageDoesNotRequirePriorSave(t *testing.T) {
+	out, err := os.CreateTemp(t.TempDir(), "exit-message")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	u := UI{out: out, persistence: &sessionPersistence{}}
+	u.printExitMessage()
+	if _, err := out.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	message, err := io.ReadAll(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(message), "/resume") {
+		t.Fatalf("exit message = %q", message)
 	}
 }
 

@@ -234,6 +234,27 @@ func (u *UI) readLine() (string, error) {
 	return u.terminal.ReadLine()
 }
 
+func (u *UI) printExitMessage() {
+	if u.persistence == nil {
+		return
+	}
+	fmt.Fprint(u.out, exitMessage(ColorEnabled(u.out)))
+}
+
+func exitMessage(color bool) string {
+	const width = 57
+	const title = "Session saved!"
+	const hint = "Next time in this folder, type /resume to resume it."
+	border := "+" + strings.Repeat("-", width+2) + "+\r\n"
+	if !color {
+		return "\r\n" + border + fmt.Sprintf("| %-*s |\r\n| %-*s |\r\n", width, title, width, hint) + border
+	}
+	coloredBorder := cyan + border + reset
+	coloredTitle := bold + green + title + reset
+	coloredHint := "Next time in this folder, type " + bold + yellow + "/resume" + reset + " to resume it."
+	return "\r\n" + coloredBorder + cyan + "|" + reset + " " + coloredTitle + strings.Repeat(" ", width-len(title)) + " " + cyan + "|" + reset + "\r\n" + cyan + "|" + reset + " " + coloredHint + strings.Repeat(" ", width-len(hint)) + " " + cyan + "|" + reset + "\r\n" + coloredBorder
+}
+
 // AddAgentView creates an isolated output/history buffer for an agent.
 func (u *UI) AddAgentView(id, provider, model string) (io.Writer, io.Writer) {
 	if u.sessionHost != nil {
@@ -347,6 +368,7 @@ func (u *UI) Run(ctx context.Context) error {
 	defer func() {
 		u.teardownStatusBar()
 		_ = term.Restore(int(u.in.Fd()), state)
+		u.printExitMessage()
 	}()
 	if u.manager != nil {
 		defer func() { u.shutdownAgentManager(); u.closeSession() }()
