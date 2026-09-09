@@ -225,6 +225,9 @@ func (d *agentDisplay) AddLine(line string)       { d.history.AddLine(line) }
 func (d *agentDisplay) Clear()                    { d.history.Clear() }
 func (d *agentDisplay) Lines() []string           { return d.history.Lines() }
 func (d *agentDisplay) Snapshot() historySnapshot { return d.history.Snapshot() }
+func (d *agentDisplay) ExportSnapshot() historyExportSnapshot {
+	return d.history.ExportSnapshot()
+}
 
 func (u *UI) watchAgentEvents(events <-chan session.Event) {
 	defer close(u.agentEventsDone)

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -68,5 +69,32 @@ func TestVisualHistoryLinesUseFullWordWrap(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, []string{"alpha beta", "gamma", ""}) {
 		t.Fatalf("visual history = %#v", got)
+	}
+}
+
+func TestHistoryExportKeepsTrimmedAndClearedLines(t *testing.T) {
+	history := newHistoryWriter(&bytes.Buffer{})
+	for index := 0; index < maxHistoryLines+3; index++ {
+		history.AddLine(fmt.Sprintf("line %d", index))
+	}
+	history.Clear()
+	history.AddLine("after clear")
+
+	snapshot := history.ExportSnapshot()
+	if len(snapshot.lines) != maxHistoryLines+4 {
+		t.Fatalf("export lines = %d, want %d", len(snapshot.lines), maxHistoryLines+4)
+	}
+	if snapshot.lines[0] != "line 0" || snapshot.lines[maxHistoryLines+3] != "after clear" {
+		t.Fatalf("export archive boundaries = %q, %q", snapshot.lines[0], snapshot.lines[maxHistoryLines+3])
+	}
+}
+
+func TestHistoryExportIncludesRenderedCurrentLine(t *testing.T) {
+	history := newHistoryWriter(&bytes.Buffer{})
+	_, _ = history.Write([]byte("\x1b[31mpartial"))
+
+	snapshot := history.ExportSnapshot()
+	if snapshot.current != "\x1b[31mpartial\x1b[0m" {
+		t.Fatalf("current export = %q", snapshot.current)
 	}
 }

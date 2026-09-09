@@ -18,6 +18,7 @@ type savedCell struct {
 }
 type savedHistory struct {
 	Lines   []string
+	Archive []string
 	Current []savedCell
 	Cursor  int
 	Pending []byte
@@ -94,7 +95,7 @@ func (u *UI) snapshotPresentation() savedPresentation {
 		sv := savedView{ID: v.id, Provider: v.provider, Model: v.model, Unseen: v.unseen,
 			Browsing: v.viewport.browsing, AnchorLine: v.viewport.anchor.line, AnchorColumn: v.viewport.anchor.column,
 			Diffs: append([]string(nil), v.response.diffList...), Buffer: v.response.buffer.String(), InFence: v.response.inFence, Thinking: v.response.thinking,
-			History: savedHistory{Lines: append([]string(nil), h.lines...), Cursor: h.cursor, Pending: append([]byte(nil), h.pending...), Style: h.style, BaseID: h.baseID}}
+			History: savedHistory{Lines: append([]string(nil), h.lines...), Archive: append([]string(nil), h.archive...), Cursor: h.cursor, Pending: append([]byte(nil), h.pending...), Style: h.style, BaseID: h.baseID}}
 		for _, c := range h.current {
 			sv.History.Current = append(sv.History.Current, savedCell{c.char, c.style})
 		}
@@ -131,6 +132,12 @@ func (u *UI) RestorePresentation(data json.RawMessage) error {
 		}
 		h := v.display.history
 		h.lines = sv.History.Lines
+		h.archive = append([]string(nil), sv.History.Archive...)
+		if len(h.archive) == 0 {
+			// Snapshots written before full-history export was introduced only have
+			// the bounded repaint window available.
+			h.archive = append([]string(nil), h.lines...)
+		}
 		h.cursor = sv.History.Cursor
 		h.pending = sv.History.Pending
 		h.style = sv.History.Style

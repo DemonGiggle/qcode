@@ -121,6 +121,7 @@ type historyDisplay interface {
 	Clear()
 	Lines() []string
 	Snapshot() historySnapshot
+	ExportSnapshot() historyExportSnapshot
 }
 
 type agentController interface {
@@ -484,6 +485,16 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		if len(fields) > 0 && fields[0] == "/diff" {
 			u.expandDiff(fields)
+			continue
+		}
+		if len(fields) > 0 && fields[0] == "/export" {
+			argument := strings.TrimSpace(strings.TrimPrefix(line, "/export"))
+			path, exportErr := u.exportSession(argument)
+			if exportErr != nil {
+				u.printSystemMessage(yellow + "Export failed: " + sanitizeDiffLine(exportErr.Error(), "<ESC>") + reset)
+			} else {
+				u.printSystemMessage(green + "Exported session to " + sanitizeDiffLine(path, "<ESC>") + reset)
+			}
 			continue
 		}
 		switch line {

@@ -84,7 +84,7 @@ func TestPresentationRoundTripAndConcurrentOutput(t *testing.T) {
 	}
 	for id, original := range u.views {
 		restored := v.views[id]
-		if !reflect.DeepEqual(original.display.Snapshot(), restored.display.Snapshot()) || !reflect.DeepEqual(original.response.diffList, restored.response.diffList) || original.viewport != restored.viewport || original.unseen != restored.unseen {
+		if !reflect.DeepEqual(original.display.Snapshot(), restored.display.Snapshot()) || !reflect.DeepEqual(original.display.ExportSnapshot(), restored.display.ExportSnapshot()) || !reflect.DeepEqual(original.response.diffList, restored.response.diffList) || original.viewport != restored.viewport || original.unseen != restored.unseen {
 			t.Fatalf("lost view %s", id)
 		}
 	}

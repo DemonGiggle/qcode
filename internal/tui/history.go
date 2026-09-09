@@ -22,6 +22,7 @@ type historyWriter struct {
 
 	mu      sync.Mutex
 	lines   []string
+	archive []string
 	current []historyCell
 	cursor  int
 	pending []byte
@@ -53,6 +54,8 @@ func (w *historyWriter) Clear() {
 	w.mu.Lock()
 	w.baseID += uint64(len(w.lines) + 1)
 	w.lines = nil
+	// Keep the complete session archive so /export still captures content
+	// that was intentionally removed from the repaint window by /clear.
 	w.current = nil
 	w.cursor = 0
 	w.pending = nil
@@ -73,6 +76,14 @@ type historySnapshot struct {
 	cursor int
 }
 
+// historyExportSnapshot contains the complete styled history for export. The
+// normal history snapshot remains bounded because it is used on every repaint;
+// export takes this larger snapshot only when explicitly requested.
+type historyExportSnapshot struct {
+	lines   []string
+	current string
+}
+
 // Snapshot includes the unfinished line without committing it. IDs survive
 // retention trimming, so a viewport can keep reading the same logical line.
 func (w *historyWriter) Snapshot() historySnapshot {
@@ -86,6 +97,24 @@ func (w *historyWriter) Snapshot() historySnapshot {
 		s.lines = append(s.lines, historyLine{w.baseID + uint64(i), line})
 	}
 	s.lines = append(s.lines, historyLine{w.baseID + uint64(len(w.lines)), renderHistoryCells(w.current)})
+	return s
+}
+
+// ExportSnapshot returns every committed line, including lines that have been
+// trimmed from the repaint window, plus the currently rendered unfinished
+// line. The caller receives independent slices and may render them freely.
+func (w *historyWriter) ExportSnapshot() historyExportSnapshot {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	s := historyExportSnapshot{lines: append([]string(nil), w.archive...)}
+	if len(s.lines) == 0 && len(w.lines) > 0 {
+		// This fallback keeps manually constructed or restored writers useful
+		// when they predate the archive field.
+		s.lines = append([]string(nil), w.lines...)
+	}
+	if limit := min(w.cursor, len(w.current)); limit > 0 {
+		s.current = renderHistoryCells(w.current[:limit])
+	}
 	return s
 }
 
@@ -207,7 +236,9 @@ func ansiSequenceLength(data []byte) (int, bool) {
 }
 
 func (w *historyWriter) commit(line []historyCell) {
-	w.lines = append(w.lines, renderHistoryCells(line))
+	rendered := renderHistoryCells(line)
+	w.archive = append(w.archive, rendered)
+	w.lines = append(w.lines, rendered)
 	if len(w.lines) > maxHistoryLines {
 		drop := maxHistoryLines / 5
 		w.lines = append([]string(nil), w.lines[drop:]...)

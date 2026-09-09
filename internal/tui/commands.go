@@ -18,6 +18,7 @@ var slashCommands = []slashCommand{
 	{name: "/compact", description: "Compact the active conversation context"},
 	{name: "/diff", description: "Expand a recent file diff"},
 	{name: "/exit", description: "Exit qcode"},
+	{name: "/export", description: "Export the session transcript as HTML"},
 	{name: "/help", description: "Show available commands"},
 	{name: "/learn", description: "Review global learning; list, forget <id>, or compact"},
 	{name: "/model", description: "Select a provider model"},
