@@ -32,6 +32,9 @@ func (u *UI) resize() {
 		return
 	}
 	u.width, u.height = width, height
+	// Terminal reflow can change rows even when their source text is the same.
+	// Force the next fixed-layout render to rebuild the full screen.
+	u.inputFrame = ""
 	views := make([]*agentView, 0, len(u.views))
 	for _, view := range u.views {
 		views = append(views, view)

@@ -99,19 +99,14 @@ func (u *UI) paintFixedLocked(direction int) {
 	}
 	count := min(5, len(matches), max(0, promptRow-3))
 	outputHeight := max(0, promptRow-count-2)
-	var b strings.Builder
-	b.WriteString("\x1b[?25l\x1b[0m\x1b[r")
-	// Clear rows explicitly: erase-to-end would erase the other regions.
-	for row := 1; row <= u.height; row++ {
-		fmt.Fprintf(&b, "\x1b[%d;1H\x1b[2K", row)
-	}
+	screenRows := make([]string, u.height+1)
 	if u.manager != nil && u.height > 3 {
-		fmt.Fprintf(&b, "\x1b[1;1H%s", tabBar(u.manager.List(), u.activeAgent, u.views, u.width, u.unicode, ColorEnabled(u.out)))
+		screenRows[1] = tabBar(u.manager.List(), u.activeAgent, u.views, u.width, u.unicode, ColorEnabled(u.out))
 	}
 	if outputHeight > 0 && u.display != nil {
 		page := u.activeViewportLocked().page(historyRows(u.display.Snapshot(), u.width), outputHeight, direction)
 		for i, row := range page {
-			fmt.Fprintf(&b, "\x1b[%d;1H%s\x1b[0m", i+2, row.text)
+			screenRows[i+2] = row.text
 		}
 	}
 	for i := 0; i < count; i++ {
@@ -122,26 +117,59 @@ func (u *UI) paintFixedLocked(direction int) {
 		if i == count-1 && len(matches) > count {
 			text += " (type to filter)"
 		}
-		fmt.Fprintf(&b, "\x1b[%d;1H%s", promptRow-count+i, truncateDiffLine(text, u.width, u.unicode))
+		screenRows[promptRow-count+i] = truncateDiffLine(text, u.width, u.unicode)
 	}
 	for i, row := range rows {
-		fmt.Fprintf(&b, "\x1b[%d;1H%s", promptRow+i, row)
+		screenRows[promptRow+i] = row
 	}
 	if footer == 2 {
 		message := taskIndicatorMessage(summary.Status, summary.QueueDepth, u.unicode, time.Now())
 		if u.activeViewportLocked().browsing {
 			message = "History paused | PgUp/PgDn | PgDn to bottom resumes"
 		}
-		fmt.Fprintf(&b, "\x1b[%d;1H%s\x1b[0m", u.height-1, truncateDiffLine(message, u.width, u.unicode))
+		screenRows[u.height-1] = truncateDiffLine(message, u.width, u.unicode)
 	}
 	if footer > 0 {
-		fmt.Fprintf(&b, "\x1b[%d;1H%s\x1b[0m", u.height, statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel()))
+		screenRows[u.height] = statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel())
 	}
-	fmt.Fprintf(&b, "\x1b[%d;%dH\x1b[?25h", promptRow+cy, cx+1)
-	frame := b.String()
-	if frame != u.inputFrame {
-		if _, err := u.out.WriteString(frame); err == nil {
-			u.inputFrame = frame
+	u.writeFixedScreenLocked(screenRows, promptRow+cy, cx+1)
+}
+
+// writeFixedScreenLocked applies a row-level diff to the fixed layout. Typing
+// normally changes only the prompt and slash-command rows, so history is not
+// cleared and repainted for each keystroke.
+func (u *UI) writeFixedScreenLocked(screenRows []string, cursorRow, cursorColumn int) {
+	full := u.inputFrame == "" || len(u.inputScreenRows) != len(screenRows)
+	changed := full || cursorRow != u.inputCursorRow || cursorColumn != u.inputCursorColumn
+	if !changed {
+		for row := 1; row < len(screenRows); row++ {
+			if screenRows[row] != u.inputScreenRows[row] {
+				changed = true
+				break
+			}
 		}
 	}
+	if !changed {
+		return
+	}
+
+	var output strings.Builder
+	output.WriteString("\x1b[?25l")
+	if full {
+		output.WriteString("\x1b[0m\x1b[r")
+	}
+	for row := 1; row < len(screenRows); row++ {
+		if !full && screenRows[row] == u.inputScreenRows[row] {
+			continue
+		}
+		fmt.Fprintf(&output, "\x1b[%d;1H\x1b[2K%s\x1b[0m", row, screenRows[row])
+	}
+	fmt.Fprintf(&output, "\x1b[%d;%dH\x1b[?25h", cursorRow, cursorColumn)
+	if _, err := u.out.WriteString(output.String()); err != nil {
+		return
+	}
+	u.inputFrame = "painted"
+	u.inputScreenRows = screenRows
+	u.inputCursorRow = cursorRow
+	u.inputCursorColumn = cursorColumn
 }

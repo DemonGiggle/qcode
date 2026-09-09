@@ -35,13 +35,7 @@ func layoutFixture(t *testing.T) (*UI, func() string) {
 		manager: &layoutManager{states: map[string]session.Status{"main": session.StatusRunning, "agent-1": session.StatusIdle}}}
 	u.display = &agentDisplay{ui: u, id: "main", history: newHistoryWriter(io.Discard)}
 	return u, func() string {
-		data, err := os.ReadFile(out.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		// The renderer clears and redraws its owned rows as one frame.
-		parts := strings.Split(string(data), "\x1b[?25l")
-		return parts[len(parts)-1]
+		return strings.Join(u.inputScreenRows, "\n")
 	}
 }
 
@@ -52,7 +46,7 @@ func TestFixedInputSurvivesStreamingAndFiltersCandidates(t *testing.T) {
 		_, _ = u.display.Write([]byte("streamed output\n"))
 	}
 	got := frame()
-	for _, want := range []string{"\x1b[22;1H(Queue)> /", "\x1b[17;1H  /agent", "\x1b[21;1H  /exit", "streamed output"} {
+	for _, want := range []string{"(Queue)> /", "  /agent", "  /exit", "streamed output"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in frame %q", want, got)
 		}
@@ -61,7 +55,7 @@ func TestFixedInputSurvivesStreamingAndFiltersCandidates(t *testing.T) {
 		t.Fatal("suggestions leaked into history")
 	}
 	u.renderInput(inputPrompt, "/h", 2)
-	if !strings.Contains(frame(), "\x1b[21;1H  /help") || strings.Contains(frame(), "  /agent") {
+	if !strings.Contains(frame(), "  /help") || strings.Contains(frame(), "  /agent") {
 		t.Fatal("filter did not replace panel")
 	}
 	u.renderInput(inputPrompt, "", 0)
@@ -97,15 +91,15 @@ func TestInputRowsTracksWideCharactersAndWrapBoundary(t *testing.T) {
 }
 
 func TestFixedLayoutSmallAndWrappedDraft(t *testing.T) {
-	u, frame := layoutFixture(t)
+	u, _ := layoutFixture(t)
 	for _, height := range []int{1, 2, 3, 4, 8, 24} {
 		u.height, u.width = height, 12
 		u.renderInput(inputPrompt, strings.Repeat("x", 120), 120)
-		if !strings.HasSuffix(frame(), "\x1b[?25h") {
+		if u.inputCursorRow < 1 || u.inputCursorColumn < 1 {
 			t.Fatal("cursor not restored")
 		}
-		if strings.Contains(frame(), "\x1b[0;") {
-			t.Fatalf("invalid row at height %d", height)
+		if len(u.inputScreenRows) != height+1 {
+			t.Fatalf("screen rows = %d, want %d", len(u.inputScreenRows), height+1)
 		}
 	}
 }
@@ -123,7 +117,35 @@ func TestFixedHistoryStaysPausedWhileInputChanges(t *testing.T) {
 	if !u.activeViewportLocked().browsing || u.activeViewportLocked().anchor != anchor {
 		t.Fatal("stream or suggestions moved the reading position")
 	}
-	if !strings.Contains(frame(), "\x1b[22;1H(Queue)> /h") {
+	if !strings.Contains(frame(), "(Queue)> /h") {
 		t.Fatal("paging moved the prompt")
+	}
+}
+
+func TestFixedInputUpdatesOnlyChangedRows(t *testing.T) {
+	u, _ := layoutFixture(t)
+	u.manager.(*layoutManager).states["main"] = session.StatusIdle
+	u.renderInput(inputPrompt, "a", 1)
+	if err := u.out.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := u.out.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.renderInput(inputPrompt, "ab", 2)
+	if err := u.out.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(u.out.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := string(after[before.Size():])
+	if clears := strings.Count(update, "\x1b[2K"); clears != 1 {
+		t.Fatalf("changed input cleared %d rows: %q", clears, update)
+	}
+	if strings.Contains(update, "\x1b[2;1H") {
+		t.Fatalf("changed input repainted history: %q", update)
 	}
 }

@@ -146,6 +146,9 @@ type UI struct {
 	inputLabel         string
 	inputPosition      int
 	inputFrame         string
+	inputScreenRows    []string
+	inputCursorRow     int
+	inputCursorColumn  int
 	terminal           *lineedit.Terminal
 	display            historyDisplay
 	responseWriter     *MarkdownWriter
