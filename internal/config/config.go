@@ -24,9 +24,16 @@ type Learning struct {
 	ContextBudget *int `toml:"context_budget"`
 }
 
+// Skills configures additional directories containing skill folders. Each
+// directory should contain <name>/SKILL.md entries.
+type Skills struct {
+	Paths []string `toml:"paths"`
+}
+
 // Config contains settings that may be supplied by a qcode config file.
 type Config struct {
 	Learning             Learning  `toml:"learning"`
+	Skills               Skills    `toml:"skills"`
 	WebSearch            WebSearch `toml:"web_search"`
 	Provider             string    `toml:"provider"`
 	BaseURL              string    `toml:"base_url"`

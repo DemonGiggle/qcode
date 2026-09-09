@@ -83,6 +83,26 @@ func TestDiscoverIncludesUserSkills(t *testing.T) {
 	}
 }
 
+func TestDiscoverIncludesCustomSkillsAndKeepsMissingLocations(t *testing.T) {
+	root := t.TempDir()
+	custom := filepath.Join(t.TempDir(), "custom-skills")
+	writeSkill(t, custom, "custom/SKILL.md", "# Custom skill\n")
+	missing := filepath.Join(t.TempDir(), "missing-skills")
+
+	catalog, err := Discover(root, custom, missing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := catalog.Skills()
+	if len(items) != 1 || items[0].Name != "custom" || items[0].Path() != filepath.Join(custom, "custom", "SKILL.md") {
+		t.Fatalf("skills = %#v, want custom skill", items)
+	}
+	locations := catalog.Locations()
+	if len(locations) < 5 || locations[len(locations)-2] != custom || locations[len(locations)-1] != missing {
+		t.Fatalf("locations = %#v, want custom and missing paths retained", locations)
+	}
+}
+
 func writeSkill(t *testing.T, root, name, content string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(name))

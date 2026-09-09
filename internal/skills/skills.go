@@ -27,8 +27,9 @@ type Skill struct {
 
 // Catalog is the immutable set of skills available for one qcode run.
 type Catalog struct {
-	root   string
-	skills []Skill
+	root      string
+	locations []string
+	skills    []Skill
 }
 
 // Selection makes only user-enabled skills available to the tool.
@@ -79,10 +80,10 @@ func (s *Selection) Load(name string) (string, error) {
 	return s.catalog.Load(name)
 }
 
-// Discover finds skills in .qcode/skills and .agents/skills. A skill is a
-// directory containing SKILL.md. .qcode takes precedence when both locations
-// define the same name.
-func Discover(root string) (*Catalog, error) {
+// Discover finds skills in the built-in locations and any custom paths. A
+// skill is a directory containing SKILL.md. Later locations take precedence
+// when multiple locations define the same name.
+func Discover(root string, customPaths ...string) (*Catalog, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace: %w", err)
@@ -103,8 +104,30 @@ func Discover(root string) (*Catalog, error) {
 		struct{ base, label string }{filepath.Join(abs, ".agents", "skills"), ".agents/skills"},
 		struct{ base, label string }{filepath.Join(abs, ".qcode", "skills"), ".qcode/skills"},
 	)
+	for _, configured := range customPaths {
+		configured = strings.TrimSpace(configured)
+		if configured == "" {
+			continue
+		}
+		base := configured
+		if base == "~" || strings.HasPrefix(base, "~/") || strings.HasPrefix(base, "~"+string(filepath.Separator)) {
+			if home, homeErr := os.UserHomeDir(); homeErr == nil {
+				if base == "~" {
+					base = home
+				} else {
+					base = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(base, "~/"), "~"+string(filepath.Separator)))
+				}
+			}
+		}
+		if !filepath.IsAbs(base) {
+			base = filepath.Join(abs, base)
+		}
+		sources = append(sources, struct{ base, label string }{filepath.Clean(base), configured})
+	}
 	byName := make(map[string]Skill)
+	locations := make([]string, 0, len(sources))
 	for _, source := range sources {
+		locations = append(locations, source.label)
 		base := source.base
 		if resolved, err := filepath.EvalSymlinks(base); err == nil {
 			base = resolved
@@ -149,7 +172,7 @@ func Discover(root string) (*Catalog, error) {
 		items = append(items, skill)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
-	return &Catalog{root: abs, skills: items}, nil
+	return &Catalog{root: abs, locations: locations, skills: items}, nil
 }
 
 func validName(name string) bool {
@@ -176,6 +199,19 @@ func (c *Catalog) Skills() []Skill {
 	}
 	return append([]Skill(nil), c.skills...)
 }
+
+// Locations returns the configured and built-in skill directories in the
+// order in which they are searched. Missing directories are retained so the
+// UI can explain every location that qcode checks.
+func (c *Catalog) Locations() []string {
+	if c == nil {
+		return nil
+	}
+	return append([]string(nil), c.locations...)
+}
+
+// Path returns the discovered SKILL.md path for display to the user.
+func (s Skill) Path() string { return s.path }
 
 // Load returns the complete document for a discovered skill. Names not in the
 // startup catalog are deliberately unavailable until qcode is restarted.

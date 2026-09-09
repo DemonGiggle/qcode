@@ -59,6 +59,7 @@ func main() {
 func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	opts := options{learningBudget: learning.DefaultBudget, autoCompactThreshold: agent.DefaultAutoCompactThreshold}
 	configPath := ""
+	var configuredSkillPaths []string
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider: ollama, openai, or opencode-go")
@@ -102,6 +103,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			return err
 		}
 		configPath = loadedPath
+		configuredSkillPaths = append([]string(nil), cfg.Skills.Paths...)
 		setFlags := make(map[string]bool)
 		flags.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
 		applyConfig(&opts, cfg, setFlags)
@@ -144,7 +146,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if configPath != "" {
 		protectedPaths = append(protectedPaths, configPath)
 	}
-	skillCatalog, err := skills.Discover(root)
+	skillCatalog, err := skills.Discover(root, configuredSkillPaths...)
 	if err != nil {
 		return err
 	}
@@ -198,6 +200,8 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	// updates do not corrupt the editable input line.
 	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
 	ui.SetSkillCatalog(skillSummaries(skillCatalog), skillSelection.Set)
+	ui.SetSkillInfo(skillInfos(skillCatalog))
+	ui.SetSkillLocations(skillCatalog.Locations())
 	if opts.demo {
 		ui.SetDemoPromptScript(demo.InteractivePrompts(), demo.InteractivePromptDelay, demo.InteractiveQueueDelay)
 	}
@@ -291,6 +295,8 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		if err := ui.EnableSessions(store, func(snap session.Snapshot) (*tui.UI, error) {
 			staged := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
 			staged.SetSkillCatalog(skillSummaries(skillCatalog), nil)
+			staged.SetSkillInfo(skillInfos(skillCatalog))
+			staged.SetSkillLocations(skillCatalog.Locations())
 			restored := agent.NewAgentManager(context.Background(), agent.DefaultMaxAgents)
 			saved := map[string]agent.SavedState{}
 			for _, item := range snap.Agents {
@@ -342,6 +348,15 @@ func skillSummaries(catalog *skills.Catalog) []prompt.SkillSummary {
 		summaries[i] = prompt.SkillSummary{Name: skill.Name, Description: skill.Description}
 	}
 	return summaries
+}
+
+func skillInfos(catalog *skills.Catalog) []tui.SkillInfo {
+	available := catalog.Skills()
+	infos := make([]tui.SkillInfo, len(available))
+	for i, skill := range available {
+		infos[i] = tui.SkillInfo{Name: skill.Name, Description: skill.Description, Path: skill.Path()}
+	}
+	return infos
 }
 
 func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {

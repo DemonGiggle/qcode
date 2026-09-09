@@ -32,6 +32,48 @@ func TestSkillSelectorRefreshReplacesExistingRows(t *testing.T) {
 	}
 }
 
+func TestSkillLocationHintListsDiscoveryPaths(t *testing.T) {
+	root := "/workspace/project"
+	plain := skillLocationHint(root, false)
+	for _, location := range []string{
+		"~/.qcode/skills/<name>/SKILL.md",
+		"/workspace/project/.agents/skills/<name>/SKILL.md",
+		"/workspace/project/.qcode/skills/<name>/SKILL.md",
+	} {
+		if !strings.Contains(plain, location) {
+			t.Fatalf("plain hint = %q, missing %q", plain, location)
+		}
+	}
+	if strings.Contains(plain, "\x1b[") {
+		t.Fatalf("plain hint contains ANSI escapes: %q", plain)
+	}
+	colored := skillLocationHint(root, true)
+	if !strings.Contains(colored, dim+"Skills are loaded from:"+reset) || !strings.Contains(colored, cyan+"/workspace/project/.qcode/skills/<name>/SKILL.md"+reset) {
+		t.Fatalf("colored hint = %q", colored)
+	}
+}
+
+func TestSkillLocationHintSanitizesWorkspace(t *testing.T) {
+	hint := skillLocationHint("/workspace/escape\x1b[31m", false)
+	if strings.Contains(hint, "\x1b[") || !strings.Contains(hint, "<ESC>") {
+		t.Fatalf("sanitized hint = %q", hint)
+	}
+}
+
+func TestListSkillsIncludesDescriptionAndPath(t *testing.T) {
+	var output bytes.Buffer
+	u := UI{
+		display:    newHistoryWriter(&output),
+		skillInfos: []SkillInfo{{Name: "review", Description: "Review code", Path: "/workspace/.qcode/skills/review/SKILL.md"}},
+	}
+	u.listSkills()
+	for _, want := range []string{"Skills found:", "review  Review code", "/workspace/.qcode/skills/review/SKILL.md"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("skills output = %q, missing %q", output.String(), want)
+		}
+	}
+}
+
 func TestSelectSkillsNavigatesTogglesAndKeepsCatalogOrder(t *testing.T) {
 	skills := []prompt.SkillSummary{
 		{Name: "first", Description: "First skill"},

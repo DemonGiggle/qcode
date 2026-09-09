@@ -125,7 +125,7 @@ func TestLoadRejectsUnknownFields(t *testing.T) {
 
 func TestLoadReturnsEmptyWhenNoFileExists(t *testing.T) {
 	cfg, path, err := load([]string{filepath.Join(t.TempDir(), "missing.toml")})
-	if err != nil || path != "" || cfg != (Config{}) {
+	if err != nil || path != "" || cfg.Provider != "" || cfg.Model != "" || len(cfg.Skills.Paths) != 0 {
 		t.Fatalf("load = (%+v, %q, %v), want empty result", cfg, path, err)
 	}
 }
@@ -170,5 +170,16 @@ func TestLearningBudgetConfig(t *testing.T) {
 		if tc.valid && cfg.Learning.ContextBudget == nil {
 			t.Fatal("budget not loaded")
 		}
+	}
+}
+
+func TestSkillPathsConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[skills]\npaths = [\"/opt/qcode/skills\", \"extra-skills\"]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := load([]string{path})
+	if err != nil || strings.Join(cfg.Skills.Paths, ",") != "/opt/qcode/skills,extra-skills" {
+		t.Fatalf("skill paths = %#v, error = %v", cfg.Skills.Paths, err)
 	}
 }

@@ -11,7 +11,15 @@ max_steps = 32
 sandbox = true
 auto_compact_threshold = 80
 disable_auto_compact = false
+
+[skills]
+paths = ["/opt/qcode/team-skills", ".team/skills"]
 ```
+
+`skills.paths` adds directories to the built-in skill locations. Absolute paths
+are used as written; relative paths are resolved from the selected workspace,
+and `~` expands to the current user's home directory. A missing directory is
+kept in the `/skill` hint and contributes no skills.
 
 ## Lookup order
 

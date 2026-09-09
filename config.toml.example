@@ -41,3 +41,8 @@ backend = "duckduckgo"
 # Up to three items are retrieved. Set 0 to disable retrieval; /learn still works.
 [learning]
 context_budget = 1200
+
+# Optional additional skill directories. Paths may be absolute or relative to
+# the selected workspace; a directory contains <name>/SKILL.md.
+# [skills]
+# paths = ["~/.config/my-skills", ".team/skills"]

@@ -161,6 +161,8 @@ type UI struct {
 	startupNotice     string
 	startupChoice     bool
 	skills            []prompt.SkillSummary
+	skillInfos        []SkillInfo
+	skillLocations    []string
 	onSkills          func([]string)
 	manager           agentController
 	activeAgent       string
@@ -184,7 +186,22 @@ type UI struct {
 // SetSkillCatalog configures the optional /skill selector.
 func (u *UI) SetSkillCatalog(skills []prompt.SkillSummary, onChange func([]string)) {
 	u.skills = append([]prompt.SkillSummary(nil), skills...)
+	u.skillInfos = make([]SkillInfo, len(skills))
+	for i, skill := range skills {
+		u.skillInfos[i] = SkillInfo{Name: skill.Name, Description: skill.Description}
+	}
 	u.onSkills = onChange
+}
+
+// SetSkillInfo configures the paths shown by /skills for discovered skills.
+func (u *UI) SetSkillInfo(infos []SkillInfo) {
+	u.skillInfos = append([]SkillInfo(nil), infos...)
+}
+
+// SetSkillLocations configures the directories shown by /skill before its
+// selector. Missing directories are intentionally retained in this list.
+func (u *UI) SetSkillLocations(locations []string) {
+	u.skillLocations = append([]string(nil), locations...)
 }
 
 func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
@@ -429,6 +446,10 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		if line == "/resume" {
 			u.resumeSession()
+			continue
+		}
+		if line == "/skills" {
+			u.listSkills()
 			continue
 		}
 		if u.fixedInput {
