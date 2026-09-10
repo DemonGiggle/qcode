@@ -28,6 +28,7 @@ func TestToolActivityUsesAllowlistedSummaries(t *testing.T) {
 		{"write", activityCall("write", `{"path":"README.md","content":"secret"}`), "Writing README.md", "Wrote README.md", trace.ActivityWrite},
 		{"web search", activityCall("web_search", `{"query":"Go context compaction"}`), `Searching web for "Go context compaction"`, `Searched web for "Go context compaction"`, trace.ActivityRead},
 		{"fetch", activityCall("web_fetch", `{"url":"https://example.test/path?token=secret#fragment"}`), "Fetching example.test", "Fetched example.test", trace.ActivityRead},
+		{"create agent", activityCall("create_agent", `{}`), "Creating agent", "Created agent", trace.ActivityAgent},
 		{"delegate", activityCall("delegate_task", `{"agent_id":"agent-2","prompt":"secret task"}`), "Consulting agent-2", "Agent agent-2 accepted the task", trace.ActivityAgent},
 		{"shell", activityCall("shell", `{"command":"echo secret"}`), "Running shell command: echo secret", "Ran shell command: echo secret", trace.ActivityWrite},
 	}

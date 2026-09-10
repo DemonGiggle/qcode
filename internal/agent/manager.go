@@ -616,6 +616,8 @@ func (t *managedToolset) ExecuteDetailed(ctx context.Context, call llm.ToolCall)
 		switch call.Name {
 		case "list_agents":
 			return t.listAgents()
+		case "create_agent":
+			return t.createAgent(ctx, call.Arguments)
 		case "delegate_task":
 			return t.delegate(ctx, call.Arguments)
 		case "get_agent_result":
@@ -676,6 +678,31 @@ func (t *managedToolset) listAgents() (llm.ToolResult, error) {
 	return llm.ToolResult{Output: string(data)}, nil
 }
 
+func (t *managedToolset) createAgent(ctx context.Context, arguments json.RawMessage) (llm.ToolResult, error) {
+	var args struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(arguments, &args); err != nil {
+		return llm.ToolResult{}, fmt.Errorf("invalid create_agent arguments: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return llm.ToolResult{}, err
+	}
+	model := strings.TrimSpace(args.Model)
+	if model == "" {
+		summary, err := t.manager.Summary(t.id)
+		if err != nil {
+			return llm.ToolResult{}, err
+		}
+		model = summary.Model
+	}
+	summary, err := t.manager.Create(model)
+	if err != nil {
+		return llm.ToolResult{}, err
+	}
+	return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q; call delegate_task with agent_id %q to assign work", summary.ID, summary.Model, summary.ID)}, nil
+}
+
 func (t *managedToolset) delegate(ctx context.Context, arguments json.RawMessage) (llm.ToolResult, error) {
 	var args struct {
 		AgentID string `json:"agent_id"`
@@ -726,6 +753,7 @@ func managerSchemas() []llm.Tool {
 	}
 	return []llm.Tool{
 		{Name: "list_agents", Description: prompt.ListAgentsTool, Parameters: object(nil)},
+		{Name: "create_agent", Description: prompt.CreateAgentTool, Parameters: object(map[string]any{"model": stringField(prompt.AgentModelParameter)})},
 		{Name: "delegate_task", Description: prompt.DelegateTaskTool, Parameters: object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter), "prompt": stringField(prompt.AgentPromptParameter)}, "agent_id", "prompt")},
 		{Name: "get_agent_result", Description: prompt.GetAgentResultTool, Parameters: object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter)}, "agent_id")},
 	}

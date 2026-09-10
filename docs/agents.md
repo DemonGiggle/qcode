@@ -16,13 +16,20 @@ The in-process manager exposes asynchronous submission, synchronous submission-a
 
 ## How the main agent talks to sub-agents
 
-The main agent receives three orchestrator tools that sub-agents do not have:
+The main agent receives four orchestrator tools that sub-agents do not have:
 
 | Tool | Purpose |
 |------|---------|
 | `list_agents` | Returns the current status of all agents (outcomes and files stripped for brevity) |
+| `create_agent` | Creates a new agent session, optionally using a specified model |
 | `delegate_task` | Queues focused work in another agent asynchronously |
 | `get_agent_result` | Retrieves a specific agent's status and latest completed handoff |
+
+To create and assign work in one coordination sequence, the main agent calls
+`create_agent` first, using the returned agent ID in a subsequent
+`delegate_task` call. If `model` is omitted, the new agent uses the main
+agent's current model. The interactive `/agent` command remains available when
+the user wants to create or switch agent tabs directly.
 
 ### Roster injection
 

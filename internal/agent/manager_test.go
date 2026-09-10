@@ -429,8 +429,26 @@ func TestMainToolsAndBoundedRoster(t *testing.T) {
 	}
 	main, _ := manager.Agent("main")
 	workerAgent, _ := manager.Agent(worker.ID)
-	if !hasSchema(main.tools.EnabledSchemas(), "get_agent_result") || hasSchema(workerAgent.tools.EnabledSchemas(), "get_agent_result") {
+	if !hasSchema(main.tools.EnabledSchemas(), "create_agent") || !hasSchema(main.tools.EnabledSchemas(), "get_agent_result") || hasSchema(workerAgent.tools.EnabledSchemas(), "create_agent") || hasSchema(workerAgent.tools.EnabledSchemas(), "get_agent_result") {
 		t.Fatal("manager tools were not restricted to main")
+	}
+}
+
+func TestMainCanCreateAgentWithDefaultModel(t *testing.T) {
+	manager := newTestManager(t, 2)
+	main, _ := manager.Agent("main")
+	result, err := main.tools.ExecuteDetailed(context.Background(), llm.ToolCall{
+		Name: "create_agent", Arguments: []byte(`{}`),
+	})
+	if err != nil || !strings.Contains(result.Output, "created agent agent-1") {
+		t.Fatalf("create result = %+v, %v", result, err)
+	}
+	created, err := manager.Summary("agent-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Model != "main-model" || created.Status != StatusIdle {
+		t.Fatalf("created agent = %+v, want main-model and idle", created)
 	}
 }
 
