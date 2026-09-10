@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"qcode/internal/llm"
+	"qcode/internal/prompt"
 	"qcode/internal/trace"
 )
 
@@ -32,12 +34,25 @@ func (*managerProvider) Complete(ctx context.Context, request llm.Request, _ llm
 	}
 }
 
-type managerToolset struct{}
+type managerToolset struct{ state string }
 
 func (*managerToolset) Schemas() []llm.Tool        { return nil }
 func (*managerToolset) EnabledSchemas() []llm.Tool { return nil }
 func (*managerToolset) ExecuteDetailed(context.Context, llm.ToolCall) (llm.ToolResult, error) {
 	return llm.ToolResult{}, nil
+}
+func (t *managerToolset) SaveTools() json.RawMessage {
+	if t.state == "" {
+		return nil
+	}
+	data, _ := json.Marshal(t.state)
+	return data
+}
+func (t *managerToolset) RestoreTools(data json.RawMessage) error {
+	if len(data) == 0 {
+		return nil
+	}
+	return json.Unmarshal(data, &t.state)
 }
 
 func newTestManager(t *testing.T, maximum int) *AgentManager {
@@ -449,6 +464,30 @@ func TestMainCanCreateAgentWithDefaultModel(t *testing.T) {
 	}
 	if created.Model != "main-model" || created.Status != StatusIdle {
 		t.Fatalf("created agent = %+v, want main-model and idle", created)
+	}
+}
+
+func TestMainCreatedAgentInheritsCapabilities(t *testing.T) {
+	manager := newTestManager(t, 2)
+	main, _ := manager.Agent("main")
+	main.SetSkills([]prompt.SkillSummary{{Name: "review", Description: "Review code"}})
+	main.SetMaxSteps(7)
+	mainTools := main.tools.(*managedToolset).base.(*managerToolset)
+	mainTools.state = "inherited"
+
+	result, err := main.tools.ExecuteDetailed(context.Background(), llm.ToolCall{
+		Name: "create_agent", Arguments: []byte(`{"model":"worker-model"}`),
+	})
+	if err != nil || !strings.Contains(result.Output, "created agent agent-1") {
+		t.Fatalf("create result = %+v, %v", result, err)
+	}
+	child, _ := manager.Agent("agent-1")
+	childTools := child.tools.(*managedToolset).base.(*managerToolset)
+	if childTools.state != "inherited" || child.MaxSteps() != 7 {
+		t.Fatalf("child capabilities = state %q, max steps %d", childTools.state, child.MaxSteps())
+	}
+	if skills := child.SelectedSkills(); len(skills) != 1 || skills[0].Name != "review" {
+		t.Fatalf("child skills = %+v", skills)
 	}
 }
 

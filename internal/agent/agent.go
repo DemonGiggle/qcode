@@ -197,6 +197,26 @@ func (a *Agent) SelectedSkills() []prompt.SkillSummary {
 	return append([]prompt.SkillSummary(nil), a.selectedSkills...)
 }
 
+// InheritCapabilitiesFrom copies the user-facing capabilities of source into
+// this agent. Conversation history and main-only orchestration tools are not
+// copied. Tool registries carry the remaining mutable capability state,
+// including tool toggles, directory grants, and selected skill names.
+func (a *Agent) InheritCapabilitiesFrom(source *Agent) error {
+	if source == nil {
+		return fmt.Errorf("source agent must not be nil")
+	}
+	if sourceTools, ok := source.tools.(persistentTools); ok {
+		if targetTools, targetOK := a.tools.(persistentTools); targetOK {
+			if err := targetTools.RestoreTools(sourceTools.SaveTools()); err != nil {
+				return err
+			}
+		}
+	}
+	a.SetSkills(source.SelectedSkills())
+	a.SetMaxSteps(source.MaxSteps())
+	return nil
+}
+
 // ResetSession discards conversation history while retaining the agent's
 // provider, model, tools, and runtime settings.
 func (a *Agent) ResetSession() {

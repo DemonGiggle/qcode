@@ -28,8 +28,11 @@ The main agent receives four orchestrator tools that sub-agents do not have:
 To create and assign work in one coordination sequence, the main agent calls
 `create_agent` first, using the returned agent ID in a subsequent
 `delegate_task` call. If `model` is omitted, the new agent uses the main
-agent's current model. The interactive `/agent` command remains available when
-the user wants to create or switch agent tabs directly.
+agent's current model. Agents created this way inherit the main agent's
+current tool enablement, selected skills, approved directory grants, and
+maximum step setting; their conversation and main-only orchestration tools stay
+separate. The interactive `/agent` command remains available when the user wants to
+create or switch agent tabs directly.
 
 ### Roster injection
 

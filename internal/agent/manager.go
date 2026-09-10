@@ -133,6 +133,35 @@ func (m *AgentManager) Create(model string) (AgentSummary, error) {
 	return m.create(id, id, model, false)
 }
 
+// CreateInherited creates a worker and copies the parent agent's capabilities
+// into it before the caller can submit work. The parent conversation and its
+// main-only orchestration tools remain private to the parent.
+func (m *AgentManager) CreateInherited(parentID, model string) (AgentSummary, error) {
+	parent, ok := m.Agent(parentID)
+	if !ok {
+		return AgentSummary{}, fmt.Errorf("unknown agent %q", parentID)
+	}
+	if strings.TrimSpace(model) == "" {
+		parentSummary, err := m.Summary(parentID)
+		if err != nil {
+			return AgentSummary{}, err
+		}
+		model = parentSummary.Model
+	}
+	created, err := m.Create(model)
+	if err != nil {
+		return AgentSummary{}, err
+	}
+	child, ok := m.Agent(created.ID)
+	if !ok {
+		return AgentSummary{}, fmt.Errorf("created agent %q is unavailable", created.ID)
+	}
+	if err := child.InheritCapabilitiesFrom(parent); err != nil {
+		return AgentSummary{}, fmt.Errorf("inherit capabilities for %s: %w", created.ID, err)
+	}
+	return created, nil
+}
+
 func (m *AgentManager) create(id, name, model string, main bool) (AgentSummary, error) {
 	m.mu.RLock()
 	factory := m.factory
@@ -696,7 +725,7 @@ func (t *managedToolset) createAgent(ctx context.Context, arguments json.RawMess
 		}
 		model = summary.Model
 	}
-	summary, err := t.manager.Create(model)
+	summary, err := t.manager.CreateInherited(t.id, model)
 	if err != nil {
 		return llm.ToolResult{}, err
 	}
