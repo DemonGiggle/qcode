@@ -22,6 +22,10 @@ are used as written; relative paths are resolved from the selected workspace,
 and `~` expands to the current user's home directory. A missing directory is
 kept in the `/skill` hint and contributes no skills.
 
+The qcode repository also contains optional official release skills in
+[`docs/skills/`](skills/). Browse that collection and decide whether any of
+its skills are useful for your work.
+
 `agent_timeout` controls how long `main` waits for a batch of agent consultations
 in interactive mode. The default is **five minutes**, allowing time for local
 models to answer a focused question. Set a positive duration such as `"90s"`,

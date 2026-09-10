@@ -4,6 +4,17 @@ Skills let you attach focused, reusable instructions to a session. Place a `SKIL
 
 To create or update a skill, see the [skill specification](skill-spec.md).
 
+## Official release skills
+
+The repository maintains a collection of ready-to-use skills in
+[`docs/skills/`](skills/). Users are encouraged to enable any official skill
+that helps with their task; skill selection is optional, and qcode loads a
+selected skill's full instructions only when the agent requests them.
+
+The release collection is optional and is not automatically enabled by qcode.
+Browse the [release skill collection](skills/) to see what is available, then
+decide whether a skill is useful for your work.
+
 ## Discovery and precedence
 
 qcode scans three directories in ascending precedence (later overrides earlier on name collisions):

@@ -18,7 +18,7 @@ qcode is a lightweight, keyboard-driven AI coding assistant that runs entirely i
 - 🤖 **Multi-agent support** with up to 20 concurrent agent tabs
 - 🔧 **Rich toolset** including read, write, edit, list, search, shell, and web tools
 - 🧠 **Global learning** that persists preferences across sessions
-- 🎯 **Skills system** for workspace-local instruction bundles
+- 🎯 **Skills system** for workspace-local instruction bundles, including [official release skills](docs/skills/)
 - 🔒 **Sandbox mode** for isolated tool execution on Linux
 - 📊 **Context tracking** with real-time token usage display
 
@@ -53,7 +53,7 @@ qcode --demo "show me how qcode works"
 - [Token usage](docs/token-usage.md) - Per-session totals and structured usage events
 - [Providers](docs/providers.md) - Ollama, OpenAI, and OpenCode Go setup
 - [Multi-agent](docs/agents.md) - Concurrent agent tabs and orchestration
-- [Skills](docs/skills.md) - Workspace-local instruction bundles
+- [Skills](docs/skills.md) - Workspace-local instruction bundles, [official release skills](docs/skills/), and authoring guidance
 - [Web Tools](docs/web-tools.md) - HTTP fetching and search capabilities
 - [Learning](docs/learning.md) - Persistent preferences and procedures
 - [Configuration](docs/configuration.md) - Config file locations and options
