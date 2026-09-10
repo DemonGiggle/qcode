@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	DefaultMaxAgents        = 4
+	DefaultMaxAgents        = 20
 	DefaultPromptQueueLimit = 16
 	DefaultResultLimit      = 128
 	maxHandoffBytes         = 4 * 1024

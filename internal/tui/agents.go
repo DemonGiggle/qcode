@@ -541,31 +541,13 @@ func tabBar(summaries []session.Summary, active string, views map[string]*agentV
 	if width <= 0 || visibleWidth(bar) <= width {
 		return withTabSwitchHint(bar, width, unicodeEnabled, color)
 	}
-	ordered := make([]session.Summary, 0, len(summaries))
-	for _, summary := range summaries {
-		if summary.ID == "main" {
-			ordered = append(ordered, summary)
-		}
-	}
-	if active != "main" {
-		for _, summary := range summaries {
-			if summary.ID == active {
-				ordered = append(ordered, summary)
-			}
-		}
-	}
-	for _, summary := range summaries {
-		if summary.ID != "main" && summary.ID != active {
-			ordered = append(ordered, summary)
-		}
-	}
-	bar = renderTabs(ordered, active, views, unicodeEnabled, color, true)
+	bar = windowedTabs(summaries, active, views, width, unicodeEnabled, color)
 	if visibleWidth(bar) <= width {
 		return withTabSwitchHint(bar, width, unicodeEnabled, color)
 	}
 	if active != "main" {
 		var essential []session.Summary
-		for _, summary := range ordered {
+		for _, summary := range summaries {
 			if summary.ID == "main" || summary.ID == active {
 				copy := summary
 				if copy.ID == "main" {
@@ -579,6 +561,106 @@ func tabBar(summaries []session.Summary, active string, views map[string]*agentV
 		bar = renderTabs(essential, active, views, unicodeEnabled, color, false)
 	}
 	return withTabSwitchHint(truncateDiffLine(bar, width, unicodeEnabled), width, unicodeEnabled, color)
+}
+
+// windowedTabs keeps main pinned and fills the remaining row with a contiguous
+// window around the active worker. Overflow counters make the hidden tabs and
+// the direction to reach them explicit while relative switching moves the
+// window along with the active agent.
+func windowedTabs(summaries []session.Summary, active string, views map[string]*agentView, width int, unicodeEnabled, color bool) string {
+	var main *session.Summary
+	workers := make([]session.Summary, 0, len(summaries))
+	activeIndex := -1
+	for _, summary := range summaries {
+		if summary.ID == "main" {
+			copy := summary
+			main = &copy
+			continue
+		}
+		if summary.ID == active {
+			activeIndex = len(workers)
+		}
+		workers = append(workers, summary)
+	}
+
+	start, end := 0, 0
+	if activeIndex >= 0 {
+		start, end = activeIndex, activeIndex+1
+	}
+	render := func(first, last int) string {
+		return renderTabWindow(main, workers, first, last, active, views, unicodeEnabled, color)
+	}
+	bar := render(start, end)
+	if visibleWidth(bar) > width {
+		return bar
+	}
+
+	for start > 0 || end < len(workers) {
+		tryLeftFirst := activeIndex >= 0 && activeIndex-start <= end-activeIndex-1
+		choices := []int{1, -1}
+		if tryLeftFirst {
+			choices = []int{-1, 1}
+		}
+		expanded := false
+		for _, direction := range choices {
+			candidateStart, candidateEnd := start, end
+			if direction < 0 {
+				if start == 0 {
+					continue
+				}
+				candidateStart--
+			} else {
+				if end == len(workers) {
+					continue
+				}
+				candidateEnd++
+			}
+			candidate := render(candidateStart, candidateEnd)
+			if visibleWidth(candidate) <= width {
+				start, end, bar = candidateStart, candidateEnd, candidate
+				expanded = true
+				break
+			}
+		}
+		if !expanded {
+			break
+		}
+	}
+	return bar
+}
+
+func renderTabWindow(main *session.Summary, workers []session.Summary, start, end int, active string, views map[string]*agentView, unicodeEnabled, color bool) string {
+	parts := make([]string, 0, end-start+3)
+	if main != nil {
+		parts = append(parts, renderTabs([]session.Summary{*main}, active, views, unicodeEnabled, color, false))
+	}
+	if start > 0 {
+		parts = append(parts, tabOverflow(start, true, unicodeEnabled, color))
+	}
+	if start < end {
+		parts = append(parts, renderTabs(workers[start:end], active, views, unicodeEnabled, color, false))
+	}
+	if end < len(workers) {
+		parts = append(parts, tabOverflow(len(workers)-end, false, unicodeEnabled, color))
+	}
+	return strings.Join(parts, " ")
+}
+
+func tabOverflow(count int, left, unicodeEnabled, color bool) string {
+	marker := fmt.Sprintf("%d>", count)
+	if left {
+		marker = fmt.Sprintf("<%d", count)
+	}
+	if unicodeEnabled {
+		marker = fmt.Sprintf("%d›", count)
+		if left {
+			marker = fmt.Sprintf("‹%d", count)
+		}
+	}
+	if color {
+		return dim + marker + reset
+	}
+	return marker
 }
 
 func withTabSwitchHint(bar string, width int, unicodeEnabled, color bool) string {

@@ -15,7 +15,7 @@ qcode is a lightweight, keyboard-driven AI coding assistant that runs entirely i
 ## ✨ Features
 
 - 🖥️ **Full-viewport TUI** with editable input, per-agent history, and ANSI-colored Markdown
-- 🤖 **Multi-agent support** with up to 4 concurrent agent tabs
+- 🤖 **Multi-agent support** with up to 20 concurrent agent tabs
 - 🔧 **Rich toolset** including read, write, edit, list, search, shell, and web tools
 - 🧠 **Global learning** that persists preferences across sessions
 - 🎯 **Skills system** for workspace-local instruction bundles

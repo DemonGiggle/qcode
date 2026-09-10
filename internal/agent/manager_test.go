@@ -105,6 +105,24 @@ func TestAgentManagerLifecycleAndReuse(t *testing.T) {
 	}
 }
 
+func TestDefaultAgentLimitIsTwentyIncludingMain(t *testing.T) {
+	if DefaultMaxAgents != 20 {
+		t.Fatalf("DefaultMaxAgents = %d, want 20", DefaultMaxAgents)
+	}
+	manager := newTestManager(t, 0)
+	for i := 1; i < DefaultMaxAgents; i++ {
+		if _, err := manager.Create("worker-model"); err != nil {
+			t.Fatalf("create agent %d: %v", i, err)
+		}
+	}
+	if got := len(manager.List()); got != DefaultMaxAgents {
+		t.Fatalf("agent count = %d, want %d", got, DefaultMaxAgents)
+	}
+	if _, err := manager.Create("overflow"); err == nil || !strings.Contains(err.Error(), "limit") {
+		t.Fatalf("limit error = %v", err)
+	}
+}
+
 func TestAgentManagerShutdownCancelsAndCleansUp(t *testing.T) {
 	manager := newTestManager(t, 2)
 	worker, _ := manager.Create("worker-model")

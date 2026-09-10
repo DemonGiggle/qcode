@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -246,6 +247,33 @@ func TestTabBarKeepsActiveAgentOnNarrowScreen(t *testing.T) {
 	}
 	if strings.Contains(got, "Switch") {
 		t.Fatalf("narrow tab bar unexpectedly contains hint = %q", got)
+	}
+}
+
+func TestTabBarWindowsManyAgentsAroundActive(t *testing.T) {
+	summaries := []session.Summary{{ID: "main", Name: "main", Status: session.StatusIdle}}
+	for i := 1; i < 20; i++ {
+		summaries = append(summaries, session.Summary{
+			ID: fmt.Sprintf("agent-%d", i), Name: fmt.Sprintf("worker-%02d", i), Status: session.StatusIdle,
+		})
+	}
+
+	got := tabBar(summaries, "agent-10", nil, 72, false, false)
+	for _, want := range []string{"[main -]", "*[worker-10 -]", "<", ">"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("windowed tab bar lacks %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "[worker-01") || strings.Contains(got, "[worker-19") {
+		t.Fatalf("windowed tab bar included distant agents: %q", got)
+	}
+	if visibleWidth(got) > 72 {
+		t.Fatalf("windowed tab bar width = %d: %q", visibleWidth(got), got)
+	}
+
+	late := tabBar(summaries, "agent-19", nil, 72, true, false)
+	if !strings.Contains(late, "*[worker-19 ○]") || !strings.Contains(late, "‹") || strings.Contains(late, "›") {
+		t.Fatalf("late tab window did not follow active agent: %q", late)
 	}
 }
 
