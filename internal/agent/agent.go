@@ -35,6 +35,7 @@ type Agent struct {
 	trace                *trace.Logger
 	out                  io.Writer
 	maxSteps             atomic.Int64
+	currentStep          atomic.Int64
 	messages             []llm.Message
 	stateMu              sync.RWMutex
 	requestContext       func() string
@@ -131,6 +132,12 @@ func (a *Agent) SetMaxSteps(maxSteps int) {
 	}
 	a.maxSteps.Store(int64(maxSteps))
 	a.updateCheckpointMaxSteps(maxSteps)
+}
+
+// StepProgress returns the current model-turn number and the configured limit
+// for the active request. The current value is zero while the agent is idle.
+func (a *Agent) StepProgress() (int, int) {
+	return int(a.currentStep.Load()), a.MaxSteps()
 }
 
 // SetRequestContext installs an ephemeral context source. Its result is added
@@ -256,11 +263,15 @@ func (a *Agent) ToolEnabled(name string) bool {
 }
 
 func (a *Agent) Run(ctx context.Context, userText string) error {
+	a.currentStep.Store(0)
 	a.repairInterruptedCalls()
 	a.stateMu.Lock()
 	a.lastResponse = ""
 	a.stateMu.Unlock()
-	defer a.publishContext()
+	defer func() {
+		a.currentStep.Store(0)
+		a.publishContext()
+	}()
 	task := a.trace.BeginTask()
 	defer task.End()
 	if a.shouldAutoCompact() {
@@ -275,6 +286,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 	a.publishContext()
 	identicalToolCalls := map[string]int{}
 	for step := 0; step < a.MaxSteps(); step++ {
+		a.currentStep.Store(int64(step + 1))
 		requestMessages := a.requestMessages(ctx)
 		a.publishContext()
 		span := a.trace.Start("llm", a.provider.Name(), map[string]any{"model": a.model, "step": step + 1})

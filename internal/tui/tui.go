@@ -104,6 +104,10 @@ type maxStepsReader interface {
 	MaxSteps() int
 }
 
+type stepRunner interface {
+	StepProgress() (int, int)
+}
+
 type skillRunner interface{ SetSkills([]prompt.SkillSummary) }
 
 type selectedSkillsRunner interface {
@@ -507,6 +511,7 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		if len(fields) > 0 && fields[0] == "/maxsteps" {
 			u.updateMaxSteps(fields)
+			u.drawStatusBar()
 			continue
 		}
 		switch line {
@@ -923,7 +928,7 @@ func (u *UI) printHeader() {
 	fmt.Fprintf(u.display, "\r\n")
 	u.printToolSummary()
 	if !u.statusActive {
-		fmt.Fprintf(u.display, "%s\r\n", statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel()))
+		fmt.Fprintf(u.display, "%s\r\n", statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel()))
 	}
 }
 
@@ -978,7 +983,7 @@ func (u *UI) renderStatusBarLocked(force bool) {
 	if !u.statusActive {
 		return
 	}
-	bar := statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel())
+	bar := statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel())
 	if !force && bar == u.statusBarText {
 		return
 	}
@@ -1013,6 +1018,9 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 		if len(contextLabel) > 1 {
 			parts = append(parts, "[TOK "+contextLabel[1]+"]")
 		}
+		if len(contextLabel) > 2 && contextLabel[2] != "" {
+			parts = append(parts, "[STEP "+contextLabel[2]+"]")
+		}
 		bar := strings.Join(parts, " ")
 		if width > 0 && visibleWidth(bar) > width {
 			if dynamic := compactStatusBar(contextLabel, false, unicodeEnabled); dynamic != "" && visibleWidth(dynamic) <= width {
@@ -1032,6 +1040,9 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 	segments = append(segments, statusSegment("WS", root, blue))
 	if len(contextLabel) > 1 {
 		segments = append(segments, statusSegment("TOK", contextLabel[1], cyan))
+	}
+	if len(contextLabel) > 2 && contextLabel[2] != "" {
+		segments = append(segments, statusSegment("STEP", contextLabel[2], yellow))
 	}
 	separator := dim + "  │  " + reset
 	if !unicodeEnabled {
@@ -1056,12 +1067,18 @@ func compactStatusBar(labels []string, color, unicodeEnabled bool) string {
 		separator = "  |  "
 	}
 	segments := []string{statusSegment("CTX", labels[0], green)}
-	if len(labels) > 1 {
+	if len(labels) > 2 && labels[2] != "" {
+		// Keep step progress visible on narrow terminals; token totals are less
+		// actionable while a request is running.
+		segments = append(segments, statusSegment("STEP", labels[2], yellow))
+	} else if len(labels) > 1 {
 		segments = append(segments, statusSegment("TOK", labels[1], cyan))
 	}
 	if !color {
 		parts := []string{"[CTX " + labels[0] + "]"}
-		if len(labels) > 1 {
+		if len(labels) > 2 && labels[2] != "" {
+			parts = append(parts, "[STEP "+labels[2]+"]")
+		} else if len(labels) > 1 {
 			parts = append(parts, "[TOK "+labels[1]+"]")
 		}
 		return strings.Join(parts, " ")

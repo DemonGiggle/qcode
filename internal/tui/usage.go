@@ -26,6 +26,15 @@ func (u *UI) usageLabel() string {
 	return label
 }
 
+func (u *UI) stepsLabel() string {
+	runner, ok := u.runner.(stepRunner)
+	if !ok {
+		return ""
+	}
+	current, maximum := runner.StepProgress()
+	return fmt.Sprintf("%d/%d", current, maximum)
+}
+
 func compactTokenCount(tokens int) string {
 	if tokens < 1000 {
 		return fmt.Sprintf("%d", tokens)

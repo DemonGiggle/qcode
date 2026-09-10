@@ -200,6 +200,21 @@ func TestStatusBarSegmentOrder(t *testing.T) {
 	}
 }
 
+func TestStatusBarShowsStepProgress(t *testing.T) {
+	got := statusBar("ollama", "qwen", "~/code", 120, true, false, "73% left", "I:1.2K O:340", "2/32")
+	want := "ollama [MODEL qwen] [CTX 73% left] [WS ~/code] [TOK I:1.2K O:340] [STEP 2/32]"
+	if got != want {
+		t.Fatalf("status bar = %q, want %q", got, want)
+	}
+}
+
+func TestNarrowStatusBarKeepsStepProgress(t *testing.T) {
+	got := statusBar("openai", "a-very-long-model-name", "/workspace", 32, true, false, "73% left", "I:1.2K O:340", "2/32")
+	if !strings.Contains(got, "[STEP 2/32]") || visibleWidth(got) > 32 {
+		t.Fatalf("narrow status bar = %q, width = %d", got, visibleWidth(got))
+	}
+}
+
 func TestStatusBarUsesColoredSegments(t *testing.T) {
 	got := statusBar("ollama", "qwen", "~/code", 80, true, true)
 	for _, sequence := range []string{cyan, magenta, blue} {

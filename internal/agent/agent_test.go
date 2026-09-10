@@ -292,10 +292,16 @@ func TestAgentMarksResponseBoundaries(t *testing.T) {
 func TestAgentMaxStepsCanChangeWhileRunning(t *testing.T) {
 	provider := &dynamicMaxStepsProvider{started: make(chan struct{}), release: make(chan struct{})}
 	runner := New(provider, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 1)
+	if current, maximum := runner.StepProgress(); current != 0 || maximum != 1 {
+		t.Fatalf("initial step progress = %d/%d, want 0/1", current, maximum)
+	}
 	done := make(chan error, 1)
 	go func() { done <- runner.Run(context.Background(), "continue") }()
 
 	<-provider.started
+	if current, maximum := runner.StepProgress(); current != 1 || maximum != 1 {
+		t.Fatalf("running step progress = %d/%d, want 1/1", current, maximum)
+	}
 	runner.SetMaxSteps(2)
 	close(provider.release)
 	if err := <-done; err != nil {
@@ -303,6 +309,9 @@ func TestAgentMaxStepsCanChangeWhileRunning(t *testing.T) {
 	}
 	if provider.calls != 2 || runner.MaxSteps() != 2 {
 		t.Fatalf("provider calls = %d, max steps = %d; want 2 and 2", provider.calls, runner.MaxSteps())
+	}
+	if current, maximum := runner.StepProgress(); current != 0 || maximum != 2 {
+		t.Fatalf("final step progress = %d/%d, want 0/2", current, maximum)
 	}
 }
 

@@ -2,7 +2,7 @@
 
 The terminal UI is a full-viewport, keyboard-driven interface with editable input, per-agent history, full word wrapping, streamed responses, and ANSI-colored Markdown, including aligned GFM tables. Fixed tabs sit at the top and a status bar at the bottom. The normal terminal buffer and scrollback are retained.
 
-The prompt is pinned above the task indicator and status bar from launch. It displays `>` for an idle agent and `(Queue)>` while the current tab's agent is working. Each tab keeps its own draft and prompt state. Long drafts wrap upward within the input area.
+The prompt is pinned above the task indicator and status bar from launch. It displays `>` for an idle agent and `(Queue)>` while the current tab's agent is working. The status bar includes `STEP current/max` for the active agent's model-turn progress. Each tab keeps its own draft and prompt state. Long drafts wrap upward within the input area.
 
 Typing `/` opens up to five matching command suggestions directly above the prompt. Type more characters to filter them or press Tab to complete the first match. Suggestions stay in their own area while output streams, and disappear when the draft no longer matches a command; they are not saved in conversation history.
 
