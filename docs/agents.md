@@ -36,7 +36,8 @@ separate. The interactive `/agent` command remains available when the user wants
 create or switch agent tabs directly.
 
 Both creation and delegation are fire-and-forget: they return the accepted
-request ID and queue position without waiting for the child to finish. If an
+request ID and queue position without waiting for the child to finish, then
+end the current main-agent model turn so it cannot begin polling. If an
 optional `create_agent.task` cannot be queued, the agent remains available and
 idle so the main agent can retry with `delegate_task`.
 

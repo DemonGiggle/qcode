@@ -474,7 +474,7 @@ func TestMainCanCreateAgentAndAssignTaskAsynchronously(t *testing.T) {
 	result, err := main.tools.ExecuteDetailed(context.Background(), llm.ToolCall{
 		Name: "create_agent", Arguments: []byte(`{"task":"block"}`),
 	})
-	if err != nil || !strings.Contains(result.Output, "accepted task asynchronously") || !strings.Contains(result.Output, "request_id=request-1") {
+	if err != nil || !result.EndTurn || !strings.Contains(result.Output, "accepted task asynchronously") || !strings.Contains(result.Output, "request_id=request-1") {
 		t.Fatalf("create and assign result = %+v, %v", result, err)
 	}
 	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
@@ -517,7 +517,7 @@ func TestMainCanDelegateAndObserveCompletion(t *testing.T) {
 	result, err := main.tools.ExecuteDetailed(context.Background(), llm.ToolCall{
 		Name: "delegate_task", Arguments: []byte(`{"agent_id":"` + worker.ID + `","prompt":"inspect"}`),
 	})
-	if err != nil || !strings.Contains(result.Output, "accepted") {
+	if err != nil || !result.EndTurn || !strings.Contains(result.Output, "accepted") {
 		t.Fatalf("delegate result = %+v, %v", result, err)
 	}
 	if summary := waitManagerStatus(t, manager, worker.ID, StatusCompleted); !strings.Contains(summary.LastOutcome, "handled inspect") {

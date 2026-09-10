@@ -412,6 +412,8 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			return nil
 		}
 		a.pendingImages = nil
+		endTurn := false
+		endTurnResponse := ""
 		for index, call := range response.Message.ToolCalls {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -451,6 +453,10 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 				result += "ERROR: " + toolErr.Error()
 			}
 			a.messages = append(a.messages, llm.Message{Role: "tool", Content: result, Name: call.Name, ToolCallID: call.ID})
+			if toolErr == nil && execution.EndTurn {
+				endTurn = true
+				endTurnResponse = execution.Output
+			}
 			if len(execution.Images) > 0 {
 				a.pendingImages = append(a.pendingImages, execution.Images...)
 			}
@@ -463,6 +469,12 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 				Images:  a.pendingImages,
 			})
 			a.pendingImages = nil
+		}
+		if endTurn {
+			a.stateMu.Lock()
+			a.lastResponse = strings.TrimSpace(endTurnResponse)
+			a.stateMu.Unlock()
+			return nil
 		}
 	}
 	return fmt.Errorf("agent stopped after %d model steps", a.MaxSteps())

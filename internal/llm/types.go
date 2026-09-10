@@ -54,6 +54,10 @@ type ToolResult struct {
 	Diff         string
 	Images       []Image
 	ChangedFiles []string
+	// EndTurn tells the agent loop that the tool completed the user's request
+	// for this model turn. It is used by fire-and-forget orchestration tools so
+	// the model cannot immediately start polling the background task.
+	EndTurn bool
 }
 
 type StreamKind uint8

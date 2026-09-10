@@ -793,7 +793,7 @@ func (t *managedToolset) createAgent(ctx context.Context, arguments json.RawMess
 			Output: fmt.Sprintf("created agent %s using model %q, but task assignment failed; the agent remains idle and can be retried with delegate_task", summary.ID, summary.Model),
 		}, fmt.Errorf("assign task to newly created agent %s: %w", summary.ID, err)
 	}
-	return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q and accepted task asynchronously; request_id=%s; queue_position=%d", summary.ID, summary.Model, submission.RequestID, submission.QueuePosition)}, nil
+	return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q and accepted task asynchronously; request_id=%s; queue_position=%d", summary.ID, summary.Model, submission.RequestID, submission.QueuePosition), EndTurn: true}, nil
 }
 
 func (t *managedToolset) delegate(ctx context.Context, arguments json.RawMessage) (llm.ToolResult, error) {
@@ -814,7 +814,7 @@ func (t *managedToolset) delegate(ctx context.Context, arguments json.RawMessage
 	if err != nil {
 		return llm.ToolResult{}, err
 	}
-	return llm.ToolResult{Output: fmt.Sprintf("task accepted by %s; request_id=%s; queue_position=%d", args.AgentID, submission.RequestID, submission.QueuePosition)}, nil
+	return llm.ToolResult{Output: fmt.Sprintf("task accepted by %s; request_id=%s; queue_position=%d", args.AgentID, submission.RequestID, submission.QueuePosition), EndTurn: true}, nil
 }
 
 func managerSchemas() []llm.Tool {
