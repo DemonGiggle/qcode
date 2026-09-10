@@ -282,8 +282,8 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		return err
 	}
 	if opts.demo {
-		// Seed the scripted collaborator so the demo's delegate_task and
-		// get_agent_result calls exercise successful coordination events.
+		// Seed the scripted collaborator so the demo's delegate_task call
+		// exercises a successful background coordination event.
 		if _, err := manager.Create(opts.model); err != nil {
 			return err
 		}

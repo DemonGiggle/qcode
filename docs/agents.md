@@ -16,25 +16,29 @@ The in-process manager exposes asynchronous submission, synchronous submission-a
 
 ## How the main agent talks to sub-agents
 
-The main agent receives six orchestrator tools that sub-agents do not have:
+The main agent receives five orchestrator tools that sub-agents do not have:
 
 | Tool | Purpose |
 |------|---------|
 | `list_agents` | Returns the current status of all agents (outcomes and files stripped for brevity) |
-| `create_agent` | Creates a new agent session, optionally using a specified model |
+| `create_agent` | Creates a new agent session and optionally queues its first task asynchronously |
 | `delegate_task` | Queues focused work in another agent asynchronously |
-| `get_agent_result` | Retrieves a specific agent's status and latest completed handoff |
 | `search_agent_work` | Searches the full session work journal, including closed agents |
 | `consult_agents` | Asks selected agents questions concurrently and waits for their specific replies within a deadline |
 
-To create and assign work in one coordination sequence, the main agent calls
-`create_agent` first, using the returned agent ID in a subsequent
-`delegate_task` call. If `model` is omitted, the new agent uses the main
-agent's current model. Agents created this way inherit the main agent's
+The main agent can create and assign work in one asynchronous call by passing
+an optional `task` to `create_agent`, or can call `create_agent` first and use
+the returned agent ID in a subsequent `delegate_task` call. If `model` is
+omitted, the new agent uses the main agent's current model. Agents created this way inherit the main agent's
 current tool enablement, selected skills, approved directory grants, and
 maximum step setting; their conversation and main-only orchestration tools stay
 separate. The interactive `/agent` command remains available when the user wants to
 create or switch agent tabs directly.
+
+Both creation and delegation are fire-and-forget: they return the accepted
+request ID and queue position without waiting for the child to finish. If an
+optional `create_agent.task` cannot be queued, the agent remains available and
+idle so the main agent can retry with `delegate_task`.
 
 ### Previous work and consultations
 
@@ -100,7 +104,7 @@ On every model request, qcode builds a bounded summary of every non-main agent�
 
 ### Handoff knowledge transfer
 
-When a sub-agent completes, its final text outcome is stored (capped at **4 KB**). The main agent retrieves this via `get_agent_result`. Sub-agent conversation histories are never copied into the main agent's context—only the final text outcome crosses the boundary.
+When a sub-agent completes, its final text outcome is stored (capped at **4 KB**) in the work journal. The main agent can search those findings or ask for fresh information through `consult_agents`, which waits for the selected agents' replies. Sub-agent conversation histories are never copied into the main agent's context—only bounded findings cross the boundary.
 
 The knowledge flow is:
 
@@ -109,7 +113,7 @@ Sub-agent completes → outcome stored (≤4 KB)
          ↓
 Main agent's next request → roster injected into system prompt (≤2 KB preview)
          ↓
-Model sees truncated outcome in roster → calls get_agent_result for full handoff
+Model sees truncated outcome in roster → searches history or calls consult_agents when information is needed
          ↓
 Main agent uses handoff as reference context
 ```
@@ -125,8 +129,8 @@ The system prompt instructs the model:
 - **No history leakage**: Sub-agent messages never enter main context.
 - **Bounded transfer**: 4 KB outcome cap, 2 KB roster cap, 100-byte preview in roster.
 - **Reference, not instruction**: Both roster and handoffs are explicitly framed as untrusted reference data that must not override user instructions.
-- **On-demand fetching**: The main agent can retrieve a latest handoff with `get_agent_result` or request fresh answers with `consult_agents`.
-- **Async delegation**: `delegate_task` returns immediately with the accepted request ID and queue position. Use `consult_agents` for a coordinated wait; repeatedly polling the same tool arguments can hit the identical-call guard.
+- **On-demand information**: The main agent can search recorded findings or request fresh answers with waiting `consult_agents`.
+- **Async delegation**: `create_agent` with `task` and `delegate_task` return immediately with the accepted request ID and queue position. The main agent continues its work without polling; use `list_agents` for status and `consult_agents` for a coordinated wait.
 
 ## Startup and session context
 

@@ -444,7 +444,7 @@ func TestMainToolsAndBoundedRoster(t *testing.T) {
 	}
 	main, _ := manager.Agent("main")
 	workerAgent, _ := manager.Agent(worker.ID)
-	if !hasSchema(main.tools.EnabledSchemas(), "create_agent") || !hasSchema(main.tools.EnabledSchemas(), "get_agent_result") || hasSchema(workerAgent.tools.EnabledSchemas(), "create_agent") || hasSchema(workerAgent.tools.EnabledSchemas(), "get_agent_result") {
+	if !hasSchema(main.tools.EnabledSchemas(), "create_agent") || !hasSchema(main.tools.EnabledSchemas(), "consult_agents") || hasSchema(main.tools.EnabledSchemas(), "get_agent_result") || hasSchema(workerAgent.tools.EnabledSchemas(), "create_agent") || hasSchema(workerAgent.tools.EnabledSchemas(), "consult_agents") || hasSchema(workerAgent.tools.EnabledSchemas(), "get_agent_result") {
 		t.Fatal("manager tools were not restricted to main")
 	}
 }
@@ -464,6 +464,25 @@ func TestMainCanCreateAgentWithDefaultModel(t *testing.T) {
 	}
 	if created.Model != "main-model" || created.Status != StatusIdle {
 		t.Fatalf("created agent = %+v, want main-model and idle", created)
+	}
+}
+
+func TestMainCanCreateAgentAndAssignTaskAsynchronously(t *testing.T) {
+	manager := newTestManager(t, 2)
+	main, _ := manager.Agent("main")
+	started := time.Now()
+	result, err := main.tools.ExecuteDetailed(context.Background(), llm.ToolCall{
+		Name: "create_agent", Arguments: []byte(`{"task":"block"}`),
+	})
+	if err != nil || !strings.Contains(result.Output, "accepted task asynchronously") || !strings.Contains(result.Output, "request_id=request-1") {
+		t.Fatalf("create and assign result = %+v, %v", result, err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("create and assign waited for the child: %s", elapsed)
+	}
+	summary := waitManagerStatus(t, manager, "agent-1", StatusRunning)
+	if summary.CurrentTask != "block" {
+		t.Fatalf("created agent task = %q, want block", summary.CurrentTask)
 	}
 }
 
@@ -491,7 +510,7 @@ func TestMainCreatedAgentInheritsCapabilities(t *testing.T) {
 	}
 }
 
-func TestMainCanDelegateAndReadHandoff(t *testing.T) {
+func TestMainCanDelegateAndObserveCompletion(t *testing.T) {
 	manager := newTestManager(t, 2)
 	worker, _ := manager.Create("worker-model")
 	main, _ := manager.Agent("main")
@@ -501,12 +520,8 @@ func TestMainCanDelegateAndReadHandoff(t *testing.T) {
 	if err != nil || !strings.Contains(result.Output, "accepted") {
 		t.Fatalf("delegate result = %+v, %v", result, err)
 	}
-	waitManagerStatus(t, manager, worker.ID, StatusCompleted)
-	result, err = main.tools.ExecuteDetailed(context.Background(), llm.ToolCall{
-		Name: "get_agent_result", Arguments: []byte(`{"agent_id":"` + worker.ID + `"}`),
-	})
-	if err != nil || !strings.Contains(result.Output, "handled inspect") {
-		t.Fatalf("handoff result = %+v, %v", result, err)
+	if summary := waitManagerStatus(t, manager, worker.ID, StatusCompleted); !strings.Contains(summary.LastOutcome, "handled inspect") {
+		t.Fatalf("completed handoff = %+v", summary)
 	}
 }
 

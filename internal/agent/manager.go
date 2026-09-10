@@ -700,8 +700,6 @@ func (t *managedToolset) ExecuteDetailed(ctx context.Context, call llm.ToolCall)
 			return t.createAgent(ctx, call.Arguments)
 		case "delegate_task":
 			return t.delegate(ctx, call.Arguments)
-		case "get_agent_result":
-			return t.result(call.Arguments)
 		case "search_agent_work":
 			return t.searchWork(call.Arguments)
 		case "consult_agents":
@@ -765,6 +763,7 @@ func (t *managedToolset) listAgents() (llm.ToolResult, error) {
 func (t *managedToolset) createAgent(ctx context.Context, arguments json.RawMessage) (llm.ToolResult, error) {
 	var args struct {
 		Model string `json:"model"`
+		Task  string `json:"task"`
 	}
 	if err := json.Unmarshal(arguments, &args); err != nil {
 		return llm.ToolResult{}, fmt.Errorf("invalid create_agent arguments: %w", err)
@@ -784,7 +783,17 @@ func (t *managedToolset) createAgent(ctx context.Context, arguments json.RawMess
 	if err != nil {
 		return llm.ToolResult{}, err
 	}
-	return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q; call delegate_task with agent_id %q to assign work", summary.ID, summary.Model, summary.ID)}, nil
+	task := strings.TrimSpace(args.Task)
+	if task == "" {
+		return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q; no task assigned", summary.ID, summary.Model)}, nil
+	}
+	submission, err := t.manager.Submit(summary.ID, task)
+	if err != nil {
+		return llm.ToolResult{
+			Output: fmt.Sprintf("created agent %s using model %q, but task assignment failed; the agent remains idle and can be retried with delegate_task", summary.ID, summary.Model),
+		}, fmt.Errorf("assign task to newly created agent %s: %w", summary.ID, err)
+	}
+	return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q and accepted task asynchronously; request_id=%s; queue_position=%d", summary.ID, summary.Model, submission.RequestID, submission.QueuePosition)}, nil
 }
 
 func (t *managedToolset) delegate(ctx context.Context, arguments json.RawMessage) (llm.ToolResult, error) {
@@ -808,24 +817,6 @@ func (t *managedToolset) delegate(ctx context.Context, arguments json.RawMessage
 	return llm.ToolResult{Output: fmt.Sprintf("task accepted by %s; request_id=%s; queue_position=%d", args.AgentID, submission.RequestID, submission.QueuePosition)}, nil
 }
 
-func (t *managedToolset) result(arguments json.RawMessage) (llm.ToolResult, error) {
-	var args struct {
-		AgentID string `json:"agent_id"`
-	}
-	if err := json.Unmarshal(arguments, &args); err != nil {
-		return llm.ToolResult{}, fmt.Errorf("invalid get_agent_result arguments: %w", err)
-	}
-	if args.AgentID == "main" {
-		return llm.ToolResult{}, fmt.Errorf("main agent has no external handoff")
-	}
-	summary, err := t.manager.Summary(args.AgentID)
-	if err != nil {
-		return llm.ToolResult{}, err
-	}
-	data, _ := json.Marshal(summary)
-	return llm.ToolResult{Output: string(data)}, nil
-}
-
 func managerSchemas() []llm.Tool {
 	stringField := func(description string) map[string]any {
 		return map[string]any{"type": "string", "description": description}
@@ -840,9 +831,8 @@ func managerSchemas() []llm.Tool {
 		{Name: "search_agent_work", Description: prompt.SearchAgentWorkTool, Parameters: object(map[string]any{"query": stringField(prompt.AgentWorkQueryParameter), "agent_id": stringField(prompt.AgentIDParameter), "offset": map[string]any{"type": "integer", "minimum": 0}}, "query")},
 		{Name: "consult_agents", Description: prompt.ConsultAgentsTool, Parameters: object(map[string]any{"requests": map[string]any{"type": "array", "minItems": 1, "maxItems": DefaultMaxAgents - 1, "items": object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter), "prompt": stringField(prompt.AgentPromptParameter)}, "agent_id", "prompt")}}, "requests")},
 		{Name: "list_agents", Description: prompt.ListAgentsTool, Parameters: object(nil)},
-		{Name: "create_agent", Description: prompt.CreateAgentTool, Parameters: object(map[string]any{"model": stringField(prompt.AgentModelParameter)})},
+		{Name: "create_agent", Description: prompt.CreateAgentTool, Parameters: object(map[string]any{"model": stringField(prompt.AgentModelParameter), "task": stringField(prompt.AgentPromptParameter)})},
 		{Name: "delegate_task", Description: prompt.DelegateTaskTool, Parameters: object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter), "prompt": stringField(prompt.AgentPromptParameter)}, "agent_id", "prompt")},
-		{Name: "get_agent_result", Description: prompt.GetAgentResultTool, Parameters: object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter)}, "agent_id")},
 	}
 }
 
