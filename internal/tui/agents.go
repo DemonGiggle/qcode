@@ -31,21 +31,7 @@ func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 			u.agentUsage()
 			return
 		}
-		var lines []string
-		for _, item := range u.manager.List() {
-			marker := " "
-			if item.ID == u.activeAgent {
-				marker = "*"
-			}
-			status := string(item.Status)
-			if item.QueueDepth > 0 {
-				status += fmt.Sprintf(" (%d queued)", item.QueueDepth)
-			}
-			lines = append(lines, fmt.Sprintf("%s %-9s %-18s %-20s %s", marker,
-				sanitizeDiffLine(item.ID, "<ESC>"), sanitizeDiffLine(item.Name, "<ESC>"),
-				sanitizeDiffLine(item.Model, "<ESC>"), status))
-		}
-		u.printSystemMessage(strings.Join(lines, "\n"))
+		u.selectAgentList(ctx)
 	case "switch":
 		if len(fields) != 3 {
 			u.agentUsage()
@@ -80,6 +66,45 @@ func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 		u.closeAgent(fields[2])
 	default:
 		u.agentUsage()
+	}
+}
+
+type agentKnowledgeReader interface {
+	AgentKnowledge(string) string
+}
+
+func (u *UI) selectAgentList(ctx context.Context) {
+	list := u.manager.List()
+	if len(list) == 0 {
+		u.printSystemMessage(dim + "No agents are available." + reset)
+		return
+	}
+	entries := make([]agentSelectorEntry, 0, len(list))
+	knowledge, _ := u.manager.(agentKnowledgeReader)
+	for _, summary := range list {
+		entry := agentSelectorEntry{summary: summary, active: summary.ID == u.activeAgent}
+		if knowledge != nil {
+			entry.knowledge = knowledge.AgentKnowledge(summary.ID)
+		}
+		entries = append(entries, entry)
+	}
+	visible := max(1, (u.height-6)/(maxAgentKnowledgeLines+1))
+	visible = min(len(entries), visible)
+	u.input.setRaw(true)
+	u.beginRawSelector()
+	selected, accepted, err := selectAgent(u.input, u.terminal, entries, u.activeAgent, visible, u.width, ColorEnabled(u.out))
+	u.input.setRaw(false)
+	u.endRawSelector()
+	if err != nil {
+		if !errors.Is(err, context.Canceled) && !errors.Is(ctx.Err(), context.Canceled) {
+			u.printSystemMessage(yellow + "Agent selection failed: " + err.Error() + reset)
+		}
+		return
+	}
+	if accepted && selected != "" {
+		if err := u.switchAgent(selected); err != nil {
+			u.printSystemMessage(yellow + err.Error() + reset)
+		}
 	}
 }
 

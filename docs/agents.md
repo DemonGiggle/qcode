@@ -2,7 +2,7 @@
 
 Interactive mode supports up to 20 concurrent agent tabs, including permanent `main`. Use multiple agents to parallelize independent tasks—for example, one agent writing code while another runs tests, or separate agents exploring different parts of a large codebase.
 
-Use `/agent` to create one, `/agent list`, `/agent switch <id>`, `/agent rename <id> <name>`, `/agent cancel <id>`, and `/agent close <id>`.
+Use `/agent` to create one, `/agent list`, `/agent switch <id>`, `/agent rename <id> <name>`, `/agent cancel <id>`, and `/agent close <id>`. `/agent list` is an interactive selector: use Up/Down or PgUp/PgDn to move, Enter to switch to the highlighted agent, and Ctrl+C to leave it. Each row retains the agent ID, name, model, status, and queue information, followed by the latest recorded knowledge preview truncated to at most five lines.
 
 The tab bar shows the available switch shortcuts when the row has room: Ctrl+PageUp/PageDown or the Alt+, and Alt+. fallbacks. When all agents do not fit, `main` stays pinned while a moving window keeps the active agent and nearby tabs visible; counters at each edge show how many tabs are hidden in that direction. Each agent keeps independent context, model, output, tool settings, and sandbox grants while workspace mutations are serialized.
 

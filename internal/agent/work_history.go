@@ -34,6 +34,21 @@ type WorkSearch struct {
 	NextOffset *int        `json:"next_offset,omitempty"`
 }
 
+// AgentKnowledge returns the latest completed finding recorded for an agent.
+// This is the same persisted final-answer material that can be injected into
+// the main agent's temporary historical context before a consultation.
+func (m *AgentManager) AgentKnowledge(agentID string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for index := len(m.work) - 1; index >= 0; index-- {
+		work := m.work[index]
+		if work.AgentID == agentID && strings.TrimSpace(work.Response) != "" {
+			return work.Response
+		}
+	}
+	return ""
+}
+
 // SearchWork searches every retained task, including closed agents and records
 // evicted from the in-memory result cache. Only excerpts enter model context.
 func (m *AgentManager) SearchWork(query, agentID string, offset int) WorkSearch {

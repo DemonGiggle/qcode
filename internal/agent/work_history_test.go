@@ -111,6 +111,23 @@ func TestHistorySearchPaginationAndRelevantExcerpts(t *testing.T) {
 	}
 }
 
+func TestAgentKnowledgeUsesLatestCompletedFinding(t *testing.T) {
+	m := newTestManager(t, 2)
+	worker, _ := m.Create("model")
+	if _, err := m.SubmitAndWait(context.Background(), worker.ID, "first finding"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SubmitAndWait(context.Background(), worker.ID, "latest finding"); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.AgentKnowledge(worker.ID); got != "handled latest finding" {
+		t.Fatalf("knowledge = %q", got)
+	}
+	if got := m.AgentKnowledge("missing"); got != "" {
+		t.Fatalf("missing knowledge = %q", got)
+	}
+}
+
 func TestMainSearchesOlderWorkThenConsultsBeforeAnswer(t *testing.T) {
 	var mainContext string
 	var replies []ConsultationReply
