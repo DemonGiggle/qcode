@@ -81,6 +81,25 @@ func TestLoadRejectsNonPositiveMaxSteps(t *testing.T) {
 	}
 }
 
+func TestAgentTimeoutConfiguration(t *testing.T) {
+	for _, value := range []string{`"5m"`, `"30s"`, `"1h"`, `"0s"`, `"-2m"`, `""`, `"forever"`, `300`, `"999999999999999999h"`} {
+		t.Run(value, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte("agent_timeout = "+value+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, _, err := load([]string{path})
+			valid := value == `"5m"` || value == `"30s"` || value == `"1h"`
+			if valid && (err != nil || cfg.AgentTimeout == nil) {
+				t.Fatalf("%+v %v", cfg, err)
+			}
+			if !valid && err == nil {
+				t.Fatal("invalid timeout accepted")
+			}
+		})
+	}
+}
+
 func TestAutoCompactConfiguration(t *testing.T) {
 	for _, tc := range []struct {
 		value string

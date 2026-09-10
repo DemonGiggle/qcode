@@ -18,6 +18,57 @@ type persistenceManager struct {
 	agents []session.SavedAgent
 	events chan session.Event
 	once   sync.Once
+	work   *session.WorkHistory
+}
+
+func (m *persistenceManager) SaveWorkHistory() *session.WorkHistory { return m.work }
+func (m *persistenceManager) ConsultationEvents(after uint64) []session.ConsultationEvent {
+	if m.work == nil || after >= uint64(len(m.work.Events)) {
+		return nil
+	}
+	return append([]session.ConsultationEvent(nil), m.work.Events[after:]...)
+}
+
+func TestConsultationEventsReplayAndPersistWithoutDuplicates(t *testing.T) {
+	u, m := persistenceUI(t)
+	m.work = &session.WorkHistory{NextRequestID: 1, Events: []session.ConsultationEvent{
+		{Sequence: 1, AgentID: "agent-1", RequestID: "request-1", Status: "timed_out", Error: "deadline exceeded"},
+		{Sequence: 2, AgentID: "missing", Status: "failed", Error: "unknown agent"},
+	}}
+	m.events = make(chan session.Event, 32)
+	for i := 0; i < cap(m.events); i++ {
+		m.events <- session.Event{Consultation: true}
+	}
+	u.SetAgentManager(m)
+	u.shutdownAgentManager()
+	lines := strings.Join(u.views["main"].display.Lines(), "\n")
+	if strings.Count(lines, "deadline exceeded") != 1 || strings.Count(lines, "unknown agent") != 1 {
+		t.Fatalf("missing or duplicated events: %s", lines)
+	}
+	store, err := session.Open(t.TempDir(), u.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := u.EnableSessions(store, nil); err != nil {
+		t.Fatal(err)
+	}
+	defer u.closeSession()
+	if err := u.saveSession(false); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := store.Load(u.persistence.current.ID)
+	if err != nil || saved.Work == nil || len(saved.Work.Events) != 2 {
+		t.Fatalf("missing durable events: %+v %v", saved.Work, err)
+	}
+	v, n := persistenceUI(t)
+	n.work = saved.Work
+	if err := v.RestorePresentation(saved.Presentation); err != nil {
+		t.Fatal(err)
+	}
+	v.replayConsultationEvents()
+	if got := strings.Join(v.views["main"].display.Lines(), "\n"); got != lines {
+		t.Fatal("resume duplicated old events")
+	}
 }
 
 func (m *persistenceManager) SaveAgents() ([]session.SavedAgent, int) { return m.agents, 2 }

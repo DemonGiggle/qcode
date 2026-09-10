@@ -28,6 +28,7 @@ type Snapshot struct {
 	Agents                 []SavedAgent
 	NextID                 int
 	Presentation           json.RawMessage
+	Work                   *WorkHistory `json:",omitempty"`
 }
 
 type Entry struct {

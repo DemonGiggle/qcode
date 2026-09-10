@@ -60,36 +60,43 @@ type managedSession struct {
 }
 
 type promptRequest struct {
-	id       string
-	targetID string
-	prompt   string
-	done     chan struct{}
-	result   PromptResult
-	err      error
+	id           string
+	targetID     string
+	prompt       string
+	done         chan struct{}
+	result       PromptResult
+	err          error
+	journalIndex int
+	deadline     time.Time
+	finished     bool
+	abortErr     error
 }
 
 // AgentManager owns independent agent lifecycles and the shared workspace
 // mutation lock. Terminal presentation remains the UI's responsibility.
 type AgentManager struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	mu            sync.RWMutex
-	workspace     sync.Mutex
-	sessions      map[string]*managedSession
-	closed        map[string]struct{}
-	order         []string
-	nextID        int
-	nextRequestID uint64
-	max           int
-	queueLimit    int
-	resultLimit   int
-	results       map[string]*promptRequest
-	resultOrder   []string
-	factory       SessionFactory
-	events        chan ManagerEvent
-	wg            sync.WaitGroup
-	shutdown      bool
-	stopOnce      sync.Once
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	mu                  sync.RWMutex
+	workspace           sync.Mutex
+	sessions            map[string]*managedSession
+	closed              map[string]struct{}
+	order               []string
+	nextID              int
+	nextRequestID       uint64
+	max                 int
+	queueLimit          int
+	resultLimit         int
+	results             map[string]*promptRequest
+	resultOrder         []string
+	factory             SessionFactory
+	events              chan ManagerEvent
+	wg                  sync.WaitGroup
+	shutdown            bool
+	stopOnce            sync.Once
+	consultationTimeout time.Duration
+	work                []session.WorkRecord
+	consultationEvents  []session.ConsultationEvent
 }
 
 func NewAgentManager(ctx context.Context, maxAgents int) *AgentManager {
@@ -100,7 +107,8 @@ func NewAgentManager(ctx context.Context, maxAgents int) *AgentManager {
 	return &AgentManager{
 		ctx: managerCtx, cancel: cancel, max: maxAgents,
 		queueLimit: DefaultPromptQueueLimit, resultLimit: DefaultResultLimit,
-		sessions: make(map[string]*managedSession), closed: make(map[string]struct{}),
+		consultationTimeout: DefaultConsultationTimeout,
+		sessions:            make(map[string]*managedSession), closed: make(map[string]struct{}),
 		results: make(map[string]*promptRequest), events: make(chan ManagerEvent, 32),
 	}
 }
@@ -336,6 +344,10 @@ func (m *AgentManager) GetResult(requestID string) (PromptResult, error) {
 }
 
 func (m *AgentManager) submit(id, task string) (*promptRequest, Submission, error) {
+	return m.submitRequest(id, task, time.Time{})
+}
+
+func (m *AgentManager) submitRequest(id, task string, deadline time.Time) (*promptRequest, Submission, error) {
 	if strings.TrimSpace(task) == "" {
 		return nil, Submission{}, fmt.Errorf("task must not be empty")
 	}
@@ -343,6 +355,9 @@ func (m *AgentManager) submit(id, task string) (*promptRequest, Submission, erro
 	defer m.mu.Unlock()
 	if m.shutdown {
 		return nil, Submission{}, ErrManagerClosed
+	}
+	if !deadline.IsZero() && !time.Now().Before(deadline) {
+		return nil, Submission{}, context.DeadlineExceeded
 	}
 	s, ok := m.sessions[id]
 	if !ok {
@@ -354,11 +369,19 @@ func (m *AgentManager) submit(id, task string) (*promptRequest, Submission, erro
 	if s.active != nil && len(s.queue) >= m.queueLimit {
 		return nil, Submission{}, fmt.Errorf("%w for agent %q (limit %d)", ErrPromptQueueFull, id, m.queueLimit)
 	}
+	if m.nextRequestID == ^uint64(0) {
+		return nil, Submission{}, fmt.Errorf("prompt request ID space exhausted")
+	}
 	m.nextRequestID++
 	req := &promptRequest{
 		id: fmt.Sprintf("request-%d", m.nextRequestID), targetID: id,
 		prompt: strings.TrimSpace(task), done: make(chan struct{}),
+		journalIndex: len(m.work), deadline: deadline,
 	}
+	m.work = append(m.work, session.WorkRecord{
+		RequestID: req.id, AgentID: id, AgentName: s.summary.Name, Model: s.summary.Model,
+		Prompt: req.prompt, Status: "queued", Created: time.Now().UTC(), Consultation: !deadline.IsZero(),
+	})
 	position := 0
 	if s.active == nil {
 		m.startRequestLocked(id, s, req)
@@ -372,10 +395,18 @@ func (m *AgentManager) submit(id, task string) (*promptRequest, Submission, erro
 }
 
 func (m *AgentManager) startRequestLocked(id string, s *managedSession, req *promptRequest) {
-	runCtx, cancel := context.WithCancel(m.ctx)
+	var runCtx context.Context
+	var cancel context.CancelFunc
+	if req.deadline.IsZero() {
+		runCtx, cancel = context.WithCancel(m.ctx)
+	} else {
+		runCtx, cancel = context.WithDeadline(m.ctx, req.deadline)
+	}
 	s.active = req
 	s.cancel = cancel
 	s.started = time.Now()
+	m.work[req.journalIndex].Status = "running"
+	m.work[req.journalIndex].Started = s.started.UTC()
 	s.summary.Status = StatusRunning
 	s.summary.QueueDepth = len(s.queue)
 	s.summary.CurrentTask = truncateUTF8(req.prompt, 512)
@@ -387,6 +418,9 @@ func (m *AgentManager) startRequestLocked(id string, s *managedSession, req *pro
 	go func() {
 		defer m.wg.Done()
 		err := runner.Run(runCtx, req.prompt)
+		if runCtx.Err() != nil {
+			err = runCtx.Err()
+		}
 		cancel()
 		m.finish(id, req, err, runner.LastResponse())
 	}()
@@ -399,9 +433,18 @@ func (m *AgentManager) finish(id string, req *promptRequest, err error, outcome 
 		m.mu.Unlock()
 		return
 	}
+	if req.abortErr != nil {
+		err, outcome = req.abortErr, ""
+	} else if !req.deadline.IsZero() && !time.Now().Before(req.deadline) {
+		err, outcome = context.DeadlineExceeded, ""
+	}
 	fullOutcome := outcome
-	m.storeResultLocked(req, PromptResult{RequestID: req.id, TargetID: id, Response: fullOutcome}, err)
-	close(req.done)
+	if req.finished {
+		// Cancellation cannot roll back a tool action that was already in
+		// flight. Retain its actual changed files without reviving a late reply.
+		m.work[req.journalIndex].ChangedFiles = append([]string(nil), s.summary.ChangedFiles...)
+	}
+	m.completeRequestLocked(req, outcome, err, s.summary.ChangedFiles)
 	s.active = nil
 	s.cancel = nil
 	duration := time.Since(s.started)
@@ -409,9 +452,12 @@ func (m *AgentManager) finish(id string, req *promptRequest, err error, outcome 
 		s.summary.Status = StatusCompleted
 		s.summary.LastOutcome = truncateUTF8(strings.TrimSpace(fullOutcome), maxHandoffBytes)
 		s.summary.Error = ""
-	} else if errors.Is(err, context.Canceled) {
+	} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		s.summary.Status = StatusCancelled
 		s.summary.Error = ""
+		if errors.Is(err, context.DeadlineExceeded) {
+			s.summary.Error = "Agent consultation timed out"
+		}
 	} else {
 		// Provider, network, and tool errors are routinely transient. Keep the
 		// error for the tab and roster, but leave every agent ready for its next
@@ -421,10 +467,16 @@ func (m *AgentManager) finish(id string, req *promptRequest, err error, outcome 
 	}
 	s.summary.QueueDepth = len(s.queue)
 	m.emitLocked(s.summary, duration)
-	if !m.shutdown && len(s.queue) > 0 {
+	for !m.shutdown && len(s.queue) > 0 {
 		next := s.queue[0]
 		s.queue = s.queue[1:]
+		s.summary.QueueDepth = len(s.queue)
+		if !next.deadline.IsZero() && !time.Now().Before(next.deadline) {
+			m.completeRequestLocked(next, "", context.DeadlineExceeded, nil)
+			continue
+		}
 		m.startRequestLocked(id, s, next)
+		break
 	}
 	m.mu.Unlock()
 }
@@ -559,10 +611,9 @@ func (m *AgentManager) Shutdown() {
 	m.stopOnce.Do(func() {
 		m.mu.Lock()
 		m.shutdown = true
-		for id, s := range m.sessions {
+		for _, s := range m.sessions {
 			for _, req := range s.queue {
-				m.storeResultLocked(req, PromptResult{RequestID: req.id, TargetID: id}, context.Canceled)
-				close(req.done)
+				m.completeRequestLocked(req, "", context.Canceled, nil)
 			}
 			s.queue = nil
 			s.summary.QueueDepth = 0
@@ -651,6 +702,10 @@ func (t *managedToolset) ExecuteDetailed(ctx context.Context, call llm.ToolCall)
 			return t.delegate(ctx, call.Arguments)
 		case "get_agent_result":
 			return t.result(call.Arguments)
+		case "search_agent_work":
+			return t.searchWork(call.Arguments)
+		case "consult_agents":
+			return t.consult(ctx, call.Arguments)
 		}
 	}
 	mutating := call.Name == "write" || call.Name == "edit" || call.Name == "shell"
@@ -746,10 +801,11 @@ func (t *managedToolset) delegate(ctx context.Context, arguments json.RawMessage
 	if err := ctx.Err(); err != nil {
 		return llm.ToolResult{}, err
 	}
-	if err := t.manager.Start(args.AgentID, args.Prompt); err != nil {
+	submission, err := t.manager.Submit(args.AgentID, args.Prompt)
+	if err != nil {
 		return llm.ToolResult{}, err
 	}
-	return llm.ToolResult{Output: fmt.Sprintf("task accepted by %s", args.AgentID)}, nil
+	return llm.ToolResult{Output: fmt.Sprintf("task accepted by %s; request_id=%s; queue_position=%d", args.AgentID, submission.RequestID, submission.QueuePosition)}, nil
 }
 
 func (t *managedToolset) result(arguments json.RawMessage) (llm.ToolResult, error) {
@@ -781,6 +837,8 @@ func managerSchemas() []llm.Tool {
 		return map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}
 	}
 	return []llm.Tool{
+		{Name: "search_agent_work", Description: prompt.SearchAgentWorkTool, Parameters: object(map[string]any{"query": stringField(prompt.AgentWorkQueryParameter), "agent_id": stringField(prompt.AgentIDParameter), "offset": map[string]any{"type": "integer", "minimum": 0}}, "query")},
+		{Name: "consult_agents", Description: prompt.ConsultAgentsTool, Parameters: object(map[string]any{"requests": map[string]any{"type": "array", "minItems": 1, "maxItems": DefaultMaxAgents - 1, "items": object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter), "prompt": stringField(prompt.AgentPromptParameter)}, "agent_id", "prompt")}}, "requests")},
 		{Name: "list_agents", Description: prompt.ListAgentsTool, Parameters: object(nil)},
 		{Name: "create_agent", Description: prompt.CreateAgentTool, Parameters: object(map[string]any{"model": stringField(prompt.AgentModelParameter)})},
 		{Name: "delegate_task", Description: prompt.DelegateTaskTool, Parameters: object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter), "prompt": stringField(prompt.AgentPromptParameter)}, "agent_id", "prompt")},

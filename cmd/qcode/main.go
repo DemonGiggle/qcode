@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
@@ -41,6 +42,7 @@ type options struct {
 	autoCompactThreshold int
 	disableAutoCompact   bool
 	maxSteps             int
+	agentTimeout         time.Duration
 	jsonEvents           bool
 	listProviders        bool
 	showVersion          bool
@@ -70,6 +72,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	flags.IntVar(&opts.contextWindow, "context-window", 0, "model context capacity in tokens for status display (0: automatic)")
 	flags.BoolVar(&opts.disableAutoCompact, "disable-auto-compact", false, "disable automatic conversation compaction")
 	flags.IntVar(&opts.maxSteps, "max-steps", 32, "maximum model turns per request")
+	flags.DurationVar(&opts.agentTimeout, "agent-timeout", agent.DefaultConsultationTimeout, "time allowed for agent consultations, including queue time")
 	flags.BoolVar(&opts.jsonEvents, "json-events", false, "emit action events as JSON Lines")
 	flags.BoolVar(&opts.listProviders, "list-providers", false, "list built-in providers")
 	flags.BoolVar(&opts.showVersion, "version", false, "print version")
@@ -110,6 +113,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	}
 	if !opts.demo && opts.model == "" {
 		return errors.New("model must not be empty")
+	}
+	if opts.agentTimeout <= 0 {
+		return errors.New("agent-timeout must be a positive duration")
 	}
 
 	root, err := filepath.Abs(opts.root)
@@ -214,6 +220,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	mainToolset := toolset
 	mainSelection := skillSelection
 	configureFactory := func(ui *tui.UI, manager *agent.AgentManager, saved map[string]agent.SavedState) {
+		_ = manager.SetConsultationTimeout(opts.agentTimeout)
 		manager.SetFactory(func(id, name, model string, isMain bool) (*agent.Agent, error) {
 			currentProvider := mainProvider
 			currentToolset := mainToolset
@@ -310,6 +317,10 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 				restored.Shutdown()
 				return nil, err
 			}
+			if err := restored.RestoreWorkHistory(snap.Work); err != nil {
+				restored.Shutdown()
+				return nil, err
+			}
 			staged.SetDetachedAgentManager(restored)
 			if err := staged.RestorePresentation(snap.Presentation); err != nil {
 				restored.Shutdown()
@@ -358,6 +369,9 @@ func skillCatalogData(root string, customPaths ...string) ([]prompt.SkillSummary
 }
 
 func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
+	if !setFlags["agent-timeout"] && cfg.AgentTimeout != nil {
+		opts.agentTimeout, _ = time.ParseDuration(*cfg.AgentTimeout) // Validated by config.Load.
+	}
 	opts.searchBackend = cfg.WebSearch.Backend
 	if cfg.Learning.ContextBudget != nil {
 		opts.learningBudget = *cfg.Learning.ContextBudget

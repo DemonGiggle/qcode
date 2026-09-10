@@ -39,6 +39,7 @@ type Agent struct {
 	messages             []llm.Message
 	stateMu              sync.RWMutex
 	requestContext       func() string
+	taskContext          string
 	lastResponse         string
 	contextStatus        atomic.Pointer[contextStatus]
 	contextWindow        int
@@ -283,6 +284,14 @@ func (a *Agent) ToolEnabled(name string) bool {
 }
 
 func (a *Agent) Run(ctx context.Context, userText string) error {
+	if contextual, ok := a.tools.(interface{ TaskContext(string) string }); ok {
+		nextContext := contextual.TaskContext(userText)
+		if nextContext != a.taskContext {
+			a.contextUsage = nil // Previous provider usage excludes the new history excerpts.
+		}
+		a.taskContext = nextContext
+	}
+	defer func() { a.taskContext = "" }()
 	a.currentStep.Store(0)
 	a.repairInterruptedCalls()
 	a.stateMu.Lock()

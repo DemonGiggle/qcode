@@ -43,10 +43,11 @@ type savedTableLine struct {
 	Newline bool
 }
 type savedPresentation struct {
-	Active  string
-	Drafts  map[string]string
-	Verbose bool
-	Views   []savedView
+	Active             string
+	Drafts             map[string]string
+	Verbose            bool
+	Views              []savedView
+	ConsultationCursor uint64
 }
 type sessionPersistence struct {
 	mu          sync.Mutex
@@ -92,6 +93,9 @@ func (u *UI) snapshotPresentation() savedPresentation {
 		u.screenMu.Lock()
 		h := v.display.history
 		h.mu.Lock()
+		if v.id == "main" {
+			s.ConsultationCursor = u.consultationCursor
+		}
 		sv := savedView{ID: v.id, Provider: v.provider, Model: v.model, Unseen: v.unseen,
 			Browsing: v.viewport.browsing, AnchorLine: v.viewport.anchor.line, AnchorColumn: v.viewport.anchor.column,
 			Diffs: append([]string(nil), v.response.diffList...), Buffer: v.response.buffer.String(), InFence: v.response.inFence, Thinking: v.response.thinking,
@@ -160,6 +164,7 @@ func (u *UI) RestorePresentation(data json.RawMessage) error {
 		u.drafts = map[string]string{}
 	}
 	u.verbose = s.Verbose
+	u.consultationCursor = s.ConsultationCursor
 	for id, v := range u.views {
 		if runner, ok := u.manager.Runner(id); ok {
 			if r, ok := runner.(verboseRunner); ok {
@@ -190,9 +195,24 @@ func (u *UI) saveSessionLocked(left bool) error {
 	if !ok {
 		return nil
 	}
-	agents, next := manager.SaveAgents()
+	// Capture presentation first so its event cursor cannot be newer than the
+	// journal. Manager identities and work must then be captured atomically.
+	presentation := u.snapshotPresentation()
+	var agents []session.SavedAgent
+	var next int
+	var work *session.WorkHistory
+	if combined, ok := u.manager.(interface {
+		SaveSessionState() ([]session.SavedAgent, int, *session.WorkHistory)
+	}); ok {
+		agents, next, work = combined.SaveSessionState()
+	} else {
+		agents, next = manager.SaveAgents()
+		if history, ok := u.manager.(interface{ SaveWorkHistory() *session.WorkHistory }); ok {
+			work = history.SaveWorkHistory()
+		}
+	}
 	// A launch containing only banners and commands is not a conversation.
-	hasContent := false
+	hasContent := work != nil && (len(work.Records) > 0 || len(work.Events) > 0)
 	preview := p.current.Preview
 	for _, a := range agents {
 		var state struct {
@@ -210,7 +230,6 @@ func (u *UI) saveSessionLocked(left bool) error {
 			}
 		}
 	}
-	presentation := u.snapshotPresentation()
 	if len(agents) > 1 {
 		hasContent = true
 	}
@@ -251,6 +270,7 @@ func (u *UI) saveSessionLocked(left bool) error {
 	snap.Agents = agents
 	snap.NextID = next
 	snap.Presentation = data
+	snap.Work = work
 	snap.Preview = preview
 	snap.Saved = time.Time{}
 	snap.Left = time.Time{}
@@ -416,6 +436,7 @@ func (u *UI) resumeSession() {
 	u.activeAgent = staged.activeAgent
 	u.drafts = staged.drafts
 	u.verbose = staged.verbose
+	u.consultationCursor = staged.consultationCursor
 	for _, v := range u.views {
 		v.display.ui = u
 	}

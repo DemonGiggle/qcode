@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -43,6 +44,7 @@ type Config struct {
 	AutoCompactThreshold *int      `toml:"auto_compact_threshold"`
 	DisableAutoCompact   *bool     `toml:"disable_auto_compact"`
 	MaxSteps             *int      `toml:"max_steps"`
+	AgentTimeout         *string   `toml:"agent_timeout"`
 	Sandbox              *bool     `toml:"sandbox"`
 	DangerSkipTLSVerify  *bool     `toml:"danger_skip_tls_verify"`
 }
@@ -124,6 +126,12 @@ func load(paths []string) (Config, string, error) {
 		}
 		if cfg.MaxSteps != nil && *cfg.MaxSteps <= 0 {
 			return Config{}, path, fmt.Errorf("parse config %s: max_steps must be greater than zero", path)
+		}
+		if cfg.AgentTimeout != nil {
+			duration, err := time.ParseDuration(*cfg.AgentTimeout)
+			if err != nil || duration <= 0 {
+				return Config{}, path, fmt.Errorf("parse config %s: agent_timeout must be a positive duration, such as \"5m\"", path)
+			}
 		}
 		return cfg, path, nil
 	}

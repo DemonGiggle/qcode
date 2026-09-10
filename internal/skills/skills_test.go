@@ -85,6 +85,7 @@ func TestDiscoverIncludesUserSkills(t *testing.T) {
 }
 
 func TestDiscoverIncludesCustomSkillsAndKeepsMissingLocations(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	custom := filepath.Join(t.TempDir(), "custom-skills")
 	writeSkill(t, custom, "custom/SKILL.md", "# Custom skill\n")
