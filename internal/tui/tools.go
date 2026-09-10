@@ -153,7 +153,7 @@ func matchingToolIndices(statuses []toolStatus, query string) []int {
 }
 
 func renderToolSelector(out io.Writer, statuses []toolStatus, matches []int, current, start, visible, width int, query string, color bool) {
-	header := fmt.Sprintf("Select tools (%d/%d) | Filter: %s", len(matches), len(statuses), query)
+	header := fmt.Sprintf("%s | Select tools (%d/%d) | Filter: %s", selectorLeaveHint, len(matches), len(statuses), query)
 	if width > 0 {
 		header = truncateDiffLine(header, width, false)
 	}

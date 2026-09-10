@@ -185,6 +185,15 @@ func TestSessionSelectorLineUsesTimeAgentsAndPreviewWithoutID(t *testing.T) {
 	}
 }
 
+func TestSessionSelectorHeaderShowsCtrlCLeaveHint(t *testing.T) {
+	entries := []session.Entry{{Snapshot: session.Snapshot{ID: strings.Repeat("a", 32), Preview: "Saved work"}}}
+	var output strings.Builder
+	renderSessionSelector(&output, entries, []int{0}, 0, 0, 1, 80, "", false)
+	if !strings.Contains(output.String(), selectorLeaveHint) {
+		t.Fatalf("selector header = %q", output.String())
+	}
+}
+
 func TestEmptyLaunchNotSaved(t *testing.T) {
 	u, m := persistenceUI(t)
 	m.agents = m.agents[:1]

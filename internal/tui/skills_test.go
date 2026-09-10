@@ -159,7 +159,7 @@ func TestSelectSkillsFiltersByNameAndDescription(t *testing.T) {
 	if err != nil || !accepted || strings.Join(names, ",") != "deploy" {
 		t.Fatalf("names = %v, accepted = %v, err = %v", names, accepted, err)
 	}
-	if !strings.Contains(output.String(), "Select skills (1/3) | Enabled: none | Filter: publish") {
+	if !strings.Contains(output.String(), selectorLeaveHint) || !strings.Contains(output.String(), "Select skills (1/3) | Enabled: none | Filter: publish") {
 		t.Fatalf("filtered selector = %q", output.String())
 	}
 }

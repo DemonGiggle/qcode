@@ -764,7 +764,6 @@ func (u *UI) chooseModel(ctx context.Context) {
 	if visible < 3 {
 		visible = 3
 	}
-	u.printSystemMessage(dim + "Type to search; use Up/Down to move, Enter to select, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
 	selected, accepted, selectErr := selectModel(u.input, u.terminal, models, u.model, visible, u.width, ColorEnabled(u.out))
@@ -775,7 +774,6 @@ func (u *UI) chooseModel(ctx context.Context) {
 		return
 	}
 	if !accepted {
-		u.printSystemMessage(dim + "Model selection cancelled." + reset)
 		return
 	}
 	if u.manager != nil {

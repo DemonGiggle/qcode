@@ -6,8 +6,9 @@ import (
 )
 
 const (
-	selectorPageUp   = "\x1b[5~"
-	selectorPageDown = "\x1b[6~"
+	selectorPageUp    = "\x1b[5~"
+	selectorPageDown  = "\x1b[6~"
+	selectorLeaveHint = "Ctrl+C to leave"
 )
 
 func readSelectorKey(in io.Reader) (string, error) {

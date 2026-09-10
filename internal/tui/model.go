@@ -115,7 +115,7 @@ func selectedMatch(matches []int, modelIndex int) int {
 }
 
 func renderModelSelector(out io.Writer, models []string, matches []int, selected, start, visible, width int, query string, color bool) {
-	header := fmt.Sprintf("Select model (%d/%d) | Up/Down, PgUp/PgDn | Search: %s", len(matches), len(models), query)
+	header := fmt.Sprintf("%s | Select model (%d/%d) | Up/Down, PgUp/PgDn | Search: %s", selectorLeaveHint, len(matches), len(models), query)
 	if width > 0 {
 		header = truncateDiffLine(header, width, false)
 	}

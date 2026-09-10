@@ -14,7 +14,7 @@ The following UI-focused commands are available in interactive mode. Feature-spe
 
 - `/model` fetches the provider's models. Search a large catalog by typing, move through matches with Up/Down, and select with Enter.
 - `/new` discards the current conversation context and resets session token totals without restarting qcode or changing the provider, model, or workspace.
-- `/resume` opens saved sessions for this workspace. Use Up/Down and Enter to restore, or Escape to cancel. Each entry shows its latest main-agent conversation preview (up to two lines) and how long ago you left it, newest first. Finish or cancel running agents before switching. Sessions open in another process cannot be selected.
+- `/resume` opens saved sessions for this workspace. Use Up/Down and Enter to restore, or Ctrl+C to cancel. Each entry shows its latest main-agent conversation preview (up to two lines) and how long ago you left it, newest first. Finish or cancel running agents before switching. Sessions open in another process cannot be selected.
 - `/clear` redraws the interactive banner, which lists enabled and disabled tools for the active agent.
 - `/verbose` adds detailed timestamped telemetry, including raw tool arguments, without disabling concise activity events.
 - `/maxsteps` shows the current per-request model-turn limit; `/maxsteps N` updates it for the active agent.

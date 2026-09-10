@@ -19,7 +19,7 @@ func TestSelectModelFiltersThenSelects(t *testing.T) {
 	if !accepted || selected != "gamma-code" {
 		t.Fatalf("selection = %q, %v", selected, accepted)
 	}
-	if !strings.Contains(output.String(), "Select model (2/3) | Up/Down, PgUp/PgDn | Search: code") {
+	if !strings.Contains(output.String(), selectorLeaveHint) || !strings.Contains(output.String(), "Select model (2/3) | Up/Down, PgUp/PgDn | Search: code") {
 		t.Fatalf("selector did not show filtered count: %q", output.String())
 	}
 }

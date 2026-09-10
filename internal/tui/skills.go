@@ -260,9 +260,9 @@ func renderSkillSelector(out io.Writer, skills []prompt.SkillSummary, matches []
 
 func renderSkillHeader(skills []prompt.SkillSummary, matches []int, selected map[int]bool, query string, width int, color bool) string {
 	enabled := skillSelectionValue(selectedSkillNames(skills, selected))
-	header := fmt.Sprintf("Select skills (%d/%d) | Enabled: %s | Filter: %s", len(matches), len(skills), enabled, sanitizeDiffLine(query, "<ESC>"))
+	header := fmt.Sprintf("%s | Select skills (%d/%d) | Enabled: %s | Filter: %s", selectorLeaveHint, len(matches), len(skills), enabled, sanitizeDiffLine(query, "<ESC>"))
 	if color {
-		prefix := fmt.Sprintf("Select skills (%d/%d) | Enabled: ", len(matches), len(skills))
+		prefix := fmt.Sprintf("%s | Select skills (%d/%d) | Enabled: ", selectorLeaveHint, len(matches), len(skills))
 		header = dim + prefix + reset + cyan + enabled + reset + dim + " | Filter: " + reset + sanitizeDiffLine(query, "<ESC>")
 	}
 	if width > 0 {

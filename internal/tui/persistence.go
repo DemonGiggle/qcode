@@ -548,7 +548,7 @@ func matchingSessionIndices(entries []session.Entry, query string) []int {
 }
 
 func renderSessionSelector(out io.Writer, entries []session.Entry, matches []int, selected, start, visible, width int, query string, color bool) {
-	header := fmt.Sprintf("Resume session (%d/%d) | Filter: %s", len(matches), len(entries), query)
+	header := fmt.Sprintf("%s | Resume session (%d/%d) | Filter: %s", selectorLeaveHint, len(matches), len(entries), query)
 	if width > 0 {
 		header = truncateDiffLine(header, width, false)
 	}

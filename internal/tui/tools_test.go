@@ -63,7 +63,7 @@ func TestToolSelectionFiltersByName(t *testing.T) {
 	if err != nil || !accepted || !runner["web_search"] || runner["web_fetch"] {
 		t.Fatalf("accepted = %v, runner = %v, err = %v", accepted, runner, err)
 	}
-	if !strings.Contains(output.String(), "Select tools (1/3) | Filter: search") {
+	if !strings.Contains(output.String(), selectorLeaveHint) || !strings.Contains(output.String(), "Select tools (1/3) | Filter: search") {
 		t.Fatalf("filtered selector = %q", output.String())
 	}
 }
