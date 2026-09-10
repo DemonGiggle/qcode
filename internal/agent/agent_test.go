@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,6 +85,12 @@ type skillProvider struct{ calls int }
 
 type whitespaceToolProvider struct{ calls int }
 
+type dynamicMaxStepsProvider struct {
+	calls   int
+	started chan struct{}
+	release chan struct{}
+}
+
 type skillToolset struct{}
 
 func (*skillToolset) Schemas() []llm.Tool {
@@ -96,6 +103,21 @@ func (*skillToolset) EnabledSchemas() []llm.Tool {
 
 func (*skillToolset) ExecuteDetailed(_ context.Context, _ llm.ToolCall) (llm.ToolResult, error) {
 	return llm.ToolResult{Output: "skill instructions"}, nil
+}
+
+func (p *dynamicMaxStepsProvider) Name() string { return "dynamic-max-steps" }
+func (p *dynamicMaxStepsProvider) Complete(ctx context.Context, _ llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	p.calls++
+	if p.calls == 1 {
+		close(p.started)
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+			return llm.Response{}, ctx.Err()
+		}
+		return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "step-one", Name: "skill"}}}}, nil
+	}
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
 }
 
 func (p *responseProvider) Name() string { return "response" }
@@ -264,6 +286,23 @@ func TestAgentMarksResponseBoundaries(t *testing.T) {
 	}
 	if output.String() != "finished\n" {
 		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestAgentMaxStepsCanChangeWhileRunning(t *testing.T) {
+	provider := &dynamicMaxStepsProvider{started: make(chan struct{}), release: make(chan struct{})}
+	runner := New(provider, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 1)
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(context.Background(), "continue") }()
+
+	<-provider.started
+	runner.SetMaxSteps(2)
+	close(provider.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 2 || runner.MaxSteps() != 2 {
+		t.Fatalf("provider calls = %d, max steps = %d; want 2 and 2", provider.calls, runner.MaxSteps())
 	}
 }
 

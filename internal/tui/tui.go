@@ -96,6 +96,14 @@ type sessionRunner interface {
 	ResetSession()
 }
 
+type maxStepsRunner interface {
+	SetMaxSteps(int)
+}
+
+type maxStepsReader interface {
+	MaxSteps() int
+}
+
 type skillRunner interface{ SetSkills([]prompt.SkillSummary) }
 
 type selectedSkillsRunner interface {
@@ -497,6 +505,10 @@ func (u *UI) Run(ctx context.Context) error {
 			}
 			continue
 		}
+		if len(fields) > 0 && fields[0] == "/maxsteps" {
+			u.updateMaxSteps(fields)
+			continue
+		}
 		switch line {
 		case "/quit", "/exit":
 			return nil
@@ -806,6 +818,33 @@ func (u *UI) expandDiff(fields []string) {
 		return
 	}
 	u.printSystemMessage(fmt.Sprintf("%sDiff %d not found; available diffs: 1-%d.%s", yellow, requested, total, reset))
+}
+
+func (u *UI) updateMaxSteps(fields []string) {
+	if len(fields) == 1 {
+		if reader, ok := u.runner.(maxStepsReader); ok {
+			u.printSystemMessage(fmt.Sprintf("%sMax steps: %d%s", green, reader.MaxSteps(), reset))
+			return
+		}
+		u.printSystemMessage(yellow + "Maximum model steps are unavailable." + reset)
+		return
+	}
+	if len(fields) != 2 {
+		u.printSystemMessage(yellow + "Usage: /maxsteps <positive integer>" + reset)
+		return
+	}
+	maxSteps, err := strconv.Atoi(fields[1])
+	if err != nil || maxSteps <= 0 {
+		u.printSystemMessage(yellow + "Usage: /maxsteps <positive integer>" + reset)
+		return
+	}
+	runner, ok := u.runner.(maxStepsRunner)
+	if !ok {
+		u.printSystemMessage(yellow + "Maximum model steps are unavailable." + reset)
+		return
+	}
+	runner.SetMaxSteps(maxSteps)
+	u.printSystemMessage(fmt.Sprintf("%sMax steps: %d%s", green, maxSteps, reset))
 }
 
 // printSystemMessage separates status and command feedback from surrounding

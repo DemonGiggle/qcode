@@ -21,6 +21,7 @@ var slashCommands = []slashCommand{
 	{name: "/export", description: "Export the session transcript as HTML"},
 	{name: "/help", description: "Show available commands"},
 	{name: "/learn", description: "Review global learning; list, forget <id>, or compact"},
+	{name: "/maxsteps", description: "Show or set maximum model turns per request"},
 	{name: "/model", description: "Select a provider model"},
 	{name: "/new", description: "Start a session with fresh context"},
 	{name: "/resume", description: "Restore a saved session for this workspace"},

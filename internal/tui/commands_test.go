@@ -22,16 +22,25 @@ type resettableRunner struct {
 func (*resettableRunner) Run(context.Context, string) error { return nil }
 func (r *resettableRunner) ResetSession()                   { r.reset = true }
 
+type configurableMaxStepsRunner struct {
+	maxSteps int
+}
+
+func (*configurableMaxStepsRunner) Run(context.Context, string) error { return nil }
+func (r *configurableMaxStepsRunner) MaxSteps() int                   { return r.maxSteps }
+func (r *configurableMaxStepsRunner) SetMaxSteps(maxSteps int)        { r.maxSteps = maxSteps }
+
 func TestMatchingSlashCommands(t *testing.T) {
 	tests := []struct {
 		line string
 		want []string
 	}{
 		{line: "", want: nil},
-		{line: "/", want: []string{"/agent", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/learn", "/model", "/new", "/resume", "/skill", "/quit", "/tool", "/verbose"}},
+		{line: "/", want: []string{"/agent", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/learn", "/maxsteps", "/model", "/new", "/resume", "/skill", "/quit", "/tool", "/verbose"}},
 		{line: "/d", want: []string{"/diff"}},
 		{line: "/h", want: []string{"/help"}},
-		{line: "/m", want: []string{"/model"}},
+		{line: "/m", want: []string{"/maxsteps", "/model"}},
+		{line: "/max", want: []string{"/maxsteps"}},
 		{line: "/n", want: []string{"/new"}},
 		{line: "/s", want: []string{"/skill"}},
 		{line: "/ski", want: []string{"/skill"}},
@@ -49,6 +58,26 @@ func TestMatchingSlashCommands(t *testing.T) {
 		if strings.Join(got, ",") != strings.Join(test.want, ",") {
 			t.Errorf("matchingSlashCommands(%q) = %v, want %v", test.line, got, test.want)
 		}
+	}
+}
+
+func TestUpdateMaxSteps(t *testing.T) {
+	var output bytes.Buffer
+	runner := &configurableMaxStepsRunner{maxSteps: 32}
+	u := &UI{runner: runner, display: newHistoryWriter(&output)}
+
+	u.updateMaxSteps([]string{"/maxsteps"})
+	if !strings.Contains(output.String(), "Max steps: 32") {
+		t.Fatalf("query output = %q", output.String())
+	}
+	u.updateMaxSteps([]string{"/maxsteps", "64"})
+	if runner.maxSteps != 64 || !strings.Contains(output.String(), "Max steps: 64") {
+		t.Fatalf("updated max steps = %d, output = %q", runner.maxSteps, output.String())
+	}
+	output.Reset()
+	u.updateMaxSteps([]string{"/maxsteps", "0"})
+	if runner.maxSteps != 64 || !strings.Contains(output.String(), "Usage: /maxsteps <positive integer>") {
+		t.Fatalf("invalid update = %d, output = %q", runner.maxSteps, output.String())
 	}
 }
 

@@ -81,7 +81,7 @@ func (a *Agent) publishCheckpoint() {
 	s := SavedState{Provider: a.provider.Name(), Model: a.model, Endpoint: a.endpoint, System: a.system,
 		ContextWindow: a.contextWindow, ContextOverride: a.contextOverride, ContextMessages: a.contextMessages,
 		ContextUsage: a.contextUsage, AutoCompact: a.autoCompact, AutoCompactThreshold: a.autoCompactThreshold,
-		MaxSteps: a.maxSteps, LearningContext: a.learningContext, LearningSessionID: a.learningSessionID,
+		MaxSteps: a.MaxSteps(), LearningContext: a.learningContext, LearningSessionID: a.learningSessionID,
 		LearningBudget: a.learningBudget, Skills: a.selectedSkills, PendingImages: a.pendingImages}
 	a.stateMu.RLock()
 	s.LastResponse, s.Usage = a.lastResponse, a.sessionUsage
@@ -102,9 +102,43 @@ func (a *Agent) publishCheckpoint() {
 	if p, ok := a.provider.(interface{ SessionIdentity() string }); ok {
 		s.ProviderSession = p.SessionIdentity()
 	}
-	data, err := json.Marshal(s)
-	if err == nil {
-		a.checkpoint.Store(&data)
+	// A max-steps update can happen from the UI while the agent goroutine is
+	// publishing its checkpoint. Compare-and-swap prevents either checkpoint
+	// writer from overwriting the other's update.
+	for {
+		s.MaxSteps = a.MaxSteps()
+		data, err := json.Marshal(s)
+		if err != nil {
+			return
+		}
+		previous := a.checkpoint.Load()
+		if a.checkpoint.CompareAndSwap(previous, &data) {
+			return
+		}
+	}
+}
+
+// updateCheckpointMaxSteps changes only the persisted runtime setting. It is
+// intentionally separate from publishCheckpoint because it may be called by
+// the UI while the agent is running.
+func (a *Agent) updateCheckpointMaxSteps(maxSteps int) {
+	for {
+		previous := a.checkpoint.Load()
+		if previous == nil {
+			return
+		}
+		var state SavedState
+		if err := json.Unmarshal(*previous, &state); err != nil {
+			return
+		}
+		state.MaxSteps = maxSteps
+		data, err := json.Marshal(state)
+		if err != nil {
+			return
+		}
+		if a.checkpoint.CompareAndSwap(previous, &data) {
+			return
+		}
 	}
 }
 
@@ -140,7 +174,8 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 	a.endpoint, a.system, a.lastResponse = s.Endpoint, s.System, s.LastResponse
 	a.contextWindow, a.contextOverride, a.contextMessages = s.ContextWindow, s.ContextOverride, s.ContextMessages
 	a.contextUsage, a.sessionUsage = s.ContextUsage, s.Usage
-	a.autoCompact, a.autoCompactThreshold, a.maxSteps = s.AutoCompact, s.AutoCompactThreshold, s.MaxSteps
+	a.autoCompact, a.autoCompactThreshold = s.AutoCompact, s.AutoCompactThreshold
+	a.maxSteps.Store(int64(s.MaxSteps))
 	a.learningContext, a.learningSessionID, a.learningBudget = s.LearningContext, s.LearningSessionID, s.LearningBudget
 	a.selectedSkills = s.Skills
 	a.pendingImages = s.PendingImages

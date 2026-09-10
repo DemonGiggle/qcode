@@ -34,7 +34,7 @@ type Agent struct {
 	tools                Toolset
 	trace                *trace.Logger
 	out                  io.Writer
-	maxSteps             int
+	maxSteps             atomic.Int64
 	messages             []llm.Message
 	stateMu              sync.RWMutex
 	requestContext       func() string
@@ -95,7 +95,8 @@ func NewWithSystem(provider llm.Provider, model string, toolset Toolset, logger 
 	if system == "" {
 		system = prompt.System
 	}
-	a := &Agent{provider: provider, model: model, tools: toolset, trace: logger, out: out, maxSteps: maxSteps, system: system, messages: []llm.Message{{Role: "system", Content: system}}, autoCompact: true, autoCompactThreshold: DefaultAutoCompactThreshold}
+	a := &Agent{provider: provider, model: model, tools: toolset, trace: logger, out: out, system: system, messages: []llm.Message{{Role: "system", Content: system}}, autoCompact: true, autoCompactThreshold: DefaultAutoCompactThreshold}
+	a.maxSteps.Store(int64(maxSteps))
 	a.publishContext()
 	return a
 }
@@ -117,6 +118,20 @@ func (a *Agent) SetUnicode(enabled bool) { a.trace.SetUnicode(enabled) }
 // SetTaskIndicator controls the trace-level Waiting animation. Terminal tab
 // UIs can render the shared task state themselves instead.
 func (a *Agent) SetTaskIndicator(enabled bool) { a.trace.SetTaskIndicator(enabled) }
+
+// MaxSteps returns the maximum number of model turns allowed for each request.
+func (a *Agent) MaxSteps() int { return int(a.maxSteps.Load()) }
+
+// SetMaxSteps updates the maximum number of model turns allowed for each
+// request. The new value also applies to a request that is already running at
+// its next model-turn boundary.
+func (a *Agent) SetMaxSteps(maxSteps int) {
+	if maxSteps <= 0 {
+		return
+	}
+	a.maxSteps.Store(int64(maxSteps))
+	a.updateCheckpointMaxSteps(maxSteps)
+}
 
 // SetRequestContext installs an ephemeral context source. Its result is added
 // to requests without becoming part of the stored conversation.
@@ -259,7 +274,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userText})
 	a.publishContext()
 	identicalToolCalls := map[string]int{}
-	for step := 0; step < a.maxSteps; step++ {
+	for step := 0; step < a.MaxSteps(); step++ {
 		requestMessages := a.requestMessages(ctx)
 		a.publishContext()
 		span := a.trace.Start("llm", a.provider.Name(), map[string]any{"model": a.model, "step": step + 1})
@@ -409,7 +424,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			a.pendingImages = nil
 		}
 	}
-	return fmt.Errorf("agent stopped after %d model steps", a.maxSteps)
+	return fmt.Errorf("agent stopped after %d model steps", a.MaxSteps())
 }
 
 func toolMayChangeWorkspace(name string) bool {

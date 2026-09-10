@@ -17,6 +17,7 @@ The following UI-focused commands are available in interactive mode. Feature-spe
 - `/resume` opens saved sessions for this workspace. Use Up/Down and Enter to restore, or Escape to cancel. Each entry shows its latest main-agent conversation preview (up to two lines) and how long ago you left it, newest first. Finish or cancel running agents before switching. Sessions open in another process cannot be selected.
 - `/clear` redraws the interactive banner, which lists enabled and disabled tools for the active agent.
 - `/verbose` adds detailed timestamped telemetry, including raw tool arguments, without disabling concise activity events.
+- `/maxsteps` shows the current per-request model-turn limit; `/maxsteps N` updates it for the active agent.
 - `/diff` and `/diff N` expand the latest write/edit diff preview (see below).
 - `/tool` enables or disables the web tools independently; see [Web tools](web-tools.md).
 

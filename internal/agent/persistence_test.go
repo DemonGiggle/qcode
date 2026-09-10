@@ -27,6 +27,7 @@ func TestAgentRestorePreservesImagesContextAndContinuation(t *testing.T) {
 	a.contextUsage = &llm.Usage{InputTokens: 300, OutputTokens: 50}
 	a.contextMessages = len(a.messages)
 	a.sessionUsage = llm.SessionUsage{InputTokens: 500, OutputTokens: 80, TotalTokens: 580, Missing: 1}
+	a.SetMaxSteps(12)
 	a.publishContext()
 	data := *a.checkpoint.Load()
 	b := New(provider, "saved-model", &managerToolset{}, trace.New(io.Discard, false), io.Discard, 1)
@@ -35,6 +36,9 @@ func TestAgentRestorePreservesImagesContextAndContinuation(t *testing.T) {
 	}
 	if !reflect.DeepEqual(a.messages, b.messages) || a.SessionUsage() != b.SessionUsage() {
 		t.Fatal("conversation or usage changed")
+	}
+	if b.MaxSteps() != 12 {
+		t.Fatalf("max steps = %d, want 12", b.MaxSteps())
 	}
 	ar, ak, ae := a.ContextRemaining()
 	br, bk, be := b.ContextRemaining()
