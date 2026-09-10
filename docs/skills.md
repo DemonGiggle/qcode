@@ -2,6 +2,8 @@
 
 Skills let you attach focused, reusable instructions to a session. Place a `SKILL.md` in `~/.qcode/skills/<name>/` for your user account, or `.qcode/skills/<name>/` / `.agents/skills/<name>/` for one workspace.
 
+To create or update a skill, see the [skill specification](skill-spec.md).
+
 ## Discovery and precedence
 
 qcode scans three directories in ascending precedence (later overrides earlier on name collisions):
@@ -17,7 +19,7 @@ Additional skill directories can be configured with `skills.paths` in
 listed, so a custom skill with the same name overrides an earlier one. Relative
 paths are based at the selected workspace and `~` expands to the user's home.
 
-A skill is a directory whose name matches `[a-z0-9-_]{1,64}` containing a `SKILL.md` file. The file must be a regular file (not a symlink escape) ≤ 64 KiB. The description is parsed from YAML front-matter (`description:` field) or the first heading/line, truncated to 160 chars.
+A skill is a directory whose name matches `[a-z0-9-_]{1,64}` containing a regular `SKILL.md` file. The file must be within its skill root and ≤ 64 KiB. qcode reads a simple `description:` line from an initial front-matter block, or the first non-empty heading/line, for a one-line summary truncated to 160 bytes. See the [skill specification](skill-spec.md) for the authoring format.
 
 ## Selection and lazy loading
 
