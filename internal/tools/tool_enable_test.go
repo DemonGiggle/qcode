@@ -1,6 +1,9 @@
 package tools
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -89,5 +92,47 @@ func TestToolResetSessionRestoresDefaults(t *testing.T) {
 		if registry.IsToolEnabled(name) != want {
 			t.Fatalf("unexpected reset default for %q", name)
 		}
+	}
+}
+
+func TestDisabledToolRefusesExecution(t *testing.T) {
+	root := t.TempDir()
+	registry, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sample.txt"), []byte("content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A handler-dispatched tool must refuse to run while disabled.
+	registry.DisableTool("read")
+	if _, err := call(t, registry, "read", map[string]any{"path": "sample.txt"}); err == nil {
+		t.Fatal("disabled read tool should refuse to execute")
+	} else if !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("expected disabled-tool error, got %q", err.Error())
+	}
+
+	// A switch-dispatched tool must refuse to run while disabled.
+	registry.DisableTool("write")
+	if _, err := call(t, registry, "write", map[string]any{"path": "blocked.txt", "content": "nope"}); err == nil {
+		t.Fatal("disabled write tool should refuse to execute")
+	} else if !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("expected disabled-tool error, got %q", err.Error())
+	}
+
+	// Nothing should have been written.
+	if _, statErr := os.Stat(filepath.Join(root, "blocked.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("disabled write tool must not create files: %v", statErr)
+	}
+
+	// Re-enabling restores execution for both dispatch paths.
+	registry.EnableTool("read")
+	if _, err := call(t, registry, "read", map[string]any{"path": "sample.txt"}); err != nil {
+		t.Fatalf("re-enabled read tool should execute: %v", err)
+	}
+	registry.EnableTool("write")
+	if _, err := call(t, registry, "write", map[string]any{"path": "restored.txt", "content": "written"}); err != nil {
+		t.Fatalf("re-enabled write tool should execute: %v", err)
 	}
 }
