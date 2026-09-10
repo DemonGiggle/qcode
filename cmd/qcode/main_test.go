@@ -2,10 +2,29 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"qcode/internal/agent"
 	"qcode/internal/config"
 )
+
+func TestAgentTimeoutConfigPrecedence(t *testing.T) {
+	opts := options{agentTimeout: agent.DefaultConsultationTimeout}
+	applyConfig(&opts, config.Config{}, nil)
+	if opts.agentTimeout != 5*time.Minute {
+		t.Fatal("missing config changed the default")
+	}
+	configured := "90s"
+	applyConfig(&opts, config.Config{AgentTimeout: &configured}, nil)
+	if opts.agentTimeout != 90*time.Second {
+		t.Fatal(opts.agentTimeout)
+	}
+	opts.agentTimeout = time.Minute
+	applyConfig(&opts, config.Config{AgentTimeout: &configured}, map[string]bool{"agent-timeout": true})
+	if opts.agentTimeout != time.Minute {
+		t.Fatal("config overrode explicit flag")
+	}
+}
 
 func TestApplyConfig(t *testing.T) {
 	t.Setenv("QCODE_PROVIDER", "")

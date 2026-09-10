@@ -213,6 +213,20 @@ func (a *Agent) repairInterruptedCalls() {
 func (m *AgentManager) SaveAgents() ([]session.SavedAgent, int) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return m.saveAgentsLocked()
+}
+
+// SaveSessionState captures identities, checkpoints, and work under one lock.
+// Otherwise concurrent creation could save a journal with an agent ID newer
+// than the snapshot's NextID, making the snapshot impossible to restore.
+func (m *AgentManager) SaveSessionState() ([]session.SavedAgent, int, *session.WorkHistory) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	agents, next := m.saveAgentsLocked()
+	return agents, next, m.saveWorkHistoryLocked()
+}
+
+func (m *AgentManager) saveAgentsLocked() ([]session.SavedAgent, int) {
 	var result []session.SavedAgent
 	for _, id := range m.order {
 		s := m.sessions[id]

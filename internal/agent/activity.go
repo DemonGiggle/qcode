@@ -76,12 +76,14 @@ func toolActivity(call llm.ToolCall) trace.Activity {
 		return activity("request_directory_access", "Requesting access to "+target(path, "directory"), "Requested access to "+target(path, "directory"), trace.ActivityWrite)
 	case "list_agents":
 		return activity("list_agents", "Listing agents", "Listed agents", trace.ActivityAgent)
+	case "search_agent_work":
+		return activity("search_agent_work", "Searching agent work history", "Searched agent work history", trace.ActivityAgent)
+	case "consult_agents":
+		return activity("consult_agents", "Waiting for agent consultations", "Collected agent consultation outcomes", trace.ActivityAgent)
 	case "create_agent":
 		return activity("create_agent", "Creating agent", "Created agent", trace.ActivityAgent)
 	case "delegate_task":
-		return activity("delegate_task", "Consulting "+target(agentID, "agent"), "Agent "+target(agentID, "agent")+" accepted the task", trace.ActivityAgent)
-	case "get_agent_result":
-		return activity("get_agent_result", "Checking "+target(agentID, "agent"), "Checked "+target(agentID, "agent"), trace.ActivityAgent)
+		return activity("delegate_task", "Starting background task for "+target(agentID, "agent"), "Background task accepted by "+target(agentID, "agent"), trace.ActivityAgent)
 	default:
 		return activity(call.Name, "Using "+activityTarget(call.Name), "Used "+activityTarget(call.Name), trace.ActivityOther)
 	}

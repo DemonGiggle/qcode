@@ -39,6 +39,7 @@ type Agent struct {
 	messages             []llm.Message
 	stateMu              sync.RWMutex
 	requestContext       func() string
+	taskContext          string
 	lastResponse         string
 	contextStatus        atomic.Pointer[contextStatus]
 	contextWindow        int
@@ -283,6 +284,14 @@ func (a *Agent) ToolEnabled(name string) bool {
 }
 
 func (a *Agent) Run(ctx context.Context, userText string) error {
+	if contextual, ok := a.tools.(interface{ TaskContext(string) string }); ok {
+		nextContext := contextual.TaskContext(userText)
+		if nextContext != a.taskContext {
+			a.contextUsage = nil // Previous provider usage excludes the new history excerpts.
+		}
+		a.taskContext = nextContext
+	}
+	defer func() { a.taskContext = "" }()
 	a.currentStep.Store(0)
 	a.repairInterruptedCalls()
 	a.stateMu.Lock()
@@ -403,6 +412,8 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			return nil
 		}
 		a.pendingImages = nil
+		endTurn := false
+		endTurnResponse := ""
 		for index, call := range response.Message.ToolCalls {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -442,6 +453,10 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 				result += "ERROR: " + toolErr.Error()
 			}
 			a.messages = append(a.messages, llm.Message{Role: "tool", Content: result, Name: call.Name, ToolCallID: call.ID})
+			if toolErr == nil && execution.EndTurn {
+				endTurn = true
+				endTurnResponse = execution.Output
+			}
 			if len(execution.Images) > 0 {
 				a.pendingImages = append(a.pendingImages, execution.Images...)
 			}
@@ -454,6 +469,12 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 				Images:  a.pendingImages,
 			})
 			a.pendingImages = nil
+		}
+		if endTurn {
+			a.stateMu.Lock()
+			a.lastResponse = strings.TrimSpace(endTurnResponse)
+			a.stateMu.Unlock()
+			return nil
 		}
 	}
 	return fmt.Errorf("agent stopped after %d model steps", a.MaxSteps())

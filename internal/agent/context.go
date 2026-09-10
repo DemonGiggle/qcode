@@ -92,6 +92,9 @@ func (a *Agent) publishContext() {
 	}
 	state := &contextStatus{known: limit > 0, estimated: true}
 	used := estimateTokens(a.messages) + estimateTokens(a.tools.EnabledSchemas())
+	if a.taskContext != "" {
+		used += estimateTokens(a.taskContext)
+	}
 	if a.learningContext != "" {
 		used += (len(a.learningContext) + 3) / 4
 	}

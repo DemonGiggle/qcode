@@ -8,6 +8,7 @@ base_url = "http://localhost:8000/v1"
 api_key = "your-api-key"
 model = "my-model"
 max_steps = 32
+agent_timeout = "5m"
 sandbox = true
 auto_compact_threshold = 80
 disable_auto_compact = false
@@ -20,6 +21,19 @@ paths = ["/opt/qcode/team-skills", ".team/skills"]
 are used as written; relative paths are resolved from the selected workspace,
 and `~` expands to the current user's home directory. A missing directory is
 kept in the `/skill` hint and contributes no skills.
+
+`agent_timeout` controls how long `main` waits for a batch of agent consultations
+in interactive mode. The default is **five minutes**, allowing time for local
+models to answer a focused question. Set a positive duration such as `"90s"`,
+`"5m"`, or `"15m"`; zero, negative values, and invalid durations are rejected.
+`--agent-timeout 90s` overrides the config value. Changes apply at startup,
+including to resumed sessions.
+
+The deadline starts when the batch is submitted and includes queue time. It is
+shared by the batch, so waiting for several agents does not multiply the timeout.
+Completed replies are kept; failed or expired consultations are reported and
+skipped. This setting applies to `consult_agents`, not ordinary user prompts or
+background tasks submitted through `delegate_task`.
 
 ## Lookup order
 

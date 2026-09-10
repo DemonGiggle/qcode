@@ -208,18 +208,17 @@ func wait(ctx context.Context, delay time.Duration) error {
 
 func demoArguments(name string) json.RawMessage {
 	values := map[string]string{
-		"list_agents":      `{}`,
-		"delegate_task":    `{"agent_id":"agent-1","prompt":"Review the mocked demo workspace"}`,
-		"get_agent_result": `{"agent_id":"agent-1"}`,
-		"web_fetch":        `{"url":"https://example.com"}`,
-		"web_search":       `{"query":"Go documentation","max_results":5}`,
-		"read":             `{"path":"README.md","offset":1,"limit":20}`,
-		"write":            `{"path":"demo/greeter.go","content":"package demo\n\nfunc Greeting(name string) string {\n\treturn \"Hello, \" + name\n}\n"}`,
-		"edit":             `{"path":"demo/greeter.go","old_text":"return \"Hello, \" + name","new_text":"return \"Hello, \" + name + \"!\""}`,
-		"list":             `{"path":"."}`,
-		"search":           `{"pattern":"TODO|FIXME","path":".","max_results":20}`,
-		"shell":            `{"command":"go test ./...","timeout_ms":120000}`,
-		"view_image":       `{"path":"screenshot.png"}`,
+		"list_agents":   `{}`,
+		"delegate_task": `{"agent_id":"agent-1","prompt":"Review the mocked demo workspace"}`,
+		"web_fetch":     `{"url":"https://example.com"}`,
+		"web_search":    `{"query":"Go documentation","max_results":5}`,
+		"read":          `{"path":"README.md","offset":1,"limit":20}`,
+		"write":         `{"path":"demo/greeter.go","content":"package demo\n\nfunc Greeting(name string) string {\n\treturn \"Hello, \" + name\n}\n"}`,
+		"edit":          `{"path":"demo/greeter.go","old_text":"return \"Hello, \" + name","new_text":"return \"Hello, \" + name + \"!\""}`,
+		"list":          `{"path":"."}`,
+		"search":        `{"pattern":"TODO|FIXME","path":".","max_results":20}`,
+		"shell":         `{"command":"go test ./...","timeout_ms":120000}`,
+		"view_image":    `{"path":"screenshot.png"}`,
 	}
 	if value, ok := values[name]; ok {
 		return json.RawMessage(value)

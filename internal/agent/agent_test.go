@@ -93,6 +93,31 @@ type dynamicMaxStepsProvider struct {
 
 type skillToolset struct{}
 
+type endTurnProvider struct{ calls int }
+
+type endTurnToolset struct{}
+
+func (p *endTurnProvider) Name() string { return "end-turn" }
+func (p *endTurnProvider) Complete(_ context.Context, _ llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	p.calls++
+	if p.calls > 1 {
+		panic("agent requested another model turn after end-turn tool")
+	}
+	return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{Name: "background"}}}}, nil
+}
+
+func (*endTurnToolset) Schemas() []llm.Tool {
+	return []llm.Tool{{Name: "background"}}
+}
+
+func (*endTurnToolset) EnabledSchemas() []llm.Tool {
+	return []llm.Tool{{Name: "background"}}
+}
+
+func (*endTurnToolset) ExecuteDetailed(context.Context, llm.ToolCall) (llm.ToolResult, error) {
+	return llm.ToolResult{Output: "background accepted", EndTurn: true}, nil
+}
+
 func (*skillToolset) Schemas() []llm.Tool {
 	return []llm.Tool{{Name: "skill"}}
 }
@@ -472,6 +497,24 @@ func TestAgentRunsToolsUntilFinalResponse(t *testing.T) {
 	}
 	if bytes.Contains(events.Bytes(), []byte("end llm")) || bytes.Contains(events.Bytes(), []byte("end tool")) {
 		t.Errorf("events contain separate end entries:\n%s", events.String())
+	}
+}
+
+func TestAgentEndsTurnAfterBackgroundTool(t *testing.T) {
+	provider := &endTurnProvider{}
+	var events bytes.Buffer
+	runner := New(provider, "test", &endTurnToolset{}, trace.New(&events, false), io.Discard, 4)
+	if err := runner.Run(context.Background(), "start background work"); err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want one", provider.calls)
+	}
+	if runner.LastResponse() != "background accepted" {
+		t.Fatalf("last response = %q", runner.LastResponse())
+	}
+	if !strings.Contains(events.String(), "background accepted") {
+		t.Fatalf("activity = %q", events.String())
 	}
 }
 

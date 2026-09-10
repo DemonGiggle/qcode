@@ -186,6 +186,7 @@ type UI struct {
 	skillLocations     []string
 	skillCatalogLoader skillCatalogLoader
 	onSkills           func([]string)
+	consultationCursor uint64 // Guarded by screenMu; persisted with the transcript.
 	manager            agentController
 	activeAgent        string
 	views              map[string]*agentView

@@ -31,21 +31,7 @@ func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 			u.agentUsage()
 			return
 		}
-		var lines []string
-		for _, item := range u.manager.List() {
-			marker := " "
-			if item.ID == u.activeAgent {
-				marker = "*"
-			}
-			status := string(item.Status)
-			if item.QueueDepth > 0 {
-				status += fmt.Sprintf(" (%d queued)", item.QueueDepth)
-			}
-			lines = append(lines, fmt.Sprintf("%s %-9s %-18s %-20s %s", marker,
-				sanitizeDiffLine(item.ID, "<ESC>"), sanitizeDiffLine(item.Name, "<ESC>"),
-				sanitizeDiffLine(item.Model, "<ESC>"), status))
-		}
-		u.printSystemMessage(strings.Join(lines, "\n"))
+		u.selectAgentList(ctx)
 	case "switch":
 		if len(fields) != 3 {
 			u.agentUsage()
@@ -80,6 +66,45 @@ func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 		u.closeAgent(fields[2])
 	default:
 		u.agentUsage()
+	}
+}
+
+type agentKnowledgeReader interface {
+	AgentKnowledge(string) string
+}
+
+func (u *UI) selectAgentList(ctx context.Context) {
+	list := u.manager.List()
+	if len(list) == 0 {
+		u.printSystemMessage(dim + "No agents are available." + reset)
+		return
+	}
+	entries := make([]agentSelectorEntry, 0, len(list))
+	knowledge, _ := u.manager.(agentKnowledgeReader)
+	for _, summary := range list {
+		entry := agentSelectorEntry{summary: summary, active: summary.ID == u.activeAgent}
+		if knowledge != nil {
+			entry.knowledge = knowledge.AgentKnowledge(summary.ID)
+		}
+		entries = append(entries, entry)
+	}
+	visible := max(1, (u.height-6)/(maxAgentKnowledgeLines+1))
+	visible = min(len(entries), visible)
+	u.input.setRaw(true)
+	u.beginRawSelector()
+	selected, accepted, err := selectAgent(u.input, u.terminal, entries, u.activeAgent, visible, u.width, ColorEnabled(u.out))
+	u.input.setRaw(false)
+	u.endRawSelector()
+	if err != nil {
+		if !errors.Is(err, context.Canceled) && !errors.Is(ctx.Err(), context.Canceled) {
+			u.printSystemMessage(yellow + "Agent selection failed: " + err.Error() + reset)
+		}
+		return
+	}
+	if accepted && selected != "" {
+		if err := u.switchAgent(selected); err != nil {
+			u.printSystemMessage(yellow + err.Error() + reset)
+		}
 	}
 }
 
@@ -208,6 +233,10 @@ type agentDisplay struct {
 func (d *agentDisplay) Write(data []byte) (int, error) {
 	d.ui.screenMu.Lock()
 	defer d.ui.screenMu.Unlock()
+	return d.writeLocked(data)
+}
+
+func (d *agentDisplay) writeLocked(data []byte) (int, error) {
 	_, _ = d.history.Write(data)
 	if d.ui.fixedInput {
 		if d.ui.activeAgent == d.id {
@@ -231,12 +260,53 @@ func (d *agentDisplay) ExportSnapshot() historyExportSnapshot {
 
 func (u *UI) watchAgentEvents(events <-chan session.Event) {
 	defer close(u.agentEventsDone)
+	u.replayConsultationEvents()
 	for event := range events {
+		u.replayConsultationEvents()
 		if event.Barrier != nil {
 			close(event.Barrier)
 			continue
 		}
+		if event.Consultation {
+			continue
+		}
 		u.handleAgentEvent(event)
+	}
+	u.replayConsultationEvents()
+}
+
+// Consultation events are replayed from the journal rather than relying on a
+// potentially saturated notification channel. The cursor follows the saved UI.
+func (u *UI) replayConsultationEvents() {
+	source, ok := u.manager.(interface {
+		ConsultationEvents(uint64) []session.ConsultationEvent
+	})
+	if !ok {
+		return
+	}
+	u.screenMu.Lock()
+	cursor := u.consultationCursor
+	view := u.views["main"]
+	u.screenMu.Unlock()
+	if view == nil {
+		return
+	}
+	events := source.ConsultationEvents(cursor)
+	for _, event := range events {
+		message := fmt.Sprintf("Consultation %s (%s): %s", event.AgentID, event.RequestID, event.Status)
+		if event.Elapsed > 0 {
+			message += " after " + formatRunDuration(event.Elapsed)
+		}
+		if event.Error != "" {
+			message += ": " + event.Error
+		}
+		u.screenMu.Lock()
+		_, _ = view.display.writeLocked([]byte(fmt.Sprintf("\n%s%s%s\n", dim, sanitizeDiffLine(message, "<ESC>"), reset)))
+		u.consultationCursor = event.Sequence
+		u.screenMu.Unlock()
+	}
+	if len(events) > 0 {
+		u.requestSessionSave()
 	}
 }
 

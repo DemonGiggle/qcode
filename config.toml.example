@@ -7,6 +7,10 @@ model = "qwen2.5-coder:7b"
 # Maximum number of model turns allowed for each request.
 max_steps = 32
 
+# Maximum wait for a batch of agent consultations, including queue time.
+# Positive duration (e.g. "90s", "5m", "15m"); default is five minutes.
+# agent_timeout = "5m"
+
 # Isolate model-triggered tools with bubblewrap on Linux. Disabled by default.
 # sandbox = true
 

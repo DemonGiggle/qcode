@@ -56,7 +56,7 @@ func (a *Agent) requestMessages(ctx context.Context) []llm.Message {
 		dynamic = contextSource()
 	}
 	if len(messages) > 0 {
-		messages[0].Content += extra + dynamic
+		messages[0].Content += extra + dynamic + a.taskContext
 	}
 	return messages
 }
