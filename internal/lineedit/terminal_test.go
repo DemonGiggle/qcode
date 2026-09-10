@@ -199,3 +199,26 @@ func TestUTF8SubmissionPreservesOriginalText(t *testing.T) {
 		t.Fatalf("ReadLine() = %q, %v; want %q", got, err, want)
 	}
 }
+
+func TestWordMovementSupportsCommonMetaAndModifiedArrowSequences(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		keys string
+		want string
+	}{
+		{name: "meta-left", keys: "one two\x1bbX\r", want: "one Xtwo"},
+		{name: "meta-right", keys: "one two\x1bb\x1bfX\r", want: "one twoX"},
+		{name: "alt-left-arrow", keys: "one two\x1b[1;3DX\r", want: "one Xtwo"},
+		{name: "ctrl-left-arrow", keys: "one two\x1b[1;5DX\r", want: "one Xtwo"},
+		{name: "meta-right-arrow", keys: "one\x1b[1;9CX\r", want: "oneX"},
+		{name: "meta-backspace", keys: "one two\x1b\x7f\r", want: "one "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			terminal := NewTerminal(readWriter{keyReader{strings.NewReader(tc.keys)}, io.Discard}, "> ")
+			line, err := terminal.ReadLine()
+			if err != nil || line != tc.want {
+				t.Fatalf("ReadLine() = %q, %v; want %q", line, err, tc.want)
+			}
+		})
+	}
+}

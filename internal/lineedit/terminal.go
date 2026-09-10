@@ -203,12 +203,29 @@ func bytesToKey(b []byte, pasteActive bool) (rune, []byte) {
 		}
 	}
 
-	if !pasteActive && len(b) >= 6 && b[0] == keyEscape && b[1] == '[' && b[2] == '1' && b[3] == ';' && b[4] == '3' {
-		switch b[5] {
-		case 'C':
-			return keyAltRight, b[6:]
-		case 'D':
-			return keyAltLeft, b[6:]
+	if !pasteActive && len(b) >= 6 && b[0] == keyEscape && b[1] == '[' && b[2] == '1' && b[3] == ';' {
+		// xterm-style modifiers: 3=Alt, 5=Ctrl, 7=Ctrl+Alt, and 9=Meta.
+		// All of these conventionally move by a word with the arrow keys.
+		if b[4] == '3' || b[4] == '5' || b[4] == '7' || b[4] == '9' {
+			switch b[5] {
+			case 'C':
+				return keyAltRight, b[6:]
+			case 'D':
+				return keyAltLeft, b[6:]
+			}
+		}
+	}
+
+	if !pasteActive && len(b) >= 2 && b[0] == keyEscape {
+		// Terminals configured to send Meta as an escape prefix use these
+		// Emacs-compatible word movement bindings.
+		switch b[1] {
+		case 'b', 'B':
+			return keyAltLeft, b[2:]
+		case 'f', 'F':
+			return keyAltRight, b[2:]
+		case keyBackspace:
+			return keyDeleteWord, b[2:]
 		}
 	}
 

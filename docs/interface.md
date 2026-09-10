@@ -6,6 +6,8 @@ The prompt is pinned above the task indicator and status bar from launch. It dis
 
 Typing `/` opens up to five matching command suggestions directly above the prompt. Type more characters to filter them or press Tab to complete the first match. Suggestions stay in their own area while output streams, and disappear when the draft no longer matches a command; they are not saved in conversation history.
 
+Input editing follows terminal conventions: Left/Right moves by character, Home/End moves to the line boundaries, Ctrl+Left/Right and Alt+Left/Right move by word, Alt+B/F provide Meta word movement, Ctrl+W deletes the previous word, and Ctrl+A/E move to the beginning/end of the line.
+
 Set `NO_COLOR=1` to disable response styling. UTF-8 terminals use Unicode interface glyphs; other locales fall back to ASCII without disabling color. Set `QCODE_ASCII=1` to force the ASCII-safe display mode.
 
 ## Slash commands
