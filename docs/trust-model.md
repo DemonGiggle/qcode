@@ -10,7 +10,7 @@ Without `--sandbox`, file tools reject paths that lexically leave the selected w
 
 qcode first checks that [bubblewrap](https://github.com/containers/bubblewrap) and the kernel features it needs are usable. qcode itself remains outside the sandbox so it can load its configuration and contact the selected provider; API keys and other environment secrets are removed from shell-tool environments, and the loaded qcode config file is hidden from model tools.
 
-Each shell call receives a fresh namespace with no network, a hidden real home and runtime directory, a private temporary directory, a read-only root filesystem, and read/write mounts for approved directories. Built-in file tools use kernel-assisted path confinement to prevent symlink escapes. Temporary files created under the sandbox's private `/tmp` do not persist. The sandbox is disabled by default.
+Each shell call receives a fresh namespace with no network by default, a hidden real home and runtime directory, a private temporary directory, a read-only root filesystem, and read/write mounts for approved directories. Enabling either web tool grants network access to the current sandbox session; disabling both or starting a new session restores isolation. Built-in file tools use kernel-assisted path confinement to prevent symlink escapes. Temporary files created under the sandbox's private `/tmp` do not persist. The sandbox is disabled by default.
 
 ## Requesting more directories
 

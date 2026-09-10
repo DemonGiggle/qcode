@@ -25,7 +25,7 @@ Omitting the setting defaults to `duckduckgo`. Unknown backend names fail at sta
 
 Requests have a 20-second deadline, at most 5 redirects, a 2 MiB response limit (after HTTP decompression), and at most two concurrent web operations. Text output is capped at 64 KiB with an explicit truncation marker. The HTML tokenizer avoids building a full page DOM. Requests use normal TLS certificate validation unless `--danger-skip-tls-verify` (or `danger_skip_tls_verify = true`) is set.
 
-Web tools are blocked when an active sandbox disables networking. Outside the sandbox they still accept only public destinations: loopback, private, link-local, and reserved addresses are rejected, including DNS results and redirects. They connect directly and do not use environment HTTP proxies, browser cookies, or provider credentials. Retrieved content is marked as untrusted reference data.
+In sandbox mode, enabling either web tool also enables networking for the current sandbox session; disabling both tools or starting a new session restores network isolation. Outside the sandbox they still accept only public destinations: loopback, private, link-local, and reserved addresses are rejected, including DNS results and redirects. They connect directly and do not use environment HTTP proxies, browser cookies, or provider credentials. Retrieved content is marked as untrusted reference data.
 
 ## Testing
 

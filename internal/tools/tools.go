@@ -84,7 +84,7 @@ func NewWithOptions(root string, options Options) (*Registry, error) {
 				r.protected = append(r.protected, canonical)
 			}
 		}
-		r.sandbox = &sandboxState{bwrap: bwrap, home: home, allowNetwork: options.AllowNetwork, insecureSkipTLSVerify: options.InsecureSkipTLSVerify, protected: r.protected}
+		r.sandbox = &sandboxState{bwrap: bwrap, home: home, allowNetwork: options.AllowNetwork, configuredAllowNetwork: options.AllowNetwork, insecureSkipTLSVerify: options.InsecureSkipTLSVerify, protected: r.protected}
 	}
 	r.web, err = newWebTools(options.SearchBackend, options.InsecureSkipTLSVerify)
 	if err != nil {
@@ -157,6 +157,18 @@ func (r *Registry) ResetSession() {
 	r.grants = []string{r.root}
 	r.grantMu.Unlock()
 	r.disabled = map[string]bool{"web_fetch": true, "web_search": true}
+	r.updateSandboxNetworkAccess()
+}
+
+// updateSandboxNetworkAccess keeps sandbox networking aligned with the
+// session's web-tool opt-in. An explicit network allowance remains in force;
+// otherwise enabling either web tool grants networking until the session is
+// reset or both tools are disabled again.
+func (r *Registry) updateSandboxNetworkAccess() {
+	if r.sandbox == nil {
+		return
+	}
+	r.sandbox.allowNetwork = r.sandbox.configuredAllowNetwork || r.IsToolEnabled("web_fetch") || r.IsToolEnabled("web_search")
 }
 
 func (r *Registry) add(schema llm.Tool, handler Handler) {
@@ -180,6 +192,7 @@ func (r *Registry) EnabledSchemas() []llm.Tool {
 // EnableTool re-enables a previously disabled tool.
 func (r *Registry) EnableTool(name string) {
 	delete(r.disabled, name)
+	r.updateSandboxNetworkAccess()
 }
 
 // DisableTool prevents a tool from being advertised or executed.
@@ -188,6 +201,7 @@ func (r *Registry) DisableTool(name string) {
 		r.disabled = make(map[string]bool)
 	}
 	r.disabled[name] = true
+	r.updateSandboxNetworkAccess()
 }
 
 // IsToolEnabled reports whether a tool is currently enabled.

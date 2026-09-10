@@ -211,12 +211,17 @@ func TestWebNetworkPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := r.beginWeb(context.Background()); err == nil || !strings.Contains(err.Error(), "sandbox networking") {
+		t.Fatalf("disabled web tools should not have network access: %v", err)
+	}
 	for _, name := range []string{"web_fetch", "web_search"} {
 		r.EnableTool(name)
-		_, err := callWeb(r, context.Background(), name, map[string]any{map[string]string{"web_fetch": "url", "web_search": "query"}[name]: "https://example.com"})
-		if err == nil || !strings.Contains(err.Error(), "sandbox networking") {
-			t.Fatalf("%s: %v", name, err)
+		_, done, err := r.beginWeb(context.Background())
+		if err != nil {
+			t.Fatalf("%s should allow sandbox networking: %v", name, err)
 		}
+		done()
+		r.DisableTool(name)
 	}
 }
 

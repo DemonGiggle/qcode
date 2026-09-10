@@ -35,6 +35,7 @@ func (r *Registry) RestoreTools(data json.RawMessage) error {
 			r.disabled[name] = disabled
 		}
 	}
+	r.updateSandboxNetworkAccess()
 	r.grantMu.Lock()
 	r.grants = []string{r.root}
 	r.grantMu.Unlock()

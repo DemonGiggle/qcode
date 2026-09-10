@@ -32,11 +32,12 @@ type SkillLoader interface {
 }
 
 type sandboxState struct {
-	bwrap                 string
-	home                  string
-	allowNetwork          bool
-	insecureSkipTLSVerify bool
-	protected             []string
+	bwrap                  string
+	home                   string
+	allowNetwork           bool
+	configuredAllowNetwork bool
+	insecureSkipTLSVerify  bool
+	protected              []string
 }
 
 type environmentVariable struct{ name, value string }
@@ -93,7 +94,7 @@ func CheckSandbox(root string, allowNetwork bool) (string, error) {
 	if canonical, evalErr := filepath.EvalSymlinks(home); evalErr == nil {
 		home = canonical
 	}
-	state := sandboxState{bwrap: bwrap, home: home, allowNetwork: allowNetwork}
+	state := sandboxState{bwrap: bwrap, home: home, allowNetwork: allowNetwork, configuredAllowNetwork: allowNetwork}
 	probeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(probeCtx, bwrap, state.arguments(root, []string{root}, "/bin/true")...)
