@@ -68,7 +68,7 @@ func (u *UI) AgentQuestioner(id string) question.Questioner {
 func cloneQuestions(questions []question.Question) []question.Question {
 	cloned := make([]question.Question, len(questions))
 	for i, item := range questions {
-		cloned[i] = question.Question{Text: item.Text, Options: append([]string(nil), item.Options...)}
+		cloned[i] = question.Question{Text: item.Text, Options: append([]string(nil), item.Options...), AllowCustom: item.AllowCustom}
 	}
 	return cloned
 }
@@ -126,6 +126,10 @@ func (u *UI) handlePendingQuestions(ctx context.Context) {
 }
 
 func (u *UI) runQuestionnaire(ctx context.Context, questions []question.Question) ([]string, error) {
+	return u.runQuestionnaireWithFooter(ctx, questions, "Ctrl+C cancels planning.")
+}
+
+func (u *UI) runQuestionnaireWithFooter(ctx context.Context, questions []question.Question, footer string) ([]string, error) {
 	if len(questions) == 0 {
 		return nil, fmt.Errorf("questionnaire has no questions")
 	}
@@ -155,7 +159,7 @@ func (u *UI) runQuestionnaire(ctx context.Context, questions []question.Question
 
 	answers := make([]string, 0, len(questions))
 	for i, question := range questions {
-		u.printSystemMessage(formatQuestion(question, i, len(questions), u.width))
+		u.printSystemMessage(formatQuestionWithFooter(question, i, len(questions), u.width, footer))
 		for {
 			if err := questionCtx.Err(); err != nil {
 				return nil, err
@@ -175,7 +179,7 @@ func (u *UI) runQuestionnaire(ctx context.Context, questions []question.Question
 				u.printSystemMessage(yellow + "Please enter an answer, or press Ctrl+C to cancel." + reset)
 				continue
 			}
-			answer, valid := normalizeQuestionAnswer(answer, question.Options)
+			answer, valid := normalizeQuestionAnswerWithCustom(answer, question.Options, question.AllowCustom)
 			if !valid {
 				u.printSystemMessage(yellow + "Choose one of the listed options." + reset)
 				continue
@@ -196,6 +200,10 @@ func (u *UI) restorePlanPrompt() {
 }
 
 func formatQuestion(item question.Question, index, total, width int) string {
+	return formatQuestionWithFooter(item, index, total, width, "Ctrl+C cancels planning.")
+}
+
+func formatQuestionWithFooter(item question.Question, index, total, width int, footer string) string {
 	var output strings.Builder
 	fmt.Fprintf(&output, "Question %d/%d:\n", index+1, total)
 	text := sanitizeDiffLine(strings.TrimSpace(item.Text), "<ESC>")
@@ -204,11 +212,20 @@ func formatQuestion(item question.Question, index, total, width int) string {
 		option = sanitizeDiffLine(strings.TrimSpace(option), "<ESC>")
 		fmt.Fprintf(&output, "   %d) %s\n", optionIndex+1, wrapANSI(option, width, "      "))
 	}
-	output.WriteString("\nChoose an option or type your own answer. Ctrl+C cancels planning.")
+	if len(item.Options) == 0 || item.AllowCustom {
+		output.WriteString("\nChoose an option or type your own answer. ")
+	} else {
+		output.WriteString("\nChoose one of the listed options. ")
+	}
+	output.WriteString(footer)
 	return output.String()
 }
 
 func normalizeQuestionAnswer(answer string, options []string) (string, bool) {
+	return normalizeQuestionAnswerWithCustom(answer, options, true)
+}
+
+func normalizeQuestionAnswerWithCustom(answer string, options []string, allowCustom bool) (string, bool) {
 	if len(options) == 0 {
 		return answer, true
 	}
@@ -220,5 +237,8 @@ func normalizeQuestionAnswer(answer string, options []string) (string, bool) {
 			return option, true
 		}
 	}
-	return answer, true
+	if allowCustom {
+		return answer, true
+	}
+	return "", false
 }

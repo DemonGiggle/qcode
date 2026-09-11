@@ -63,6 +63,11 @@ func (a *Agent) PlanMode() bool { return a.planMode.Load() }
 // authority midway through a request.
 func (a *Agent) SetPlanMode(enabled bool) {
 	a.planMode.Store(enabled)
+	if !enabled {
+		a.stateMu.Lock()
+		a.planDecisionPending = false
+		a.stateMu.Unlock()
+	}
 	a.system = prompt.SystemForMode(a.selectedSkills, enabled)
 	if len(a.messages) > 0 && a.messages[0].Role == "system" {
 		a.messages[0].Content = a.system
@@ -95,8 +100,21 @@ func (a *Agent) LatestPlanText() (string, bool) {
 func (a *Agent) ClearLatestPlan() {
 	a.stateMu.Lock()
 	a.latestPlan = nil
+	a.planDecisionPending = false
 	a.stateMu.Unlock()
 	a.publishCheckpoint()
+}
+
+// TakePlanDecision returns the latest plan once when the interactive host
+// should ask whether to implement it or remain in Plan mode.
+func (a *Agent) TakePlanDecision() (string, bool) {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	if !a.planDecisionPending || a.latestPlan == nil {
+		return "", false
+	}
+	a.planDecisionPending = false
+	return renderPlan(*a.latestPlan), true
 }
 
 func (a *Agent) enabledSchemas() []llm.Tool {
@@ -122,6 +140,7 @@ func (a *Agent) executeDetailed(ctx context.Context, call llm.ToolCall) (llm.Too
 func (a *Agent) savePlan(plan Plan) {
 	a.stateMu.Lock()
 	a.latestPlan = &plan
+	a.planDecisionPending = true
 	a.stateMu.Unlock()
 	a.publishCheckpoint()
 }
@@ -182,7 +201,7 @@ func (a *Agent) askQuestions(ctx context.Context, arguments json.RawMessage) (ll
 	}
 	questions := make([]Question, len(request.Questions))
 	for i, item := range request.Questions {
-		questions[i] = Question{Text: strings.TrimSpace(item.Text)}
+		questions[i] = Question{Text: strings.TrimSpace(item.Text), AllowCustom: true}
 		if questions[i].Text == "" {
 			return llm.ToolResult{}, fmt.Errorf("question %d must not be empty", i+1)
 		}

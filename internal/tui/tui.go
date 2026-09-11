@@ -205,6 +205,8 @@ type UI struct {
 	approvals          map[string][]*approvalRequest
 	questionMu         sync.Mutex
 	questions          []*questionRequest
+	planDecisionMu     sync.Mutex
+	planDecisions      []*planDecisionRequest
 	tabMu              sync.Mutex
 	pendingTab         int
 	agentEventsDone    chan struct{}
@@ -487,6 +489,7 @@ func (u *UI) Run(ctx context.Context) error {
 		u.handlePendingTabSwitch()
 		u.handlePendingApproval(ctx)
 		u.handlePendingQuestions(ctx)
+		u.handlePendingPlanDecision(ctx)
 		line, err := u.readLine()
 		u.commandMenu.dismiss(u.out)
 		if err != nil {

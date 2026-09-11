@@ -25,8 +25,14 @@ func TestNormalizeQuestionAnswer(t *testing.T) {
 	}
 }
 
+func TestNormalizeQuestionAnswerCanRequireOption(t *testing.T) {
+	if got, valid := normalizeQuestionAnswerWithCustom("Something else", []string{"SQLite", "Postgres"}, false); valid || got != "" {
+		t.Fatalf("strict answer = %q, %v; want empty, false", got, valid)
+	}
+}
+
 func TestFormatQuestion(t *testing.T) {
-	got := formatQuestion(question.Question{Text: "Which store?", Options: []string{"SQLite", "Postgres"}}, 0, 2, 80)
+	got := formatQuestion(question.Question{Text: "Which store?", Options: []string{"SQLite", "Postgres"}, AllowCustom: true}, 0, 2, 80)
 	for _, want := range []string{"Question 1/2", "Which store?", "1) SQLite", "2) Postgres", "type your own answer", "Ctrl+C cancels planning"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("questionnaire %q does not contain %q", got, want)

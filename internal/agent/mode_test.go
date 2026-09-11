@@ -128,6 +128,12 @@ func TestPlanModeSavesSubmittedPlan(t *testing.T) {
 	if !a.PlanMode() {
 		t.Fatal("planning request changed mode")
 	}
+	if planText, ready := a.TakePlanDecision(); !ready || !strings.Contains(planText, "Add caching") {
+		t.Fatalf("plan decision = %q, ready=%v", planText, ready)
+	}
+	if _, ready := a.TakePlanDecision(); ready {
+		t.Fatal("plan decision was returned more than once")
+	}
 	seen := false
 	for _, schema := range provider.tools {
 		if schema.Name == "propose_plan" {

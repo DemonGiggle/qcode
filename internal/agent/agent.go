@@ -58,6 +58,7 @@ type Agent struct {
 	planMode             atomic.Bool
 	questioner           Questioner
 	latestPlan           *Plan
+	planDecisionPending  bool
 	checkpoint           atomic.Pointer[[]byte]
 }
 
