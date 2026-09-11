@@ -222,3 +222,22 @@ func TestWordMovementSupportsCommonMetaAndModifiedArrowSequences(t *testing.T) {
 		})
 	}
 }
+
+func TestHomeAndEndSupportCommonTerminalSequences(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		keys string
+		want string
+	}{
+		{name: "csi-1-and-4", keys: "one two\x1b[1~X\x1b[4~Y\r", want: "Xone twoY"},
+		{name: "rxvt-7-and-8", keys: "one two\x1b[7~X\x1b[8~Y\r", want: "Xone twoY"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			terminal := NewTerminal(readWriter{keyReader{strings.NewReader(tc.keys)}, io.Discard}, "> ")
+			line, err := terminal.ReadLine()
+			if err != nil || line != tc.want {
+				t.Fatalf("ReadLine() = %q, %v; want %q", line, err, tc.want)
+			}
+		})
+	}
+}

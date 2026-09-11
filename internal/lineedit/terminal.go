@@ -203,6 +203,19 @@ func bytesToKey(b []byte, pasteActive bool) (rune, []byte) {
 		}
 	}
 
+	if !pasteActive && len(b) >= 4 && b[0] == keyEscape && b[1] == '[' {
+		// xterm and Linux console commonly encode Home/End as CSI 1~/4~.
+		// rxvt uses CSI 7~/8~ for the same keys.
+		if b[3] == '~' {
+			switch b[2] {
+			case '1', '7':
+				return keyHome, b[4:]
+			case '4', '8':
+				return keyEnd, b[4:]
+			}
+		}
+	}
+
 	if !pasteActive && len(b) >= 6 && b[0] == keyEscape && b[1] == '[' && b[2] == '1' && b[3] == ';' {
 		// xterm-style modifiers: 3=Alt, 5=Ctrl, 7=Ctrl+Alt, and 9=Meta.
 		// All of these conventionally move by a word with the arrow keys.
