@@ -18,6 +18,8 @@ handoff.
 Commands:
 
 - `/plan` enters Plan mode and shows `PLAN` in the status bar.
+- `/plan show` opens the latest submitted plan in a temporary, scrollable view.
+  It does not add the plan text to the conversation output.
 - `/plan off` leaves Plan mode without executing the plan.
 - `/plan act` switches to normal mode and starts implementing the latest
   submitted plan. It is available only when a complete plan exists.

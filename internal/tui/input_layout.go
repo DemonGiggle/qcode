@@ -65,6 +65,9 @@ func inputRows(text string, cursor, width int) ([]string, int, int) {
 // paintFixedLocked owns the entire screen, including the cursor. No editor
 // escape sequences or candidate text are passed through conversation history.
 func (u *UI) paintFixedLocked(direction int) {
+	if u.planViewActive {
+		return
+	}
 	if u.input != nil {
 		u.input.mu.Lock()
 		raw := u.input.raw

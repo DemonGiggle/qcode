@@ -188,6 +188,7 @@ type UI struct {
 	viewport           viewport
 	statusActive       bool
 	statusBarText      string
+	planViewActive     bool
 	startupNotice      string
 	startupChoice      bool
 	skills             []prompt.SkillSummary
@@ -885,15 +886,26 @@ func (u *UI) updateMaxSteps(fields []string) {
 
 func (u *UI) handlePlanCommand(ctx context.Context, fields []string) {
 	if len(fields) > 2 {
-		u.printSystemMessage(yellow + "Usage: /plan [off|act]" + reset)
-		return
-	}
-	if !u.activeAgentConfigurable() {
+		u.printSystemMessage(yellow + "Usage: /plan [off|show|act]" + reset)
 		return
 	}
 	controller, ok := u.runner.(planController)
 	if !ok {
 		u.printSystemMessage(yellow + "Plan mode is unavailable." + reset)
+		return
+	}
+	if len(fields) == 2 && fields[1] == "show" {
+		plan, exists := controller.LatestPlanText()
+		if !exists {
+			u.printSystemMessage(yellow + "No complete plan is available. Ask qcode to submit a plan first." + reset)
+			return
+		}
+		if err := u.showPlanView(ctx, plan); err != nil && !errors.Is(err, context.Canceled) {
+			u.printSystemMessage(yellow + "Unable to show plan: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+		}
+		return
+	}
+	if !u.activeAgentConfigurable() {
 		return
 	}
 	setPrompt := func(plan bool) {
@@ -933,7 +945,7 @@ func (u *UI) handlePlanCommand(ctx context.Context, fields []string) {
 		}
 		u.printSystemMessage(green + "Plan approved; implementation started." + reset)
 	default:
-		u.printSystemMessage(yellow + "Usage: /plan [off|act]" + reset)
+		u.printSystemMessage(yellow + "Usage: /plan [off|show|act]" + reset)
 	}
 }
 

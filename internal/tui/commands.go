@@ -24,7 +24,7 @@ var slashCommands = []slashCommand{
 	{name: "/maxsteps", description: "Show or set maximum model turns per request"},
 	{name: "/model", description: "Select a provider model"},
 	{name: "/new", description: "Start a session with fresh context"},
-	{name: "/plan", description: "Enter read-only planning mode; use /plan act to implement"},
+	{name: "/plan", description: "Manage planning mode; use /plan show to view or /plan act to implement"},
 	{name: "/resume", description: "Restore a saved session for this workspace"},
 	{name: "/skill", description: "Select workspace skills"},
 	{name: "/quit", description: "Exit qcode"},
