@@ -909,7 +909,7 @@ func (r *Registry) shell(ctx context.Context, arguments json.RawMessage) (string
 	} else if runtime.GOOS == "windows" {
 		cmd = exec.CommandContext(commandCtx, "cmd.exe", "/d", "/s", "/c", args.Command)
 	} else {
-		cmd = exec.CommandContext(commandCtx, "/bin/sh", "-c", args.Command)
+		cmd = exec.CommandContext(commandCtx, "/bin/sh", "-c", trackedShellCommand(args.Command))
 	}
 	// --new-session conflicts with placing bubblewrap itself in a process
 	// group. --die-with-parent handles sandbox child cleanup instead.

@@ -270,6 +270,43 @@ func TestShellCancellationStopsBackgroundChildren(t *testing.T) {
 	}
 }
 
+func TestShellCancellationKeepsBackgroundJobsAttached(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process groups are POSIX-specific")
+	}
+	root := t.TempDir()
+	registry, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := registry.Execute(ctx, llm.ToolCall{Name: "shell", Arguments: json.RawMessage(`{"command":"touch started && sleep 30 &"}`)})
+		done <- err
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, statErr := os.Stat(filepath.Join(root, "started")); statErr == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("background shell command did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("shell error = %v, want context cancellation", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Ctrl+C did not stop the attached background job")
+	}
+}
+
 func TestReadAcceptsStringDecimalOffsetAndShowsContinuation(t *testing.T) {
 	root := t.TempDir()
 	lines := make([]string, 350)

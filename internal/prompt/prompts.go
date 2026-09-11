@@ -67,7 +67,7 @@ const (
 	EditTool            = "Replace one exact occurrence of old_text in a UTF-8 text file."
 	ListTool            = "List a directory. Results are sorted and include a trailing slash for directories."
 	SearchTool          = "Search text files incrementally with a Go regular expression, including large files. Returns file:line:matching text. Use read with offset and limit around matching line numbers for surrounding code. If more matches are reported, repeat with the supplied search offset; do not repeat unchanged arguments. Pagination assumes files remain unchanged. Incomplete scans are explicitly reported."
-	ShellTool           = "Run a command with the platform shell in the current working directory."
+	ShellTool           = "Run a command with the platform shell in the current working directory. Shell background jobs remain attached to this request so Ctrl+C can cancel them; keep development servers attached instead of daemonizing them."
 	ImageTool           = "Load a local image and attach it for visual analysis. Use this when the user asks about an image in the workspace. Supports PNG, JPEG, WEBP, and GIF."
 	DirectoryAccessTool = "Ask the user to grant read/write access to an additional directory for this session. Use this before a shell command needs a path outside the approved workspace."
 	SkillTool           = "Load the complete instructions for an available workspace skill. Call this before performing work covered by that skill."

@@ -112,7 +112,7 @@ func CheckSandbox(root string, allowNetwork bool) (string, error) {
 }
 
 func (s sandboxState) command(ctx context.Context, root string, grants []string, command string) *exec.Cmd {
-	return exec.CommandContext(ctx, s.bwrap, s.arguments(root, grants, "/bin/sh", "-c", command)...)
+	return exec.CommandContext(ctx, s.bwrap, s.arguments(root, grants, "/bin/sh", "-c", trackedShellCommand(command))...)
 }
 
 func (s sandboxState) arguments(root string, grants []string, command ...string) []string {
