@@ -109,7 +109,7 @@ func (a *Agent) enabledSchemas() []llm.Tool {
 			filtered = append(filtered, tool)
 		}
 	}
-	return append(filtered, proposePlanSchema())
+	return append(filtered, askQuestionsSchema(), proposePlanSchema())
 }
 
 func (a *Agent) executeDetailed(ctx context.Context, call llm.ToolCall) (llm.ToolResult, error) {
@@ -143,9 +143,86 @@ func proposePlanSchema() llm.Tool {
 	}}
 }
 
+func askQuestionsSchema() llm.Tool {
+	question := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"question": map[string]any{"type": "string", "description": prompt.QuestionTextParameter},
+			"options": map[string]any{
+				"type":        "array",
+				"minItems":    2,
+				"maxItems":    6,
+				"items":       map[string]any{"type": "string"},
+				"description": prompt.QuestionOptionsParameter,
+			},
+		},
+		"required": []string{"question"},
+	}
+	return llm.Tool{Name: "ask_questions", Description: prompt.AskQuestionsTool, Parameters: map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties":           map[string]any{"questions": map[string]any{"type": "array", "minItems": 1, "maxItems": 8, "items": question}},
+		"required":             []string{"questions"},
+	}}
+}
+
+func (a *Agent) askQuestions(ctx context.Context, arguments json.RawMessage) (llm.ToolResult, error) {
+	var request struct {
+		Questions []struct {
+			Text    string   `json:"question"`
+			Options []string `json:"options,omitempty"`
+		} `json:"questions"`
+	}
+	if err := json.Unmarshal(arguments, &request); err != nil {
+		return llm.ToolResult{}, fmt.Errorf("invalid questions: %w", err)
+	}
+	if len(request.Questions) == 0 || len(request.Questions) > 8 {
+		return llm.ToolResult{}, fmt.Errorf("ask_questions requires 1-8 questions")
+	}
+	questions := make([]Question, len(request.Questions))
+	for i, item := range request.Questions {
+		questions[i] = Question{Text: strings.TrimSpace(item.Text)}
+		if questions[i].Text == "" {
+			return llm.ToolResult{}, fmt.Errorf("question %d must not be empty", i+1)
+		}
+		for _, option := range item.Options {
+			option = strings.TrimSpace(option)
+			if option == "" {
+				return llm.ToolResult{}, fmt.Errorf("question %d has an empty option", i+1)
+			}
+			questions[i].Options = append(questions[i].Options, option)
+		}
+		if len(questions[i].Options) == 1 || len(questions[i].Options) > 6 {
+			return llm.ToolResult{}, fmt.Errorf("question %d must have either no options or 2-6 options", i+1)
+		}
+	}
+
+	a.stateMu.RLock()
+	questioner := a.questioner
+	a.stateMu.RUnlock()
+	if questioner == nil {
+		return llm.ToolResult{}, fmt.Errorf("ask_questions requires an interactive terminal")
+	}
+	answers, err := questioner(ctx, questions)
+	if err != nil {
+		return llm.ToolResult{}, err
+	}
+	if len(answers) != len(questions) {
+		return llm.ToolResult{}, fmt.Errorf("questionnaire returned %d answers for %d questions", len(answers), len(questions))
+	}
+	data, err := json.Marshal(struct {
+		Answers []string `json:"answers"`
+	}{Answers: answers})
+	if err != nil {
+		return llm.ToolResult{}, err
+	}
+	return llm.ToolResult{Output: string(data)}, nil
+}
+
 func planAllowedTool(name string) bool {
 	switch name {
-	case "web_fetch", "web_search", "read", "list", "search", "view_image", "skill", "list_agents", "search_agent_work", "propose_plan":
+	case "web_fetch", "web_search", "read", "list", "search", "view_image", "skill", "list_agents", "search_agent_work", "ask_questions", "propose_plan":
 		return true
 	default:
 		return false
@@ -165,13 +242,13 @@ func (t *modeToolset) Schemas() []llm.Tool {
 	if !t.owner.PlanMode() {
 		return base
 	}
-	filtered := make([]llm.Tool, 0, len(base)+1)
+	filtered := make([]llm.Tool, 0, len(base)+2)
 	for _, tool := range base {
 		if planAllowedTool(tool.Name) {
 			filtered = append(filtered, tool)
 		}
 	}
-	return append(filtered, proposePlanSchema())
+	return append(filtered, askQuestionsSchema(), proposePlanSchema())
 }
 
 func (t *modeToolset) EnabledSchemas() []llm.Tool {
@@ -179,13 +256,13 @@ func (t *modeToolset) EnabledSchemas() []llm.Tool {
 	if !t.owner.PlanMode() {
 		return base
 	}
-	filtered := make([]llm.Tool, 0, len(base)+1)
+	filtered := make([]llm.Tool, 0, len(base)+2)
 	for _, tool := range base {
 		if planAllowedTool(tool.Name) {
 			filtered = append(filtered, tool)
 		}
 	}
-	return append(filtered, proposePlanSchema())
+	return append(filtered, askQuestionsSchema(), proposePlanSchema())
 }
 
 func (t *modeToolset) ExecuteDetailed(ctx context.Context, call llm.ToolCall) (llm.ToolResult, error) {
@@ -213,6 +290,9 @@ func (t *modeToolset) ExecuteDetailed(ctx context.Context, call llm.ToolCall) (l
 			t.owner.savePlan(plan)
 			return llm.ToolResult{Output: planText, EndTurn: true}, nil
 		}
+		if call.Name == "ask_questions" {
+			return t.owner.askQuestions(ctx, call.Arguments)
+		}
 		if !planAllowedTool(call.Name) {
 			return llm.ToolResult{}, fmt.Errorf("tool %q is unavailable in Plan mode; Plan mode is read-only", call.Name)
 		}
@@ -233,7 +313,7 @@ func (t *modeToolset) ToolNames() []string {
 		}
 	}
 	if t.owner.PlanMode() {
-		names = append(names, "propose_plan")
+		names = append(names, "ask_questions", "propose_plan")
 	}
 	return names
 }

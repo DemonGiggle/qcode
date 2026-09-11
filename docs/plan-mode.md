@@ -18,6 +18,10 @@ handoff.
 Commands:
 
 - `/plan` enters Plan mode and shows `PLAN` in the status bar.
+- During planning, the agent may open a blocking questionnaire for unresolved
+  design decisions. Questions are presented one at a time; choose an option or
+  type a custom answer to let the same planning request continue. Ctrl+C
+  cancels it.
 - `/plan show` opens the latest submitted plan in a temporary, scrollable view.
   It does not add the plan text to the conversation output.
 - `/plan off` leaves Plan mode without executing the plan.

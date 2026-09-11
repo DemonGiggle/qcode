@@ -12,11 +12,12 @@ Use tools when they are needed to inspect or change the workspace. Before changi
 // policy enforces the no-mutation portion independently of this prompt.
 const PlanModeSuffix = `
 
-You are in Plan mode. Inspect the workspace and ask focused questions when a
-decision is genuinely unresolved. Do not change files, run shell commands, or
-claim that implementation or validation has happened. When you have enough
-information, submit one complete implementation plan with the propose_plan
-tool. The plan must include ordered changes and concrete validation steps.`
+You are in Plan mode. Inspect the workspace and use the ask_questions tool for
+a small blocking questionnaire when a decision is genuinely unresolved. Do
+not change files, run shell commands, or claim that implementation or
+validation has happened. When you have enough information, submit one
+complete implementation plan with the propose_plan tool. The plan must
+include ordered changes and concrete validation steps.`
 
 // ConversationCompact is used to summarize a conversation before replacing
 // older turns. Like the system prompt, it remains deliberately visible here
@@ -71,6 +72,7 @@ const (
 	DirectoryAccessTool = "Ask the user to grant read/write access to an additional directory for this session. Use this before a shell command needs a path outside the approved workspace."
 	SkillTool           = "Load the complete instructions for an available workspace skill. Call this before performing work covered by that skill."
 	ProposePlanTool     = "Save a complete implementation plan for the user to review. This tool is available only in Plan mode and ends the current planning request."
+	AskQuestionsTool    = "Ask the user a small blocking questionnaire about unresolved design decisions. Use this only when the answers materially affect the implementation plan; the tool returns one answer per question and then planning continues."
 	ListAgentsTool      = "List the other agent sessions and their current task status. Available only to the main agent."
 	SearchAgentWorkTool = "Search all recorded agent tasks and findings in this session, including earlier work and closed agents. Results are excerpts of reference data. Use an empty query to browse, agent_id to filter, and next_offset for further pages. Available only to the main agent."
 	ConsultAgentsTool   = "Ask several distinct agents focused questions about their previous work. All requests are submitted asynchronously before waiting for their specific replies. The configured agent timeout includes queue time. Returns individual completed, timed_out, failed, or cancelled outcomes; use successful replies and continue despite other failures. Available only to the main agent."
@@ -80,33 +82,35 @@ const (
 
 // Tool parameter descriptions are model-visible prompts too, so they live here.
 const (
-	WebURLParameter         = "Public HTTP(S) URL to fetch"
-	WebQueryParameter       = "Web search query"
-	WebResultsParameter     = "Maximum search results (default 5, range 1–10)"
-	PathParameter           = "File path relative to the workspace"
-	OffsetParameter         = "One-based line number to start reading from (default 1)"
-	LimitParameter          = "Maximum lines to read (default 200)"
-	ContentParameter        = "Complete new file content"
-	OldTextParameter        = "Exact text to replace"
-	NewTextParameter        = "Replacement text"
-	DirectoryParameter      = "Directory path relative to the workspace; defaults to ."
-	PatternParameter        = "Go regular expression"
-	SearchPathParameter     = "Directory or file to search; defaults to ."
-	MaxResultsParameter     = "Maximum matches (default 100)"
-	SearchOffsetParameter   = "Number of matching lines to skip (default 0); use the next offset from search results. This is not a file line number."
-	CommandParameter        = "Shell command"
-	TimeoutParameter        = "Timeout in milliseconds (default 120000)"
-	AccessPathParameter     = "File or directory path that must be accessible outside the approved workspace"
-	SkillNameParameter      = "Exact name of an available workspace skill"
-	PlanTitleParameter      = "Short title for the implementation plan"
-	PlanSummaryParameter    = "The goal, relevant findings, and important assumptions"
-	PlanStepsParameter      = "Ordered implementation steps; each should name the affected behavior or files"
-	PlanValidationParameter = "Concrete tests or checks that will validate the implementation"
-	PlanQuestionsParameter  = "Important unresolved decisions; use an empty array when none remain"
-	AgentIDParameter        = "Exact agent ID from list_agents, work history, or the injected roster"
-	AgentModelParameter     = "Model name for the new agent; omit to use the main agent's current model"
-	AgentPromptParameter    = "Focused task or follow-up to send to the target agent"
-	AgentWorkQueryParameter = "Words describing relevant tasks, findings, or files; empty to browse all work"
+	WebURLParameter          = "Public HTTP(S) URL to fetch"
+	WebQueryParameter        = "Web search query"
+	WebResultsParameter      = "Maximum search results (default 5, range 1–10)"
+	PathParameter            = "File path relative to the workspace"
+	OffsetParameter          = "One-based line number to start reading from (default 1)"
+	LimitParameter           = "Maximum lines to read (default 200)"
+	ContentParameter         = "Complete new file content"
+	OldTextParameter         = "Exact text to replace"
+	NewTextParameter         = "Replacement text"
+	DirectoryParameter       = "Directory path relative to the workspace; defaults to ."
+	PatternParameter         = "Go regular expression"
+	SearchPathParameter      = "Directory or file to search; defaults to ."
+	MaxResultsParameter      = "Maximum matches (default 100)"
+	SearchOffsetParameter    = "Number of matching lines to skip (default 0); use the next offset from search results. This is not a file line number."
+	CommandParameter         = "Shell command"
+	TimeoutParameter         = "Timeout in milliseconds (default 120000)"
+	AccessPathParameter      = "File or directory path that must be accessible outside the approved workspace"
+	SkillNameParameter       = "Exact name of an available workspace skill"
+	PlanTitleParameter       = "Short title for the implementation plan"
+	PlanSummaryParameter     = "The goal, relevant findings, and important assumptions"
+	PlanStepsParameter       = "Ordered implementation steps; each should name the affected behavior or files"
+	PlanValidationParameter  = "Concrete tests or checks that will validate the implementation"
+	PlanQuestionsParameter   = "Important unresolved decisions; use an empty array when none remain"
+	QuestionTextParameter    = "A focused design question for the user"
+	QuestionOptionsParameter = "Optional mutually exclusive choices; omit for a free-text answer"
+	AgentIDParameter         = "Exact agent ID from list_agents, work history, or the injected roster"
+	AgentModelParameter      = "Model name for the new agent; omit to use the main agent's current model"
+	AgentPromptParameter     = "Focused task or follow-up to send to the target agent"
+	AgentWorkQueryParameter  = "Words describing relevant tasks, findings, or files; empty to browse all work"
 )
 
 const AgentHistoryReference = `

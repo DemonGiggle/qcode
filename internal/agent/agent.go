@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"qcode/internal/learning"
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
+	"qcode/internal/question"
 	"qcode/internal/tools"
 	"qcode/internal/trace"
 )
@@ -54,6 +56,7 @@ type Agent struct {
 	selectedSkills       []prompt.SkillSummary
 	pendingImages        []llm.Image
 	planMode             atomic.Bool
+	questioner           Questioner
 	latestPlan           *Plan
 	checkpoint           atomic.Pointer[[]byte]
 }
@@ -66,6 +69,9 @@ type Toolset interface {
 	EnabledSchemas() []llm.Tool
 	ExecuteDetailed(context.Context, llm.ToolCall) (llm.ToolResult, error)
 }
+
+type Question = question.Question
+type Questioner = question.Questioner
 
 type responseLifecycle interface {
 	BeginResponse()
@@ -107,6 +113,14 @@ func NewWithSystem(provider llm.Provider, model string, toolset Toolset, logger 
 }
 
 func (a *Agent) SetVerbose(verbose bool) { a.trace.SetVerbose(verbose) }
+
+// SetQuestioner installs the interactive host used by Plan mode's
+// ask_questions tool. A nil questioner makes that tool unavailable.
+func (a *Agent) SetQuestioner(questioner Questioner) {
+	a.stateMu.Lock()
+	a.questioner = questioner
+	a.stateMu.Unlock()
+}
 
 // SetAutoCompact configures automatic compaction. Manual compaction remains
 // available regardless of this setting.
@@ -252,7 +266,7 @@ func (a *Agent) ToolNames() []string {
 				names = append(names, tool.Name)
 			}
 		}
-		return append(names, "propose_plan")
+		return append(names, "ask_questions", "propose_plan")
 	}
 	if configurable, ok := a.tools.(interface{ ToolNames() []string }); ok {
 		return configurable.ToolNames()
@@ -458,6 +472,9 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			activity.EndWithOutput(toolErr, execution.Output)
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			if errors.Is(toolErr, context.Canceled) {
+				return toolErr
 			}
 			if toolErr == nil && toolMayChangeWorkspace(call.Name) {
 				currentCount := identicalToolCalls[fingerprint]

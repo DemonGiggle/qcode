@@ -203,6 +203,8 @@ type UI struct {
 	drafts             map[string]string
 	approvalMu         sync.Mutex
 	approvals          map[string][]*approvalRequest
+	questionMu         sync.Mutex
+	questions          []*questionRequest
 	tabMu              sync.Mutex
 	pendingTab         int
 	agentEventsDone    chan struct{}
@@ -484,6 +486,7 @@ func (u *UI) Run(ctx context.Context) error {
 		u.reportSave(u.saveSession(false))
 		u.handlePendingTabSwitch()
 		u.handlePendingApproval(ctx)
+		u.handlePendingQuestions(ctx)
 		line, err := u.readLine()
 		u.commandMenu.dismiss(u.out)
 		if err != nil {

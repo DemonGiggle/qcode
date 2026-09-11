@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 
 	"qcode/internal/llm"
@@ -45,7 +46,7 @@ func TestPlanModeFiltersAndRejectsMutationTools(t *testing.T) {
 	for _, schema := range a.enabledSchemas() {
 		seen[schema.Name] = true
 	}
-	for _, name := range []string{"read", "list_agents", "propose_plan"} {
+	for _, name := range []string{"read", "list_agents", "ask_questions", "propose_plan"} {
 		if !seen[name] {
 			t.Fatalf("Plan mode omitted %q from schemas: %v", name, seen)
 		}
@@ -60,6 +61,56 @@ func TestPlanModeFiltersAndRejectsMutationTools(t *testing.T) {
 	}
 	if tools.called != "" {
 		t.Fatal("rejected tool reached underlying toolset")
+	}
+}
+
+type modeQuestionProvider struct {
+	calls      int
+	answerSeen string
+}
+
+func (p *modeQuestionProvider) Name() string { return "mode-question-test" }
+func (p *modeQuestionProvider) Complete(_ context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	p.calls++
+	if p.calls == 1 {
+		args, _ := json.Marshal(map[string]any{
+			"questions": []map[string]any{{"question": "Which store?", "options": []string{"SQLite", "Postgres"}}},
+		})
+		return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "question-1", Name: "ask_questions", Arguments: args}}}}, nil
+	}
+	for _, message := range request.Messages {
+		if message.Role == "tool" && message.Name == "ask_questions" {
+			p.answerSeen = message.Content
+		}
+	}
+	args, _ := json.Marshal(map[string]any{
+		"title": "Choose storage", "summary": "Use the selected storage backend.",
+		"steps": []string{"Configure the selected backend."}, "validation": []string{"Run storage tests."},
+	})
+	return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "plan-1", Name: "propose_plan", Arguments: args}}}}, nil
+}
+
+func TestPlanModeBlocksForQuestionsAndContinues(t *testing.T) {
+	provider := &modeQuestionProvider{}
+	a := New(provider, "model", &modeTestToolset{}, trace.New(io.Discard, false), io.Discard, 3)
+	a.SetPlanMode(true)
+	asked := false
+	a.SetQuestioner(func(_ context.Context, questions []Question) ([]string, error) {
+		asked = true
+		if len(questions) != 1 || questions[0].Text != "Which store?" || len(questions[0].Options) != 2 {
+			t.Fatalf("questions = %+v", questions)
+		}
+		return []string{"SQLite"}, nil
+	})
+
+	if err := a.Run(context.Background(), "plan this with decisions"); err != nil {
+		t.Fatal(err)
+	}
+	if !asked || provider.calls != 2 || !strings.Contains(provider.answerSeen, "SQLite") {
+		t.Fatalf("question flow asked=%v calls=%d answer=%q", asked, provider.calls, provider.answerSeen)
+	}
+	if _, ok := a.LatestPlan(); !ok {
+		t.Fatal("question flow did not reach plan submission")
 	}
 }
 
