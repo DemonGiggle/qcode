@@ -32,6 +32,7 @@ const (
 )
 
 const inputPrompt = cyan + bold + "> " + reset
+const planInputPrompt = cyan + bold + "(Plan)> " + reset
 
 var qcodeBanner = []string{
 	` #####    #####    #####   ######  #######`,
@@ -102,6 +103,13 @@ type maxStepsRunner interface {
 
 type maxStepsReader interface {
 	MaxSteps() int
+}
+
+type planController interface {
+	PlanMode() bool
+	SetPlanMode(bool)
+	LatestPlanText() (string, bool)
+	ClearLatestPlan()
 }
 
 type stepRunner interface {
@@ -180,6 +188,7 @@ type UI struct {
 	viewport           viewport
 	statusActive       bool
 	statusBarText      string
+	planViewActive     bool
 	startupNotice      string
 	startupChoice      bool
 	skills             []prompt.SkillSummary
@@ -194,6 +203,10 @@ type UI struct {
 	drafts             map[string]string
 	approvalMu         sync.Mutex
 	approvals          map[string][]*approvalRequest
+	questionMu         sync.Mutex
+	questions          []*questionRequest
+	planDecisionMu     sync.Mutex
+	planDecisions      []*planDecisionRequest
 	tabMu              sync.Mutex
 	pendingTab         int
 	agentEventsDone    chan struct{}
@@ -374,7 +387,19 @@ func (u *UI) shutdownAgentManager() {
 func (u *UI) SetRunner(runner Runner) {
 	u.screenMu.Lock()
 	u.runner = runner
+	if controller, ok := runner.(planController); ok && controller.PlanMode() {
+		u.inputLabel = planInputPrompt
+	} else {
+		u.inputLabel = inputPrompt
+	}
 	u.screenMu.Unlock()
+	if controller, ok := runner.(planController); ok {
+		if controller.PlanMode() {
+			u.terminal.SetPrompt(planInputPrompt)
+		} else {
+			u.terminal.SetPrompt(inputPrompt)
+		}
+	}
 	if configurable, ok := runner.(verboseRunner); ok {
 		configurable.SetVerbose(u.verbose)
 	}
@@ -426,6 +451,12 @@ func (u *UI) Run(ctx context.Context) error {
 	u.input.start()
 	u.fixedInput = true
 	u.inputLabel = inputPrompt
+	if controller, ok := u.runner.(planController); ok && controller.PlanMode() {
+		u.inputLabel = planInputPrompt
+		u.terminal.SetPrompt(planInputPrompt)
+	} else {
+		u.terminal.SetPrompt(inputPrompt)
+	}
 	u.terminal.RenderInput = u.renderInput
 	u.setupStatusBar()
 	stopResize := u.watchResize()
@@ -457,6 +488,8 @@ func (u *UI) Run(ctx context.Context) error {
 		u.reportSave(u.saveSession(false))
 		u.handlePendingTabSwitch()
 		u.handlePendingApproval(ctx)
+		u.handlePendingQuestions(ctx)
+		u.handlePendingPlanDecision(ctx)
 		line, err := u.readLine()
 		u.commandMenu.dismiss(u.out)
 		if err != nil {
@@ -513,6 +546,10 @@ func (u *UI) Run(ctx context.Context) error {
 		if len(fields) > 0 && fields[0] == "/maxsteps" {
 			u.updateMaxSteps(fields)
 			u.drawStatusBar()
+			continue
+		}
+		if len(fields) > 0 && fields[0] == "/plan" {
+			u.handlePlanCommand(ctx, fields)
 			continue
 		}
 		switch line {
@@ -699,6 +736,7 @@ func (u *UI) startNewSession() {
 			u.printSystemMessage(yellow + err.Error() + reset)
 			return
 		}
+		u.setInputModePrompt(false)
 		u.drawTabBar()
 		u.drawStatusBar()
 		u.responseWriter.ResetDiffs()
@@ -711,6 +749,7 @@ func (u *UI) startNewSession() {
 		return
 	}
 	resetter.ResetSession()
+	u.setInputModePrompt(false)
 	u.drawStatusBar()
 	u.responseWriter.ResetDiffs()
 	u.printSystemMessage(green + "New session started; previous context cleared." + reset)
@@ -851,6 +890,85 @@ func (u *UI) updateMaxSteps(fields []string) {
 	u.printSystemMessage(fmt.Sprintf("%sMax steps: %d%s", green, maxSteps, reset))
 }
 
+func (u *UI) handlePlanCommand(ctx context.Context, fields []string) {
+	if len(fields) > 2 {
+		u.printSystemMessage(yellow + "Usage: /plan [off|show|act]" + reset)
+		return
+	}
+	controller, ok := u.runner.(planController)
+	if !ok {
+		u.printSystemMessage(yellow + "Plan mode is unavailable." + reset)
+		return
+	}
+	if len(fields) == 2 && fields[1] == "show" {
+		plan, exists := controller.LatestPlanText()
+		if !exists {
+			u.printSystemMessage(yellow + "No complete plan is available. Ask qcode to submit a plan first." + reset)
+			return
+		}
+		if err := u.showPlanView(ctx, plan); err != nil && !errors.Is(err, context.Canceled) {
+			u.printSystemMessage(yellow + "Unable to show plan: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+		}
+		return
+	}
+	if !u.activeAgentConfigurable() {
+		return
+	}
+	setPrompt := func(plan bool) {
+		u.setInputModePrompt(plan)
+		u.drawStatusBar()
+	}
+	switch {
+	case len(fields) == 1:
+		if !controller.PlanMode() {
+			controller.ClearLatestPlan()
+		}
+		controller.SetPlanMode(true)
+		setPrompt(true)
+		u.printSystemMessage(green + "Plan mode enabled; workspace mutation tools are unavailable." + reset)
+	case fields[1] == "off":
+		controller.SetPlanMode(false)
+		setPrompt(false)
+		u.printSystemMessage(green + "Plan mode disabled." + reset)
+	case fields[1] == "act":
+		plan, exists := controller.LatestPlanText()
+		if !exists {
+			u.printSystemMessage(yellow + "No complete plan is available. Ask qcode to submit a plan first." + reset)
+			return
+		}
+		if u.manager == nil {
+			u.printSystemMessage(yellow + "Plan execution requires the interactive agent manager." + reset)
+			return
+		}
+		controller.SetPlanMode(false)
+		setPrompt(false)
+		implementation := "Implement the approved plan below. Do not re-plan. If a required assumption is invalid, stop and explain before changing files.\n\n" + plan
+		if _, err := u.manager.Submit(u.activeAgent, implementation); err != nil {
+			controller.SetPlanMode(true)
+			setPrompt(true)
+			u.printSystemMessage(yellow + "Unable to start plan implementation: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+			return
+		}
+		u.printSystemMessage(green + "Plan approved; implementation started." + reset)
+	default:
+		u.printSystemMessage(yellow + "Usage: /plan [off|show|act]" + reset)
+	}
+}
+
+func (u *UI) setInputModePrompt(plan bool) {
+	label := inputPrompt
+	if plan {
+		label = planInputPrompt
+	}
+	if u.terminal != nil {
+		u.terminal.SetPrompt(label)
+	}
+	u.screenMu.Lock()
+	u.inputLabel = label
+	u.paintFixedLocked(0)
+	u.screenMu.Unlock()
+}
+
 // printSystemMessage separates status and command feedback from surrounding
 // conversation so it remains easy to scan in both the terminal and history.
 func (u *UI) printSystemMessage(message string) {
@@ -927,7 +1045,7 @@ func (u *UI) printHeader() {
 	fmt.Fprintf(u.display, "\r\n")
 	u.printToolSummary()
 	if !u.statusActive {
-		fmt.Fprintf(u.display, "%s\r\n", statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel()))
+		fmt.Fprintf(u.display, "%s\r\n", statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel()))
 	}
 }
 
@@ -982,7 +1100,7 @@ func (u *UI) renderStatusBarLocked(force bool) {
 	if !u.statusActive {
 		return
 	}
-	bar := statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel())
+	bar := statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel())
 	if !force && bar == u.statusBarText {
 		return
 	}
@@ -1020,6 +1138,9 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 		if len(contextLabel) > 2 && contextLabel[2] != "" {
 			parts = append(parts, "[STEP "+contextLabel[2]+"]")
 		}
+		if len(contextLabel) > 3 && contextLabel[3] != "" {
+			parts = append(parts, "[MODE "+contextLabel[3]+"]")
+		}
 		bar := strings.Join(parts, " ")
 		if width > 0 && visibleWidth(bar) > width {
 			if dynamic := compactStatusBar(contextLabel, false, unicodeEnabled); dynamic != "" && visibleWidth(dynamic) <= width {
@@ -1042,6 +1163,9 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 	}
 	if len(contextLabel) > 2 && contextLabel[2] != "" {
 		segments = append(segments, statusSegment("STEP", contextLabel[2], yellow))
+	}
+	if len(contextLabel) > 3 && contextLabel[3] != "" {
+		segments = append(segments, statusSegment("MODE", contextLabel[3], yellow))
 	}
 	separator := dim + "  │  " + reset
 	if !unicodeEnabled {
@@ -1188,6 +1312,13 @@ func (u *UI) contextLabel() string {
 		}
 	}
 	return "unknown"
+}
+
+func (u *UI) modeLabel() string {
+	if controller, ok := u.runner.(planController); ok && controller.PlanMode() {
+		return "PLAN"
+	}
+	return ""
 }
 
 func (u *UI) printToolSummary() {

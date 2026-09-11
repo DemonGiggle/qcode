@@ -19,7 +19,7 @@ func (u *UI) renderInput(prompt, line string, pos int) {
 	u.tabMu.Lock()
 	pending := u.pendingTab != 0
 	u.tabMu.Unlock()
-	if !pending && prompt == inputPrompt {
+	if !pending && (prompt == inputPrompt || prompt == planInputPrompt) {
 		u.drafts[u.activeAgent] = line
 	}
 	u.paintFixedLocked(0)
@@ -65,6 +65,9 @@ func inputRows(text string, cursor, width int) ([]string, int, int) {
 // paintFixedLocked owns the entire screen, including the cursor. No editor
 // escape sequences or candidate text are passed through conversation history.
 func (u *UI) paintFixedLocked(direction int) {
+	if u.planViewActive {
+		return
+	}
 	if u.input != nil {
 		u.input.mu.Lock()
 		raw := u.input.raw
@@ -82,8 +85,11 @@ func (u *UI) paintFixedLocked(direction int) {
 	if u.manager != nil {
 		summary, _ = u.manager.Summary(u.activeAgent)
 	}
-	if u.inputLabel == inputPrompt {
+	if u.inputLabel == inputPrompt || u.inputLabel == planInputPrompt {
 		label = queuePrompt(summary.Status)
+		if u.inputLabel == planInputPrompt && summary.Status != session.StatusRunning && summary.Status != session.StatusWaitingForApproval {
+			label = plainHistoryText(planInputPrompt)
+		}
 	}
 	rows, cy, cx := inputRows(label+u.inputText, utf8.RuneCountInString(label)+u.inputPosition, u.width)
 	// Keep a cursor-centered window for drafts taller than the terminal.
@@ -94,7 +100,7 @@ func (u *UI) paintFixedLocked(direction int) {
 	footer := min(2, max(0, u.height-2))
 	promptRow := u.height - footer - len(rows) + 1
 	matches := matchingSlashCommands(u.inputText)
-	if u.inputLabel != inputPrompt {
+	if u.inputLabel != inputPrompt && u.inputLabel != planInputPrompt {
 		matches = nil
 	}
 	count := min(5, len(matches), max(0, promptRow-3))
@@ -130,7 +136,7 @@ func (u *UI) paintFixedLocked(direction int) {
 		screenRows[u.height-1] = truncateDiffLine(message, u.width, u.unicode)
 	}
 	if footer > 0 {
-		screenRows[u.height] = statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel())
+		screenRows[u.height] = statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel())
 	}
 	u.writeFixedScreenLocked(screenRows, promptRow+cy, cx+1)
 }

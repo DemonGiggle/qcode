@@ -263,6 +263,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			logger.SetColor(tui.ColorEnabled(stdout))
 			logger.SetWidth(tui.OutputWidth(stdout))
 			runner := agent.NewWithSystem(currentProvider, model, wrappedTools, logger, response, opts.maxSteps, system)
+			runner.SetQuestioner(ui.AgentQuestioner(id))
 			runner.SetTaskIndicator(false)
 			runner.SetLearning(learningStore, opts.learningBudget)
 			if model == opts.model {

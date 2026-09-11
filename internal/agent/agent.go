@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"qcode/internal/learning"
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
+	"qcode/internal/question"
 	"qcode/internal/tools"
 	"qcode/internal/trace"
 )
@@ -53,6 +55,10 @@ type Agent struct {
 	endpoint             string
 	selectedSkills       []prompt.SkillSummary
 	pendingImages        []llm.Image
+	planMode             atomic.Bool
+	questioner           Questioner
+	latestPlan           *Plan
+	planDecisionPending  bool
 	checkpoint           atomic.Pointer[[]byte]
 }
 
@@ -64,6 +70,9 @@ type Toolset interface {
 	EnabledSchemas() []llm.Tool
 	ExecuteDetailed(context.Context, llm.ToolCall) (llm.ToolResult, error)
 }
+
+type Question = question.Question
+type Questioner = question.Questioner
 
 type responseLifecycle interface {
 	BeginResponse()
@@ -97,13 +106,22 @@ func NewWithSystem(provider llm.Provider, model string, toolset Toolset, logger 
 	if system == "" {
 		system = prompt.System
 	}
-	a := &Agent{provider: provider, model: model, tools: toolset, trace: logger, out: out, system: system, messages: []llm.Message{{Role: "system", Content: system}}, autoCompact: true, autoCompactThreshold: DefaultAutoCompactThreshold}
+	a := &Agent{provider: provider, model: model, trace: logger, out: out, system: system, messages: []llm.Message{{Role: "system", Content: system}}, autoCompact: true, autoCompactThreshold: DefaultAutoCompactThreshold}
+	a.tools = toolset
 	a.maxSteps.Store(int64(maxSteps))
 	a.publishContext()
 	return a
 }
 
 func (a *Agent) SetVerbose(verbose bool) { a.trace.SetVerbose(verbose) }
+
+// SetQuestioner installs the interactive host used by Plan mode's
+// ask_questions tool. A nil questioner makes that tool unavailable.
+func (a *Agent) SetQuestioner(questioner Questioner) {
+	a.stateMu.Lock()
+	a.questioner = questioner
+	a.stateMu.Unlock()
+}
 
 // SetAutoCompact configures automatic compaction. Manual compaction remains
 // available regardless of this setting.
@@ -187,7 +205,7 @@ func (a *Agent) SetModel(model string) {
 func (a *Agent) SetSkills(skills []prompt.SkillSummary) {
 	a.selectedSkills = append([]prompt.SkillSummary(nil), skills...)
 	defer a.invalidateContextUsage()
-	a.system = prompt.SystemWithSkills(skills)
+	a.system = prompt.SystemForMode(skills, a.PlanMode())
 	if len(a.messages) > 0 && a.messages[0].Role == "system" {
 		a.messages[0].Content = a.system
 	}
@@ -228,7 +246,12 @@ func (a *Agent) ResetSession() {
 	a.stateMu.Unlock()
 	a.learningContext = ""
 	a.learningSessionID = ""
+	a.planMode.Store(false)
+	a.stateMu.Lock()
+	a.latestPlan = nil
+	a.stateMu.Unlock()
 	defer a.invalidateContextUsage()
+	a.system = prompt.SystemForMode(a.selectedSkills, false)
 	a.messages = []llm.Message{{Role: "system", Content: a.system}}
 	if resetter, ok := a.tools.(interface{ ResetSession() }); ok {
 		resetter.ResetSession()
@@ -237,6 +260,15 @@ func (a *Agent) ResetSession() {
 
 // ToolNames returns the names of all registered tools.
 func (a *Agent) ToolNames() []string {
+	if a.PlanMode() {
+		names := make([]string, 0)
+		for _, tool := range a.tools.Schemas() {
+			if planAllowedTool(tool.Name) {
+				names = append(names, tool.Name)
+			}
+		}
+		return append(names, "ask_questions", "propose_plan")
+	}
 	if configurable, ok := a.tools.(interface{ ToolNames() []string }); ok {
 		return configurable.ToolNames()
 	}
@@ -253,6 +285,9 @@ func (a *Agent) ToolNames() []string {
 
 // ToggleTool enables or disables a tool by name.
 func (a *Agent) ToggleTool(name string, enabled bool) {
+	if a.PlanMode() && !planAllowedTool(name) {
+		return
+	}
 	defer a.invalidateContextUsage()
 	if configurable, ok := a.tools.(interface{ ToggleTool(string, bool) }); ok {
 		configurable.ToggleTool(name, enabled)
@@ -269,6 +304,9 @@ func (a *Agent) ToggleTool(name string, enabled bool) {
 
 // ToolEnabled reports whether a tool is currently enabled.
 func (a *Agent) ToolEnabled(name string) bool {
+	if a.PlanMode() && !planAllowedTool(name) {
+		return false
+	}
 	if configurable, ok := a.tools.(interface{ ToolEnabled(string) bool }); ok {
 		return configurable.ToolEnabled(name)
 	}
@@ -329,7 +367,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		if rendersResponses {
 			lifecycle.BeginResponse()
 		}
-		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Messages: requestMessages, Tools: a.tools.EnabledSchemas()}, func(event llm.StreamEvent) {
+		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Messages: requestMessages, Tools: a.enabledSchemas()}, func(event llm.StreamEvent) {
 			if ctx.Err() != nil {
 				return
 			}
@@ -430,11 +468,14 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			arguments := compactJSON(call.Arguments)
 			activity := a.trace.StartActivity(toolActivity(call))
 			toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": arguments})
-			execution, toolErr := a.tools.ExecuteDetailed(ctx, call)
+			execution, toolErr := a.executeDetailed(ctx, call)
 			toolSpan.End(toolErr)
 			activity.EndWithOutput(toolErr, execution.Output)
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			if errors.Is(toolErr, context.Canceled) {
+				return toolErr
 			}
 			if toolErr == nil && toolMayChangeWorkspace(call.Name) {
 				currentCount := identicalToolCalls[fingerprint]
