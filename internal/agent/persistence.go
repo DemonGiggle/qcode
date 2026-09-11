@@ -41,6 +41,8 @@ type SavedState struct {
 	LearningContext, LearningSessionID              string
 	LearningBudget                                  int
 	Skills                                          []prompt.SkillSummary
+	PlanMode                                        bool
+	LatestPlan                                      *Plan
 	Tools                                           json.RawMessage
 }
 
@@ -82,7 +84,11 @@ func (a *Agent) publishCheckpoint() {
 		ContextWindow: a.contextWindow, ContextOverride: a.contextOverride, ContextMessages: a.contextMessages,
 		ContextUsage: a.contextUsage, AutoCompact: a.autoCompact, AutoCompactThreshold: a.autoCompactThreshold,
 		MaxSteps: a.MaxSteps(), LearningContext: a.learningContext, LearningSessionID: a.learningSessionID,
-		LearningBudget: a.learningBudget, Skills: a.selectedSkills, PendingImages: a.pendingImages}
+		LearningBudget: a.learningBudget, Skills: a.selectedSkills, PendingImages: a.pendingImages,
+		PlanMode: a.PlanMode()}
+	if plan, ok := a.LatestPlan(); ok {
+		s.LatestPlan = &plan
+	}
 	a.stateMu.RLock()
 	s.LastResponse, s.Usage = a.lastResponse, a.sessionUsage
 	a.stateMu.RUnlock()
@@ -175,6 +181,11 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 	a.contextWindow, a.contextOverride, a.contextMessages = s.ContextWindow, s.ContextOverride, s.ContextMessages
 	a.contextUsage, a.sessionUsage = s.ContextUsage, s.Usage
 	a.autoCompact, a.autoCompactThreshold = s.AutoCompact, s.AutoCompactThreshold
+	a.planMode.Store(s.PlanMode)
+	if s.LatestPlan != nil {
+		plan := s.LatestPlan.clone()
+		a.latestPlan = &plan
+	}
 	a.maxSteps.Store(int64(s.MaxSteps))
 	a.learningContext, a.learningSessionID, a.learningBudget = s.LearningContext, s.LearningSessionID, s.LearningBudget
 	a.selectedSkills = s.Skills

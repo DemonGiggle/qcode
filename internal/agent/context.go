@@ -91,7 +91,7 @@ func (a *Agent) publishContext() {
 		limit = a.contextOverride
 	}
 	state := &contextStatus{known: limit > 0, estimated: true}
-	used := estimateTokens(a.messages) + estimateTokens(a.tools.EnabledSchemas())
+	used := estimateTokens(a.messages) + estimateTokens(a.enabledSchemas())
 	if a.taskContext != "" {
 		used += estimateTokens(a.taskContext)
 	}

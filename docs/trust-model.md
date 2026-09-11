@@ -2,6 +2,11 @@
 
 qcode runs model-triggered tools against your workspace and account. This page describes the protections that apply by default and what `--sandbox` changes on Linux.
 
+Interactive [Plan mode](plan-mode.md) adds a stricter per-agent policy: only
+inspection tools and plan submission are advertised and every mutation-capable
+tool call is rejected before execution. Plan mode does not run shell commands,
+request additional directories, or delegate work to other agents.
+
 ## Without the sandbox
 
 Without `--sandbox`, file tools reject paths that lexically leave the selected workspace (`--cwd`), but symbolic links and the `shell` tool can still reach anything allowed by the operating-system account.
