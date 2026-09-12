@@ -69,6 +69,27 @@ func newTestManager(t *testing.T, maximum int) *AgentManager {
 	return manager
 }
 
+func TestManagerSchemasEncodeParameterlessRequiredAsEmptyArray(t *testing.T) {
+	var listAgents llm.Tool
+	for _, tool := range managerSchemas() {
+		if tool.Name == "list_agents" {
+			listAgents = tool
+			break
+		}
+	}
+	required, ok := listAgents.Parameters["required"].([]string)
+	if !ok || required == nil || len(required) != 0 {
+		t.Fatalf("list_agents required = %#v, want empty []string", listAgents.Parameters["required"])
+	}
+	data, err := json.Marshal(listAgents.Parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"required":null`) {
+		t.Fatalf("schema serializes a null required list: %s", data)
+	}
+}
+
 func waitManagerStatus(t *testing.T, manager *AgentManager, id string, want Status) AgentSummary {
 	t.Helper()
 	deadline := time.After(2 * time.Second)

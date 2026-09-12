@@ -825,6 +825,11 @@ func managerSchemas() []llm.Tool {
 		if properties == nil {
 			properties = map[string]any{}
 		}
+		// DeepSeek V4.1 validates function schemas strictly: `required: null`
+		// is invalid even for a parameterless tool such as list_agents.
+		if required == nil {
+			required = []string{}
+		}
 		return map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}
 	}
 	return []llm.Tool{
