@@ -2,12 +2,13 @@ package control
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"qcode/internal/session"
 )
 
 var (
@@ -17,34 +18,31 @@ var (
 
 const resolvedInteractionHistory = 256
 
-type InteractionKind string
+type InteractionKind = session.InteractionKind
+type Interaction = session.Interaction
+type Resolution = session.Resolution
 
 const (
-	InteractionDirectoryApproval InteractionKind = "directory_approval"
-	InteractionQuestions         InteractionKind = "questions"
-	InteractionPlanDecision      InteractionKind = "plan_decision"
+	InteractionDirectoryApproval = session.InteractionDirectoryApproval
+	InteractionQuestions         = session.InteractionQuestions
+	InteractionPlanDecision      = session.InteractionPlanDecision
+	InteractionLearningApproval  = session.InteractionLearningApproval
 )
-
-// Interaction is a transport-neutral request for human input. Payload is kept
-// opaque at this boundary so each interaction kind can evolve independently.
-type Interaction struct {
-	ID        string          `json:"id"`
-	AgentID   string          `json:"agent_id"`
-	Kind      InteractionKind `json:"kind"`
-	Payload   json.RawMessage `json:"payload,omitempty"`
-	CreatedAt time.Time       `json:"created_at"`
-}
-
-type Resolution struct {
-	InteractionID string          `json:"interaction_id"`
-	Value         json.RawMessage `json:"value,omitempty"`
-	ResolvedBy    string          `json:"resolved_by,omitempty"`
-}
 
 type pendingInteraction struct {
 	interaction Interaction
 	result      chan Resolution
 }
+
+// InteractionRequest is an opened human-input request. It allows a local UI
+// to present the request while a remote controller races to resolve it.
+type InteractionRequest struct {
+	Interaction Interaction
+	broker      *InteractionBroker
+	pending     *pendingInteraction
+}
+
+func (r *InteractionRequest) InteractionInfo() session.Interaction { return r.Interaction }
 
 // InteractionBroker lets local and remote controllers race safely to answer
 // one human-input request. The first successful resolution wins.
@@ -70,11 +68,16 @@ func newInteractionBroker(onRequest func(Interaction), onResolve func(Resolution
 }
 
 func (b *InteractionBroker) Request(ctx context.Context, interaction Interaction) (Resolution, error) {
-	if ctx == nil {
-		ctx = context.Background()
+	request, err := b.Begin(interaction)
+	if err != nil {
+		return Resolution{}, err
 	}
+	return request.Wait(ctx)
+}
+
+func (b *InteractionBroker) Begin(interaction Interaction) (*InteractionRequest, error) {
 	if strings.TrimSpace(interaction.AgentID) == "" {
-		return Resolution{}, errors.New("interaction agent ID must not be empty")
+		return nil, errors.New("interaction agent ID must not be empty")
 	}
 	b.mu.Lock()
 	b.nextID++
@@ -87,14 +90,22 @@ func (b *InteractionBroker) Request(ctx context.Context, interaction Interaction
 	if onRequest != nil {
 		onRequest(interaction)
 	}
+	return &InteractionRequest{Interaction: interaction, broker: b, pending: pending}, nil
+}
 
+func (r *InteractionRequest) Wait(ctx context.Context) (Resolution, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	select {
-	case result := <-pending.result:
+	case result := <-r.pending.result:
 		return result, nil
 	case <-ctx.Done():
-		b.mu.Lock()
-		delete(b.pending, interaction.ID)
-		b.mu.Unlock()
+		r.broker.mu.Lock()
+		if current := r.broker.pending[r.Interaction.ID]; current == r.pending {
+			delete(r.broker.pending, r.Interaction.ID)
+		}
+		r.broker.mu.Unlock()
 		return Resolution{}, ctx.Err()
 	}
 }

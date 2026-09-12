@@ -97,6 +97,16 @@ func (h *Host) Snapshot() Snapshot {
 
 func (h *Host) Interactions() *InteractionBroker { return h.interactions }
 
+func (h *Host) BeginInteraction(interaction session.Interaction) (session.InteractionWaiter, error) {
+	return h.interactions.Begin(interaction)
+}
+
+func (h *Host) ResolveInteraction(resolution session.Resolution) error {
+	return h.interactions.Resolve(resolution)
+}
+
+func (h *Host) PendingInteractions() []session.Interaction { return h.interactions.Pending() }
+
 func (h *Host) SetFactory(factory agent.SessionFactory) { h.manager.SetFactory(factory) }
 
 func (h *Host) SetConsultationTimeout(timeout time.Duration) error {

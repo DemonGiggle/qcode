@@ -352,6 +352,10 @@ func (u *UI) closeSession() {
 }
 
 func (u *UI) resumeSession() {
+	u.resumeSessionID("")
+}
+
+func (u *UI) resumeSessionID(requestedID string) {
 	p := u.persistence
 	if p == nil {
 		u.printSystemMessage("Session resume is unavailable.")
@@ -381,18 +385,34 @@ func (u *UI) resumeSession() {
 		u.printSystemMessage("No saved sessions for this workspace.")
 		return
 	}
-	u.input.setRaw(true)
-	u.beginRawSelector()
-	id, accepted, err := u.selectSession(choices)
-	u.input.setRaw(false)
-	u.endRawSelector()
-	u.repaintActive()
-	if err != nil {
-		u.printSystemMessage(err.Error())
-		return
-	}
-	if !accepted {
-		return
+	id := requestedID
+	if id == "" {
+		u.input.setRaw(true)
+		u.beginRawSelector()
+		var accepted bool
+		id, accepted, err = u.selectSession(choices)
+		u.input.setRaw(false)
+		u.endRawSelector()
+		u.repaintActive()
+		if err != nil {
+			u.printSystemMessage(err.Error())
+			return
+		}
+		if !accepted {
+			return
+		}
+	} else {
+		found := false
+		for _, choice := range choices {
+			if choice.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			u.printSystemMessage("Unknown or current session: " + id)
+			return
+		}
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -439,9 +459,11 @@ func (u *UI) resumeSession() {
 	u.consultationCursor = staged.consultationCursor
 	for _, v := range u.views {
 		v.display.ui = u
+		v.display.history.onChange = u.signalPresentation
 	}
 	u.screenMu.Unlock()
 	u.SetAgentManager(staged.manager)
+	u.signalPresentation()
 	session.Release(p.lock)
 	p.lock = lock
 	p.current = snap

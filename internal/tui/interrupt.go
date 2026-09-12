@@ -41,13 +41,14 @@ type interruptReader struct {
 	data   chan byte
 	once   sync.Once
 
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	page    func(int)
-	tab     func(int)
-	err     error
-	pending []byte
-	raw     bool
+	mu       sync.Mutex
+	injectMu sync.Mutex
+	cancel   context.CancelFunc
+	page     func(int)
+	tab      func(int)
+	err      error
+	pending  []byte
+	raw      bool
 }
 
 func newInterruptReader(source io.Reader) *interruptReader {
@@ -90,6 +91,8 @@ func (r *interruptReader) interruptLine() {
 
 func (r *interruptReader) inject(data []byte) {
 	go func() {
+		r.injectMu.Lock()
+		defer r.injectMu.Unlock()
 		for _, key := range data {
 			r.data <- key
 		}

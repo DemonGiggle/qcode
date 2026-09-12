@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"sync"
 
 	"qcode/internal/question"
+	"qcode/internal/session"
 )
 
 type questionRequest struct {
@@ -30,7 +32,7 @@ func (u *UI) AgentQuestioner(id string) question.Questioner {
 	if u.sessionHost != nil {
 		return u.sessionHost.AgentQuestioner(id)
 	}
-	return func(ctx context.Context, questions []question.Question) ([]string, error) {
+	local := func(ctx context.Context, questions []question.Question) ([]string, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -60,7 +62,77 @@ func (u *UI) AgentQuestioner(id string) question.Questioner {
 			return result.answers, result.err
 		case <-ctx.Done():
 			u.removeQuestionRequest(request)
+			if manager != nil {
+				manager.SetWaitingForApproval(id, false)
+			}
 			return nil, ctx.Err()
+		}
+	}
+	brokerOwner, ok := u.manager.(interactionController)
+	if !ok {
+		return local
+	}
+	return func(ctx context.Context, questions []question.Question) ([]string, error) {
+		payload, err := json.Marshal(questions)
+		if err != nil {
+			return nil, err
+		}
+		handle, err := brokerOwner.BeginInteraction(session.Interaction{AgentID: id, Kind: session.InteractionQuestions, Payload: payload})
+		if err != nil {
+			return nil, err
+		}
+		u.signalPresentation()
+		localCtx, cancelLocal := context.WithCancel(ctx)
+		defer cancelLocal()
+		brokerCtx, cancelBroker := context.WithCancel(ctx)
+		defer cancelBroker()
+		localResult := make(chan questionResult, 1)
+		go func() {
+			answers, err := local(localCtx, questions)
+			localResult <- questionResult{answers: answers, err: err}
+		}()
+		remoteResult := make(chan struct {
+			resolution session.Resolution
+			err        error
+		}, 1)
+		go func() {
+			resolution, err := handle.Wait(brokerCtx)
+			remoteResult <- struct {
+				resolution session.Resolution
+				err        error
+			}{resolution, err}
+		}()
+		select {
+		case result := <-localResult:
+			if result.err != nil {
+				return nil, result.err
+			}
+			value, _ := json.Marshal(result.answers)
+			_ = brokerOwner.ResolveInteraction(session.Resolution{InteractionID: handle.InteractionInfo().ID, Value: value, ResolvedBy: "local-tui"})
+			u.signalPresentation()
+			resolved := <-remoteResult
+			if resolved.err != nil {
+				return nil, resolved.err
+			}
+			var answers []string
+			if err := json.Unmarshal(resolved.resolution.Value, &answers); err != nil {
+				return nil, err
+			}
+			return answers, nil
+		case resolved := <-remoteResult:
+			cancelLocal()
+			<-localResult
+			if resolved.err != nil {
+				return nil, resolved.err
+			}
+			var answers []string
+			if err := json.Unmarshal(resolved.resolution.Value, &answers); err != nil {
+				return nil, err
+			}
+			if len(answers) != len(questions) {
+				return nil, fmt.Errorf("remote answer count does not match questions")
+			}
+			return answers, nil
 		}
 	}
 }

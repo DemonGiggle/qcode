@@ -22,6 +22,7 @@ import (
 	"qcode/internal/learning"
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
+	"qcode/internal/remote"
 	"qcode/internal/session"
 	"qcode/internal/skills"
 	"qcode/internal/tools"
@@ -219,6 +220,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	host := control.NewHost(context.Background(), agent.DefaultMaxAgents)
 	defer host.Shutdown()
 	ui.SetAgentManager(host)
+	remoteControl := remote.New(ui)
+	defer remoteControl.Stop()
+	ui.SetRemoteService(remoteControl)
 	mainRegistry := registry
 	mainProvider := provider
 	mainToolset := toolset
