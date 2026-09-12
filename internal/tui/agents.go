@@ -114,7 +114,7 @@ func (u *UI) createAgent(ctx context.Context) {
 		u.printSystemMessage(yellow + "Model selection is unavailable." + reset)
 		return
 	}
-	selected, accepted, err := u.selectAgentModel(ctx, runner)
+	selected, thinking, accepted, err := u.selectAgentModel(ctx, runner)
 	if err != nil {
 		u.printSystemMessage(yellow + "Unable to select model: " + err.Error() + reset)
 		return
@@ -128,6 +128,16 @@ func (u *UI) createAgent(ctx context.Context) {
 		u.printSystemMessage(yellow + err.Error() + reset)
 		return
 	}
+	if thinking != "" {
+		if created, ok := u.manager.Runner(summary.ID); ok {
+			if configured, ok := created.(thinkingRunner); ok {
+				if err := configured.SetThinking(thinking); err != nil {
+					u.printSystemMessage(yellow + err.Error() + reset)
+					return
+				}
+			}
+		}
+	}
 	if err := u.switchAgent(summary.ID); err != nil {
 		u.printSystemMessage(yellow + err.Error() + reset)
 		return
@@ -135,20 +145,20 @@ func (u *UI) createAgent(ctx context.Context) {
 	u.printSystemMessage(green + "Created " + summary.ID + "." + reset)
 }
 
-func (u *UI) selectAgentModel(ctx context.Context, runner modelRunner) (string, bool, error) {
+func (u *UI) selectAgentModel(ctx context.Context, runner modelRunner) (string, string, bool, error) {
 	fetchCtx, cancel := context.WithCancel(ctx)
 	u.input.setCancel(cancel)
 	models, err := runner.ListModels(fetchCtx)
 	u.input.setCancel(nil)
 	cancel()
 	if errors.Is(err, context.Canceled) {
-		return "", false, nil
+		return "", "", false, nil
 	}
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	if len(models) == 0 {
-		return "", false, fmt.Errorf("provider returned no models")
+		return "", "", false, fmt.Errorf("provider returned no models")
 	}
 	visible := min(12, max(3, u.height-6))
 	u.printSystemMessage(dim + "Type to search; use Up/Down to move, Enter to select, or Ctrl+C to cancel." + reset)
@@ -157,7 +167,11 @@ func (u *UI) selectAgentModel(ctx context.Context, runner modelRunner) (string, 
 	selected, accepted, selectErr := selectModel(u.input, u.terminal, models, u.model, visible, u.width, ColorEnabled(u.out))
 	u.input.setRaw(false)
 	u.endRawSelector()
-	return selected, accepted, selectErr
+	if selectErr != nil || !accepted {
+		return selected, "", accepted, selectErr
+	}
+	level, selectedThinking, thinkingErr := u.selectThinkingLevel(runner, selected, visible)
+	return selected, level, selectedThinking, thinkingErr
 }
 
 func (u *UI) closeAgent(id string) {
@@ -418,6 +432,20 @@ func (u *UI) switchAgent(id string) error {
 	u.updateActiveCancellation()
 	u.repaintActive()
 	return nil
+}
+
+func (u *UI) thinkingLabel() string {
+	runner, ok := u.runner.(thinkingRunner)
+	if !ok {
+		return ""
+	}
+	if level := runner.ThinkingLevel(); level != "" {
+		return level
+	}
+	if capability := runner.ThinkingCapability(); capability.AlwaysOn {
+		return "on"
+	}
+	return ""
 }
 
 // AgentDirectoryApprover suspends background approval requests until their tab

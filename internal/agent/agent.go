@@ -33,6 +33,7 @@ type Agent struct {
 	learningSessionID    string
 	provider             llm.Provider
 	model                string
+	thinking             string
 	tools                Toolset
 	trace                *trace.Logger
 	out                  io.Writer
@@ -197,8 +198,53 @@ func (a *Agent) SetModel(model string) {
 			a.contextUsage = nil
 		}
 		a.model = model
+		if capability := a.ThinkingCapability(); !capability.Adjustable || !thinkingLevelAllowed(capability, a.thinking) {
+			a.thinking = ""
+		}
 		a.publishContext()
+		a.publishCheckpoint()
 	}
+}
+
+// ThinkingCapability returns the selected model's provider-neutral thinking
+// policy. Providers that do not advertise a policy safely return no control.
+func (a *Agent) ThinkingCapability() llm.ThinkingCapability {
+	return a.ThinkingCapabilityFor(a.model)
+}
+
+// ThinkingCapabilityFor permits a UI to inspect a prospective model before it
+// commits the model selection.
+func (a *Agent) ThinkingCapabilityFor(model string) llm.ThinkingCapability {
+	if provider, ok := a.provider.(llm.ThinkingProvider); ok {
+		return provider.ThinkingCapability(model)
+	}
+	return llm.ThinkingCapability{RequestFormat: llm.ThinkingRequestNone, ReplayFormat: llm.ThinkingReplayNone}
+}
+
+// SetThinking chooses an optional model-supported level. An empty value means
+// use the provider/model default and omit optional request fields.
+func (a *Agent) SetThinking(level string) error {
+	level = strings.ToLower(strings.TrimSpace(level))
+	capability := a.ThinkingCapability()
+	if level != "" && (!capability.Adjustable || !thinkingLevelAllowed(capability, level)) {
+		return fmt.Errorf("thinking level %q is not supported by model %q", level, a.model)
+	}
+	a.thinking = level
+	a.publishCheckpoint()
+	return nil
+}
+
+// ThinkingLevel returns the explicit level, if any. Empty uses the model
+// default and intentionally results in no optional provider request field.
+func (a *Agent) ThinkingLevel() string { return a.thinking }
+
+func thinkingLevelAllowed(capability llm.ThinkingCapability, level string) bool {
+	for _, allowed := range capability.Levels {
+		if level == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 // SetSkills replaces the user-selected skills advertised to the model.
@@ -322,6 +368,11 @@ func (a *Agent) ToolEnabled(name string) bool {
 }
 
 func (a *Agent) Run(ctx context.Context, userText string) error {
+	if validator, ok := a.provider.(llm.ModelValidator); ok {
+		if err := validator.ValidateModel(a.model); err != nil {
+			return err
+		}
+	}
 	if contextual, ok := a.tools.(interface{ TaskContext(string) string }); ok {
 		nextContext := contextual.TaskContext(userText)
 		if nextContext != a.taskContext {
@@ -367,7 +418,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		if rendersResponses {
 			lifecycle.BeginResponse()
 		}
-		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Messages: requestMessages, Tools: a.enabledSchemas()}, func(event llm.StreamEvent) {
+		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Thinking: a.thinking, Messages: requestMessages, Tools: a.enabledSchemas()}, func(event llm.StreamEvent) {
 			if ctx.Err() != nil {
 				return
 			}

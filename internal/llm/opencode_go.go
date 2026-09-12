@@ -8,6 +8,27 @@ import (
 
 const openCodeGoBaseURL = "https://opencode.ai/zen/go/v1"
 
+// OpenCode Go's /models endpoint includes models on Chat Completions,
+// Responses, and Anthropic Messages routes. qcode currently implements only
+// Chat Completions, so hide known incompatible entries from the picker and
+// reject direct use before it can incur a request. Source: OpenCode Go model
+// table, checked 2026-09-12.
+var openCodeGoNonChatModels = map[string]string{
+	"gpt-5.6-luna":               "Responses",
+	"grok-4.6":                   "Responses",
+	"minimax-m2.5":               "Anthropic Messages",
+	"minimax-m2.7":               "Anthropic Messages",
+	"minimax-m3":                 "Anthropic Messages",
+	"muse-spark-1.2-contributor": "Responses",
+	"muse-spark-1.3-contributor": "Responses",
+	"qwen3.5-plus":               "Anthropic Messages",
+	"qwen3.6-plus":               "Anthropic Messages",
+	"qwen3.7-max":                "Anthropic Messages",
+	"qwen3.7-plus":               "Anthropic Messages",
+	"qwen3.8-flash":              "Anthropic Messages",
+	"qwen3.8-max":                "Anthropic Messages",
+}
+
 func init() { Register("opencode-go", newOpenCodeGo) }
 
 // newOpenCodeGo configures OpenCode Go's OpenAI-compatible Chat Completions
@@ -19,6 +40,16 @@ func newOpenCodeGo(config Config) (Provider, error) {
 		return nil, fmt.Errorf("create OpenCode Go session ID: %w", err)
 	}
 	return newOpenAICompatible(config, openCodeGoBaseURL, "opencode-go", "qcode", sessionID)
+}
+
+func (p *openAIProvider) ValidateModel(model string) error {
+	if p.name != "opencode-go" {
+		return nil
+	}
+	if endpoint, unsupported := openCodeGoNonChatModels[model]; unsupported {
+		return fmt.Errorf("OpenCode Go model %q requires the %s endpoint, which qcode does not support yet", model, endpoint)
+	}
+	return nil
 }
 
 // newOpenCodeSessionID returns a UUIDv4 which is stable for the lifetime of a
