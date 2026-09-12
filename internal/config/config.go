@@ -40,6 +40,7 @@ type Config struct {
 	BaseURL              string    `toml:"base_url"`
 	APIKey               string    `toml:"api_key"`
 	Model                string    `toml:"model"`
+	Thinking             string    `toml:"thinking"`
 	ContextWindow        *int      `toml:"context_window"`
 	AutoCompactThreshold *int      `toml:"auto_compact_threshold"`
 	DisableAutoCompact   *bool     `toml:"disable_auto_compact"`

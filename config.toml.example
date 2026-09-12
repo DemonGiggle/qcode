@@ -4,6 +4,10 @@ provider = "ollama"
 # Model identifier passed to the selected provider.
 model = "qwen2.5-coder:7b"
 
+# Optional thinking level for a model with an explicit capability entry. qcode
+# omits this field for unknown models; use values such as off, low, high, max.
+# thinking = "high"
+
 # Maximum number of model turns allowed for each request.
 max_steps = 32
 

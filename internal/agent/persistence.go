@@ -28,7 +28,7 @@ type SavedToolCall struct {
 type SavedState struct {
 	ProviderSession                                 string
 	PendingImages                                   []llm.Image
-	Provider, Model, Endpoint, System               string
+	Provider, Model, Thinking, Endpoint, System     string
 	Messages                                        []SavedMessage
 	LastResponse                                    string
 	ContextWindow, ContextOverride, ContextMessages int
@@ -80,7 +80,7 @@ func (a *Agent) RestoreWarnings() []string {
 // publishCheckpoint runs only on the agent's state-owning goroutine. Readers
 // receive immutable JSON and never access the live conversation.
 func (a *Agent) publishCheckpoint() {
-	s := SavedState{Provider: a.provider.Name(), Model: a.model, Endpoint: a.endpoint, System: a.system,
+	s := SavedState{Provider: a.provider.Name(), Model: a.model, Thinking: a.thinking, Endpoint: a.endpoint, System: a.system,
 		ContextWindow: a.contextWindow, ContextOverride: a.contextOverride, ContextMessages: a.contextMessages,
 		ContextUsage: a.contextUsage, AutoCompact: a.autoCompact, AutoCompactThreshold: a.autoCompactThreshold,
 		MaxSteps: a.MaxSteps(), LearningContext: a.learningContext, LearningSessionID: a.learningSessionID,
@@ -178,6 +178,11 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 		a.messages = append(a.messages, m.Message)
 	}
 	a.endpoint, a.system, a.lastResponse = s.Endpoint, s.System, s.LastResponse
+	if s.Thinking != "" {
+		if err := a.SetThinking(s.Thinking); err != nil {
+			return fmt.Errorf("incompatible thinking level: %w", err)
+		}
+	}
 	a.contextWindow, a.contextOverride, a.contextMessages = s.ContextWindow, s.ContextOverride, s.ContextMessages
 	a.contextUsage, a.sessionUsage = s.ContextUsage, s.Usage
 	a.autoCompact, a.autoCompactThreshold = s.AutoCompact, s.AutoCompactThreshold

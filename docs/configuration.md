@@ -7,6 +7,7 @@ provider = "openai"
 base_url = "http://localhost:8000/v1"
 api_key = "your-api-key"
 model = "my-model"
+thinking = "high"
 max_steps = 32
 agent_timeout = "5m"
 sandbox = true
@@ -58,6 +59,10 @@ Explicit command-line flags take precedence over environment variables, which ta
 When a flag or environment variable selects a provider different from the configured provider, the configured `model`, `base_url`, and `api_key` are not inherited; set any of them explicitly if they should apply to the selected provider.
 
 API keys can be set with `api_key` in this file, though `QCODE_API_KEY` or `OPENAI_API_KEY` is preferable on shared systems. `--api-key` takes precedence over both environment variables and the configuration file. Keep configuration files containing a key private (for example, mode `0600` on Unix-like systems).
+
+`thinking` (or `--thinking` / `QCODE_THINKING`) is an optional level such as
+`off`, `low`, `high`, or `max`. It is validated against the selected provider
+and model. No value is sent for unknown models or when the setting is omitted.
 
 `danger_skip_tls_verify = true` (or `--danger-skip-tls-verify`) disables certificate and hostname verification for qcode's provider and native web HTTP requests. It also supplies insecure-TLS environment settings to shell commands for Git, Node.js, npm, and compatible Python runtimes; arbitrary shell programs may require their own insecure-TLS option.
 

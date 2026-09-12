@@ -88,7 +88,7 @@ func (p *openAIProvider) Models(ctx context.Context) ([]string, error) {
 	}
 	models := make([]string, 0, len(payload.Data))
 	for _, model := range payload.Data {
-		if model.ID != "" {
+		if model.ID != "" && !(p.name == "opencode-go" && openCodeGoNonChatModels[model.ID] != "") {
 			models = append(models, model.ID)
 		}
 	}
@@ -111,17 +111,32 @@ type openAIToolCall struct {
 }
 
 type openAIMessage struct {
-	Role       string           `json:"role"`
-	Content    any              `json:"content,omitempty"`
-	Name       string           `json:"name,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
-	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
+	Role             string           `json:"role"`
+	Content          any              `json:"content,omitempty"`
+	ReasoningContent *string          `json:"reasoning_content,omitempty"`
+	ReasoningDetails json.RawMessage  `json:"reasoning_details,omitempty"`
+	Name             string           `json:"name,omitempty"`
+	ToolCallID       string           `json:"tool_call_id,omitempty"`
+	ToolCalls        []openAIToolCall `json:"tool_calls,omitempty"`
 }
 
 func (p *openAIProvider) Complete(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
+	capability := p.ThinkingCapability(input.Model)
 	messages := make([]openAIMessage, 0, len(input.Messages))
 	for _, message := range input.Messages {
 		converted := openAIMessage{Role: message.Role, Content: openAIContent(message), Name: message.Name, ToolCallID: message.ToolCallID}
+		if message.Role == "assistant" {
+			switch capability.ReplayFormat {
+			case ThinkingReplayReasoningContent:
+				// DeepSeek-compatible models require this field on every
+				// replayed assistant turn while thinking is active, including an
+				// empty value for messages that did not emit visible reasoning.
+				reasoning := message.Thinking
+				converted.ReasoningContent = &reasoning
+			case ThinkingReplayReasoningDetails:
+				converted.ReasoningDetails = message.ReasoningDetails
+			}
+		}
 		for i, call := range message.ToolCalls {
 			item := openAIToolCall{Index: i, ID: call.ID, Type: "function"}
 			item.Function.Name = call.Name
@@ -137,6 +152,9 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 	body := map[string]any{"stream_options": map[string]any{"include_usage": true}, "model": input.Model, "messages": messages, "stream": true, "temperature": input.Temperature}
 	if len(tools) > 0 {
 		body["tools"] = tools
+	}
+	for field, value := range thinkingFields(capability, input.Thinking) {
+		body[field] = value
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -215,6 +233,7 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 					Content          string           `json:"content"`
 					ReasoningContent string           `json:"reasoning_content"`
 					Reasoning        string           `json:"reasoning"`
+					ReasoningDetails json.RawMessage  `json:"reasoning_details"`
 					ToolCalls        []openAIToolCall `json:"tool_calls"`
 				} `json:"delta"`
 			} `json:"choices"`
@@ -235,6 +254,10 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 			}
 			if reasoning != "" && onText != nil {
 				onText(StreamEvent{Kind: StreamThinking, Text: reasoning})
+			}
+			result.Thinking += reasoning
+			if len(choice.Delta.ReasoningDetails) > 0 {
+				result.ReasoningDetails = append(json.RawMessage(nil), choice.Delta.ReasoningDetails...)
 			}
 			if choice.Delta.Content != "" {
 				result.Content += choice.Delta.Content

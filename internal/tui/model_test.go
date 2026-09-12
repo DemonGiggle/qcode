@@ -63,3 +63,14 @@ func TestSelectModelSupportsPageNavigation(t *testing.T) {
 		t.Fatalf("rendered lines = %d, want two bounded six-row renders", lines)
 	}
 }
+
+func TestSelectThinkingShowsOnlyThinkingLevels(t *testing.T) {
+	var output bytes.Buffer
+	selected, accepted, err := selectThinking(strings.NewReader(arrowDownSequence+"\r"), &output, []string{"low", "high"}, "low", 2, 80, false)
+	if err != nil || !accepted || selected != "high" {
+		t.Fatalf("selection = %q, accepted = %v, err = %v", selected, accepted, err)
+	}
+	if got := output.String(); !strings.Contains(got, "Select thinking level (2/2)") || strings.Contains(got, "Search:") {
+		t.Fatalf("thinking selector output = %q", got)
+	}
+}

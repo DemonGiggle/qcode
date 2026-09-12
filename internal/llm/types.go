@@ -21,13 +21,17 @@ type Image struct {
 }
 
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	Thinking   string     `json:"thinking,omitempty"`
-	Name       string     `json:"name,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	Images     []Image    `json:"-"`
+	Role     string `json:"role"`
+	Content  string `json:"content,omitempty"`
+	Thinking string `json:"thinking,omitempty"`
+	// ReasoningDetails preserves provider-specific structured reasoning when a
+	// model requires it on a later tool-call turn. Thinking remains the
+	// normalized, displayable stream; this field is intentionally opaque.
+	ReasoningDetails json.RawMessage `json:"reasoning_details,omitempty"`
+	Name             string          `json:"name,omitempty"`
+	ToolCallID       string          `json:"tool_call_id,omitempty"`
+	ToolCalls        []ToolCall      `json:"tool_calls,omitempty"`
+	Images           []Image         `json:"-"`
 }
 
 type Tool struct {
@@ -37,7 +41,10 @@ type Tool struct {
 }
 
 type Request struct {
-	Model       string
+	Model string
+	// Thinking is an optional user-selected level. Providers must omit thinking
+	// request fields when it is empty or unsupported for the selected model.
+	Thinking    string
 	Messages    []Message
 	Tools       []Tool
 	Temperature float64
@@ -82,6 +89,31 @@ type Provider interface {
 // ModelLister is an optional provider capability used by interactive clients.
 type ModelLister interface {
 	Models(context.Context) ([]string, error)
+}
+
+// ThinkingCapability describes model-specific thinking behavior without
+// exposing provider wire details to the UI or agent loop.
+type ThinkingCapability struct {
+	Supported     bool
+	Adjustable    bool
+	AlwaysOn      bool
+	Levels        []string
+	Default       string
+	RequestFormat string
+	ReplayFormat  string
+}
+
+// ThinkingProvider is optional. A provider that does not implement it has no
+// user-selectable thinking policy.
+type ThinkingProvider interface {
+	ThinkingCapability(model string) ThinkingCapability
+}
+
+// ModelValidator is optional. It lets a provider reject a known model that is
+// advertised by a shared catalog but requires an endpoint qcode does not yet
+// implement.
+type ModelValidator interface {
+	ValidateModel(model string) error
 }
 
 type Factory func(Config) (Provider, error)

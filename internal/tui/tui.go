@@ -16,6 +16,7 @@ import (
 	"golang.org/x/term"
 
 	"qcode/internal/lineedit"
+	"qcode/internal/llm"
 
 	"qcode/internal/prompt"
 	"qcode/internal/session"
@@ -82,6 +83,13 @@ type unicodeRunner interface {
 type modelRunner interface {
 	ListModels(context.Context) ([]string, error)
 	SetModel(string)
+}
+
+type thinkingRunner interface {
+	ThinkingCapability() llm.ThinkingCapability
+	ThinkingCapabilityFor(string) llm.ThinkingCapability
+	SetThinking(string) error
+	ThinkingLevel() string
 }
 
 type contextRunner interface {
@@ -816,6 +824,21 @@ func (u *UI) chooseModel(ctx context.Context) {
 	if !accepted {
 		return
 	}
+	level, selectedThinking, err := u.selectThinkingLevel(runner, selected, visible)
+	if err != nil {
+		u.printSystemMessage(yellow + "Unable to select thinking level: " + err.Error() + reset)
+		return
+	}
+	if !selectedThinking {
+		return
+	}
+	runner.SetModel(selected)
+	if thinking, ok := runner.(thinkingRunner); ok {
+		if err := thinking.SetThinking(level); err != nil {
+			u.printSystemMessage(yellow + err.Error() + reset)
+			return
+		}
+	}
 	if u.manager != nil {
 		if err := u.manager.UpdateModel(u.activeAgent, selected); err != nil {
 			u.printSystemMessage(yellow + err.Error() + reset)
@@ -827,7 +850,6 @@ func (u *UI) chooseModel(ctx context.Context) {
 		}
 		u.screenMu.Unlock()
 	}
-	runner.SetModel(selected)
 	if tracker, ok := u.runner.(contextRunner); ok {
 		tracker.RefreshContext(ctx)
 	}
@@ -835,7 +857,39 @@ func (u *UI) chooseModel(ctx context.Context) {
 	u.model = selected
 	u.screenMu.Unlock()
 	u.drawStatusBar()
-	u.printSystemMessage(fmt.Sprintf("%sModel: %s%s", green, selected, reset))
+	message := fmt.Sprintf("%sModel: %s", green, selected)
+	if level != "" {
+		message += " · thinking: " + level
+	}
+	u.printSystemMessage(message + reset)
+}
+
+// selectThinkingLevel is a second, model-aware selector. It never presents a
+// selector for unknown or fixed models, and an empty result means the model
+// default (no optional request field) rather than an invented effort level.
+func (u *UI) selectThinkingLevel(runner modelRunner, model string, visible int) (string, bool, error) {
+	thinking, ok := runner.(thinkingRunner)
+	if !ok {
+		return "", true, nil
+	}
+	capability := thinking.ThinkingCapabilityFor(model)
+	if !capability.Adjustable || len(capability.Levels) == 0 {
+		return "", true, nil
+	}
+	current := ""
+	if model == u.model {
+		current = thinking.ThinkingLevel()
+	}
+	u.printSystemMessage(dim + "Select a thinking level; Ctrl+C leaves the model unchanged." + reset)
+	u.input.setRaw(true)
+	u.beginRawSelector()
+	selected, accepted, err := selectThinking(u.input, u.terminal, capability.Levels, current, visible, u.width, ColorEnabled(u.out))
+	u.input.setRaw(false)
+	u.endRawSelector()
+	if err != nil || !accepted {
+		return "", false, err
+	}
+	return selected, true, nil
 }
 
 func (u *UI) expandDiff(fields []string) {
@@ -1045,7 +1099,7 @@ func (u *UI) printHeader() {
 	fmt.Fprintf(u.display, "\r\n")
 	u.printToolSummary()
 	if !u.statusActive {
-		fmt.Fprintf(u.display, "%s\r\n", statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel()))
+		fmt.Fprintf(u.display, "%s\r\n", statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel()))
 	}
 }
 
@@ -1100,7 +1154,7 @@ func (u *UI) renderStatusBarLocked(force bool) {
 	if !u.statusActive {
 		return
 	}
-	bar := statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel())
+	bar := statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
 	if !force && bar == u.statusBarText {
 		return
 	}
@@ -1141,6 +1195,9 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 		if len(contextLabel) > 3 && contextLabel[3] != "" {
 			parts = append(parts, "[MODE "+contextLabel[3]+"]")
 		}
+		if len(contextLabel) > 4 && contextLabel[4] != "" {
+			parts = append(parts, "[THINK "+contextLabel[4]+"]")
+		}
 		bar := strings.Join(parts, " ")
 		if width > 0 && visibleWidth(bar) > width {
 			if dynamic := compactStatusBar(contextLabel, false, unicodeEnabled); dynamic != "" && visibleWidth(dynamic) <= width {
@@ -1166,6 +1223,9 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 	}
 	if len(contextLabel) > 3 && contextLabel[3] != "" {
 		segments = append(segments, statusSegment("MODE", contextLabel[3], yellow))
+	}
+	if len(contextLabel) > 4 && contextLabel[4] != "" {
+		segments = append(segments, statusSegment("THINK", contextLabel[4], magenta))
 	}
 	separator := dim + "  │  " + reset
 	if !unicodeEnabled {

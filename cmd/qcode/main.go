@@ -35,6 +35,7 @@ type options struct {
 	searchBackend        string
 	provider             string
 	model                string
+	thinking             string
 	baseURL              string
 	apiKey               string
 	root                 string
@@ -66,6 +67,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	flags.SetOutput(stderr)
 	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider: ollama, openai, or opencode-go")
 	flags.StringVar(&opts.model, "model", env("QCODE_MODEL", "qwen2.5-coder:7b"), "model identifier")
+	flags.StringVar(&opts.thinking, "thinking", os.Getenv("QCODE_THINKING"), "thinking level for a model that supports it (for example: low, high, max, off)")
 	flags.StringVar(&opts.baseURL, "base-url", os.Getenv("QCODE_BASE_URL"), "provider API base URL")
 	flags.StringVar(&opts.apiKey, "api-key", firstEnv("QCODE_API_KEY", "OPENAI_API_KEY"), "API key (prefer QCODE_API_KEY or OPENAI_API_KEY)")
 	flags.StringVar(&opts.root, "cwd", ".", "workspace root")
@@ -199,7 +201,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if promptText != "" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
-		return runOneShot(ctx, promptText, provider, opts.model, toolset, stderr, stdout, opts.jsonEvents, opts.maxSteps, system, learningStore, opts.learningBudget)
+		return runOneShot(ctx, promptText, provider, opts.model, opts.thinking, toolset, stderr, stdout, opts.jsonEvents, opts.maxSteps, system, learningStore, opts.learningBudget)
 	}
 
 	// Terminal output must go through term.Terminal so asynchronous-looking stream
@@ -268,6 +270,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			runner.SetLearning(learningStore, opts.learningBudget)
 			if model == opts.model {
 				runner.SetContextWindow(opts.contextWindow)
+				if err := runner.SetThinking(opts.thinking); err != nil {
+					return nil, err
+				}
 			}
 			runner.SetAutoCompact(!opts.disableAutoCompact, opts.autoCompactThreshold)
 			runner.SetEndpoint(currentEndpoint)
@@ -335,13 +340,16 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	return ui.Run(context.Background())
 }
 
-func runOneShot(ctx context.Context, promptText string, provider llm.Provider, model string, toolset agent.Toolset, stderr, stdout *os.File, jsonEvents bool, maxSteps int, system string, learningStore learning.Store, learningBudget int) error {
+func runOneShot(ctx context.Context, promptText string, provider llm.Provider, model, thinking string, toolset agent.Toolset, stderr, stdout *os.File, jsonEvents bool, maxSteps int, system string, learningStore learning.Store, learningBudget int) error {
 	manager := agent.NewAgentManager(ctx, 1)
 	defer manager.Shutdown()
 	manager.SetFactory(func(id, name, model string, main bool) (*agent.Agent, error) {
 		logger := newTraceLogger(stderr, jsonEvents)
 		responseWriter := newResponseWriter(stdout)
 		runner := agent.NewWithSystem(provider, model, toolset, logger, responseWriter, maxSteps, system)
+		if err := runner.SetThinking(thinking); err != nil {
+			return nil, err
+		}
 		runner.SetLearning(learningStore, learningBudget)
 		return runner, nil
 	})
@@ -386,6 +394,9 @@ func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
 	providerConfigApplies := cfg.Provider == "" || opts.provider == cfg.Provider
 	if providerConfigApplies && !setFlags["model"] && os.Getenv("QCODE_MODEL") == "" && cfg.Model != "" {
 		opts.model = cfg.Model
+	}
+	if providerConfigApplies && !setFlags["thinking"] && os.Getenv("QCODE_THINKING") == "" && cfg.Thinking != "" {
+		opts.thinking = cfg.Thinking
 	}
 	// A configured capacity belongs to the configured model and provider.
 	if providerConfigApplies && (cfg.Model == "" || cfg.Model == opts.model) && !setFlags["context-window"] && cfg.ContextWindow != nil {

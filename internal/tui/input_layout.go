@@ -136,7 +136,7 @@ func (u *UI) paintFixedLocked(direction int) {
 		screenRows[u.height-1] = truncateDiffLine(message, u.width, u.unicode)
 	}
 	if footer > 0 {
-		screenRows[u.height] = statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel())
+		screenRows[u.height] = statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
 	}
 	u.writeFixedScreenLocked(screenRows, promptRow+cy, cx+1)
 }

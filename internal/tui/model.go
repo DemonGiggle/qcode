@@ -12,6 +12,17 @@ const (
 )
 
 func selectModel(in io.Reader, out io.Writer, models []string, current string, visible, width int, color bool) (string, bool, error) {
+	return selectOption(in, out, models, current, visible, width, color, "model", true)
+}
+
+// selectThinking is intentionally a separate entry point so the two-stage
+// model picker can use the same bounded keyboard selector without calling
+// thinking levels models in its prompt.
+func selectThinking(in io.Reader, out io.Writer, levels []string, current string, visible, width int, color bool) (string, bool, error) {
+	return selectOption(in, out, levels, current, visible, width, color, "thinking level", false)
+}
+
+func selectOption(in io.Reader, out io.Writer, models []string, current string, visible, width int, color bool, noun string, searchable bool) (string, bool, error) {
 	if len(models) == 0 {
 		return "", false, nil
 	}
@@ -28,7 +39,7 @@ func selectModel(in io.Reader, out io.Writer, models []string, current string, v
 	matches := matchingModelIndices(models, query)
 	selected = selectedMatch(matches, selected)
 	start := selectorInitialStart(selected, len(matches), visible)
-	renderModelSelector(out, models, matches, selected, start, visible, width, query, color)
+	renderModelSelector(out, models, matches, selected, start, visible, width, query, color, noun, searchable)
 	for {
 		key, err := readSelectorKey(in)
 		if err != nil {
@@ -63,13 +74,16 @@ func selectModel(in io.Reader, out io.Writer, models []string, current string, v
 			}
 			if start != oldStart {
 				clearModelSelector(out, rows)
-				renderModelSelector(out, models, matches, selected, start, visible, width, query, color)
+				renderModelSelector(out, models, matches, selected, start, visible, width, query, color, noun, searchable)
 			} else if selected != oldSelected {
 				replaceSelectorRow(out, rows, 1+oldSelected-start, renderModelLine(models, matches, oldSelected, false, width, color))
 				replaceSelectorRow(out, rows, 1+selected-start, renderModelLine(models, matches, selected, true, width, color))
 			}
 			continue
 		case string([]byte{8}), string([]byte{127}):
+			if !searchable {
+				continue
+			}
 			if len(query) == 0 {
 				continue
 			}
@@ -77,10 +91,16 @@ func selectModel(in io.Reader, out io.Writer, models []string, current string, v
 			matches = matchingModelIndices(models, query)
 			selected = 0
 		case string([]byte{ctrlU}):
+			if !searchable {
+				continue
+			}
 			query = ""
 			matches = matchingModelIndices(models, query)
 			selected = 0
 		default:
+			if !searchable {
+				continue
+			}
 			if len(key) != 1 || key[0] < 32 || key[0] > 126 {
 				continue
 			}
@@ -90,7 +110,7 @@ func selectModel(in io.Reader, out io.Writer, models []string, current string, v
 		}
 		start = selectorInitialStart(selected, len(matches), visible)
 		clearModelSelector(out, rows)
-		renderModelSelector(out, models, matches, selected, start, visible, width, query, color)
+		renderModelSelector(out, models, matches, selected, start, visible, width, query, color, noun, searchable)
 	}
 }
 
@@ -114,8 +134,11 @@ func selectedMatch(matches []int, modelIndex int) int {
 	return 0
 }
 
-func renderModelSelector(out io.Writer, models []string, matches []int, selected, start, visible, width int, query string, color bool) {
-	header := fmt.Sprintf("%s | Select model (%d/%d) | Up/Down, PgUp/PgDn | Search: %s", selectorLeaveHint, len(matches), len(models), query)
+func renderModelSelector(out io.Writer, models []string, matches []int, selected, start, visible, width int, query string, color bool, noun string, searchable bool) {
+	header := fmt.Sprintf("%s | Select %s (%d/%d) | Up/Down, PgUp/PgDn", selectorLeaveHint, noun, len(matches), len(models))
+	if searchable {
+		header += " | Search: " + query
+	}
 	if width > 0 {
 		header = truncateDiffLine(header, width, false)
 	}
