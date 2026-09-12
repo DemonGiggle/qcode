@@ -2,12 +2,14 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
 	"qcode/internal/learning"
+	"qcode/internal/session"
 )
 
 type learningRunner interface {
@@ -42,7 +44,7 @@ func (u *UI) learn(ctx context.Context, arguments string) {
 	defer cancel()
 	u.input.setCancel(cancel)
 	defer u.input.setCancel(nil)
-	result, err := runner.Learn(taskCtx, arguments, func(ctx context.Context, review []learning.Change) (bool, error) {
+	localApprover := func(ctx context.Context, review []learning.Change) (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
@@ -61,7 +63,70 @@ func (u *UI) learn(ctx context.Context, arguments string) {
 			return false, err
 		}
 		return approveLearningAnswer(answer), nil
-	})
+	}
+	approver := localApprover
+	if broker, ok := u.manager.(interactionController); ok {
+		u.screenMu.Lock()
+		agentID := u.activeAgent
+		u.screenMu.Unlock()
+		approver = func(ctx context.Context, review []learning.Change) (bool, error) {
+			payload, _ := json.Marshal(review)
+			waiter, err := broker.BeginInteraction(session.Interaction{AgentID: agentID, Kind: session.InteractionLearningApproval, Payload: payload})
+			if err != nil {
+				return false, err
+			}
+			u.signalPresentation()
+			localCtx, cancelLocal := context.WithCancel(ctx)
+			defer cancelLocal()
+			brokerCtx, cancelBroker := context.WithCancel(ctx)
+			defer cancelBroker()
+			type approval struct {
+				approved bool
+				err      error
+			}
+			localResult := make(chan approval, 1)
+			go func() { approved, err := localApprover(localCtx, review); localResult <- approval{approved, err} }()
+			type remoteApproval struct {
+				resolution session.Resolution
+				err        error
+			}
+			remoteResult := make(chan remoteApproval, 1)
+			go func() { resolution, err := waiter.Wait(brokerCtx); remoteResult <- remoteApproval{resolution, err} }()
+			select {
+			case local := <-localResult:
+				if local.err != nil {
+					return false, local.err
+				}
+				value, _ := json.Marshal(local.approved)
+				_ = broker.ResolveInteraction(session.Resolution{InteractionID: waiter.InteractionInfo().ID, Value: value, ResolvedBy: "local-tui"})
+				u.signalPresentation()
+				remote := <-remoteResult
+				if remote.err != nil {
+					return false, remote.err
+				}
+				var approved bool
+				if err := json.Unmarshal(remote.resolution.Value, &approved); err != nil {
+					return false, err
+				}
+				return approved, nil
+			case remote := <-remoteResult:
+				cancelLocal()
+				if u.input != nil {
+					u.input.interruptLine()
+				}
+				<-localResult
+				if remote.err != nil {
+					return false, remote.err
+				}
+				var approved bool
+				if err := json.Unmarshal(remote.resolution.Value, &approved); err != nil {
+					return false, err
+				}
+				return approved, nil
+			}
+		}
+	}
+	result, err := runner.Learn(taskCtx, arguments, approver)
 	u.drawStatusBar()
 	if errors.Is(err, context.Canceled) {
 		u.printSystemMessage(yellow + "Learning cancelled." + reset)

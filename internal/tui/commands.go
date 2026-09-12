@@ -26,6 +26,7 @@ var slashCommands = []slashCommand{
 	{name: "/new", description: "Start a session with fresh context"},
 	{name: "/plan", description: "Manage planning mode; use /plan show to view or /plan act to implement"},
 	{name: "/resume", description: "Restore a saved session for this workspace"},
+	{name: "/remote", description: "Start, inspect, or stop browser remote control"},
 	{name: "/skill", description: "Select workspace skills"},
 	{name: "/quit", description: "Exit qcode"},
 	{name: "/tool", description: "Toggle available tools"},

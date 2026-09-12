@@ -170,61 +170,66 @@ type agentController interface {
 }
 
 type UI struct {
-	fixedInput         bool
-	inputText          string
-	inputLabel         string
-	inputPosition      int
-	inputFrame         string
-	inputScreenRows    []string
-	inputCursorRow     int
-	inputCursorColumn  int
-	terminal           *lineedit.Terminal
-	display            historyDisplay
-	responseWriter     *MarkdownWriter
-	commandMenu        slashCommandMenu
-	input              *interruptReader
-	in                 *os.File
-	out                *os.File
-	runner             Runner
-	provider           string
-	model              string
-	root               string
-	verbose            bool
-	width              int
-	height             int
-	unicode            bool
-	viewport           viewport
-	statusActive       bool
-	statusBarText      string
-	planViewActive     bool
-	startupNotice      string
-	startupChoice      bool
-	skills             []prompt.SkillSummary
-	skillLocations     []string
-	skillCatalogLoader skillCatalogLoader
-	onSkills           func([]string)
-	consultationCursor uint64 // Guarded by screenMu; persisted with the transcript.
-	manager            agentController
-	activeAgent        string
-	views              map[string]*agentView
-	screenMu           sync.Mutex
-	drafts             map[string]string
-	approvalMu         sync.Mutex
-	approvals          map[string][]*approvalRequest
-	questionMu         sync.Mutex
-	questions          []*questionRequest
-	planDecisionMu     sync.Mutex
-	planDecisions      []*planDecisionRequest
-	tabMu              sync.Mutex
-	pendingTab         int
-	agentEventsDone    chan struct{}
-	uiEvents           chan struct{}
-	taskIndicatorText  string
-	demoPrompts        []string
-	demoPromptDelay    time.Duration
-	demoQueueDelay     time.Duration
-	persistence        *sessionPersistence
-	sessionHost        *UI
+	fixedInput           bool
+	inputText            string
+	inputLabel           string
+	inputPosition        int
+	inputFrame           string
+	inputScreenRows      []string
+	inputCursorRow       int
+	inputCursorColumn    int
+	terminal             *lineedit.Terminal
+	display              historyDisplay
+	responseWriter       *MarkdownWriter
+	commandMenu          slashCommandMenu
+	input                *interruptReader
+	in                   *os.File
+	out                  *os.File
+	runner               Runner
+	provider             string
+	model                string
+	root                 string
+	verbose              bool
+	width                int
+	height               int
+	unicode              bool
+	viewport             viewport
+	statusActive         bool
+	statusBarText        string
+	planViewActive       bool
+	startupNotice        string
+	startupChoice        bool
+	skills               []prompt.SkillSummary
+	skillLocations       []string
+	skillCatalogLoader   skillCatalogLoader
+	onSkills             func([]string)
+	consultationCursor   uint64 // Guarded by screenMu; persisted with the transcript.
+	manager              agentController
+	activeAgent          string
+	views                map[string]*agentView
+	screenMu             sync.Mutex
+	drafts               map[string]string
+	approvalMu           sync.Mutex
+	approvals            map[string][]*approvalRequest
+	questionMu           sync.Mutex
+	questions            []*questionRequest
+	planDecisionMu       sync.Mutex
+	planDecisions        []*planDecisionRequest
+	tabMu                sync.Mutex
+	pendingTab           int
+	agentEventsDone      chan struct{}
+	uiEvents             chan struct{}
+	presentationMu       sync.Mutex
+	presentationSubs     map[uint64]chan struct{}
+	nextPresentationSub  uint64
+	presentationSequence uint64
+	taskIndicatorText    string
+	demoPrompts          []string
+	demoPromptDelay      time.Duration
+	demoQueueDelay       time.Duration
+	persistence          *sessionPersistence
+	sessionHost          *UI
+	remoteService        RemoteService
 }
 
 // SetSkillCatalog configures the optional /skill selector.
@@ -270,25 +275,27 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	responseWriter.SetUnicode(unicodeEnabled)
 	responseWriter.EnableDiffs()
 	u := &UI{
-		terminal:       t,
-		display:        display,
-		responseWriter: responseWriter,
-		commandMenu:    slashCommandMenu{out: t, color: ColorEnabled(out), width: width},
-		input:          input,
-		in:             in,
-		out:            out,
-		runner:         runner,
-		provider:       provider,
-		model:          model,
-		root:           root,
-		width:          width,
-		height:         height,
-		unicode:        unicodeEnabled,
-		views:          make(map[string]*agentView),
-		drafts:         make(map[string]string),
-		approvals:      make(map[string][]*approvalRequest),
-		uiEvents:       make(chan struct{}, 1),
+		terminal:         t,
+		display:          display,
+		responseWriter:   responseWriter,
+		commandMenu:      slashCommandMenu{out: t, color: ColorEnabled(out), width: width},
+		input:            input,
+		in:               in,
+		out:              out,
+		runner:           runner,
+		provider:         provider,
+		model:            model,
+		root:             root,
+		width:            width,
+		height:           height,
+		unicode:          unicodeEnabled,
+		views:            make(map[string]*agentView),
+		drafts:           make(map[string]string),
+		approvals:        make(map[string][]*approvalRequest),
+		uiEvents:         make(chan struct{}, 1),
+		presentationSubs: make(map[uint64]chan struct{}),
 	}
+	display.history.onChange = u.signalPresentation
 	display.ui = u
 	t.AutoCompleteCallback = u.completeSlashCommand
 	input.setPageHandler(u.showPage)
@@ -334,6 +341,7 @@ func (u *UI) AddAgentView(id, provider, model string) (io.Writer, io.Writer) {
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
 	history := newHistoryWriter(io.Discard)
+	history.onChange = u.signalPresentation
 	display := &agentDisplay{ui: u, id: id, history: history}
 	response := NewMarkdownWriter(display, ColorEnabled(u.out), u.width)
 	response.SetUnicode(u.unicode)
@@ -518,8 +526,15 @@ func (u *UI) Run(ctx context.Context) error {
 		if line == "" {
 			continue
 		}
-		if line == "/resume" {
-			u.resumeSession()
+		if line == "/resume" || strings.HasPrefix(line, "/resume ") {
+			fields := strings.Fields(line)
+			if len(fields) > 2 {
+				u.printSystemMessage(yellow + "Usage: /resume [session-id]" + reset)
+			} else if len(fields) == 2 {
+				u.resumeSessionID(fields[1])
+			} else {
+				u.resumeSession()
+			}
 			continue
 		}
 		if u.fixedInput {
@@ -529,6 +544,22 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		u.resetPage()
 		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == "/remote" {
+			u.handleRemoteCommand(ctx, fields)
+			continue
+		}
+		if len(fields) > 1 && fields[0] == "/model" {
+			u.setModelCommand(ctx, fields)
+			continue
+		}
+		if len(fields) > 1 && fields[0] == "/tool" {
+			u.setToolCommand(fields)
+			continue
+		}
+		if len(fields) > 1 && fields[0] == "/skill" {
+			u.setSkillCommand(fields)
+			continue
+		}
 		if len(fields) > 0 && fields[0] == "/agent" {
 			u.handleAgentCommand(ctx, fields)
 			continue
@@ -694,6 +725,9 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 	if err != nil {
 		return "", false, err
 	}
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
 	selected := strings.TrimSpace(line)
 	if selected == "" {
 		selected = proposed
@@ -712,6 +746,9 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 	if err != nil {
 		return "", false, err
 	}
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
 	approved := strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes")
 	if approved && sensitive {
 		u.terminal.SetPrompt(yellow + bold + "Confirm broad home access by typing YES: " + reset)
@@ -719,6 +756,9 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 		u.terminal.SetPrompt(inputPrompt)
 		if confirmErr != nil {
 			return "", false, confirmErr
+		}
+		if err := ctx.Err(); err != nil {
+			return "", false, err
 		}
 		approved = strings.TrimSpace(confirmation) == "YES"
 	}
@@ -862,6 +902,80 @@ func (u *UI) chooseModel(ctx context.Context) {
 		message += " · thinking: " + level
 	}
 	u.printSystemMessage(message + reset)
+}
+
+func (u *UI) setModelCommand(ctx context.Context, fields []string) {
+	if len(fields) < 2 || len(fields) > 3 {
+		u.printSystemMessage(yellow + "Usage: /model <model> [thinking]" + reset)
+		return
+	}
+	if !u.activeAgentConfigurable() {
+		return
+	}
+	runner, ok := u.runner.(modelRunner)
+	if !ok {
+		u.printSystemMessage(yellow + "Model selection is unavailable." + reset)
+		return
+	}
+	models, err := runner.ListModels(ctx)
+	if err != nil {
+		u.printSystemMessage(yellow + "Unable to list models: " + err.Error() + reset)
+		return
+	}
+	found := false
+	for _, model := range models {
+		if model == fields[1] {
+			found = true
+			break
+		}
+	}
+	if !found {
+		u.printSystemMessage(yellow + "Unknown model: " + sanitizeDiffLine(fields[1], "<ESC>") + reset)
+		return
+	}
+	level := ""
+	if len(fields) == 3 {
+		thinking, ok := runner.(thinkingRunner)
+		if !ok {
+			u.printSystemMessage(yellow + "Thinking configuration is unavailable." + reset)
+			return
+		}
+		capability := thinking.ThinkingCapabilityFor(fields[1])
+		for _, candidate := range capability.Levels {
+			if candidate == fields[2] {
+				level = candidate
+				break
+			}
+		}
+		if level == "" {
+			u.printSystemMessage(yellow + "Unsupported thinking level: " + sanitizeDiffLine(fields[2], "<ESC>") + reset)
+			return
+		}
+	}
+	runner.SetModel(fields[1])
+	if thinking, ok := runner.(thinkingRunner); ok {
+		if err := thinking.SetThinking(level); err != nil {
+			u.printSystemMessage(yellow + err.Error() + reset)
+			return
+		}
+	}
+	if u.manager != nil {
+		if err := u.manager.UpdateModel(u.activeAgent, fields[1]); err != nil {
+			u.printSystemMessage(yellow + err.Error() + reset)
+			return
+		}
+	}
+	u.screenMu.Lock()
+	u.model = fields[1]
+	if view := u.views[u.activeAgent]; view != nil {
+		view.model = fields[1]
+	}
+	u.screenMu.Unlock()
+	if tracker, ok := u.runner.(contextRunner); ok {
+		tracker.RefreshContext(ctx)
+	}
+	u.drawStatusBar()
+	u.printSystemMessage(green + "Model: " + sanitizeDiffLine(fields[1], "<ESC>") + reset)
 }
 
 // selectThinkingLevel is a second, model-aware selector. It never presents a
