@@ -88,7 +88,7 @@ func (p *openAIProvider) Models(ctx context.Context) ([]string, error) {
 	}
 	models := make([]string, 0, len(payload.Data))
 	for _, model := range payload.Data {
-		if model.ID != "" && !(p.name == "opencode-go" && openCodeGoNonChatModels[model.ID] != "") {
+		if model.ID != "" && !(p.name == "opencode-go" && openCodeGoModelRoutes[model.ID] == openCodeGoResponsesRoute) {
 			models = append(models, model.ID)
 		}
 	}
@@ -121,6 +121,9 @@ type openAIMessage struct {
 }
 
 func (p *openAIProvider) Complete(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
+	if p.name == "opencode-go" && openCodeGoModelRoutes[input.Model] == openCodeGoMessagesRoute {
+		return p.completeAnthropicMessages(ctx, input, onText)
+	}
 	capability := p.ThinkingCapability(input.Model)
 	messages := make([]openAIMessage, 0, len(input.Messages))
 	for _, message := range input.Messages {

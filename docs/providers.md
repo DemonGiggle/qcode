@@ -23,7 +23,7 @@ export QCODE_API_KEY=...
 qcode --provider opencode-go --model kimi-k3
 ```
 
-The OpenCode Go API base URL defaults to `https://opencode.ai/zen/go/v1` and can be overridden with `--base-url`. Consult the OpenCode Go model table when choosing a model: models assigned to its Responses or Anthropic Messages endpoints are not supported by qcode yet.
+The OpenCode Go API base URL defaults to `https://opencode.ai/zen/go/v1` and can be overridden with `--base-url`. qcode supports both its OpenAI-compatible Chat Completions route and its Anthropic Messages route, so Qwen and MiniMax models are available alongside Chat Completions models. Models assigned to the Responses route are not supported yet.
 
 ### Thinking levels
 
@@ -43,11 +43,11 @@ omit those fields. An unsupported explicit level fails before making a model
 request. qcode preserves required reasoning replay data across tool turns for
 known models that require it.
 
-qcode currently uses OpenCode Go's Chat Completions route. `/model` hides
-known models assigned to its Responses or Anthropic Messages routes (including
-GPT 5.6 Luna), and a direct `--model` selection of one fails before a request.
-Those routes need dedicated provider adapters rather than a generic thinking
-flag.
+`/model` hides known OpenCode Go models assigned to its unsupported Responses
+route (including GPT 5.6 Luna), and a direct `--model` selection of one fails
+before a request. Chat Completions and Anthropic Messages models use their
+dedicated qcode adapters; a generic thinking flag is not a replacement for an
+endpoint adapter.
 
 ## Vision
 

@@ -212,7 +212,7 @@ func TestOpenCodeGoHidesAndRejectsModelsOnUnsupportedEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(models, ",") != "glm-5.2" {
+	if strings.Join(models, ",") != "glm-5.2,qwen3.8-max" {
 		t.Fatalf("models = %v", models)
 	}
 	if err := provider.(ModelValidator).ValidateModel("gpt-5.6-luna"); err == nil || !strings.Contains(err.Error(), "Responses") {
@@ -220,5 +220,63 @@ func TestOpenCodeGoHidesAndRejectsModelsOnUnsupportedEndpoints(t *testing.T) {
 	}
 	if err := provider.(ModelValidator).ValidateModel("glm-5.2"); err != nil {
 		t.Fatalf("chat model validation error = %v", err)
+	}
+}
+
+func TestOpenCodeGoUsesAnthropicMessagesForQwen(t *testing.T) {
+	client := doerFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/v1/messages" {
+			t.Errorf("path = %q", request.URL.Path)
+		}
+		if request.Header.Get("x-api-key") != "go-secret" || request.Header.Get("anthropic-version") != anthropicVersion {
+			t.Errorf("headers = %#v", request.Header)
+		}
+		var body struct {
+			Model     string `json:"model"`
+			MaxTokens int    `json:"max_tokens"`
+			System    string `json:"system"`
+			Messages  []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+			Tools []struct {
+				Name        string         `json:"name"`
+				InputSchema map[string]any `json:"input_schema"`
+			} `json:"tools"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Model != "qwen3.8-flash" || body.MaxTokens != 8192 || body.System != "system" || len(body.Messages) != 1 || body.Messages[0].Role != "user" || len(body.Tools) != 1 || body.Tools[0].Name != "read" {
+			t.Fatalf("body = %#v", body)
+		}
+		stream := strings.Join([]string{
+			`event: message_start`,
+			`data: {"type":"message_start","message":{"usage":{"input_tokens":11}}}`,
+			`event: content_block_start`,
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"read","input":{}}}`,
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"."}}`,
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"}"}}`,
+			`event: message_delta`,
+			`data: {"type":"message_delta","usage":{"output_tokens":7}}`,
+		}, "\n") + "\n\n"
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(stream))}, nil
+	})
+	provider, err := newOpenCodeGo(Config{BaseURL: "http://go.test/v1", APIKey: "go-secret", HTTP: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := provider.Complete(context.Background(), Request{Model: "qwen3.8-flash", Messages: []Message{{Role: "system", Content: "system"}, {Role: "user", Content: "inspect"}}, Tools: []Tool{{Name: "read", Parameters: map[string]any{"type": "object"}}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Usage == nil || response.Usage.InputTokens != 11 || response.Usage.OutputTokens != 7 || len(response.Message.ToolCalls) != 1 {
+		t.Fatalf("response = %#v", response)
+	}
+	call := response.Message.ToolCalls[0]
+	if call.ID != "tool_1" || call.Name != "read" || string(call.Arguments) != `{"path":"."}` {
+		t.Fatalf("tool call = %#v", call)
 	}
 }

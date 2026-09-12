@@ -8,25 +8,30 @@ import (
 
 const openCodeGoBaseURL = "https://opencode.ai/zen/go/v1"
 
-// OpenCode Go's /models endpoint includes models on Chat Completions,
-// Responses, and Anthropic Messages routes. qcode currently implements only
-// Chat Completions, so hide known incompatible entries from the picker and
-// reject direct use before it can incur a request. Source: OpenCode Go model
-// table, checked 2026-09-12.
-var openCodeGoNonChatModels = map[string]string{
-	"gpt-5.6-luna":               "Responses",
-	"grok-4.6":                   "Responses",
-	"minimax-m2.5":               "Anthropic Messages",
-	"minimax-m2.7":               "Anthropic Messages",
-	"minimax-m3":                 "Anthropic Messages",
-	"muse-spark-1.2-contributor": "Responses",
-	"muse-spark-1.3-contributor": "Responses",
-	"qwen3.5-plus":               "Anthropic Messages",
-	"qwen3.6-plus":               "Anthropic Messages",
-	"qwen3.7-max":                "Anthropic Messages",
-	"qwen3.7-plus":               "Anthropic Messages",
-	"qwen3.8-flash":              "Anthropic Messages",
-	"qwen3.8-max":                "Anthropic Messages",
+const (
+	openCodeGoChatRoute      = "chat/completions"
+	openCodeGoMessagesRoute  = "messages"
+	openCodeGoResponsesRoute = "responses"
+)
+
+// OpenCode Go's /models endpoint includes models on three wire protocols.
+// Keep routing separate from thinking capabilities: the same model catalog can
+// say both how a request is encoded and whether qcode has an adapter for it.
+// Source: OpenCode Go model table, checked 2026-09-12.
+var openCodeGoModelRoutes = map[string]string{
+	"gpt-5.6-luna":               openCodeGoResponsesRoute,
+	"grok-4.6":                   openCodeGoResponsesRoute,
+	"minimax-m2.5":               openCodeGoMessagesRoute,
+	"minimax-m2.7":               openCodeGoMessagesRoute,
+	"minimax-m3":                 openCodeGoMessagesRoute,
+	"muse-spark-1.2-contributor": openCodeGoResponsesRoute,
+	"muse-spark-1.3-contributor": openCodeGoResponsesRoute,
+	"qwen3.5-plus":               openCodeGoMessagesRoute,
+	"qwen3.6-plus":               openCodeGoMessagesRoute,
+	"qwen3.7-max":                openCodeGoMessagesRoute,
+	"qwen3.7-plus":               openCodeGoMessagesRoute,
+	"qwen3.8-flash":              openCodeGoMessagesRoute,
+	"qwen3.8-max":                openCodeGoMessagesRoute,
 }
 
 func init() { Register("opencode-go", newOpenCodeGo) }
@@ -46,8 +51,8 @@ func (p *openAIProvider) ValidateModel(model string) error {
 	if p.name != "opencode-go" {
 		return nil
 	}
-	if endpoint, unsupported := openCodeGoNonChatModels[model]; unsupported {
-		return fmt.Errorf("OpenCode Go model %q requires the %s endpoint, which qcode does not support yet", model, endpoint)
+	if endpoint := openCodeGoModelRoutes[model]; endpoint == openCodeGoResponsesRoute {
+		return fmt.Errorf("OpenCode Go model %q requires the Responses endpoint, which qcode does not support yet", model)
 	}
 	return nil
 }
