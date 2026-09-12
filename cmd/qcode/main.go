@@ -17,6 +17,7 @@ import (
 
 	"qcode/internal/agent"
 	"qcode/internal/config"
+	"qcode/internal/control"
 	"qcode/internal/demo"
 	"qcode/internal/learning"
 	"qcode/internal/llm"
@@ -215,15 +216,16 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if sandboxNotice != "" {
 		ui.SetStartupNotice(sandboxNotice, sandboxChoice)
 	}
-	manager := agent.NewAgentManager(context.Background(), agent.DefaultMaxAgents)
-	ui.SetAgentManager(manager)
+	host := control.NewHost(context.Background(), agent.DefaultMaxAgents)
+	defer host.Shutdown()
+	ui.SetAgentManager(host)
 	mainRegistry := registry
 	mainProvider := provider
 	mainToolset := toolset
 	mainSelection := skillSelection
-	configureFactory := func(ui *tui.UI, manager *agent.AgentManager, saved map[string]agent.SavedState) {
-		_ = manager.SetConsultationTimeout(opts.agentTimeout)
-		manager.SetFactory(func(id, name, model string, isMain bool) (*agent.Agent, error) {
+	configureFactory := func(ui *tui.UI, host *control.Host, saved map[string]agent.SavedState) {
+		_ = host.SetConsultationTimeout(opts.agentTimeout)
+		host.SetFactory(func(id, name, model string, isMain bool) (*agent.Agent, error) {
 			currentProvider := mainProvider
 			currentToolset := mainToolset
 			currentRegistry := mainRegistry
@@ -260,7 +262,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 				}
 			}
 			display, response := ui.AddAgentView(id, currentProvider.Name(), model)
-			wrappedTools := manager.WrapToolset(id, currentToolset, isMain)
+			wrappedTools := host.WrapToolset(id, currentToolset, isMain)
 			logger := trace.NewAnimated(display, opts.jsonEvents)
 			logger.SetColor(tui.ColorEnabled(stdout))
 			logger.SetWidth(tui.OutputWidth(stdout))
@@ -283,18 +285,18 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			return runner, nil
 		})
 	}
-	configureFactory(ui, manager, nil)
-	if _, err := manager.CreateMain(opts.model); err != nil {
+	configureFactory(ui, host, nil)
+	if _, err := host.CreateMain(opts.model); err != nil {
 		return err
 	}
 	if opts.demo {
 		// Seed the scripted collaborator so the demo's delegate_task call
 		// exercises a successful background coordination event.
-		if _, err := manager.Create(opts.model); err != nil {
+		if _, err := host.Create(opts.model); err != nil {
 			return err
 		}
 	}
-	runner, _ := manager.Agent("main")
+	runner, _ := host.Agent("main")
 	ui.SetRunner(runner)
 	if !opts.demo {
 		directory, err := session.DefaultDirectory()
@@ -309,7 +311,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			staged := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
 			staged.SetSkillCatalogLoader(loadSkills)
 			staged.SetSkillLocations(skillLocations)
-			restored := agent.NewAgentManager(context.Background(), agent.DefaultMaxAgents)
+			restored := control.NewHost(context.Background(), agent.DefaultMaxAgents)
 			saved := map[string]agent.SavedState{}
 			for _, item := range snap.Agents {
 				var state agent.SavedState
@@ -341,9 +343,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 }
 
 func runOneShot(ctx context.Context, promptText string, provider llm.Provider, model, thinking string, toolset agent.Toolset, stderr, stdout *os.File, jsonEvents bool, maxSteps int, system string, learningStore learning.Store, learningBudget int) error {
-	manager := agent.NewAgentManager(ctx, 1)
-	defer manager.Shutdown()
-	manager.SetFactory(func(id, name, model string, main bool) (*agent.Agent, error) {
+	host := control.NewHost(ctx, 1)
+	defer host.Shutdown()
+	host.SetFactory(func(id, name, model string, main bool) (*agent.Agent, error) {
 		logger := newTraceLogger(stderr, jsonEvents)
 		responseWriter := newResponseWriter(stdout)
 		runner := agent.NewWithSystem(provider, model, toolset, logger, responseWriter, maxSteps, system)
@@ -353,10 +355,10 @@ func runOneShot(ctx context.Context, promptText string, provider llm.Provider, m
 		runner.SetLearning(learningStore, learningBudget)
 		return runner, nil
 	})
-	if _, err := manager.CreateMain(model); err != nil {
+	if _, err := host.CreateMain(model); err != nil {
 		return err
 	}
-	_, err := manager.SubmitAndWait(ctx, "main", promptText)
+	_, err := host.SubmitAndWait(ctx, "main", promptText)
 	return err
 }
 
