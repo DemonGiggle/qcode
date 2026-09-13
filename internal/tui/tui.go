@@ -1309,6 +1309,10 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 }
 
 func statusBarWithRemote(provider, model, root string, width int, unicodeEnabled, color, remote bool, contextLabel ...string) string {
+	return statusBarWithRemoteColors(provider, model, root, width, unicodeEnabled, color, remote, magenta, blue, contextLabel...)
+}
+
+func statusBarWithRemoteColors(provider, model, root string, width int, unicodeEnabled, color, remote bool, modelColor, workspaceColor string, contextLabel ...string) string {
 	provider = sanitizeDiffLine(provider, "<ESC>")
 	model = sanitizeDiffLine(model, "<ESC>")
 	root = sanitizeDiffLine(root, "<ESC>")
@@ -1348,11 +1352,11 @@ func statusBarWithRemote(provider, model, root string, width int, unicodeEnabled
 	if remote {
 		segments = append(segments, remoteStatusBadge(true))
 	}
-	segments = append(segments, statusValue(provider, cyan), statusSegment("MODEL", model, magenta))
+	segments = append(segments, statusValue(provider, cyan), statusSegment("MODEL", model, modelColor))
 	if len(contextLabel) > 0 {
 		segments = append(segments, statusSegment("CTX", contextLabel[0], green))
 	}
-	segments = append(segments, statusSegment("WS", root, blue))
+	segments = append(segments, statusSegment("WS", root, workspaceColor))
 	if len(contextLabel) > 1 {
 		segments = append(segments, statusSegment("TOK", contextLabel[1], cyan))
 	}

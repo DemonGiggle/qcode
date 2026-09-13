@@ -15,6 +15,11 @@ import (
 	"qcode/internal/session"
 )
 
+const (
+	webStatusModelColor     = "\x1b[38;2;224;156;255m"
+	webStatusWorkspaceColor = "\x1b[38;2;128;184;255m"
+)
+
 // RemoteAgentView is a transport-safe snapshot of one agent tab.
 type RemoteAgentView struct {
 	ID       string   `json:"id"`
@@ -272,7 +277,7 @@ func (u *UI) remoteStatusBar() string {
 	if u.remoteService != nil {
 		remote, _, _ = u.remoteService.Status()
 	}
-	return statusBarWithRemote(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, true, remote, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+	return statusBarWithRemoteColors(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, true, remote, webStatusModelColor, webStatusWorkspaceColor, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
 }
 
 func (u *UI) SubscribePresentation(ctx context.Context) <-chan struct{} {

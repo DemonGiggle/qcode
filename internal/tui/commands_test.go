@@ -235,6 +235,18 @@ func TestStatusBarUsesColoredSegments(t *testing.T) {
 	}
 }
 
+func TestWebStatusBarUsesReadableModelAndWorkspaceColors(t *testing.T) {
+	got := statusBarWithRemoteColors("ollama", "qwen", "~/code", 80, true, true, false, webStatusModelColor, webStatusWorkspaceColor)
+	for _, color := range []string{webStatusModelColor, webStatusWorkspaceColor} {
+		if !strings.Contains(got, color) {
+			t.Fatalf("web status bar %q does not contain color %q", got, color)
+		}
+	}
+	if strings.Contains(got, magenta) || strings.Contains(got, blue) {
+		t.Fatalf("web status bar still contains dark ANSI model/workspace colors: %q", got)
+	}
+}
+
 func TestStatusBarShowsRemoteBadgeAtBeginning(t *testing.T) {
 	plain := statusBarWithRemote("ollama", "qwen", "~/code", 80, true, false, true)
 	if !strings.HasPrefix(plain, "[REMOTE] ") {
