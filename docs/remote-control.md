@@ -75,6 +75,10 @@ network listeners, anonymous clients, tagged devices without a user identity,
 and Tailscale Funnel are not supported. Anyone permitted by the tailnet policy
 to open the URL is a controller in this first version.
 
+The web UI is responsive: agent tabs scroll horizontally on narrow screens,
+the composer stacks on phone widths, and selectors remain touch-sized and
+scrollable in short or landscape viewports.
+
 Use `/remote status` to see the URL and connected browser count. Use `/remote
 off` to close browsers, stop the loopback server, and interrupt the foreground
 Serve process. Exiting qcode performs the same cleanup without resetting other

@@ -1,20 +1,230 @@
 package remote
 
 const indexHTML = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>qcode remote</title><style>
-:root{color-scheme:dark;--bg:#07090d;--panel:#0d1117;--line:#253041;--muted:#8190a5;--text:#d8e0ea;--cyan:#43d9e8;--green:#54d17a;--yellow:#e8bf55}
-*{box-sizing:border-box}html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-body{display:grid;grid-template-rows:auto 1fr auto;overflow:hidden}.top{background:var(--panel);border-bottom:1px solid var(--line);padding:.55rem .8rem;display:flex;gap:.45rem;align-items:center;overflow-x:auto}
-.brand{color:var(--cyan);font-weight:800;margin-right:.5rem}.tab{border:1px solid transparent;background:transparent;color:var(--muted);border-radius:.3rem;padding:.35rem .6rem;white-space:nowrap;cursor:pointer}.tab.active{border-color:var(--cyan);color:var(--text)}.tab.running:after{content:' ●';color:var(--green)}
-main{overflow:auto;padding:1rem;scrollbar-color:var(--line) transparent}.transcript{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.48;font:inherit}.empty{color:var(--muted)}
-.bottom{background:var(--panel);border-top:1px solid var(--line);padding:.55rem .75rem}.status{font-size:.76rem;color:var(--muted);margin-bottom:.45rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.status .online{color:var(--green)}.interaction,.command-panel{display:none;border:1px solid var(--yellow);border-radius:.35rem;margin-bottom:.55rem;padding:.65rem}.interaction.open,.command-panel.open{display:block}.interaction-title,.command-title{color:var(--yellow);margin-bottom:.45rem}.command-help{color:var(--muted);font-size:.8rem;margin:.25rem 0 .5rem}.command-actions{display:flex;gap:.4rem;margin-top:.5rem}.command-actions .cancel{background:var(--line);color:var(--text);font-weight:400}.choices{display:flex;flex-wrap:wrap;gap:.4rem}.choices button{background:var(--line);color:var(--text);font-weight:400}.selector-list{display:grid;gap:.3rem;max-height:14rem;overflow:auto;margin:.5rem 0}.selector-list button{text-align:left;background:var(--line);color:var(--text);font-weight:400}.selector-empty{color:var(--muted);padding:.35rem 0}
-form{display:flex;gap:.55rem}input{flex:1;min-width:0;background:#080b10;border:1px solid var(--line);border-radius:.35rem;color:var(--text);font:inherit;padding:.65rem .75rem;outline:none}input:focus{border-color:var(--cyan)}button{background:var(--cyan);border:0;border-radius:.35rem;color:#001014;font:inherit;font-weight:800;padding:.55rem .9rem;cursor:pointer}button:disabled{opacity:.5}.notice{color:var(--yellow)}
-@media(max-width:600px){main{padding:.7rem}.brand{display:none}.top{padding:.4rem}.bottom{padding:.5rem}.tab{padding:.3rem .45rem}}
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#07090d"><title>qcode remote</title><style>
+:root {
+  color-scheme: dark;
+  --bg: #07090d;
+  --panel: #0d1117;
+  --field: #080b10;
+  --line: #253041;
+  --muted: #8190a5;
+  --text: #d8e0ea;
+  --cyan: #43d9e8;
+  --green: #54d17a;
+  --yellow: #e8bf55;
+  --content-width: 72rem;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html {
+  min-height: 100%;
+  background: var(--bg);
+}
+body {
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 100svh;
+  margin: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.top {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  padding: calc(.5rem + env(safe-area-inset-top)) calc(.8rem + env(safe-area-inset-right)) .5rem calc(.8rem + env(safe-area-inset-left));
+  overflow: hidden;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.brand {
+  flex: 0 0 auto;
+  margin-right: .35rem;
+  color: var(--cyan);
+  font-weight: 800;
+}
+#tabs {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  gap: .45rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+.tab {
+  flex: 0 0 auto;
+  min-height: 2.75rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  border-radius: .35rem;
+  padding: .45rem .7rem;
+  white-space: nowrap;
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.tab.active { border-color: var(--cyan); color: var(--text); }
+.tab.running::after { content: ' ●'; color: var(--green); }
+
+main {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: clamp(.75rem, 2vw, 1.25rem);
+  overscroll-behavior: contain;
+  scrollbar-color: var(--line) transparent;
+}
+.transcript {
+  width: min(100%, var(--content-width));
+  margin: 0 auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.5;
+  font: inherit;
+  font-size: clamp(.82rem, .78rem + .25vw, .96rem);
+}
+.empty { color: var(--muted); }
+
+.bottom {
+  min-width: 0;
+  padding: .65rem max(.75rem, env(safe-area-inset-right)) calc(.65rem + env(safe-area-inset-bottom)) max(.75rem, env(safe-area-inset-left));
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+.status,
+.interaction,
+.command-panel,
+form {
+  width: min(100%, var(--content-width));
+  margin-left: auto;
+  margin-right: auto;
+}
+.status {
+  min-width: 0;
+  margin-bottom: .45rem;
+  color: var(--muted);
+  font-size: .76rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.status .online { color: var(--green); }
+.interaction,
+.command-panel {
+  display: none;
+  margin-bottom: .55rem;
+  padding: .7rem;
+  border: 1px solid var(--yellow);
+  border-radius: .4rem;
+}
+.interaction.open,
+.command-panel.open { display: block; }
+.interaction-title,
+.command-title { margin-bottom: .45rem; color: var(--yellow); }
+.command-help { margin: .25rem 0 .5rem; color: var(--muted); font-size: .8rem; line-height: 1.4; }
+.command-actions { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .55rem; }
+.command-actions .cancel { background: var(--line); color: var(--text); font-weight: 400; }
+.choices { display: flex; flex-wrap: wrap; gap: .45rem; }
+.choices button { flex: 1 1 12rem; background: var(--line); color: var(--text); font-weight: 400; }
+.selector-list {
+  display: grid;
+  gap: .35rem;
+  max-height: min(18rem, 32dvh);
+  margin: .5rem 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.selector-list button { width: 100%; text-align: left; background: var(--line); color: var(--text); font-weight: 400; }
+.selector-empty { padding: .35rem 0; color: var(--muted); }
+
+form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: .55rem;
+}
+input {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: .65rem .75rem;
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: .4rem;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  outline: none;
+}
+input:focus { border-color: var(--cyan); }
+button {
+  min-height: 2.75rem;
+  padding: .55rem .9rem;
+  border: 0;
+  border-radius: .4rem;
+  background: var(--cyan);
+  color: #001014;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+button:focus-visible,
+input:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+button:disabled { opacity: .5; cursor: default; }
+.notice { color: var(--yellow); }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 680px) {
+  .top { padding-top: calc(.35rem + env(safe-area-inset-top)); padding-bottom: .35rem; }
+  .brand { display: none; }
+  main { padding: .7rem; }
+  .bottom { padding-top: .55rem; }
+  .tab { min-height: 2.6rem; padding: .4rem .6rem; }
+  .choices button { flex-basis: 100%; }
+}
+@media (max-width: 480px) {
+  .top { padding-left: max(.5rem, env(safe-area-inset-left)); padding-right: max(.5rem, env(safe-area-inset-right)); }
+  .bottom { padding-left: max(.55rem, env(safe-area-inset-left)); padding-right: max(.55rem, env(safe-area-inset-right)); }
+  .interaction, .command-panel { padding: .6rem; }
+  .command-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .command-actions button { width: 100%; }
+  form { grid-template-columns: 1fr; gap: .4rem; }
+  form button { width: 100%; }
+  .selector-list { max-height: min(14rem, 30dvh); }
+}
+@media (max-height: 520px) and (orientation: landscape) {
+  .top { padding-top: .25rem; padding-bottom: .25rem; }
+  .tab, button, input { min-height: 2.35rem; }
+  .bottom { padding-top: .4rem; }
+  .selector-list { max-height: 10rem; }
+}
 </style></head><body>
-<header class="top"><span class="brand">qcode</span><nav id="tabs"></nav></header>
+<header class="top"><span class="brand" aria-label="qcode remote">qcode</span><nav id="tabs" aria-label="Agents"></nav></header>
 <main id="scroll"><pre id="transcript" class="transcript empty">Connecting…</pre></main>
-<footer class="bottom"><div id="interaction" class="interaction"></div><div id="command" class="command-panel"></div><div id="status" class="status">Connecting to qcode…</div><form id="form"><input id="input" autocomplete="off" spellcheck="false" placeholder="Send a prompt or slash command"><button id="send">Send</button></form></footer>
+<footer class="bottom"><div id="interaction" class="interaction"></div><div id="command" class="command-panel"></div><div id="status" class="status" role="status" aria-live="polite">Connecting to qcode…</div><form id="form"><label class="sr-only" for="input">Message or slash command</label><input id="input" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Send a prompt or slash command"><button id="send" type="submit">Send</button></form></footer>
 <script>
 (()=>{
 const tabs=document.querySelector('#tabs'),out=document.querySelector('#transcript'),status=document.querySelector('#status'),interaction=document.querySelector('#interaction'),command=document.querySelector('#command'),form=document.querySelector('#form'),input=document.querySelector('#input'),send=document.querySelector('#send'),scroll=document.querySelector('#scroll');

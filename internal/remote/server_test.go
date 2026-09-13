@@ -146,6 +146,10 @@ func TestRemotePageHasCatalogBackedSelectorControls(t *testing.T) {
 		"No matching entries.",
 		"submitLines",
 		"e.key==='Escape'",
+		"viewport-fit=cover",
+		"100dvh",
+		"@media (max-width: 480px)",
+		"grid-template-columns: 1fr",
 	} {
 		if !strings.Contains(indexHTML, fragment) {
 			t.Fatalf("remote page is missing selector behavior %q", fragment)
