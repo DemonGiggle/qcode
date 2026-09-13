@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"qcode/internal/control"
+	"qcode/internal/prompt"
 	"qcode/internal/question"
+	"qcode/internal/session"
 )
 
 type fakeRemoteService struct {
@@ -18,6 +20,85 @@ type fakeRemoteService struct {
 	command string
 	ip      string
 	stopped bool
+}
+
+type remoteCatalogRunner struct {
+	selected []prompt.SkillSummary
+	tools    map[string]bool
+}
+
+func (r *remoteCatalogRunner) Run(context.Context, string) error { return nil }
+func (r *remoteCatalogRunner) ListModels(context.Context) ([]string, error) {
+	return []string{"model-a", "model-b"}, nil
+}
+func (r *remoteCatalogRunner) SetModel(string)                      {}
+func (r *remoteCatalogRunner) ToggleTool(name string, enabled bool) { r.tools[name] = enabled }
+func (r *remoteCatalogRunner) ToolNames() []string                  { return []string{"read", "write"} }
+func (r *remoteCatalogRunner) ToolEnabled(name string) bool         { return r.tools[name] }
+func (r *remoteCatalogRunner) SelectedSkills() []prompt.SkillSummary {
+	return append([]prompt.SkillSummary(nil), r.selected...)
+}
+
+func TestRemoteCatalogIncludesSelectorStateAndResumableSessions(t *testing.T) {
+	root := t.TempDir()
+	runner := &remoteCatalogRunner{
+		selected: []prompt.SkillSummary{{Name: "review"}},
+		tools:    map[string]bool{"read": true, "write": false},
+	}
+	u := New(nil, nil, runner, "test", "model-a", root)
+	u.SetSkillCatalogLoader(func() ([]prompt.SkillSummary, error) {
+		return []prompt.SkillSummary{
+			{Name: "review", Description: "Review changes"},
+			{Name: "deploy", Description: "Deploy safely"},
+		}, nil
+	})
+	store, err := session.Open(t.TempDir(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, currentLock, err := store.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Release(currentLock)
+	u.persistence = &sessionPersistence{store: store, current: current}
+
+	resumable, resumableLock, err := store.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumable.Preview = "  Review \x1b[31mthe release\x1b[0m  "
+	resumable.Saved = time.Now().UTC()
+	resumable.Agents = []session.SavedAgent{{}}
+	if err := store.Save(resumable); err != nil {
+		t.Fatal(err)
+	}
+	session.Release(resumableLock)
+
+	busy, busyLock, err := store.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Release(busyLock)
+	busy.Preview = "busy"
+	busy.Saved = time.Now().UTC()
+	if err := store.Save(busy); err != nil {
+		t.Fatal(err)
+	}
+
+	catalog := u.RemoteCatalog(context.Background())
+	if got, want := len(catalog.Models), 2; got != want || catalog.Models[0] != "model-a" {
+		t.Fatalf("models = %#v, want two models", catalog.Models)
+	}
+	if len(catalog.Tools) != 2 || !catalog.Tools[0].Enabled || catalog.Tools[1].Enabled {
+		t.Fatalf("tools = %#v", catalog.Tools)
+	}
+	if len(catalog.Skills) != 2 || !catalog.Skills[0].Selected || catalog.Skills[1].Selected {
+		t.Fatalf("skills = %#v", catalog.Skills)
+	}
+	if len(catalog.Sessions) != 1 || catalog.Sessions[0].ID != resumable.ID || catalog.Sessions[0].Preview != "Review the release" {
+		t.Fatalf("sessions = %#v, want only resumable saved session", catalog.Sessions)
+	}
 }
 
 func TestRemoteCanWinQuestionInteraction(t *testing.T) {

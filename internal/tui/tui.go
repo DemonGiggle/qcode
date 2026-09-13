@@ -234,6 +234,8 @@ type UI struct {
 
 // SetSkillCatalog configures the optional /skill selector.
 func (u *UI) SetSkillCatalog(skills []prompt.SkillSummary, onChange func([]string)) {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
 	u.skills = append([]prompt.SkillSummary(nil), skills...)
 	u.onSkills = onChange
 }
@@ -241,25 +243,33 @@ func (u *UI) SetSkillCatalog(skills []prompt.SkillSummary, onChange func([]strin
 // SetSkillLocations configures the directories shown by /skill before its
 // selector. Missing directories are intentionally retained in this list.
 func (u *UI) SetSkillLocations(locations []string) {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
 	u.skillLocations = append([]string(nil), locations...)
 }
 
 // SetSkillCatalogLoader defers skill discovery until /skill needs the catalog.
 // The loader may refresh the catalog on each command invocation.
 func (u *UI) SetSkillCatalogLoader(loader skillCatalogLoader) {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
 	u.skillCatalogLoader = loader
 }
 
 func (u *UI) ensureSkillCatalog() bool {
-	if u.skillCatalogLoader == nil {
+	u.screenMu.Lock()
+	loader := u.skillCatalogLoader
+	onSkills := u.onSkills
+	u.screenMu.Unlock()
+	if loader == nil {
 		return true
 	}
-	summaries, err := u.skillCatalogLoader()
+	summaries, err := loader()
 	if err != nil {
 		u.printSystemMessage(yellow + "Cannot discover skills: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 		return false
 	}
-	u.SetSkillCatalog(summaries, u.onSkills)
+	u.SetSkillCatalog(summaries, onSkills)
 	return true
 }
 

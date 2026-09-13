@@ -8,7 +8,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
+	"qcode/internal/prompt"
 	"qcode/internal/question"
 	"qcode/internal/session"
 )
@@ -35,13 +37,33 @@ type RemotePresentation struct {
 // RemoteCatalog contains the read-only selector data needed by the browser UI.
 // It deliberately mirrors existing TUI runtime state without changing it.
 type RemoteCatalog struct {
-	Models []string          `json:"models"`
-	Tools  []RemoteToolState `json:"tools"`
+	Models   []string             `json:"models"`
+	Tools    []RemoteToolState    `json:"tools"`
+	Skills   []RemoteSkillState   `json:"skills"`
+	Sessions []RemoteSessionState `json:"sessions"`
 }
 
 type RemoteToolState struct {
 	Name    string `json:"name"`
 	Enabled bool   `json:"enabled"`
+}
+
+type RemoteSkillState struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Selected    bool   `json:"selected"`
+}
+
+// RemoteSessionState is the resumable subset of a saved session entry. The
+// current session, busy sessions, and unreadable snapshots are intentionally
+// omitted by RemoteCatalog.
+type RemoteSessionState struct {
+	ID         string    `json:"id"`
+	Preview    string    `json:"preview"`
+	Created    time.Time `json:"created,omitempty"`
+	Saved      time.Time `json:"saved,omitempty"`
+	Left       time.Time `json:"left,omitempty"`
+	AgentCount int       `json:"agent_count"`
 }
 
 type RemoteService interface {
@@ -162,18 +184,85 @@ func (u *UI) RemotePresentation() RemotePresentation {
 }
 
 func (u *UI) RemoteCatalog(ctx context.Context) RemoteCatalog {
-	result := RemoteCatalog{}
-	if runner, ok := u.runner.(modelRunner); ok {
-		if models, err := runner.ListModels(ctx); err == nil {
-			result.Models = models
+	result := RemoteCatalog{
+		Models:   make([]string, 0),
+		Tools:    make([]RemoteToolState, 0),
+		Skills:   make([]RemoteSkillState, 0),
+		Sessions: make([]RemoteSessionState, 0),
+	}
+	u.screenMu.Lock()
+	runner := u.runner
+	catalogLoader := u.skillCatalogLoader
+	skillSummaries := append([]prompt.SkillSummary(nil), u.skills...)
+	u.screenMu.Unlock()
+	if catalogLoader != nil {
+		if loaded, err := catalogLoader(); err == nil {
+			skillSummaries = loaded
 		}
 	}
-	if runner, ok := u.runner.(toolRunner); ok {
+	selectedSkills := map[string]bool{}
+	if selectedRunner, ok := runner.(selectedSkillsRunner); ok {
+		for _, skill := range selectedRunner.SelectedSkills() {
+			selectedSkills[skill.Name] = true
+		}
+	}
+	for _, skill := range skillSummaries {
+		result.Skills = append(result.Skills, RemoteSkillState{
+			Name: skill.Name, Description: skill.Description, Selected: selectedSkills[skill.Name],
+		})
+	}
+	if runner, ok := runner.(modelRunner); ok {
+		if models, err := runner.ListModels(ctx); err == nil {
+			result.Models = append(result.Models, models...)
+		}
+	}
+	if runner, ok := runner.(toolRunner); ok {
 		for _, name := range runner.ToolNames() {
 			result.Tools = append(result.Tools, RemoteToolState{Name: name, Enabled: runner.ToolEnabled(name)})
 		}
 	}
+	result.Sessions = u.remoteSessions()
 	return result
+}
+
+func (u *UI) remoteSessions() []RemoteSessionState {
+	p := u.persistence
+	if p == nil {
+		return []RemoteSessionState{}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.store == nil {
+		return []RemoteSessionState{}
+	}
+	entries, err := p.store.List()
+	if err != nil {
+		return []RemoteSessionState{}
+	}
+	result := make([]RemoteSessionState, 0, len(entries))
+	for _, entry := range entries {
+		if entry.ID == p.current.ID || entry.Busy || entry.Problem != "" {
+			continue
+		}
+		result = append(result, RemoteSessionState{
+			ID: entry.ID, Preview: remoteSessionPreview(entry.Preview),
+			Created: entry.Created, Saved: entry.Saved, Left: entry.Left,
+			AgentCount: len(entry.Agents),
+		})
+	}
+	return result
+}
+
+func remoteSessionPreview(preview string) string {
+	preview = strings.Join(strings.Fields(plainHistoryText(preview)), " ")
+	if preview == "" {
+		return "Untitled session"
+	}
+	runes := []rune(preview)
+	if len(runes) <= 256 {
+		return preview
+	}
+	return string(runes[:253]) + "..."
 }
 
 // remoteStatusBar uses the same formatter as the terminal footer, but always

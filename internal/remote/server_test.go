@@ -14,16 +14,19 @@ import (
 )
 
 type testPresentation struct {
-	mu    sync.Mutex
-	actor string
-	line  string
+	mu      sync.Mutex
+	actor   string
+	line    string
+	catalog tui.RemoteCatalog
 }
 
 func (p *testPresentation) RemotePresentation() tui.RemotePresentation {
 	return tui.RemotePresentation{Active: "main", Views: []tui.RemoteAgentView{{ID: "main", Name: "main", Lines: []string{"hello"}}}}
 }
 func (p *testPresentation) RemoteCatalog(context.Context) tui.RemoteCatalog {
-	return tui.RemoteCatalog{}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.catalog
 }
 func (p *testPresentation) SubscribePresentation(ctx context.Context) <-chan struct{} {
 	ch := make(chan struct{})
@@ -67,6 +70,44 @@ func TestSnapshotIncludesRuntimeAndPresentation(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"actor":"alice@example.com"`) || !strings.Contains(response.Body.String(), `"hello"`) {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCatalogIncludesSelectorData(t *testing.T) {
+	presentation := &testPresentation{catalog: tui.RemoteCatalog{
+		Models:   []string{"model-a"},
+		Skills:   []tui.RemoteSkillState{{Name: "review", Selected: true}},
+		Sessions: []tui.RemoteSessionState{{ID: "session-1", Preview: "Review the release"}},
+	}}
+	handler := New(presentation).routes()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/catalog", nil)
+	request.Header.Set(identityHeader, "alice@example.com")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+	for _, fragment := range []string{`"model-a"`, `"review"`, `"selected":true`, `"session-1"`} {
+		if !strings.Contains(response.Body.String(), fragment) {
+			t.Fatalf("catalog response = %s, missing %s", response.Body.String(), fragment)
+		}
+	}
+}
+
+func TestRemotePageHasCatalogBackedSelectorControls(t *testing.T) {
+	for _, fragment := range []string{
+		"api/v1/catalog",
+		"Select skills",
+		"Resume session",
+		"Switch agent",
+		"Type to filter",
+		"No matching entries.",
+		"submitLines",
+		"e.key==='Escape'",
+	} {
+		if !strings.Contains(indexHTML, fragment) {
+			t.Fatalf("remote page is missing selector behavior %q", fragment)
+		}
 	}
 }
 

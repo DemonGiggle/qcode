@@ -84,3 +84,10 @@ Browser commands are injected as complete lines into the normal TUI command
 loop, so they use the same agent manager, queues, session state, and command
 handlers as local input. Remote `/exit`, `/quit`, and `/remote` mutations are
 rejected; browser `/exit` only closes that browser view.
+
+The browser also provides catalog-backed selectors for `/model`, `/tool`,
+`/skill`, `/resume`, `/agent`, `/agent new`, `/agent list`, and `/agent switch`.
+Selectors can be filtered, and skill/tool selectors preserve the current
+multi-selection until Apply. Cancel or Escape leaves the qcode session
+unchanged. Saved-session choices exclude the current session and snapshots that
+are busy or unreadable.
