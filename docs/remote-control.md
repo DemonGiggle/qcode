@@ -54,7 +54,10 @@ Run `/remote` in an interactive qcode session. qcode verifies that Tailscale is
 connected, starts a web server on a random `127.0.0.1` port, and runs a
 foreground `tailscale serve` proxy on a unique path. The command prints the
 HTTPS URL and the exact `tailscale serve` command after Serve reports that it
-is ready.
+is ready. Open the URL from a browser on a device signed in to the same
+Tailscale tailnet; it is not publicly reachable. qcode also prints the node's
+Tailscale IP as a DNS check, but HTTPS must use the hostname because the
+certificate is issued for that name.
 
 On Linux, the user running qcode must be allowed to manage the local Tailscale
 daemon. If `/remote` reports an operator-permission error, run this once as an

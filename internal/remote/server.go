@@ -4,11 +4,11 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -38,6 +38,7 @@ type Manager struct {
 	serve     *exec.Cmd
 	serveDone chan struct{}
 	command   string
+	ip        string
 	url       string
 	clients   int
 }
@@ -53,7 +54,7 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 	}
 	m.mu.Unlock()
 
-	dnsName, err := tailscaleDNSName(ctx)
+	dnsName, tailscaleIP, err := tailscaleEndpoint(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -120,7 +121,7 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 		return m.url, nil
 	}
 	done := make(chan struct{})
-	m.server, m.listener, m.serve, m.serveDone, m.command, m.url = server, listener, cmd, done, strings.Join(cmd.Args, " "), remoteURL
+	m.server, m.listener, m.serve, m.serveDone, m.command, m.ip, m.url = server, listener, cmd, done, strings.Join(cmd.Args, " "), tailscaleIP, remoteURL
 	m.mu.Unlock()
 	go func() {
 		defer close(done)
@@ -129,7 +130,7 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 		if m.serve == cmd {
 			staleServer, staleListener := m.server, m.listener
 			m.serve = nil
-			m.server, m.listener, m.serveDone, m.command, m.url = nil, nil, nil, "", ""
+			m.server, m.listener, m.serveDone, m.command, m.ip, m.url = nil, nil, nil, "", "", ""
 			m.mu.Unlock()
 			_ = staleServer.Close()
 			_ = staleListener.Close()
@@ -158,7 +159,7 @@ func watchServeOutput(reader io.Reader, ready chan<- error) {
 	ready <- errors.New(message)
 }
 
-func tailscaleDNSName(ctx context.Context) (string, error) {
+func tailscaleEndpoint(ctx context.Context) (string, string, error) {
 	command := exec.CommandContext(ctx, "tailscale", "status", "--json")
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -166,22 +167,30 @@ func tailscaleDNSName(ctx context.Context) (string, error) {
 		if detail == "" {
 			detail = err.Error()
 		}
-		return "", fmt.Errorf("tailscale is unavailable or disconnected: %w", annotateTailscaleError(errors.New(detail)))
+		return "", "", fmt.Errorf("tailscale is unavailable or disconnected: %w", annotateTailscaleError(errors.New(detail)))
 	}
 	var status struct {
 		BackendState string
-		Self         struct{ DNSName string }
+		Self         struct {
+			DNSName      string
+			TailscaleIPs []string
+		}
 	}
 	if err := json.Unmarshal(output, &status); err != nil {
-		return "", fmt.Errorf("decode tailscale status: %w", err)
+		return "", "", fmt.Errorf("decode tailscale status: %w", err)
 	}
 	if status.BackendState != "Running" {
-		return "", fmt.Errorf("tailscale is not connected (state %q)", status.BackendState)
+		return "", "", fmt.Errorf("tailscale is not connected (state %q)", status.BackendState)
 	}
 	if status.Self.DNSName == "" {
-		return "", errors.New("tailscale status did not report a MagicDNS name")
+		return "", "", errors.New("tailscale status did not report a MagicDNS name")
 	}
-	return status.Self.DNSName, nil
+	for _, ip := range status.Self.TailscaleIPs {
+		if !strings.Contains(ip, ":") {
+			return status.Self.DNSName, ip, nil
+		}
+	}
+	return status.Self.DNSName, "", nil
 }
 
 const tailscaleOperatorHint = "Tailscale needs permission to enable remote control. Run `sudo tailscale set --operator=$USER` once, then retry `/remote`."
@@ -204,17 +213,23 @@ func annotateTailscaleError(err error) error {
 }
 
 func randomID() (string, error) {
-	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
-		return "", fmt.Errorf("create remote path: %w", err)
+	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+	var id strings.Builder
+	id.Grow(2)
+	for range 2 {
+		value, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
+		if err != nil {
+			return "", fmt.Errorf("create remote path: %w", err)
+		}
+		id.WriteByte(alphabet[value.Int64()])
 	}
-	return hex.EncodeToString(value[:]), nil
+	return id.String(), nil
 }
 
 func (m *Manager) Stop() error {
 	m.mu.Lock()
 	server, listener, cmd, done := m.server, m.listener, m.serve, m.serveDone
-	m.server, m.listener, m.serve, m.serveDone, m.command, m.url = nil, nil, nil, nil, "", ""
+	m.server, m.listener, m.serve, m.serveDone, m.command, m.ip, m.url = nil, nil, nil, nil, "", "", ""
 	m.mu.Unlock()
 	if server == nil {
 		return nil
@@ -252,6 +267,13 @@ func (m *Manager) ServeCommand() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.command
+}
+
+// TailscaleIP returns this node's IPv4 Tailscale address while remote control is active.
+func (m *Manager) TailscaleIP() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.ip
 }
 
 func (m *Manager) routes(prefix ...string) http.Handler {

@@ -41,6 +41,10 @@ type remoteCommandProvider interface {
 	ServeCommand() string
 }
 
+type remoteIPProvider interface {
+	TailscaleIP() string
+}
+
 type interactionController interface {
 	BeginInteraction(session.Interaction) (session.InteractionWaiter, error)
 	ResolveInteraction(session.Resolution) error
@@ -89,6 +93,12 @@ func (u *UI) handleRemoteCommand(ctx context.Context, fields []string) {
 			u.printSystemMessage(dim + "Tailscale command: " + sanitizeDiffLine(command, "<ESC>") + reset)
 		}
 	}
+	if service, ok := u.remoteService.(remoteIPProvider); ok {
+		if ip := service.TailscaleIP(); ip != "" {
+			u.printSystemMessage(dim + "DNS check: this hostname should resolve to Tailscale IP " + sanitizeDiffLine(ip, "<ESC>") + ". HTTPS must use the hostname." + reset)
+		}
+	}
+	u.printSystemMessage(dim + "Remote access requires a browser signed in to this Tailscale tailnet." + reset)
 }
 
 func (u *UI) RemotePresentation() RemotePresentation {

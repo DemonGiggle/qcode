@@ -109,6 +109,21 @@ func TestAnnotateTailscaleErrorAddsOperatorSetupHint(t *testing.T) {
 	}
 }
 
+func TestRandomIDIsTwoLowercaseLettersOrDigits(t *testing.T) {
+	id, err := randomID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(id) != 2 {
+		t.Fatalf("ID length = %d, want 2", len(id))
+	}
+	for _, char := range id {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') {
+			t.Fatalf("ID is not lowercase letters or digits: %q", id)
+		}
+	}
+}
+
 func TestActionIsAttributedAndSameOrigin(t *testing.T) {
 	handler, presentation := newTestHandler(t)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/actions", bytes.NewBufferString(`{"line":"fix it"}`))
