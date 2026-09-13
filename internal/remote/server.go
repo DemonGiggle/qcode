@@ -37,6 +37,7 @@ type Manager struct {
 	listener  net.Listener
 	serve     *exec.Cmd
 	serveDone chan struct{}
+	command   string
 	url       string
 	clients   int
 }
@@ -119,7 +120,7 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 		return m.url, nil
 	}
 	done := make(chan struct{})
-	m.server, m.listener, m.serve, m.serveDone, m.url = server, listener, cmd, done, remoteURL
+	m.server, m.listener, m.serve, m.serveDone, m.command, m.url = server, listener, cmd, done, strings.Join(cmd.Args, " "), remoteURL
 	m.mu.Unlock()
 	go func() {
 		defer close(done)
@@ -128,7 +129,7 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 		if m.serve == cmd {
 			staleServer, staleListener := m.server, m.listener
 			m.serve = nil
-			m.server, m.listener, m.serveDone, m.url = nil, nil, nil, ""
+			m.server, m.listener, m.serveDone, m.command, m.url = nil, nil, nil, "", ""
 			m.mu.Unlock()
 			_ = staleServer.Close()
 			_ = staleListener.Close()
@@ -213,7 +214,7 @@ func randomID() (string, error) {
 func (m *Manager) Stop() error {
 	m.mu.Lock()
 	server, listener, cmd, done := m.server, m.listener, m.serve, m.serveDone
-	m.server, m.listener, m.serve, m.serveDone, m.url = nil, nil, nil, nil, ""
+	m.server, m.listener, m.serve, m.serveDone, m.command, m.url = nil, nil, nil, nil, "", ""
 	m.mu.Unlock()
 	if server == nil {
 		return nil
@@ -244,6 +245,13 @@ func (m *Manager) Status() (bool, string, int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.server != nil && m.serve != nil, m.url, m.clients
+}
+
+// ServeCommand returns the Tailscale command that backs the active remote-control session.
+func (m *Manager) ServeCommand() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.command
 }
 
 func (m *Manager) routes(prefix ...string) http.Handler {

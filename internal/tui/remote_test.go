@@ -1,9 +1,10 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 type fakeRemoteService struct {
 	running bool
 	url     string
+	command string
 	stopped bool
 }
 
@@ -63,14 +65,19 @@ func (s *fakeRemoteService) Start(context.Context) (string, error) {
 }
 func (s *fakeRemoteService) Stop() error                 { s.running, s.stopped = false, true; return nil }
 func (s *fakeRemoteService) Status() (bool, string, int) { return s.running, s.url, 2 }
+func (s *fakeRemoteService) ServeCommand() string        { return s.command }
 
 func TestRemoteCommandLifecycle(t *testing.T) {
-	history := newHistoryWriter(io.Discard)
-	service := &fakeRemoteService{}
+	var output bytes.Buffer
+	history := newHistoryWriter(&output)
+	service := &fakeRemoteService{command: "tailscale serve --https=443 --set-path=/qcode/test http://127.0.0.1:1234"}
 	u := &UI{display: history, remoteService: service}
 	u.handleRemoteCommand(context.Background(), []string{"/remote"})
 	if !service.running {
 		t.Fatal("remote service did not start")
+	}
+	if !strings.Contains(output.String(), "Tailscale command: "+service.command) {
+		t.Fatalf("remote command output = %q", output.String())
 	}
 	u.handleRemoteCommand(context.Background(), []string{"/remote", "off"})
 	if !service.stopped {

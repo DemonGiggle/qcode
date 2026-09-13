@@ -53,7 +53,8 @@ viewer role can be added later with Tailscale application capabilities.
 Run `/remote` in an interactive qcode session. qcode verifies that Tailscale is
 connected, starts a web server on a random `127.0.0.1` port, and runs a
 foreground `tailscale serve` proxy on a unique path. The command prints the
-HTTPS URL after Serve reports that it is ready.
+HTTPS URL and the exact `tailscale serve` command after Serve reports that it
+is ready.
 
 On Linux, the user running qcode must be allowed to manage the local Tailscale
 daemon. If `/remote` reports an operator-permission error, run this once as an

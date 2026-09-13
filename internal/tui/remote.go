@@ -37,6 +37,10 @@ type RemoteService interface {
 	Status() (bool, string, int)
 }
 
+type remoteCommandProvider interface {
+	ServeCommand() string
+}
+
 type interactionController interface {
 	BeginInteraction(session.Interaction) (session.InteractionWaiter, error)
 	ResolveInteraction(session.Resolution) error
@@ -80,6 +84,11 @@ func (u *UI) handleRemoteCommand(ctx context.Context, fields []string) {
 	}
 	u.drawStatusBar()
 	u.printSystemMessage(green + "Remote control available at " + sanitizeDiffLine(url, "<ESC>") + reset)
+	if service, ok := u.remoteService.(remoteCommandProvider); ok {
+		if command := service.ServeCommand(); command != "" {
+			u.printSystemMessage(dim + "Tailscale command: " + sanitizeDiffLine(command, "<ESC>") + reset)
+		}
+	}
 }
 
 func (u *UI) RemotePresentation() RemotePresentation {
