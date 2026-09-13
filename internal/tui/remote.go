@@ -42,15 +42,23 @@ type RemotePresentation struct {
 // RemoteCatalog contains the read-only selector data needed by the browser UI.
 // It deliberately mirrors existing TUI runtime state without changing it.
 type RemoteCatalog struct {
-	Models   []string             `json:"models"`
-	Tools    []RemoteToolState    `json:"tools"`
-	Skills   []RemoteSkillState   `json:"skills"`
-	Sessions []RemoteSessionState `json:"sessions"`
+	Models   []string                       `json:"models"`
+	Thinking map[string]RemoteThinkingState `json:"thinking"`
+	Tools    []RemoteToolState              `json:"tools"`
+	Skills   []RemoteSkillState             `json:"skills"`
+	Sessions []RemoteSessionState           `json:"sessions"`
 }
 
 type RemoteToolState struct {
 	Name    string `json:"name"`
 	Enabled bool   `json:"enabled"`
+}
+
+// RemoteThinkingState contains the selectable thinking levels for one model.
+// Models without an adjustable thinking capability are omitted.
+type RemoteThinkingState struct {
+	Levels  []string `json:"levels"`
+	Current string   `json:"current,omitempty"`
 }
 
 type RemoteSkillState struct {
@@ -191,6 +199,7 @@ func (u *UI) RemotePresentation() RemotePresentation {
 func (u *UI) RemoteCatalog(ctx context.Context) RemoteCatalog {
 	result := RemoteCatalog{
 		Models:   make([]string, 0),
+		Thinking: make(map[string]RemoteThinkingState),
 		Tools:    make([]RemoteToolState, 0),
 		Skills:   make([]RemoteSkillState, 0),
 		Sessions: make([]RemoteSessionState, 0),
@@ -199,6 +208,7 @@ func (u *UI) RemoteCatalog(ctx context.Context) RemoteCatalog {
 	runner := u.runner
 	catalogLoader := u.skillCatalogLoader
 	skillSummaries := append([]prompt.SkillSummary(nil), u.skills...)
+	currentModel := u.model
 	u.screenMu.Unlock()
 	if catalogLoader != nil {
 		if loaded, err := catalogLoader(); err == nil {
@@ -216,9 +226,22 @@ func (u *UI) RemoteCatalog(ctx context.Context) RemoteCatalog {
 			Name: skill.Name, Description: skill.Description, Selected: selectedSkills[skill.Name],
 		})
 	}
-	if runner, ok := runner.(modelRunner); ok {
-		if models, err := runner.ListModels(ctx); err == nil {
+	if modelRunner, ok := runner.(modelRunner); ok {
+		if models, err := modelRunner.ListModels(ctx); err == nil {
 			result.Models = append(result.Models, models...)
+			if thinkingRunner, ok := runner.(thinkingRunner); ok {
+				for _, model := range models {
+					capability := thinkingRunner.ThinkingCapabilityFor(model)
+					if !capability.Adjustable || len(capability.Levels) == 0 {
+						continue
+					}
+					state := RemoteThinkingState{Levels: append([]string(nil), capability.Levels...)}
+					if model == currentModel {
+						state.Current = thinkingRunner.ThinkingLevel()
+					}
+					result.Thinking[model] = state
+				}
+			}
 		}
 	}
 	if runner, ok := runner.(toolRunner); ok {

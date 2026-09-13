@@ -76,6 +76,7 @@ func TestSnapshotIncludesRuntimeAndPresentation(t *testing.T) {
 func TestCatalogIncludesSelectorData(t *testing.T) {
 	presentation := &testPresentation{catalog: tui.RemoteCatalog{
 		Models:   []string{"model-a"},
+		Thinking: map[string]tui.RemoteThinkingState{"model-a": {Levels: []string{"low", "high"}, Current: "low"}},
 		Skills:   []tui.RemoteSkillState{{Name: "review", Selected: true}},
 		Sessions: []tui.RemoteSessionState{{ID: "session-1", Preview: "Review the release"}},
 	}}
@@ -87,7 +88,7 @@ func TestCatalogIncludesSelectorData(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
 	}
-	for _, fragment := range []string{`"model-a"`, `"review"`, `"selected":true`, `"session-1"`} {
+	for _, fragment := range []string{`"model-a"`, `"low"`, `"review"`, `"selected":true`, `"session-1"`} {
 		if !strings.Contains(response.Body.String(), fragment) {
 			t.Fatalf("catalog response = %s, missing %s", response.Body.String(), fragment)
 		}
@@ -97,6 +98,8 @@ func TestCatalogIncludesSelectorData(t *testing.T) {
 func TestRemotePageHasCatalogBackedSelectorControls(t *testing.T) {
 	for _, fragment := range []string{
 		"api/v1/catalog",
+		"data.thinking",
+		"Select thinking level",
 		"Select skills",
 		"Resume session",
 		"Switch agent",

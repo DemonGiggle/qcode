@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"qcode/internal/control"
+	"qcode/internal/llm"
 	"qcode/internal/prompt"
 	"qcode/internal/question"
 	"qcode/internal/session"
@@ -25,6 +26,8 @@ type fakeRemoteService struct {
 type remoteCatalogRunner struct {
 	selected []prompt.SkillSummary
 	tools    map[string]bool
+	thinking map[string]llm.ThinkingCapability
+	level    string
 }
 
 func (r *remoteCatalogRunner) Run(context.Context, string) error { return nil }
@@ -35,6 +38,14 @@ func (r *remoteCatalogRunner) SetModel(string)                      {}
 func (r *remoteCatalogRunner) ToggleTool(name string, enabled bool) { r.tools[name] = enabled }
 func (r *remoteCatalogRunner) ToolNames() []string                  { return []string{"read", "write"} }
 func (r *remoteCatalogRunner) ToolEnabled(name string) bool         { return r.tools[name] }
+func (r *remoteCatalogRunner) ThinkingCapability() llm.ThinkingCapability {
+	return r.thinking["model-a"]
+}
+func (r *remoteCatalogRunner) ThinkingCapabilityFor(model string) llm.ThinkingCapability {
+	return r.thinking[model]
+}
+func (r *remoteCatalogRunner) SetThinking(level string) error { r.level = level; return nil }
+func (r *remoteCatalogRunner) ThinkingLevel() string          { return r.level }
 func (r *remoteCatalogRunner) SelectedSkills() []prompt.SkillSummary {
 	return append([]prompt.SkillSummary(nil), r.selected...)
 }
@@ -44,6 +55,10 @@ func TestRemoteCatalogIncludesSelectorStateAndResumableSessions(t *testing.T) {
 	runner := &remoteCatalogRunner{
 		selected: []prompt.SkillSummary{{Name: "review"}},
 		tools:    map[string]bool{"read": true, "write": false},
+		thinking: map[string]llm.ThinkingCapability{
+			"model-a": {Adjustable: true, Levels: []string{"low", "high"}},
+		},
+		level: "low",
 	}
 	u := New(nil, nil, runner, "test", "model-a", root)
 	u.SetSkillCatalogLoader(func() ([]prompt.SkillSummary, error) {
@@ -89,6 +104,9 @@ func TestRemoteCatalogIncludesSelectorStateAndResumableSessions(t *testing.T) {
 	catalog := u.RemoteCatalog(context.Background())
 	if got, want := len(catalog.Models), 2; got != want || catalog.Models[0] != "model-a" {
 		t.Fatalf("models = %#v, want two models", catalog.Models)
+	}
+	if got := catalog.Thinking["model-a"]; len(got.Levels) != 2 || got.Levels[0] != "low" || got.Current != "low" {
+		t.Fatalf("thinking = %#v, want model-a levels and current level", catalog.Thinking)
 	}
 	if len(catalog.Tools) != 2 || !catalog.Tools[0].Enabled || catalog.Tools[1].Enabled {
 		t.Fatalf("tools = %#v", catalog.Tools)

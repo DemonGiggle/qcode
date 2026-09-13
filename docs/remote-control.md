@@ -87,7 +87,8 @@ rejected; browser `/exit` only closes that browser view.
 
 The browser also provides catalog-backed selectors for `/model`, `/tool`,
 `/skill`, `/resume`, `/agent`, `/agent new`, `/agent list`, and `/agent switch`.
-Selectors can be filtered, and skill/tool selectors preserve the current
-multi-selection until Apply. Cancel or Escape leaves the qcode session
-unchanged. Saved-session choices exclude the current session and snapshots that
-are busy or unreadable.
+Selectors can be filtered, and model selection opens a second selector when the
+chosen model supports adjustable thinking levels. Skill/tool selectors preserve
+the current multi-selection until Apply. Cancel or Escape leaves the qcode
+session unchanged. Saved-session choices exclude the current session and
+snapshots that are busy or unreadable.
