@@ -24,6 +24,7 @@ const identityHeader = "Tailscale-User-Login"
 
 type presentation interface {
 	RemotePresentation() tui.RemotePresentation
+	RemoteCatalog(context.Context) tui.RemoteCatalog
 	SubscribePresentation(context.Context) <-chan struct{}
 	SubmitRemote(string, string) error
 	ResolveRemoteInteraction(string, string, []byte) error
@@ -280,6 +281,7 @@ func (m *Manager) routes(prefix ...string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", m.index)
 	mux.HandleFunc("GET /api/v1/snapshot", m.snapshot)
+	mux.HandleFunc("GET /api/v1/catalog", m.catalog)
 	mux.HandleFunc("GET /api/v1/events", m.events)
 	mux.HandleFunc("POST /api/v1/actions", m.action)
 	mux.HandleFunc("POST /api/v1/interactions/{id}/resolve", m.resolveInteraction)
@@ -329,6 +331,12 @@ func (m *Manager) snapshot(w http.ResponseWriter, r *http.Request) {
 		"runtime":      map[string]any{"sequence": presentation.Sequence, "agents": presentation.Agents, "interactions": presentation.Interactions},
 		"presentation": presentation, "actor": r.Header.Get("X-Qcode-Actor"),
 	})
+}
+
+func (m *Manager) catalog(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	writeJSON(w, http.StatusOK, m.ui.RemoteCatalog(ctx))
 }
 
 func (m *Manager) action(w http.ResponseWriter, r *http.Request) {

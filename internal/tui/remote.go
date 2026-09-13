@@ -32,6 +32,18 @@ type RemotePresentation struct {
 	Interactions []session.Interaction `json:"interactions,omitempty"`
 }
 
+// RemoteCatalog contains the read-only selector data needed by the browser UI.
+// It deliberately mirrors existing TUI runtime state without changing it.
+type RemoteCatalog struct {
+	Models []string          `json:"models"`
+	Tools  []RemoteToolState `json:"tools"`
+}
+
+type RemoteToolState struct {
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+}
+
 type RemoteService interface {
 	Start(context.Context) (string, error)
 	Stop() error
@@ -145,6 +157,21 @@ func (u *UI) RemotePresentation() RemotePresentation {
 			ID: view.id, Name: name, Provider: view.provider, Model: view.model,
 			Status: string(summary.Status), Lines: lines,
 		})
+	}
+	return result
+}
+
+func (u *UI) RemoteCatalog(ctx context.Context) RemoteCatalog {
+	result := RemoteCatalog{}
+	if runner, ok := u.runner.(modelRunner); ok {
+		if models, err := runner.ListModels(ctx); err == nil {
+			result.Models = models
+		}
+	}
+	if runner, ok := u.runner.(toolRunner); ok {
+		for _, name := range runner.ToolNames() {
+			result.Tools = append(result.Tools, RemoteToolState{Name: name, Enabled: runner.ToolEnabled(name)})
+		}
 	}
 	return result
 }

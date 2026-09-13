@@ -22,6 +22,9 @@ type testPresentation struct {
 func (p *testPresentation) RemotePresentation() tui.RemotePresentation {
 	return tui.RemotePresentation{Active: "main", Views: []tui.RemoteAgentView{{ID: "main", Name: "main", Lines: []string{"hello"}}}}
 }
+func (p *testPresentation) RemoteCatalog(context.Context) tui.RemoteCatalog {
+	return tui.RemoteCatalog{}
+}
 func (p *testPresentation) SubscribePresentation(ctx context.Context) <-chan struct{} {
 	ch := make(chan struct{})
 	go func() { <-ctx.Done(); close(ch) }()
