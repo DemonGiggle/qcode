@@ -26,6 +26,7 @@ type RemoteAgentView struct {
 type RemotePresentation struct {
 	Sequence     uint64                `json:"sequence"`
 	Active       string                `json:"active"`
+	StatusBar    string                `json:"status_bar"`
 	Views        []RemoteAgentView     `json:"views"`
 	Agents       []session.Summary     `json:"agents"`
 	Interactions []session.Interaction `json:"interactions,omitempty"`
@@ -125,7 +126,7 @@ func (u *UI) RemotePresentation() RemotePresentation {
 	}
 	u.screenMu.Unlock()
 	sort.Slice(views, func(i, j int) bool { return views[i].id < views[j].id })
-	result := RemotePresentation{Sequence: sequence, Active: active, Agents: agents}
+	result := RemotePresentation{Sequence: sequence, Active: active, StatusBar: u.statusBar(), Agents: agents}
 	if source, ok := u.manager.(interface{ PendingInteractions() []session.Interaction }); ok {
 		result.Interactions = source.PendingInteractions()
 	}
