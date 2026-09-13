@@ -57,10 +57,10 @@ HTTPS URL after Serve reports that it is ready.
 
 On Linux, the user running qcode must be allowed to manage the local Tailscale
 daemon. If `/remote` reports an operator-permission error, run this once as an
-administrator, replacing the placeholder with the qcode user name:
+administrator:
 
 ```sh
-sudo tailscale set --operator=<your-user>
+sudo tailscale set --operator=$USER
 ```
 
 qcode intentionally does not invoke `sudo` itself. `/remote off` and qcode exit

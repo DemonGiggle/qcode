@@ -183,7 +183,7 @@ func tailscaleDNSName(ctx context.Context) (string, error) {
 	return status.Self.DNSName, nil
 }
 
-const tailscaleOperatorHint = "run `sudo tailscale set --operator=<your-user>` once, then retry /remote"
+const tailscaleOperatorHint = "Tailscale needs permission to enable remote control. Run `sudo tailscale set --operator=$USER` once, then retry `/remote`."
 
 func annotateTailscaleError(err error) error {
 	if err == nil {
@@ -191,15 +191,15 @@ func annotateTailscaleError(err error) error {
 	}
 	message := err.Error()
 	lower := strings.ToLower(message)
-	if strings.Contains(lower, "--operator") ||
-		(!strings.Contains(lower, "permission") &&
-			!strings.Contains(lower, "not authorized") &&
-			!strings.Contains(lower, "unauthorized") &&
-			!strings.Contains(lower, "must be root") &&
-			!strings.Contains(lower, "operator")) {
+	if !strings.Contains(lower, "access denied") &&
+		!strings.Contains(lower, "permission") &&
+		!strings.Contains(lower, "not authorized") &&
+		!strings.Contains(lower, "unauthorized") &&
+		!strings.Contains(lower, "must be root") &&
+		!strings.Contains(lower, "operator") {
 		return err
 	}
-	return fmt.Errorf("%w; %s", err, tailscaleOperatorHint)
+	return errors.New(tailscaleOperatorHint)
 }
 
 func randomID() (string, error) {

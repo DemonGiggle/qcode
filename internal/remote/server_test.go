@@ -93,9 +93,9 @@ func TestWatchServeOutput(t *testing.T) {
 }
 
 func TestAnnotateTailscaleErrorAddsOperatorSetupHint(t *testing.T) {
-	annotated := annotateTailscaleError(errors.New("permission denied"))
-	if !strings.Contains(annotated.Error(), tailscaleOperatorHint) {
-		t.Fatalf("annotated error = %q", annotated)
+	annotated := annotateTailscaleError(errors.New("Access denied: serve config denied\n\nUse 'sudo tailscale serve --https=443 --set-path=/qcode/abc http://127.0.0.1:1234'."))
+	if annotated.Error() != tailscaleOperatorHint {
+		t.Fatalf("annotated error = %q, want %q", annotated, tailscaleOperatorHint)
 	}
 
 	unchanged := annotateTailscaleError(errors.New("tailscale is disconnected"))
@@ -104,8 +104,8 @@ func TestAnnotateTailscaleErrorAddsOperatorSetupHint(t *testing.T) {
 	}
 
 	alreadyHinted := annotateTailscaleError(errors.New("permission denied; run tailscale set --operator=alice"))
-	if strings.Count(alreadyHinted.Error(), tailscaleOperatorHint) != 0 {
-		t.Fatalf("duplicated operator hint: %q", alreadyHinted)
+	if alreadyHinted.Error() != tailscaleOperatorHint {
+		t.Fatalf("operator error = %q, want %q", alreadyHinted, tailscaleOperatorHint)
 	}
 }
 
