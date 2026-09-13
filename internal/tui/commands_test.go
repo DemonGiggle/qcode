@@ -235,6 +235,21 @@ func TestStatusBarUsesColoredSegments(t *testing.T) {
 	}
 }
 
+func TestStatusBarShowsRemoteBadgeAtBeginning(t *testing.T) {
+	plain := statusBarWithRemote("ollama", "qwen", "~/code", 80, true, false, true)
+	if !strings.HasPrefix(plain, "[REMOTE] ") {
+		t.Fatalf("plain remote status bar = %q", plain)
+	}
+
+	colored := statusBarWithRemote("ollama", "qwen", "~/code", 80, true, true, true)
+	if !strings.HasPrefix(colored, "\x1b[1;30;42m REMOTE "+reset) {
+		t.Fatalf("colored remote status bar = %q", colored)
+	}
+	if visibleWidth(colored) > 80 {
+		t.Fatalf("colored remote status bar width = %d", visibleWidth(colored))
+	}
+}
+
 func TestStatusBarFitsTerminalWidth(t *testing.T) {
 	got := statusBar("openai", "a-very-long-model-name", "~/a/very/long/workspace/path", 32, true, true)
 	if visibleWidth(got) > 32 {

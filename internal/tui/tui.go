@@ -1213,7 +1213,7 @@ func (u *UI) printHeader() {
 	fmt.Fprintf(u.display, "\r\n")
 	u.printToolSummary()
 	if !u.statusActive {
-		fmt.Fprintf(u.display, "%s\r\n", statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel()))
+		fmt.Fprintf(u.display, "%s\r\n", u.statusBar())
 	}
 }
 
@@ -1268,12 +1268,20 @@ func (u *UI) renderStatusBarLocked(force bool) {
 	if !u.statusActive {
 		return
 	}
-	bar := statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+	bar := u.statusBar()
 	if !force && bar == u.statusBarText {
 		return
 	}
 	u.statusBarText = bar
 	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", u.height, bar)
+}
+
+func (u *UI) statusBar() string {
+	remote := false
+	if u.remoteService != nil {
+		remote, _, _ = u.remoteService.Status()
+	}
+	return statusBarWithRemote(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), remote, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
 }
 
 func (u *UI) teardownStatusBar() {
@@ -1287,15 +1295,20 @@ func (u *UI) teardownStatusBar() {
 }
 
 func statusBar(provider, model, root string, width int, unicodeEnabled, color bool, contextLabel ...string) string {
+	return statusBarWithRemote(provider, model, root, width, unicodeEnabled, color, false, contextLabel...)
+}
+
+func statusBarWithRemote(provider, model, root string, width int, unicodeEnabled, color, remote bool, contextLabel ...string) string {
 	provider = sanitizeDiffLine(provider, "<ESC>")
 	model = sanitizeDiffLine(model, "<ESC>")
 	root = sanitizeDiffLine(root, "<ESC>")
 
 	if !color {
-		parts := []string{
-			provider,
-			"[MODEL " + model + "]",
+		parts := []string{}
+		if remote {
+			parts = append(parts, remoteStatusBadge(false))
 		}
+		parts = append(parts, provider, "[MODEL "+model+"]")
 		if len(contextLabel) > 0 {
 			parts = append(parts, "[CTX "+contextLabel[0]+"]")
 		}
@@ -1314,17 +1327,18 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 		}
 		bar := strings.Join(parts, " ")
 		if width > 0 && visibleWidth(bar) > width {
-			if dynamic := compactStatusBar(contextLabel, false, unicodeEnabled); dynamic != "" && visibleWidth(dynamic) <= width {
+			if dynamic := compactStatusBar(contextLabel, false, unicodeEnabled, remote); dynamic != "" && visibleWidth(dynamic) <= width {
 				return dynamic
 			}
 		}
 		return truncateDiffLine(bar, width, unicodeEnabled)
 	}
 
-	segments := []string{
-		statusValue(provider, cyan),
-		statusSegment("MODEL", model, magenta),
+	segments := []string{}
+	if remote {
+		segments = append(segments, remoteStatusBadge(true))
 	}
+	segments = append(segments, statusValue(provider, cyan), statusSegment("MODEL", model, magenta))
 	if len(contextLabel) > 0 {
 		segments = append(segments, statusSegment("CTX", contextLabel[0], green))
 	}
@@ -1347,7 +1361,7 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 	}
 	bar := strings.Join(segments, separator)
 	if width > 0 && visibleWidth(bar) > width {
-		if dynamic := compactStatusBar(contextLabel, true, unicodeEnabled); dynamic != "" && visibleWidth(dynamic) <= width {
+		if dynamic := compactStatusBar(contextLabel, true, unicodeEnabled, remote); dynamic != "" && visibleWidth(dynamic) <= width {
 			return dynamic + reset
 		}
 		bar = truncateDiffLine(bar, width, unicodeEnabled)
@@ -1355,15 +1369,21 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 	return bar + reset
 }
 
-func compactStatusBar(labels []string, color, unicodeEnabled bool) string {
-	if len(labels) == 0 {
+func compactStatusBar(labels []string, color, unicodeEnabled, remote bool) string {
+	if len(labels) == 0 && !remote {
 		return ""
 	}
 	separator := "  │  "
 	if !unicodeEnabled {
 		separator = "  |  "
 	}
-	segments := []string{statusSegment("CTX", labels[0], green)}
+	segments := []string{}
+	if remote {
+		segments = append(segments, remoteStatusBadge(color))
+	}
+	if len(labels) > 0 {
+		segments = append(segments, statusSegment("CTX", labels[0], green))
+	}
 	if len(labels) > 2 && labels[2] != "" {
 		// Keep step progress visible on narrow terminals; token totals are less
 		// actionable while a request is running.
@@ -1372,7 +1392,13 @@ func compactStatusBar(labels []string, color, unicodeEnabled bool) string {
 		segments = append(segments, statusSegment("TOK", labels[1], cyan))
 	}
 	if !color {
-		parts := []string{"[CTX " + labels[0] + "]"}
+		parts := []string{}
+		if remote {
+			parts = append(parts, remoteStatusBadge(false))
+		}
+		if len(labels) > 0 {
+			parts = append(parts, "[CTX "+labels[0]+"]")
+		}
 		if len(labels) > 2 && labels[2] != "" {
 			parts = append(parts, "[STEP "+labels[2]+"]")
 		} else if len(labels) > 1 {
@@ -1381,6 +1407,13 @@ func compactStatusBar(labels []string, color, unicodeEnabled bool) string {
 		return strings.Join(parts, " ")
 	}
 	return strings.Join(segments, separator)
+}
+
+func remoteStatusBadge(color bool) string {
+	if !color {
+		return "[REMOTE]"
+	}
+	return "\x1b[1;30;42m REMOTE " + reset
 }
 
 func statusSegment(label, value, color string) string {

@@ -3,6 +3,7 @@ package remote
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -88,6 +89,23 @@ func TestWatchServeOutput(t *testing.T) {
 	watchServeOutput(strings.NewReader("serve needs setup\n"), failed)
 	if err := <-failed; err == nil || !strings.Contains(err.Error(), "needs setup") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestAnnotateTailscaleErrorAddsOperatorSetupHint(t *testing.T) {
+	annotated := annotateTailscaleError(errors.New("permission denied"))
+	if !strings.Contains(annotated.Error(), tailscaleOperatorHint) {
+		t.Fatalf("annotated error = %q", annotated)
+	}
+
+	unchanged := annotateTailscaleError(errors.New("tailscale is disconnected"))
+	if strings.Contains(unchanged.Error(), tailscaleOperatorHint) {
+		t.Fatalf("unrelated error received operator hint: %q", unchanged)
+	}
+
+	alreadyHinted := annotateTailscaleError(errors.New("permission denied; run tailscale set --operator=alice"))
+	if strings.Count(alreadyHinted.Error(), tailscaleOperatorHint) != 0 {
+		t.Fatalf("duplicated operator hint: %q", alreadyHinted)
 	}
 }
 

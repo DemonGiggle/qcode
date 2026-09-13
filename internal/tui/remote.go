@@ -58,6 +58,7 @@ func (u *UI) handleRemoteCommand(ctx context.Context, fields []string) {
 			u.printSystemMessage(yellow + "Unable to stop remote control: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 			return
 		}
+		u.drawStatusBar()
 		u.printSystemMessage(green + "Remote control stopped." + reset)
 		return
 	}
@@ -77,6 +78,7 @@ func (u *UI) handleRemoteCommand(ctx context.Context, fields []string) {
 		u.printSystemMessage(yellow + "Unable to start remote control: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 		return
 	}
+	u.drawStatusBar()
 	u.printSystemMessage(green + "Remote control available at " + sanitizeDiffLine(url, "<ESC>") + reset)
 }
 

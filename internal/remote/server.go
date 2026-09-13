@@ -80,7 +80,7 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 	if err := cmd.Start(); err != nil {
 		_ = server.Close()
 		_ = listener.Close()
-		return "", fmt.Errorf("start tailscale serve: %w", err)
+		return "", fmt.Errorf("start tailscale serve: %w", annotateTailscaleError(err))
 	}
 	ready := make(chan error, 1)
 	go watchServeOutput(stdout, ready)
@@ -92,7 +92,7 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 			_ = cmd.Wait()
 			_ = server.Close()
 			_ = listener.Close()
-			return "", err
+			return "", annotateTailscaleError(err)
 		}
 	case <-time.After(15 * time.Second):
 		_ = cmd.Process.Kill()
@@ -159,9 +159,13 @@ func watchServeOutput(reader io.Reader, ready chan<- error) {
 
 func tailscaleDNSName(ctx context.Context) (string, error) {
 	command := exec.CommandContext(ctx, "tailscale", "status", "--json")
-	output, err := command.Output()
+	output, err := command.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("tailscale is unavailable or disconnected: %w", err)
+		detail := strings.TrimSpace(string(output))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return "", fmt.Errorf("tailscale is unavailable or disconnected: %w", annotateTailscaleError(errors.New(detail)))
 	}
 	var status struct {
 		BackendState string
@@ -177,6 +181,25 @@ func tailscaleDNSName(ctx context.Context) (string, error) {
 		return "", errors.New("tailscale status did not report a MagicDNS name")
 	}
 	return status.Self.DNSName, nil
+}
+
+const tailscaleOperatorHint = "run `sudo tailscale set --operator=<your-user>` once, then retry /remote"
+
+func annotateTailscaleError(err error) error {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	lower := strings.ToLower(message)
+	if strings.Contains(lower, "--operator") ||
+		(!strings.Contains(lower, "permission") &&
+			!strings.Contains(lower, "not authorized") &&
+			!strings.Contains(lower, "unauthorized") &&
+			!strings.Contains(lower, "must be root") &&
+			!strings.Contains(lower, "operator")) {
+		return err
+	}
+	return fmt.Errorf("%w; %s", err, tailscaleOperatorHint)
 }
 
 func randomID() (string, error) {

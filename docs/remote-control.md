@@ -55,6 +55,17 @@ connected, starts a web server on a random `127.0.0.1` port, and runs a
 foreground `tailscale serve` proxy on a unique path. The command prints the
 HTTPS URL after Serve reports that it is ready.
 
+On Linux, the user running qcode must be allowed to manage the local Tailscale
+daemon. If `/remote` reports an operator-permission error, run this once as an
+administrator, replacing the placeholder with the qcode user name:
+
+```sh
+sudo tailscale set --operator=<your-user>
+```
+
+qcode intentionally does not invoke `sudo` itself. `/remote off` and qcode exit
+stop the foreground Serve proxy and close the local listener.
+
 The web UI requires the `Tailscale-User-Login` header injected by Serve. Direct
 network listeners, anonymous clients, tagged devices without a user identity,
 and Tailscale Funnel are not supported. Anyone permitted by the tailnet policy
