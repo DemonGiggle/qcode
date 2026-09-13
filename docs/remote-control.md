@@ -80,6 +80,10 @@ off` to close browsers, stop the loopback server, and interrupt the foreground
 Serve process. Exiting qcode performs the same cleanup without resetting other
 Serve mappings on the machine.
 
+When `/verbose` is enabled, qcode records `Remote connect: <identity>` and
+`Remote disconnect: <identity>` in the active screen history for each browser
+event stream connection.
+
 Browser commands are injected as complete lines into the normal TUI command
 loop, so they use the same agent manager, queues, session state, and command
 handlers as local input. Remote `/exit`, `/quit`, and `/remote` mutations are

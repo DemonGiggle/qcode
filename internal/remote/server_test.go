@@ -9,15 +9,17 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"qcode/internal/tui"
 )
 
 type testPresentation struct {
-	mu      sync.Mutex
-	actor   string
-	line    string
-	catalog tui.RemoteCatalog
+	mu          sync.Mutex
+	actor       string
+	line        string
+	catalog     tui.RemoteCatalog
+	connections chan string
 }
 
 func (p *testPresentation) RemotePresentation() tui.RemotePresentation {
@@ -44,6 +46,16 @@ func (p *testPresentation) ResolveRemoteInteraction(actor, id string, value []by
 	p.actor, p.line = actor, id+":"+string(value)
 	p.mu.Unlock()
 	return nil
+}
+func (p *testPresentation) RemoteConnection(actor string, connected bool) {
+	if p.connections == nil {
+		return
+	}
+	event := "disconnect"
+	if connected {
+		event = "connect"
+	}
+	p.connections <- event + ":" + actor
 }
 
 func newTestHandler(t *testing.T) (http.Handler, *testPresentation) {
@@ -111,6 +123,44 @@ func TestRemotePageHasCatalogBackedSelectorControls(t *testing.T) {
 		if !strings.Contains(indexHTML, fragment) {
 			t.Fatalf("remote page is missing selector behavior %q", fragment)
 		}
+	}
+}
+
+func TestEventsReportConnectionLifecycle(t *testing.T) {
+	presentation := &testPresentation{connections: make(chan string, 2)}
+	manager := New(presentation)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/events", nil).WithContext(ctx)
+	request.Header.Set(identityHeader, "alice@example.com")
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		manager.routes().ServeHTTP(response, request)
+		close(done)
+	}()
+
+	select {
+	case event := <-presentation.connections:
+		if event != "connect:alice@example.com" {
+			t.Fatalf("connect event = %q", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for connect event")
+	}
+	cancel()
+	select {
+	case event := <-presentation.connections:
+		if event != "disconnect:alice@example.com" {
+			t.Fatalf("disconnect event = %q", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for disconnect event")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("events handler did not stop")
 	}
 }
 

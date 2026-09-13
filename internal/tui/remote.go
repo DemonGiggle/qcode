@@ -428,3 +428,20 @@ func (u *UI) SubmitRemote(actor, line string) error {
 	u.input.inject(append([]byte{ctrlU}, []byte(line+"\r")...))
 	return nil
 }
+
+// RemoteConnection records browser connection lifecycle events only when
+// verbose tracing is enabled. The event is written through the active display
+// so it remains visible in the terminal and in the remote presentation.
+func (u *UI) RemoteConnection(actor string, connected bool) {
+	u.screenMu.Lock()
+	verbose := u.verbose
+	u.screenMu.Unlock()
+	if !verbose {
+		return
+	}
+	event := "disconnect"
+	if connected {
+		event = "connect"
+	}
+	u.printSystemMessage(dim + "Remote " + event + ": " + sanitizeDiffLine(actor, "<ESC>") + reset)
+}

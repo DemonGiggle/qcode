@@ -200,3 +200,21 @@ func TestRemoteOwnerCommandsAreRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestRemoteConnectionLogsOnlyInVerboseMode(t *testing.T) {
+	var output bytes.Buffer
+	u := &UI{display: newHistoryWriter(&output), verbose: true}
+	u.RemoteConnection("alice@example.com", true)
+	u.RemoteConnection("alice@example.com", false)
+	if got := output.String(); !strings.Contains(got, "Remote connect: alice@example.com") || !strings.Contains(got, "Remote disconnect: alice@example.com") {
+		t.Fatalf("verbose remote connection log = %q", got)
+	}
+
+	output.Reset()
+	u.verbose = false
+	u.RemoteConnection("alice@example.com", true)
+	u.RemoteConnection("alice@example.com", false)
+	if output.Len() != 0 {
+		t.Fatalf("non-verbose remote connection log = %q", output.String())
+	}
+}

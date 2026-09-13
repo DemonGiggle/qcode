@@ -30,6 +30,10 @@ type presentation interface {
 	ResolveRemoteInteraction(string, string, []byte) error
 }
 
+type remoteConnectionLogger interface {
+	RemoteConnection(string, bool)
+}
+
 type Manager struct {
 	ui presentation
 
@@ -395,6 +399,11 @@ func (m *Manager) events(w http.ResponseWriter, r *http.Request) {
 	m.clients++
 	m.mu.Unlock()
 	defer func() { m.mu.Lock(); m.clients--; m.mu.Unlock() }()
+	if logger, ok := m.ui.(remoteConnectionLogger); ok {
+		actor := r.Header.Get("X-Qcode-Actor")
+		logger.RemoteConnection(actor, true)
+		defer logger.RemoteConnection(actor, false)
+	}
 	ctx := r.Context()
 	presentation := m.ui.SubscribePresentation(ctx)
 	ticker := time.NewTicker(15 * time.Second)
