@@ -206,14 +206,19 @@ func TestRemoteConnectionLogsOnlyInVerboseMode(t *testing.T) {
 	u := &UI{display: newHistoryWriter(&output), verbose: true}
 	u.RemoteConnection("alice@example.com", true)
 	u.RemoteConnection("alice@example.com", false)
+	u.RemoteRequestRejected("GET", "/api/v1/events", "missing Tailscale-User-Login")
 	if got := output.String(); !strings.Contains(got, "Remote connect: alice@example.com") || !strings.Contains(got, "Remote disconnect: alice@example.com") {
 		t.Fatalf("verbose remote connection log = %q", got)
+	}
+	if !strings.Contains(output.String(), "Remote reject: missing Tailscale-User-Login (GET /api/v1/events)") {
+		t.Fatalf("verbose remote rejection log = %q", output.String())
 	}
 
 	output.Reset()
 	u.verbose = false
 	u.RemoteConnection("alice@example.com", true)
 	u.RemoteConnection("alice@example.com", false)
+	u.RemoteRequestRejected("GET", "/api/v1/events", "missing Tailscale-User-Login")
 	if output.Len() != 0 {
 		t.Fatalf("non-verbose remote connection log = %q", output.String())
 	}

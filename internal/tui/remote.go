@@ -445,3 +445,16 @@ func (u *UI) RemoteConnection(actor string, connected bool) {
 	}
 	u.printSystemMessage(dim + "Remote " + event + ": " + sanitizeDiffLine(actor, "<ESC>") + reset)
 }
+
+// RemoteRequestRejected records a remote request that failed before reaching a
+// route. It is useful for diagnosing missing Tailscale identity headers and
+// cross-origin browser configuration while verbose tracing is enabled.
+func (u *UI) RemoteRequestRejected(method, path, reason string) {
+	u.screenMu.Lock()
+	verbose := u.verbose
+	u.screenMu.Unlock()
+	if !verbose {
+		return
+	}
+	u.printSystemMessage(dim + "Remote reject: " + sanitizeDiffLine(reason, "<ESC>") + " (" + sanitizeDiffLine(method, "<ESC>") + " " + sanitizeDiffLine(path, "<ESC>") + ")" + reset)
+}

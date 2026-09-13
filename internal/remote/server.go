@@ -34,6 +34,10 @@ type remoteConnectionLogger interface {
 	RemoteConnection(string, bool)
 }
 
+type remoteRequestLogger interface {
+	RemoteRequestRejected(string, string, string)
+}
+
 type Manager struct {
 	ui presentation
 
@@ -294,8 +298,19 @@ func (m *Manager) routes(prefix ...string) http.Handler {
 		return handler
 	}
 	base := strings.TrimSuffix(prefix[0], "/")
+	redirect := m.authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target := base + "/"
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusPermanentRedirect)
+	}))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == base || strings.HasPrefix(r.URL.Path, base+"/") {
+		if r.URL.Path == base {
+			redirect.ServeHTTP(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, base+"/") {
 			http.StripPrefix(base, handler).ServeHTTP(w, r)
 			return
 		}
@@ -307,12 +322,14 @@ func (m *Manager) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := strings.TrimSpace(r.Header.Get(identityHeader))
 		if identity == "" {
+			m.reportRejectedRequest(r, "missing Tailscale-User-Login")
 			http.Error(w, "a named Tailscale user identity is required", http.StatusUnauthorized)
 			return
 		}
 		if r.Method != http.MethodGet {
 			origin := r.Header.Get("Origin")
 			if origin != "" && origin != "https://"+r.Host {
+				m.reportRejectedRequest(r, "cross-origin request")
 				http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 				return
 			}
@@ -320,6 +337,13 @@ func (m *Manager) authenticate(next http.Handler) http.Handler {
 		r.Header.Set("X-Qcode-Actor", identity)
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (m *Manager) reportRejectedRequest(r *http.Request, reason string) {
+	logger, ok := m.ui.(remoteRequestLogger)
+	if ok {
+		logger.RemoteRequestRejected(r.Method, r.URL.Path, reason)
+	}
 }
 
 func (m *Manager) index(w http.ResponseWriter, _ *http.Request) {

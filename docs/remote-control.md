@@ -82,7 +82,10 @@ Serve mappings on the machine.
 
 When `/verbose` is enabled, qcode records `Remote connect: <identity>` and
 `Remote disconnect: <identity>` in the active screen history for each browser
-event stream connection.
+event stream connection. It also records rejected requests, including the
+missing-identity case, to distinguish Tailscale authentication failures from
+requests that never reach qcode. The printed URL includes a trailing slash;
+keep it when opening the URL because the web UI uses relative API paths.
 
 Browser commands are injected as complete lines into the normal TUI command
 loop, so they use the same agent manager, queues, session state, and command

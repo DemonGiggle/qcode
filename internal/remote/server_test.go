@@ -20,6 +20,7 @@ type testPresentation struct {
 	line        string
 	catalog     tui.RemoteCatalog
 	connections chan string
+	rejections  chan string
 }
 
 func (p *testPresentation) RemotePresentation() tui.RemotePresentation {
@@ -57,6 +58,12 @@ func (p *testPresentation) RemoteConnection(actor string, connected bool) {
 	}
 	p.connections <- event + ":" + actor
 }
+func (p *testPresentation) RemoteRequestRejected(method, path, reason string) {
+	if p.rejections == nil {
+		return
+	}
+	p.rejections <- method + " " + path + ":" + reason
+}
 
 func newTestHandler(t *testing.T) (http.Handler, *testPresentation) {
 	t.Helper()
@@ -71,6 +78,26 @@ func TestRequiresNamedTailscaleIdentity(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestReportsRejectedRemoteRequest(t *testing.T) {
+	presentation := &testPresentation{rejections: make(chan string, 1)}
+	handler := New(presentation).routes()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/events", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+	select {
+	case rejection := <-presentation.rejections:
+		want := "GET /api/v1/events:missing Tailscale-User-Login"
+		if rejection != want {
+			t.Fatalf("rejection = %q, want %q", rejection, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for rejected request")
 	}
 }
 
@@ -173,6 +200,20 @@ func TestPrefixedServePathRoutesToAPI(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"hello"`) {
 		t.Fatalf("response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestPrefixedServePathRedirectsMissingTrailingSlash(t *testing.T) {
+	handler := New(&testPresentation{}).routes("/qcode/session")
+	request := httptest.NewRequest(http.MethodGet, "/qcode/session", nil)
+	request.Header.Set(identityHeader, "alice@example.com")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusPermanentRedirect {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusPermanentRedirect)
+	}
+	if location := response.Header().Get("Location"); location != "/qcode/session/" {
+		t.Fatalf("Location = %q, want %q", location, "/qcode/session/")
 	}
 }
 
