@@ -126,7 +126,7 @@ func (u *UI) RemotePresentation() RemotePresentation {
 	}
 	u.screenMu.Unlock()
 	sort.Slice(views, func(i, j int) bool { return views[i].id < views[j].id })
-	result := RemotePresentation{Sequence: sequence, Active: active, StatusBar: u.statusBar(), Agents: agents}
+	result := RemotePresentation{Sequence: sequence, Active: active, StatusBar: u.remoteStatusBar(), Agents: agents}
 	if source, ok := u.manager.(interface{ PendingInteractions() []session.Interaction }); ok {
 		result.Interactions = source.PendingInteractions()
 	}
@@ -147,6 +147,16 @@ func (u *UI) RemotePresentation() RemotePresentation {
 		})
 	}
 	return result
+}
+
+// remoteStatusBar uses the same formatter as the terminal footer, but always
+// includes ANSI styling so the browser can faithfully render TUI categories.
+func (u *UI) remoteStatusBar() string {
+	remote := false
+	if u.remoteService != nil {
+		remote, _, _ = u.remoteService.Status()
+	}
+	return statusBarWithRemote(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, true, remote, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
 }
 
 func (u *UI) SubscribePresentation(ctx context.Context) <-chan struct{} {
