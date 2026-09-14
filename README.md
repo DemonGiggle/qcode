@@ -46,6 +46,12 @@ qcode --provider openai --model gpt-5
 
 # Try without configuration
 qcode --demo "show me how qcode works"
+
+# Update an installed qcode binary
+qcode update
+
+# Update using a different architecture for the current operating system
+qcode update --arch arm64
 ```
 
 ## 📖 Documentation
