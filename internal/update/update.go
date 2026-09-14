@@ -490,7 +490,7 @@ func parseVersion(raw string) (semanticVersion, bool) {
 	raw = strings.SplitN(raw, "+", 2)[0]
 	parts := strings.SplitN(raw, "-", 2)
 	core := strings.Split(parts[0], ".")
-	if len(core) != 3 {
+	if len(core) != 2 && len(core) != 3 {
 		return semanticVersion{}, false
 	}
 	values := make([]int64, 3)

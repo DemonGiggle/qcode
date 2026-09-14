@@ -20,6 +20,7 @@ func TestParseVersionAndCompare(t *testing.T) {
 		valid  bool
 	}{
 		{name: "equal with v prefix", left: "v1.2.3", right: "1.2.3", result: 0, valid: true},
+		{name: "two component release tags", left: "v0.6", right: "v0.7", result: -1, valid: true},
 		{name: "patch update", left: "1.2.3", right: "1.2.4", result: -1, valid: true},
 		{name: "major downgrade", left: "2.0.0", right: "1.9.9", result: 1, valid: true},
 		{name: "release beats prerelease", left: "1.2.3-rc.1", right: "1.2.3", result: -1, valid: true},
@@ -95,7 +96,7 @@ func TestRunDownloadsAndReplacesExecutable(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		switch request.URL.Path {
 		case "/latest":
-			return fakeResponse(http.StatusOK, `{"tag_name":"v1.1.0","assets":[{"name":"qcode_linux_amd64","browser_download_url":"https://api.test/download/linux"},{"name":"qcode_linux_arm64","browser_download_url":"https://api.test/download/arm64"}]}`), nil
+			return fakeResponse(http.StatusOK, `{"tag_name":"v0.7","assets":[{"name":"qcode_linux_amd64","browser_download_url":"https://api.test/download/linux"},{"name":"qcode_linux_arm64","browser_download_url":"https://api.test/download/arm64"}]}`), nil
 		case "/download/linux":
 			downloads.Add(1)
 			return fakeResponse(http.StatusOK, "new binary"), nil
@@ -106,7 +107,7 @@ func TestRunDownloadsAndReplacesExecutable(t *testing.T) {
 
 	var output strings.Builder
 	err := Run(context.Background(), nil, Options{
-		CurrentVersion:       "v1.0.0",
+		CurrentVersion:       "v0.6",
 		GOOS:                 "linux",
 		GOARCH:               "amd64",
 		ExecutablePath:       target,
@@ -125,7 +126,7 @@ func TestRunDownloadsAndReplacesExecutable(t *testing.T) {
 	if string(content) != "new binary" || downloads.Load() != 1 {
 		t.Fatalf("content = %q, downloads = %d", content, downloads.Load())
 	}
-	if !strings.Contains(output.String(), "from v1.0.0 to v1.1.0") || !strings.Contains(output.String(), target) {
+	if !strings.Contains(output.String(), "from v0.6 to v0.7") || !strings.Contains(output.String(), target) {
 		t.Fatalf("output = %q", output.String())
 	}
 }
