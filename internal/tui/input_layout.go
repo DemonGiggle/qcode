@@ -115,6 +115,17 @@ func (u *UI) paintFixedLocked(direction int) {
 			screenRows[i+2] = row.text
 		}
 	}
+	if u.remoteLogin != nil && outputHeight > 0 {
+		for i := 0; i < outputHeight; i++ {
+			screenRows[i+2] = ""
+		}
+		for i, row := range u.remoteLoginRows(u.width, outputHeight) {
+			if i == 0 {
+				row = u.remoteLoginHeading(row)
+			}
+			screenRows[i+2] = row
+		}
+	}
 	for i := 0; i < count; i++ {
 		text := fmt.Sprintf("  %-8s %s", matches[i].name, matches[i].description)
 		if ColorEnabled(u.out) {

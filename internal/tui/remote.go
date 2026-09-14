@@ -79,8 +79,15 @@ type RemoteSessionState struct {
 	AgentCount int       `json:"agent_count"`
 }
 
+type RemoteLogin struct {
+	URL       string
+	ExpiresAt time.Time
+}
+
 type RemoteService interface {
 	Start(context.Context) (string, error)
+	IssueLogin(context.Context) (RemoteLogin, error)
+	LoginState() string
 	Stop() error
 	Status() (bool, string, int)
 }
@@ -110,6 +117,7 @@ func (u *UI) handleRemoteCommand(ctx context.Context, fields []string) {
 		return
 	}
 	if len(fields) == 2 && fields[1] == "off" {
+		u.clearRemoteLogin()
 		if err := u.remoteService.Stop(); err != nil {
 			u.printSystemMessage(yellow + "Unable to stop remote control: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 			return
@@ -122,11 +130,12 @@ func (u *UI) handleRemoteCommand(ctx context.Context, fields []string) {
 		u.printSystemMessage(yellow + "Usage: /remote [status|off]" + reset)
 		return
 	}
-	if running, url, clients := u.remoteService.Status(); running {
-		u.printSystemMessage(fmt.Sprintf("%sRemote control: %s · %d connected%s", green, sanitizeDiffLine(url, "<ESC>"), clients, reset))
-		return
-	} else if len(fields) == 2 {
-		u.printSystemMessage(dim + "Remote control is off." + reset)
+	if len(fields) == 2 {
+		if running, url, clients := u.remoteService.Status(); running {
+			u.printSystemMessage(fmt.Sprintf("%sRemote control: %s · %d connected · login link: %s%s", green, sanitizeDiffLine(url, "<ESC>"), clients, u.remoteService.LoginState(), reset))
+		} else {
+			u.printSystemMessage(dim + "Remote control is off." + reset)
+		}
 		return
 	}
 	url, err := u.remoteService.Start(ctx)
@@ -147,6 +156,12 @@ func (u *UI) handleRemoteCommand(ctx context.Context, fields []string) {
 		}
 	}
 	u.printSystemMessage(dim + "Remote access requires a browser signed in to this Tailscale tailnet." + reset)
+	login, err := u.remoteService.IssueLogin(ctx)
+	if err != nil {
+		u.printSystemMessage(yellow + "Unable to issue remote login link." + reset)
+		return
+	}
+	u.showRemoteLogin(login)
 }
 
 func (u *UI) RemotePresentation() RemotePresentation {

@@ -230,6 +230,9 @@ type UI struct {
 	persistence          *sessionPersistence
 	sessionHost          *UI
 	remoteService        RemoteService
+	remoteLogin          *RemoteLogin
+	remoteQR             []string
+	remoteLoginTimer     *time.Timer
 }
 
 // SetSkillCatalog configures the optional /skill selector.
@@ -451,6 +454,7 @@ func (u *UI) SetDemoPromptScript(prompts []string, firstDelay, queueDelay time.D
 }
 
 func (u *UI) Run(ctx context.Context) error {
+	defer u.clearRemoteLogin()
 	if u.runner == nil {
 		return fmt.Errorf("terminal UI has no agent runner")
 	}
@@ -536,6 +540,7 @@ func (u *UI) Run(ctx context.Context) error {
 		if line == "" {
 			continue
 		}
+		u.clearRemoteLogin()
 		if line == "/resume" || strings.HasPrefix(line, "/resume ") {
 			fields := strings.Fields(line)
 			if len(fields) > 2 {

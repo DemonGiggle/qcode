@@ -41,20 +41,24 @@ type remoteRequestLogger interface {
 type Manager struct {
 	ui presentation
 
-	mu        sync.Mutex
-	server    *http.Server
-	listener  net.Listener
-	serve     *exec.Cmd
-	serveDone chan struct{}
-	command   string
-	ip        string
-	url       string
-	clients   int
+	lifecycleMu sync.Mutex
+	mu          sync.Mutex
+	server      *http.Server
+	listener    net.Listener
+	serve       *exec.Cmd
+	serveDone   chan struct{}
+	command     string
+	ip          string
+	url         string
+	clients     int
+	auth        *authStore
 }
 
-func New(ui presentation) *Manager { return &Manager{ui: ui} }
+func New(ui presentation) *Manager { return &Manager{ui: ui, auth: newAuthStore()} }
 
 func (m *Manager) Start(ctx context.Context) (string, error) {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 	m.mu.Lock()
 	if m.server != nil {
 		url := m.url
@@ -77,7 +81,14 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 		return "", err
 	}
 	prefix := "/qcode/" + id
-	server := &http.Server{Handler: m.routes(prefix), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	auth := newAuthStore()
+	started := false
+	defer func() {
+		if !started {
+			auth.close()
+		}
+	}()
+	server := &http.Server{Handler: m.routesWithAuth(auth, prefix), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() { _ = server.Serve(listener) }()
 	target := "http://" + listener.Addr().String()
 	cmd := exec.CommandContext(ctx, "tailscale", "serve", "--https=443", "--set-path="+prefix, target)
@@ -130,6 +141,11 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 		return m.url, nil
 	}
 	done := make(chan struct{})
+	if m.auth != nil {
+		m.auth.close()
+	}
+	m.auth = auth
+	started = true
 	m.server, m.listener, m.serve, m.serveDone, m.command, m.ip, m.url = server, listener, cmd, done, strings.Join(cmd.Args, " "), tailscaleIP, url
 	m.mu.Unlock()
 	go func() {
@@ -137,6 +153,7 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 		_ = cmd.Wait()
 		m.mu.Lock()
 		if m.serve == cmd {
+			auth.close()
 			staleServer, staleListener := m.server, m.listener
 			m.serve = nil
 			m.server, m.listener, m.serveDone, m.command, m.ip, m.url = nil, nil, nil, "", "", ""
@@ -242,8 +259,13 @@ func randomID() (string, error) {
 }
 
 func (m *Manager) Stop() error {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 	m.mu.Lock()
 	server, listener, cmd, done := m.server, m.listener, m.serve, m.serveDone
+	if m.auth != nil {
+		m.auth.close()
+	}
 	m.server, m.listener, m.serve, m.serveDone, m.command, m.ip, m.url = nil, nil, nil, nil, "", "", ""
 	m.mu.Unlock()
 	if server == nil {
@@ -292,24 +314,38 @@ func (m *Manager) TailscaleIP() string {
 }
 
 func (m *Manager) routes(prefix ...string) http.Handler {
+	m.mu.Lock()
+	auth := m.auth
+	m.mu.Unlock()
+	return m.routesWithAuth(auth, prefix...)
+}
+
+func (m *Manager) routesWithAuth(auth *authStore, prefix ...string) http.Handler {
 	base := ""
 	if len(prefix) > 0 {
 		base = strings.TrimSuffix(prefix[0], "/")
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
 		m.index(w, base+"/")
 	})
-	mux.HandleFunc("GET /api/v1/snapshot", m.snapshot)
-	mux.HandleFunc("GET /api/v1/catalog", m.catalog)
-	mux.HandleFunc("GET /api/v1/events", m.events)
-	mux.HandleFunc("POST /api/v1/actions", m.action)
-	mux.HandleFunc("POST /api/v1/interactions/{id}/resolve", m.resolveInteraction)
+	mux.HandleFunc("POST /api/v1/login", auth.exchange)
+	api := http.NewServeMux()
+	api.HandleFunc("GET /api/v1/snapshot", m.snapshot)
+	api.HandleFunc("GET /api/v1/catalog", m.catalog)
+	api.HandleFunc("GET /api/v1/events", m.events)
+	api.HandleFunc("POST /api/v1/actions", m.action)
+	api.HandleFunc("POST /api/v1/interactions/{id}/resolve", m.resolveInteraction)
+	mux.Handle("/api/v1/", auth.requireSession(m, api))
 	handler := m.authenticate(mux)
 	if base == "" {
 		return handler
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == base {
+			r = r.Clone(r.Context())
+			r.URL.Path, r.URL.RawPath = "/", ""
+		}
 		if strings.HasPrefix(r.URL.Path, base+"/") {
 			http.StripPrefix(base, handler).ServeHTTP(w, r)
 			return
@@ -347,6 +383,7 @@ func (m *Manager) reportRejectedRequest(r *http.Request, reason string) {
 }
 
 func (m *Manager) index(w http.ResponseWriter, basePath string) {
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'")
 	w.Header().Set("Cache-Control", "no-store")

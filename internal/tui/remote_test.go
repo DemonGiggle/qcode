@@ -21,6 +21,7 @@ type fakeRemoteService struct {
 	command string
 	ip      string
 	stopped bool
+	issues  int
 }
 
 type remoteCatalogRunner struct {
@@ -163,7 +164,12 @@ func (s *fakeRemoteService) Start(context.Context) (string, error) {
 	s.url = "https://host.tailnet.ts.net/qcode/test"
 	return s.url, nil
 }
-func (s *fakeRemoteService) Stop() error                 { s.running, s.stopped = false, true; return nil }
+func (s *fakeRemoteService) Stop() error { s.running, s.stopped = false, true; return nil }
+func (s *fakeRemoteService) IssueLogin(context.Context) (RemoteLogin, error) {
+	s.issues++
+	return RemoteLogin{URL: s.url + "#login=test-secret", ExpiresAt: time.Now().Add(3 * time.Minute)}, nil
+}
+func (s *fakeRemoteService) LoginState() string          { return "available" }
 func (s *fakeRemoteService) Status() (bool, string, int) { return s.running, s.url, 2 }
 func (s *fakeRemoteService) ServeCommand() string        { return s.command }
 func (s *fakeRemoteService) TailscaleIP() string         { return s.ip }
@@ -174,6 +180,7 @@ func TestRemoteCommandLifecycle(t *testing.T) {
 	service := &fakeRemoteService{command: "tailscale serve --https=443 --set-path=/qcode/test http://127.0.0.1:1234", ip: "100.64.0.1"}
 	u := &UI{display: history, remoteService: service}
 	u.handleRemoteCommand(context.Background(), []string{"/remote"})
+	defer u.clearRemoteLogin()
 	if !service.running {
 		t.Fatal("remote service did not start")
 	}
@@ -185,6 +192,17 @@ func TestRemoteCommandLifecycle(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "DNS check: this hostname should resolve to Tailscale IP "+service.ip) {
 		t.Fatalf("remote IP output = %q", output.String())
+	}
+	if strings.Contains(output.String(), "test-secret") {
+		t.Fatal("login link entered shared history")
+	}
+	u.handleRemoteCommand(context.Background(), []string{"/remote", "status"})
+	if service.issues != 1 {
+		t.Fatal("status issued a login")
+	}
+	u.handleRemoteCommand(context.Background(), []string{"/remote"})
+	if service.issues != 2 {
+		t.Fatal("repeated /remote did not issue a new login")
 	}
 	u.handleRemoteCommand(context.Background(), []string{"/remote", "off"})
 	if !service.stopped {

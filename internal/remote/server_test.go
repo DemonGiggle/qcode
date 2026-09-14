@@ -3,6 +3,7 @@ package remote
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -71,7 +72,20 @@ func (p *testPresentation) RemoteRequestRejected(method, path, reason string) {
 func newTestHandler(t *testing.T) (http.Handler, *testPresentation) {
 	t.Helper()
 	presentation := &testPresentation{}
-	return New(presentation).routes(), presentation
+	return authorizedTestManager(presentation).routes(), presentation
+}
+
+const testSessionKey = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func authorizedTestManager(p presentation) *Manager {
+	m := New(p)
+	m.auth.sessions[sha256.Sum256([]byte(testSessionKey))] = "alice@example.com"
+	return m
+}
+
+func authorizeTestRequest(r *http.Request) {
+	r.Header.Set(identityHeader, "alice@example.com")
+	r.Header.Set("Authorization", "Bearer "+testSessionKey)
 }
 
 func TestRequiresNamedTailscaleIdentity(t *testing.T) {
@@ -107,7 +121,7 @@ func TestReportsRejectedRemoteRequest(t *testing.T) {
 func TestSnapshotIncludesRuntimeAndPresentation(t *testing.T) {
 	handler, _ := newTestHandler(t)
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/snapshot", nil)
-	request.Header.Set(identityHeader, "alice@example.com")
+	authorizeTestRequest(request)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"actor":"alice@example.com"`) || !strings.Contains(response.Body.String(), `"hello"`) {
@@ -122,9 +136,9 @@ func TestCatalogIncludesSelectorData(t *testing.T) {
 		Skills:   []tui.RemoteSkillState{{Name: "review", Selected: true}},
 		Sessions: []tui.RemoteSessionState{{ID: "session-1", Preview: "Review the release"}},
 	}}
-	handler := New(presentation).routes()
+	handler := authorizedTestManager(presentation).routes()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/catalog", nil)
-	request.Header.Set(identityHeader, "alice@example.com")
+	authorizeTestRequest(request)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -179,11 +193,11 @@ func TestRemotePageShowsWaitingIndicator(t *testing.T) {
 
 func TestEventsReportConnectionLifecycle(t *testing.T) {
 	presentation := &testPresentation{connections: make(chan string, 2)}
-	manager := New(presentation)
+	manager := authorizedTestManager(presentation)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/events", nil).WithContext(ctx)
-	request.Header.Set(identityHeader, "alice@example.com")
+	authorizeTestRequest(request)
 	response := httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() {
@@ -217,9 +231,9 @@ func TestEventsReportConnectionLifecycle(t *testing.T) {
 
 func TestPrefixedServePathRoutesToAPI(t *testing.T) {
 	presentation := &testPresentation{}
-	handler := New(presentation).routes("/qcode/session")
+	handler := authorizedTestManager(presentation).routes("/qcode/session")
 	request := httptest.NewRequest(http.MethodGet, "/qcode/session/api/v1/snapshot", nil)
-	request.Header.Set(identityHeader, "alice@example.com")
+	authorizeTestRequest(request)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"hello"`) {
@@ -356,7 +370,7 @@ func TestActionIsAttributedAndSameOrigin(t *testing.T) {
 	handler, presentation := newTestHandler(t)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/actions", bytes.NewBufferString(`{"line":"fix it"}`))
 	request.Host = "host.tailnet.ts.net"
-	request.Header.Set(identityHeader, "alice@example.com")
+	authorizeTestRequest(request)
 	request.Header.Set("Origin", "https://host.tailnet.ts.net")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -371,7 +385,7 @@ func TestActionIsAttributedAndSameOrigin(t *testing.T) {
 
 	rejected := httptest.NewRequest(http.MethodPost, "/api/v1/actions", bytes.NewBufferString(`{"line":"fix it"}`))
 	rejected.Host = "host.tailnet.ts.net"
-	rejected.Header.Set(identityHeader, "alice@example.com")
+	authorizeTestRequest(rejected)
 	rejected.Header.Set("Origin", "https://evil.example")
 	rejectedResponse := httptest.NewRecorder()
 	handler.ServeHTTP(rejectedResponse, rejected)
@@ -384,7 +398,7 @@ func TestRemoteResolvesSharedInteraction(t *testing.T) {
 	handler, presentation := newTestHandler(t)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/interactions/interaction-1/resolve", bytes.NewBufferString(`{"value":["Postgres"]}`))
 	request.Host = "host.tailnet.ts.net"
-	request.Header.Set(identityHeader, "alice@example.com")
+	authorizeTestRequest(request)
 	request.Header.Set("Origin", "https://host.tailnet.ts.net")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
