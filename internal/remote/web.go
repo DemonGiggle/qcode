@@ -1,7 +1,11 @@
 package remote
 
+import "html/template"
+
+var indexTemplate = template.Must(template.New("remote").Parse(indexHTML))
+
 const indexHTML = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<html lang="en"><head><meta charset="utf-8"><base href="{{.}}"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#07090d"><title>qcode remote</title><style>
 :root {
   color-scheme: dark;

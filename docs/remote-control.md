@@ -93,9 +93,10 @@ When `/verbose` is enabled, qcode records `Remote connect: <identity>` and
 `Remote disconnect: <identity>` in the active screen history for each browser
 event stream connection. It also records rejected requests, including the
 missing-identity case, to distinguish Tailscale authentication failures from
-requests that never reach qcode. The printed URL has no trailing slash; opening
-it redirects once to the trailing-slash form the web UI needs for its relative
-API paths.
+requests that never reach qcode. The printed URL works without a trailing slash
+and opens directly without a redirect. The web page sets its base URL to the
+session path so relative API requests still reach that session after Tailscale
+Serve strips the path prefix. URLs with a trailing slash also work.
 
 Browser commands are injected as complete lines into the normal TUI command
 loop, so they use the same agent manager, queues, session state, and command

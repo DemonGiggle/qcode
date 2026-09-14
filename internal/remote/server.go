@@ -150,10 +150,8 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 	return url, nil
 }
 
-// remoteURL is the browser-facing address for the Serve mount. It intentionally
-// omits the trailing slash, since a bare path is friendlier to read; the
-// loopback handler redirects it to the slash form the relative web API paths
-// require.
+// remoteURL is the browser-facing address for the Serve mount. The web page
+// sets its own base URL so relative API paths work without a trailing slash.
 func remoteURL(dnsName, prefix string) string {
 	return "https://" + strings.TrimSuffix(dnsName, ".") + prefix
 }
@@ -294,30 +292,24 @@ func (m *Manager) TailscaleIP() string {
 }
 
 func (m *Manager) routes(prefix ...string) http.Handler {
+	base := ""
+	if len(prefix) > 0 {
+		base = strings.TrimSuffix(prefix[0], "/")
+	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", m.index)
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, _ *http.Request) {
+		m.index(w, base+"/")
+	})
 	mux.HandleFunc("GET /api/v1/snapshot", m.snapshot)
 	mux.HandleFunc("GET /api/v1/catalog", m.catalog)
 	mux.HandleFunc("GET /api/v1/events", m.events)
 	mux.HandleFunc("POST /api/v1/actions", m.action)
 	mux.HandleFunc("POST /api/v1/interactions/{id}/resolve", m.resolveInteraction)
 	handler := m.authenticate(mux)
-	if len(prefix) == 0 || prefix[0] == "" {
+	if base == "" {
 		return handler
 	}
-	base := strings.TrimSuffix(prefix[0], "/")
-	redirect := m.authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		target := base + "/"
-		if r.URL.RawQuery != "" {
-			target += "?" + r.URL.RawQuery
-		}
-		http.Redirect(w, r, target, http.StatusPermanentRedirect)
-	}))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == base {
-			redirect.ServeHTTP(w, r)
-			return
-		}
 		if strings.HasPrefix(r.URL.Path, base+"/") {
 			http.StripPrefix(base, handler).ServeHTTP(w, r)
 			return
@@ -354,11 +346,11 @@ func (m *Manager) reportRejectedRequest(r *http.Request, reason string) {
 	}
 }
 
-func (m *Manager) index(w http.ResponseWriter, _ *http.Request) {
+func (m *Manager) index(w http.ResponseWriter, basePath string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = io.WriteString(w, indexHTML)
+	_ = indexTemplate.Execute(w, basePath)
 }
 
 func (m *Manager) snapshot(w http.ResponseWriter, r *http.Request) {

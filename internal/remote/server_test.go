@@ -6,10 +6,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/net/html"
 
 	"qcode/internal/tui"
 )
@@ -224,17 +227,75 @@ func TestPrefixedServePathRoutesToAPI(t *testing.T) {
 	}
 }
 
-func TestPrefixedServePathRedirectsMissingTrailingSlash(t *testing.T) {
-	handler := New(&testPresentation{}).routes("/qcode/session")
-	request := httptest.NewRequest(http.MethodGet, "/qcode/session", nil)
-	request.Header.Set(identityHeader, "alice@example.com")
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusPermanentRedirect {
-		t.Fatalf("status = %d, want %d", response.Code, http.StatusPermanentRedirect)
-	}
-	if location := response.Header().Get("Location"); location != "/qcode/session/" {
-		t.Fatalf("Location = %q, want %q", location, "/qcode/session/")
+func TestRemotePageURLs(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		prefix      string
+		browserPath string
+		backendPath string
+	}{
+		{"bare path", "/qcode/ab", "/qcode/ab", "/qcode/ab"},
+		{"trailing slash", "/qcode/ab", "/qcode/ab/", "/qcode/ab/"},
+		{"query and fragment", "/qcode/ab", "/qcode/ab?view=main#transcript", "/qcode/ab?view=main"},
+		{"Serve strips bare path", "/qcode/ab", "/qcode/ab", "/"},
+		{"Serve strips trailing slash", "/qcode/ab", "/qcode/ab/", "/"},
+		{"Serve strips path with query", "/qcode/ab", "/qcode/ab?view=main#transcript", "/?view=main"},
+		{"root", "", "/", "/"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handler := New(&testPresentation{}).routes(test.prefix)
+			request := httptest.NewRequest(http.MethodGet, test.backendPath, nil)
+			request.Header.Set(identityHeader, "alice@example.com")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+			}
+			if location := response.Header().Get("Location"); location != "" {
+				t.Fatalf("unexpected redirect to %q", location)
+			}
+			if !strings.Contains(response.Body.String(), "qcode remote") {
+				t.Fatal("response is missing the remote page")
+			}
+
+			// Resolve relative API URLs as a browser would. Tailscale strips the
+			// mount before proxying, so the backend cannot use the request path
+			// to determine the page's public base URL.
+			browserURL, err := url.Parse("https://host.tailnet.ts.net" + test.browserPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			baseURL := browserURL
+			tokenizer := html.NewTokenizer(strings.NewReader(response.Body.String()))
+			for tokenType := tokenizer.Next(); tokenType != html.ErrorToken; tokenType = tokenizer.Next() {
+				if tokenType != html.StartTagToken && tokenType != html.SelfClosingTagToken {
+					continue
+				}
+				token := tokenizer.Token()
+				if token.Data != "base" {
+					continue
+				}
+				for _, attr := range token.Attr {
+					if attr.Key == "href" {
+						baseURL, err = browserURL.Parse(attr.Val)
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				break
+			}
+			for _, endpoint := range []string{"snapshot", "catalog", "events", "actions", "interactions/interaction-1/resolve"} {
+				got, err := baseURL.Parse("api/v1/" + endpoint)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := "https://host.tailnet.ts.net" + test.prefix + "/api/v1/" + endpoint
+				if got.String() != want {
+					t.Errorf("browser API URL = %q, want %q", got, want)
+				}
+			}
+		})
 	}
 }
 
