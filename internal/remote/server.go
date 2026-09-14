@@ -119,7 +119,7 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 		return "", ctx.Err()
 	}
 
-	remoteURL := "https://" + strings.TrimSuffix(dnsName, ".") + prefix + "/"
+	url := remoteURL(dnsName, prefix)
 	m.mu.Lock()
 	if m.server != nil {
 		m.mu.Unlock()
@@ -130,7 +130,7 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 		return m.url, nil
 	}
 	done := make(chan struct{})
-	m.server, m.listener, m.serve, m.serveDone, m.command, m.ip, m.url = server, listener, cmd, done, strings.Join(cmd.Args, " "), tailscaleIP, remoteURL
+	m.server, m.listener, m.serve, m.serveDone, m.command, m.ip, m.url = server, listener, cmd, done, strings.Join(cmd.Args, " "), tailscaleIP, url
 	m.mu.Unlock()
 	go func() {
 		defer close(done)
@@ -147,7 +147,15 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 		}
 		m.mu.Unlock()
 	}()
-	return remoteURL, nil
+	return url, nil
+}
+
+// remoteURL is the browser-facing address for the Serve mount. It intentionally
+// omits the trailing slash, since a bare path is friendlier to read; the
+// loopback handler redirects it to the slash form the relative web API paths
+// require.
+func remoteURL(dnsName, prefix string) string {
+	return "https://" + strings.TrimSuffix(dnsName, ".") + prefix
 }
 
 func watchServeOutput(reader io.Reader, ready chan<- error) {

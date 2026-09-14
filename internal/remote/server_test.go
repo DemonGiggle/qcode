@@ -238,6 +238,14 @@ func TestPrefixedServePathRedirectsMissingTrailingSlash(t *testing.T) {
 	}
 }
 
+func TestRemoteURLHasNoTrailingSlash(t *testing.T) {
+	got := remoteURL("host.tailnet.ts.net.", "/qcode/ab")
+	want := "https://host.tailnet.ts.net/qcode/ab"
+	if got != want {
+		t.Fatalf("remoteURL = %q, want %q", got, want)
+	}
+}
+
 func TestWatchServeOutput(t *testing.T) {
 	ready := make(chan error, 1)
 	watchServeOutput(strings.NewReader("Available within your tailnet:\nhttps://host.example.ts.net\n"), ready)

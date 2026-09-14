@@ -160,7 +160,7 @@ func TestRemoteCanWinQuestionInteraction(t *testing.T) {
 
 func (s *fakeRemoteService) Start(context.Context) (string, error) {
 	s.running = true
-	s.url = "https://host.tailnet.ts.net/qcode/test/"
+	s.url = "https://host.tailnet.ts.net/qcode/test"
 	return s.url, nil
 }
 func (s *fakeRemoteService) Stop() error                 { s.running, s.stopped = false, true; return nil }
