@@ -35,6 +35,11 @@ const (
 const inputPrompt = cyan + bold + "> " + reset
 const planInputPrompt = cyan + bold + "(Plan)> " + reset
 
+// Keep the workspace path from crowding out the model and usage segments on
+// wide terminals. The path is still allowed to use less space when the
+// terminal itself is narrow.
+const maxWorkspaceStatusWidth = 24
+
 var qcodeBanner = []string{
 	` #####    #####    #####   ######  #######`,
 	`##   ##  ##       ##   ##  ##   ## ##     `,
@@ -1177,11 +1182,45 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 	model = sanitizeDiffLine(model, "<ESC>")
 	root = sanitizeDiffLine(root, "<ESC>")
 
-	if !color {
-		parts := []string{
-			provider,
-			"[MODEL " + model + "]",
+	render := func(workspace string) string {
+		return buildStatusBar(provider, model, workspace, unicodeEnabled, color, contextLabel...)
+	}
+
+	bar := render(root)
+	if width > 0 {
+		// Reserve the space occupied by every other segment, then elide only
+		// the workspace path. This keeps the useful project name visible while
+		// avoiding the less helpful behavior of truncating the whole bar.
+		workspaceWidth := width - visibleWidth(render(""))
+		if workspaceWidth > maxWorkspaceStatusWidth {
+			workspaceWidth = maxWorkspaceStatusWidth
 		}
+		if workspaceWidth > 0 && visibleWidth(root) > workspaceWidth {
+			bar = render(shortenWorkspacePath(root, workspaceWidth, unicodeEnabled))
+		}
+	}
+
+	if !color {
+		if width > 0 && visibleWidth(bar) > width {
+			if dynamic := compactStatusBar(contextLabel, false, unicodeEnabled); dynamic != "" && visibleWidth(dynamic) <= width {
+				return dynamic
+			}
+		}
+		return truncateDiffLine(bar, width, unicodeEnabled)
+	}
+
+	if width > 0 && visibleWidth(bar) > width {
+		if dynamic := compactStatusBar(contextLabel, true, unicodeEnabled); dynamic != "" && visibleWidth(dynamic) <= width {
+			return dynamic + reset
+		}
+		bar = truncateDiffLine(bar, width, unicodeEnabled)
+	}
+	return bar + reset
+}
+
+func buildStatusBar(provider, model, root string, unicodeEnabled, color bool, contextLabel ...string) string {
+	if !color {
+		parts := []string{provider, "[MODEL " + model + "]"}
 		if len(contextLabel) > 0 {
 			parts = append(parts, "[CTX "+contextLabel[0]+"]")
 		}
@@ -1198,19 +1237,10 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 		if len(contextLabel) > 4 && contextLabel[4] != "" {
 			parts = append(parts, "[THINK "+contextLabel[4]+"]")
 		}
-		bar := strings.Join(parts, " ")
-		if width > 0 && visibleWidth(bar) > width {
-			if dynamic := compactStatusBar(contextLabel, false, unicodeEnabled); dynamic != "" && visibleWidth(dynamic) <= width {
-				return dynamic
-			}
-		}
-		return truncateDiffLine(bar, width, unicodeEnabled)
+		return strings.Join(parts, " ")
 	}
 
-	segments := []string{
-		statusValue(provider, cyan),
-		statusSegment("MODEL", model, magenta),
-	}
+	segments := []string{statusValue(provider, cyan), statusSegment("MODEL", model, magenta)}
 	if len(contextLabel) > 0 {
 		segments = append(segments, statusSegment("CTX", contextLabel[0], green))
 	}
@@ -1231,14 +1261,50 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 	if !unicodeEnabled {
 		separator = dim + "  |  " + reset
 	}
-	bar := strings.Join(segments, separator)
-	if width > 0 && visibleWidth(bar) > width {
-		if dynamic := compactStatusBar(contextLabel, true, unicodeEnabled); dynamic != "" && visibleWidth(dynamic) <= width {
-			return dynamic + reset
-		}
-		bar = truncateDiffLine(bar, width, unicodeEnabled)
+	return strings.Join(segments, separator)
+}
+
+// shortenWorkspacePath follows the usual shell prompt convention of showing
+// the home directory as ~ and eliding leading directories with an ellipsis,
+// while retaining as many trailing path components as the available width
+// allows. The final component (usually the project name) is kept whenever it
+// can fit.
+func shortenWorkspacePath(path string, width int, unicodeEnabled bool) string {
+	if width <= 0 || visibleWidth(path) <= width {
+		return path
 	}
-	return bar + reset
+
+	separator := string(filepath.Separator)
+	marker := "…" + separator
+	if !unicodeEnabled {
+		marker = "..." + separator
+	}
+	prefix := ""
+	remainder := path
+	if strings.HasPrefix(path, "~"+separator) {
+		prefix = "~" + separator
+		remainder = strings.TrimPrefix(path, prefix)
+	}
+	parts := strings.Split(remainder, separator)
+	for index := 0; index < len(parts); index++ {
+		if parts[index] == "" {
+			continue
+		}
+		tail := strings.Join(parts[index:], separator)
+		candidate := prefix + marker + tail
+		if visibleWidth(candidate) <= width {
+			return candidate
+		}
+	}
+
+	// A single directory name can itself exceed the budget. Keep the
+	// rightmost part of that name, which is more useful for identifying a
+	// workspace than truncating the complete status bar.
+	base := filepath.Base(path)
+	if prefix != "" {
+		base = prefix + base
+	}
+	return truncateDiffLine(base, width, unicodeEnabled)
 }
 
 func compactStatusBar(labels []string, color, unicodeEnabled bool) string {
