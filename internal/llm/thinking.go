@@ -6,6 +6,7 @@ const (
 	ThinkingRequestNone            = "none"
 	ThinkingRequestReasoningEffort = "reasoning_effort"
 	ThinkingRequestObject          = "thinking"
+	ThinkingRequestOllamaThink     = "think"
 	ThinkingReplayNone             = "none"
 	ThinkingReplayReasoningContent = "reasoning_content"
 	ThinkingReplayReasoningDetails = "reasoning_details"
@@ -114,6 +115,12 @@ func thinkingFields(capability ThinkingCapability, level string) map[string]any 
 	level = strings.ToLower(strings.TrimSpace(level))
 	if level == "" || !capability.Adjustable || !validThinkingLevel(capability, level) {
 		return nil
+	}
+	if capability.RequestFormat == ThinkingRequestOllamaThink {
+		if level == "off" {
+			return map[string]any{"think": false}
+		}
+		return map[string]any{"think": level}
 	}
 	if level == "off" {
 		return map[string]any{"thinking": map[string]any{"type": "disabled"}}

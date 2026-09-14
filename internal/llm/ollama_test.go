@@ -39,6 +39,59 @@ func TestOllamaStreamsTextAndToolCall(t *testing.T) {
 	}
 }
 
+func TestOllamaSendsThinkingLevel(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		level string
+		want  any
+	}{
+		{name: "high", level: "high", want: "high"},
+		{name: "off", level: "off", want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := doerFunc(func(r *http.Request) (*http.Response, error) {
+				var payload map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatal(err)
+				}
+				if got := payload["think"]; got != test.want {
+					t.Errorf("think = %#v, want %#v", got, test.want)
+				}
+				body := `{"message":{"role":"assistant","content":"ok"},"done":true}` + "\n"
+				return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+			})
+			provider, err := newOllama(Config{BaseURL: "http://ollama.test", HTTP: client})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := provider.Complete(context.Background(), Request{Model: "qwen3:8b", Thinking: test.level}, nil); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestOllamaOmitsThinkingByDefault(t *testing.T) {
+	client := doerFunc(func(r *http.Request) (*http.Response, error) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := payload["think"]; ok {
+			t.Fatalf("think = %#v, want omitted", payload["think"])
+		}
+		body := `{"message":{"role":"assistant","content":"ok"},"done":true}` + "\n"
+		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	provider, err := newOllama(Config{BaseURL: "http://ollama.test", HTTP: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Complete(context.Background(), Request{Model: "qwen3:8b"}, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOllamaSendsThinkingAndNamedToolResult(t *testing.T) {
 	client := doerFunc(func(r *http.Request) (*http.Response, error) {
 		var payload struct {
@@ -107,7 +160,7 @@ func TestOllamaListsLocalModels(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/tags" {
 			t.Errorf("request = %s %s", r.Method, r.URL.Path)
 		}
-		body := `{"models":[{"name":"qwen:7b"},{"name":"coder:latest"}]}`
+		body := `{"models":[{"name":"qwen3:8b","capabilities":["completion","thinking"]},{"name":"coder:latest","capabilities":["completion"]}]}`
 		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
 	provider, err := newOllama(Config{BaseURL: "http://ollama.test", HTTP: client})
@@ -118,7 +171,41 @@ func TestOllamaListsLocalModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(models, ",") != "qwen:7b,coder:latest" {
+	if strings.Join(models, ",") != "qwen3:8b,coder:latest" {
 		t.Fatalf("models = %v", models)
+	}
+	capability := provider.(ThinkingProvider).ThinkingCapability("qwen3:8b")
+	if !capability.Adjustable || strings.Join(capability.Levels, ",") != "off,low,medium,high,max" {
+		t.Fatalf("qwen3 thinking capability = %#v", capability)
+	}
+	if got := provider.(ThinkingProvider).ThinkingCapability("coder:latest"); got.Supported {
+		t.Fatalf("coder thinking capability = %#v", got)
+	}
+}
+
+func TestOllamaDiscoversThinkingCapabilityFromShow(t *testing.T) {
+	client := doerFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/api/tags":
+			body := `{"models":[{"name":"custom-reasoner"}]}`
+			return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+		case "/api/show":
+			body := `{"capabilities":["completion","thinking"]}`
+			return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			return &http.Response{StatusCode: 404, Status: "404 Not Found", Header: make(http.Header), Body: io.NopCloser(strings.NewReader("{}"))}, nil
+		}
+	})
+	provider, err := newOllama(Config{BaseURL: "http://ollama.test", HTTP: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.(ModelLister).Models(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	capability := provider.(ThinkingProvider).ThinkingCapability("custom-reasoner")
+	if !capability.Supported || !capability.Adjustable {
+		t.Fatalf("custom thinking capability = %#v", capability)
 	}
 }
