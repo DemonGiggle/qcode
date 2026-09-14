@@ -157,6 +157,23 @@ func TestRemotePageHasCatalogBackedSelectorControls(t *testing.T) {
 	}
 }
 
+func TestRemotePageShowsWaitingIndicator(t *testing.T) {
+	for _, fragment := range []string{
+		`<div id="waiting" class="waiting"`,
+		`#waiting`,
+		`.waiting-cancel`,
+		"spinnerFrames=['⠋'",
+		"'Waiting ('",
+		"' · '+waitingQueued+' queued'",
+		"'/agent cancel '+active",
+		"setInterval(()=>{if(!waitingRunning)return;waitingFrame++;drawWaiting()},100)",
+	} {
+		if !strings.Contains(indexHTML, fragment) {
+			t.Fatalf("remote page is missing waiting indicator behavior %q", fragment)
+		}
+	}
+}
+
 func TestEventsReportConnectionLifecycle(t *testing.T) {
 	presentation := &testPresentation{connections: make(chan string, 2)}
 	manager := New(presentation)

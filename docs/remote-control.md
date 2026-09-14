@@ -79,6 +79,11 @@ The web UI is responsive: agent tabs scroll horizontally on narrow screens,
 the composer stacks on phone widths, and selectors remain touch-sized and
 scrollable in short or landscape viewports.
 
+The browser mirrors the terminal task indicator: while the active tab's agent is
+running, a dim `Waiting (⠋) · N queued` line with the same animated spinner
+frames appears above the status bar, and a Cancel button replaces the TUI's
+`Ctrl+C` hint so a queued or running prompt can be stopped without the keyboard.
+
 Use `/remote status` to see the URL and connected browser count. Use `/remote
 off` to close browsers, stop the loopback server, and interrupt the foreground
 Serve process. Exiting qcode performs the same cleanup without resetting other
