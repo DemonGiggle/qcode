@@ -192,9 +192,9 @@ func TestRemoteActiveScreenShowsConnectionsAndSecondaryClose(t *testing.T) {
 
 func TestRemoteModeMenuDefaultsToPureWeb(t *testing.T) {
 	var output bytes.Buffer
-	renderRemoteModeMenu(&output, []RemoteMode{RemoteModePureWeb, RemoteModeTailscale}, 0, 120, false)
+	renderRemoteModeMenu(&output, []RemoteMode{RemoteModePureWeb, RemoteModePureWebOpen, RemoteModeTailscale}, 0, 120, false)
 	got := output.String()
-	if !strings.Contains(got, "> Pure Web") || !strings.Contains(got, "  Tailscale") {
+	if !strings.Contains(got, "> Pure Web") || !strings.Contains(got, "Pure Web (No auth, danger!)") || !strings.Contains(got, "  Tailscale") {
 		t.Fatalf("remote mode menu = %q", got)
 	}
 }

@@ -2,10 +2,15 @@ package remote
 
 import "html/template"
 
+type remotePage struct {
+	BasePath     string
+	AuthRequired bool
+}
+
 var indexTemplate = template.Must(template.New("remote").Parse(indexHTML))
 
 const indexHTML = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><base href="{{.}}"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<html lang="en"><head><meta charset="utf-8"><base href="{{.BasePath}}"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#07090d"><title>qcode remote</title><style>
 :root {
   color-scheme: dark;
@@ -258,11 +263,12 @@ button:disabled { opacity: .5; cursor: default; }
 const tabs=document.querySelector('#tabs'),out=document.querySelector('#transcript'),status=document.querySelector('#status'),interaction=document.querySelector('#interaction'),command=document.querySelector('#command'),form=document.querySelector('#form'),input=document.querySelector('#input'),send=document.querySelector('#send'),scroll=document.querySelector('#scroll'),waiting=document.querySelector('#waiting');
 let snapshot=null,active='',timer=0,closed=false;const cleared={};
 let sessionKey='',eventController=null;
+const authRequired={{.AuthRequired}};
 const storageKey='qcode.remote.session:'+new URL(document.baseURI).pathname;
 const events={close(){if(eventController)eventController.abort();eventController=null}};
 input.disabled=true;send.disabled=true;
 function lockSession(message){closed=true;events.close();clearTimeout(timer);sessionKey='';snapshot=null;try{sessionStorage.removeItem(storageKey)}catch(_){}input.disabled=true;send.disabled=true;waitingRunning=false;drawWaiting();tabs.replaceChildren();interaction.replaceChildren();interaction.className='interaction';command.replaceChildren();command.className='command-panel';out.textContent='Run /remote in the terminal for a new login link.';out.className='transcript empty';status.textContent=message}
-async function apiFetch(path,options={}){if(!sessionKey)throw new Error('Authorization required. Run /remote for a new login link.');const headers=new Headers(options.headers);headers.set('Authorization','Bearer '+sessionKey);const r=await fetch(path,{...options,headers});if(r.status===401){lockSession('Session is no longer authorized. Run /remote for a new login link.');throw new Error('Session is no longer authorized. Run /remote for a new login link.')}return r}
+async function apiFetch(path,options={}){if(authRequired&&!sessionKey)throw new Error('Authorization required. Run /remote for a new login link.');const headers=new Headers(options.headers);if(authRequired)headers.set('Authorization','Bearer '+sessionKey);const r=await fetch(path,{...options,headers});if(authRequired&&r.status===401){lockSession('Session is no longer authorized. Run /remote for a new login link.');throw new Error('Session is no longer authorized. Run /remote for a new login link.')}return r}
 function abortableDelay(ms,signal){return new Promise(resolve=>{if(signal.aborted){resolve();return}const finish=()=>{clearTimeout(id);signal.removeEventListener('abort',finish);resolve()};const id=setTimeout(finish,ms);signal.addEventListener('abort',finish,{once:true})})}
 async function streamEvents(){
   events.close();
@@ -314,6 +320,7 @@ async function login(){
   const fragment=new URLSearchParams(location.hash.slice(1));
   const token=fragment.get('login');
   if(token!==null)history.replaceState(null,'',location.pathname+location.search);
+	if(!authRequired){closed=false;input.disabled=false;send.disabled=false;streamEvents();load();input.focus();return}
   try{
     const probe=storageKey+'.probe';
     sessionStorage.setItem(probe,'1');
@@ -406,6 +413,6 @@ login();
 // Reload that document so the normal login bootstrap exchanges the new token.
 window.addEventListener('hashchange',()=>{if(new URLSearchParams(location.hash.slice(1)).has('login'))location.reload()});
 window.addEventListener('pagehide',()=>events.close());
-window.addEventListener('pageshow',e=>{if(e.persisted&&!closed&&sessionKey){streamEvents();load()}})
+        window.addEventListener('pageshow',e=>{if(e.persisted&&!closed&&(!authRequired||sessionKey)){streamEvents();load()}})
 })();
 </script></body></html>`

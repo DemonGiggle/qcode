@@ -51,14 +51,17 @@ func newCredential() (string, error) {
 }
 
 func (a *authStore) issue(baseURL string) (tui.RemoteLogin, error) {
-	token, err := newCredential()
-	if err != nil {
-		return tui.RemoteLogin{}, err
-	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
 		return tui.RemoteLogin{}, errors.New("remote control is off")
+	}
+	if a.mode == tui.RemoteModePureWebOpen {
+		return tui.RemoteLogin{URL: baseURL, OpenAccess: true}, nil
+	}
+	token, err := newCredential()
+	if err != nil {
+		return tui.RemoteLogin{}, err
 	}
 	a.login, a.expires, a.used = sha256.Sum256([]byte(token)), a.now().Add(loginLifetime), false
 	return tui.RemoteLogin{URL: baseURL + "#login=" + token, ExpiresAt: a.expires}, nil
@@ -68,6 +71,8 @@ func (a *authStore) state() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	switch {
+	case a.mode == tui.RemoteModePureWebOpen:
+		return "open"
 	case a.closed || a.expires.IsZero():
 		return "none"
 	case a.used:

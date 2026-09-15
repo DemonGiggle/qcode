@@ -14,7 +14,7 @@ const (
 )
 
 func (u *UI) selectRemoteMode() (RemoteMode, bool, error) {
-	modes := []RemoteMode{RemoteModePureWeb, RemoteModeTailscale}
+	modes := []RemoteMode{RemoteModePureWeb, RemoteModePureWebOpen, RemoteModeTailscale}
 	selected := 0
 	u.input.setRaw(true)
 	u.beginRawSelector()
@@ -48,7 +48,9 @@ func renderRemoteModeMenu(out interface{ Write([]byte) (int, error) }, modes []R
 	rows := []string{"Remote control | Choose how to connect | Up/Down, Enter, Ctrl+C to leave"}
 	for index, mode := range modes {
 		name, detail := "Pure Web", "Trusted LAN HTTP; scan a one-time QR link"
-		if mode == RemoteModeTailscale {
+		if mode == RemoteModePureWebOpen {
+			name, detail = "Pure Web (No auth, danger!)", "Trusted LAN HTTP; anyone who knows the URL can control qcode"
+		} else if mode == RemoteModeTailscale {
 			name, detail = "Tailscale", "HTTPS through tailscale serve and named tailnet identity"
 		}
 		prefix := "  "
@@ -70,7 +72,7 @@ func renderRemoteModeMenu(out interface{ Write([]byte) (int, error) }, modes []R
 func (u *UI) showRemoteActive(status RemoteStatus) error {
 	selected := remoteKeepOpen
 	staticRows := 6 // title, address, connections, spacer, and two actions
-	if status.Mode == RemoteModePureWeb {
+	if status.Mode != RemoteModeTailscale {
 		staticRows++
 	}
 	loginHeight := max(1, u.height-3-staticRows)
@@ -148,6 +150,9 @@ func (u *UI) dismissRemoteMenuForInput() {
 
 func renderRemoteActiveMenu(out interface{ Write([]byte) (int, error) }, status RemoteStatus, selected remoteMenuChoice, loginRows []string, width int, color bool) int {
 	mode := "Pure Web · trusted LAN HTTP"
+	if status.Mode == RemoteModePureWebOpen {
+		mode = "Pure Web (NO AUTH) · anyone with the URL can control qcode"
+	}
 	if status.Mode == RemoteModeTailscale {
 		mode = "Tailscale · HTTPS and tailnet identity"
 	}
@@ -158,6 +163,8 @@ func renderRemoteActiveMenu(out interface{ Write([]byte) (int, error) }, status 
 	}
 	if status.Mode == RemoteModePureWeb {
 		rows = append(rows, "Warning: LAN HTTP is unencrypted; use only on a trusted network.")
+	} else if status.Mode == RemoteModePureWebOpen {
+		rows = append(rows, "DANGER: no login is required; anyone with this URL has full remote control.")
 	}
 	rows = append(rows, loginRows...)
 	rows = append(rows, "", "  Keep connection open", "  Close Connection")

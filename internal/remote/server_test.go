@@ -144,6 +144,48 @@ func TestPureWebUsesQRSessionWithoutTailscaleIdentity(t *testing.T) {
 	}
 }
 
+func TestPureWebOpenAllowsDirectUnauthenticatedControl(t *testing.T) {
+	presentation := &testPresentation{}
+	manager := New(presentation)
+	auth := newAuthStore(tui.RemoteModePureWebOpen)
+	manager.auth = auth
+	handler := manager.routesWithAuth(auth)
+	login, err := auth.issue("http://192.168.1.10:1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !login.OpenAccess || login.URL != "http://192.168.1.10:1234" || login.ExpiresAt != (time.Time{}) {
+		t.Fatalf("open remote link = %#v", login)
+	}
+
+	snapshot := httptest.NewRequest(http.MethodGet, "/api/v1/snapshot", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, snapshot)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"actor":"pure-web-open"`) {
+		t.Fatalf("open remote snapshot = %d %s", response.Code, response.Body.String())
+	}
+
+	action := httptest.NewRequest(http.MethodPost, "/api/v1/actions", bytes.NewBufferString(`{"line":"hello"}`))
+	action.Host = "192.168.1.10:1234"
+	action.Header.Set("Origin", "http://192.168.1.10:1234")
+	actionResponse := httptest.NewRecorder()
+	handler.ServeHTTP(actionResponse, action)
+	if actionResponse.Code != http.StatusAccepted {
+		t.Fatalf("open remote action = %d %s", actionResponse.Code, actionResponse.Body.String())
+	}
+	presentation.mu.Lock()
+	defer presentation.mu.Unlock()
+	if presentation.actor != "pure-web-open" || presentation.line != "hello" {
+		t.Fatalf("open remote action = (%q, %q)", presentation.actor, presentation.line)
+	}
+
+	page := httptest.NewRecorder()
+	handler.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/", nil))
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "authRequired= false") {
+		t.Fatalf("open remote page = %d %s", page.Code, page.Body.String())
+	}
+}
+
 func TestPureWebStatusDoesNotRequireTailscaleServe(t *testing.T) {
 	manager := New(&testPresentation{})
 	manager.server = &http.Server{}

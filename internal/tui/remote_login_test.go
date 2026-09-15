@@ -92,6 +92,19 @@ func TestRemoteLoginExpiryTimerDoesNotClearReplacement(t *testing.T) {
 	}
 }
 
+func TestOpenRemoteLinkHasNoExpiry(t *testing.T) {
+	login := RemoteLogin{URL: "http://192.168.1.10:1234", OpenAccess: true}
+	qr, err := qrcode.New(login.URL, qrcode.Medium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &UI{remoteLogin: &login, remoteQR: terminalQR(qr.Bitmap())}
+	rows := strings.Join(u.remoteLoginRows(80, 40), "\n")
+	if !strings.Contains(rows, "NO AUTH") || !strings.Contains(rows, login.URL) || strings.Contains(rows, "expired") {
+		t.Fatalf("open remote link rows = %q", rows)
+	}
+}
+
 // Use an independent scanner when available; Go-only installations still run
 // the layout, expiry, and credential-isolation tests above.
 func TestTerminalQRDecodesLoginURL(t *testing.T) {

@@ -58,7 +58,7 @@ type Manager struct {
 func New(ui presentation) *Manager { return &Manager{ui: ui, auth: newAuthStore()} }
 
 func (m *Manager) Start(ctx context.Context, mode tui.RemoteMode) (tui.RemoteStatus, error) {
-	if mode != tui.RemoteModePureWeb && mode != tui.RemoteModeTailscale {
+	if mode != tui.RemoteModePureWeb && mode != tui.RemoteModePureWebOpen && mode != tui.RemoteModeTailscale {
 		return tui.RemoteStatus{}, fmt.Errorf("unsupported remote mode %q", mode)
 	}
 	m.lifecycleMu.Lock()
@@ -74,7 +74,7 @@ func (m *Manager) Start(ctx context.Context, mode tui.RemoteMode) (tui.RemoteSta
 	listenAddress := "127.0.0.1:0"
 	publicURL := ""
 	publicIP := ""
-	if mode == tui.RemoteModePureWeb {
+	if mode != tui.RemoteModeTailscale {
 		var err error
 		publicIP, err = primaryLANIPv4()
 		if err != nil {
@@ -86,17 +86,17 @@ func (m *Manager) Start(ctx context.Context, mode tui.RemoteMode) (tui.RemoteSta
 	if err != nil {
 		return tui.RemoteStatus{}, fmt.Errorf("listen for remote control: %w", err)
 	}
-	if mode == tui.RemoteModePureWeb {
+	if mode != tui.RemoteModeTailscale {
 		publicURL = "http://" + net.JoinHostPort(publicIP, fmt.Sprintf("%d", listener.Addr().(*net.TCPAddr).Port))
 	}
 	if mode == tui.RemoteModeTailscale {
 		return m.startTailscale(ctx, listener)
 	}
-	return m.startPureWeb(listener, publicURL)
+	return m.startPureWeb(listener, publicURL, mode)
 }
 
-func (m *Manager) startPureWeb(listener net.Listener, publicURL string) (tui.RemoteStatus, error) {
-	auth := newAuthStore(tui.RemoteModePureWeb)
+func (m *Manager) startPureWeb(listener net.Listener, publicURL string, mode tui.RemoteMode) (tui.RemoteStatus, error) {
+	auth := newAuthStore(mode)
 	server := &http.Server{Handler: m.routesWithAuth(auth), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	m.mu.Lock()
 	if m.server != nil {
@@ -111,7 +111,7 @@ func (m *Manager) startPureWeb(listener net.Listener, publicURL string) (tui.Rem
 		m.auth.close()
 	}
 	m.auth = auth
-	m.server, m.listener, m.mode, m.url = server, listener, tui.RemoteModePureWeb, publicURL
+	m.server, m.listener, m.mode, m.url = server, listener, mode, publicURL
 	status := m.statusLocked()
 	m.mu.Unlock()
 	go func() {
@@ -416,7 +416,7 @@ func (m *Manager) routesWithAuth(auth *authStore, prefix ...string) http.Handler
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
-		m.index(w, base+"/")
+		m.index(w, base+"/", auth.mode)
 	})
 	mux.HandleFunc("POST /api/v1/login", auth.exchange)
 	api := http.NewServeMux()
@@ -425,7 +425,11 @@ func (m *Manager) routesWithAuth(auth *authStore, prefix ...string) http.Handler
 	api.HandleFunc("GET /api/v1/events", m.events)
 	api.HandleFunc("POST /api/v1/actions", m.action)
 	api.HandleFunc("POST /api/v1/interactions/{id}/resolve", m.resolveInteraction)
-	mux.Handle("/api/v1/", auth.requireSession(m, api))
+	if auth.mode == tui.RemoteModePureWebOpen {
+		mux.Handle("/api/v1/", api)
+	} else {
+		mux.Handle("/api/v1/", auth.requireSession(m, api))
+	}
 	handler := m.authenticate(auth.mode, mux)
 	if base == "" {
 		return handler
@@ -446,6 +450,9 @@ func (m *Manager) routesWithAuth(auth *authStore, prefix ...string) http.Handler
 func (m *Manager) authenticate(mode tui.RemoteMode, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := "pure-web"
+		if mode == tui.RemoteModePureWebOpen {
+			identity = "pure-web-open"
+		}
 		if mode == tui.RemoteModeTailscale {
 			identity = strings.TrimSpace(r.Header.Get(identityHeader))
 			if identity == "" {
@@ -478,12 +485,12 @@ func (m *Manager) reportRejectedRequest(r *http.Request, reason string) {
 	}
 }
 
-func (m *Manager) index(w http.ResponseWriter, basePath string) {
+func (m *Manager) index(w http.ResponseWriter, basePath string, mode tui.RemoteMode) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'")
 	w.Header().Set("Cache-Control", "no-store")
-	_ = indexTemplate.Execute(w, basePath)
+	_ = indexTemplate.Execute(w, remotePage{BasePath: basePath, AuthRequired: mode != tui.RemoteModePureWebOpen})
 }
 
 func (m *Manager) snapshot(w http.ResponseWriter, r *http.Request) {

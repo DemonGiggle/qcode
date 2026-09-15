@@ -59,6 +59,12 @@ must be used only on a trusted LAN. Tailscale starts a loopback server and its
 foreground `tailscale serve` proxy on a unique HTTPS path; browsers must belong
 to the same tailnet.
 
+The selector also includes **Pure Web (No auth, danger!)**. It uses the same
+LAN HTTP listener but encodes the bare service URL in the QR code: no login
+link, token, or browser session is required. Anyone who knows that URL can read
+and control the qcode session until it is closed. Use it only for deliberately
+open, short-lived trusted-network sessions.
+
 When remote control is already on, `/remote` creates a fresh one-time QR login
 link for another browser and shows the mode, address, and current number of
 active browser sessions. The screen selects **Keep connection open** by default

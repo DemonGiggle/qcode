@@ -22,6 +22,12 @@ func (u *UI) showRemoteLogin(login RemoteLogin) {
 		u.remoteLoginTimer.Stop()
 	}
 	u.remoteLogin, u.remoteQR = &login, rows
+	if login.OpenAccess {
+		if u.fixedInput {
+			u.paintFixedLocked(0)
+		}
+		return
+	}
 	u.remoteLoginTimer = time.AfterFunc(time.Until(login.ExpiresAt), func() {
 		u.screenMu.Lock()
 		defer u.screenMu.Unlock()
@@ -70,6 +76,27 @@ func (u *UI) remoteLoginRows(width, height int) []string {
 		return nil
 	}
 	login := u.remoteLogin
+	if login.OpenAccess {
+		rows := []string{"Remote link (NO AUTH — anyone with this URL can control qcode)"}
+		for remaining := login.URL; len(remaining) > 0; {
+			n := min(len(remaining), width)
+			rows = append(rows, remaining[:n])
+			remaining = remaining[n:]
+		}
+		rows = append(rows, "")
+		if len(u.remoteQR) > 0 && visibleWidth(u.remoteQR[0]) <= width && len(rows)+len(u.remoteQR) <= height {
+			rows = append(rows, u.remoteQR...)
+		} else {
+			rows = append(rows, "Enlarge the terminal to show the QR code.")
+		}
+		if len(rows) > height {
+			return []string{truncateDiffLine("Enlarge the terminal to show the open remote link and QR code.", width, false)}
+		}
+		for i := range rows {
+			rows[i] = truncateDiffLine(rows[i], width, true)
+		}
+		return rows
+	}
 	if !time.Now().Before(login.ExpiresAt) {
 		return []string{truncateDiffLine("Login link expired. Run /remote for a new link.", width, false)}
 	}
@@ -99,7 +126,7 @@ func (u *UI) remoteLoginRows(width, height int) []string {
 // OSC 8 keeps the complete target clickable even when the displayed URL wraps.
 // Add it after layout so the secret target never affects measured row widths.
 func (u *UI) remoteLoginHeading(row string) string {
-	if u.remoteLogin == nil || u.remoteLogin.URL == "" || !time.Now().Before(u.remoteLogin.ExpiresAt) {
+	if u.remoteLogin == nil || u.remoteLogin.URL == "" || (!u.remoteLogin.OpenAccess && !time.Now().Before(u.remoteLogin.ExpiresAt)) {
 		return row
 	}
 	return "\x1b]8;;" + u.remoteLogin.URL + "\x1b\\" + row + "\x1b]8;;\x1b\\"

@@ -80,16 +80,18 @@ type RemoteSessionState struct {
 }
 
 type RemoteLogin struct {
-	URL       string
-	ExpiresAt time.Time
+	URL        string
+	ExpiresAt  time.Time
+	OpenAccess bool
 }
 
 // RemoteMode selects how the browser-facing listener is exposed.
 type RemoteMode string
 
 const (
-	RemoteModePureWeb   RemoteMode = "pure-web"
-	RemoteModeTailscale RemoteMode = "tailscale"
+	RemoteModePureWeb     RemoteMode = "pure-web"
+	RemoteModePureWebOpen RemoteMode = "pure-web-open"
+	RemoteModeTailscale   RemoteMode = "tailscale"
 )
 
 // RemoteStatus is the current browser remote-control lifecycle state.
