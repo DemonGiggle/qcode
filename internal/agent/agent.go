@@ -22,6 +22,8 @@ import (
 
 const maxIdenticalToolCalls = 3
 
+const repeatedToolRecoveryTemplate = `Recovery notice: the tool %q has been requested with unchanged arguments %d times during this request. Treat the previous tool result as authoritative. Do not request that exact tool call again. Re-evaluate the user's goal and either choose a different next action with materially different arguments, or provide the final answer if the goal is complete. If the previous result failed, change the approach rather than retrying unchanged.`
+
 // DefaultAutoCompactThreshold is the percentage of a known context window
 // used before the next request is compacted.
 const DefaultAutoCompactThreshold = 80
@@ -403,9 +405,17 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userText})
 	a.publishContext()
 	identicalToolCalls := map[string]int{}
+	recoveryInstruction := ""
 	for step := 0; step < a.MaxSteps(); step++ {
 		a.currentStep.Store(int64(step + 1))
 		requestMessages := a.requestMessages(ctx)
+		if recoveryInstruction != "" && len(requestMessages) > 0 && requestMessages[0].Role == "system" {
+			// Keep the recovery notice ephemeral. It helps the next model turn
+			// without becoming a durable conversation turn or disturbing the
+			// provider-specific assistant/tool message pairing.
+			requestMessages[0].Content += "\n\n" + recoveryInstruction
+		}
+		recoveryInstruction = ""
 		a.publishContext()
 		span := a.trace.Start("llm", a.provider.Name(), map[string]any{"model": a.model, "step": step + 1})
 		wroteText := false
@@ -512,6 +522,9 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			identicalToolCalls[fingerprint]++
 			if identicalToolCalls[fingerprint] >= maxIdenticalToolCalls {
 				return fmt.Errorf("agent stopped after tool %q was requested unchanged %d times; arguments=%s", call.Name, identicalToolCalls[fingerprint], compactJSON(call.Arguments))
+			}
+			if identicalToolCalls[fingerprint] == maxIdenticalToolCalls-1 {
+				recoveryInstruction = fmt.Sprintf(repeatedToolRecoveryTemplate, call.Name, identicalToolCalls[fingerprint])
 			}
 			if call.ID == "" {
 				call.ID = fmt.Sprintf("call_%d_%d", step+1, index+1)

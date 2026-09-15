@@ -56,6 +56,7 @@ type repeatingProvider struct{ calls int }
 type scriptedProvider struct {
 	calls    int
 	sequence []llm.ToolCall
+	requests []llm.Request
 }
 
 type observingStreamProvider struct {
@@ -167,8 +168,9 @@ func (p *repeatingProvider) Complete(_ context.Context, _ llm.Request, _ llm.Str
 }
 
 func (p *scriptedProvider) Name() string { return "scripted" }
-func (p *scriptedProvider) Complete(_ context.Context, _ llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+func (p *scriptedProvider) Complete(_ context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
 	p.calls++
+	p.requests = append(p.requests, request)
 	if p.calls > len(p.sequence) {
 		return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
 	}
@@ -599,6 +601,37 @@ func TestAgentStopsRepeatedIdenticalToolCallsEarly(t *testing.T) {
 	}
 	if bytes.Count(events.Bytes(), []byte("start tool read")) != 2 {
 		t.Fatalf("tool events:\n%s", events.String())
+	}
+}
+
+func TestAgentAddsOneShotRecoveryInstructionAfterRepeatedToolCall(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "same.txt"), []byte("same"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := tools.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := llm.ToolCall{Name: "read", Arguments: json.RawMessage(`{"path":"same.txt"}`)}
+	list := llm.ToolCall{Name: "list", Arguments: json.RawMessage(`{"path":"."}`)}
+	provider := &scriptedProvider{sequence: []llm.ToolCall{read, read, list}}
+	var output, events bytes.Buffer
+	runner := New(provider, "test", registry, trace.New(&events, false), &output, 8)
+	if err := runner.Run(context.Background(), "inspect the workspace"); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.requests) != 4 {
+		t.Fatalf("provider requests = %d, want 4", len(provider.requests))
+	}
+	if strings.Contains(provider.requests[0].Messages[0].Content, "Recovery notice:") || strings.Contains(provider.requests[1].Messages[0].Content, "Recovery notice:") {
+		t.Fatal("recovery instruction was sent before the repeated call")
+	}
+	if !strings.Contains(provider.requests[2].Messages[0].Content, "Recovery notice: the tool \"read\" has been requested with unchanged arguments 2 times") {
+		t.Fatalf("recovery instruction = %q", provider.requests[2].Messages[0].Content)
+	}
+	if strings.Contains(provider.requests[3].Messages[0].Content, "Recovery notice:") {
+		t.Fatal("recovery instruction was not one-shot")
 	}
 }
 
