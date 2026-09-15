@@ -10,11 +10,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 )
 
+const ollamaThinkingCapability = "thinking"
+
 type ollamaProvider struct {
-	baseURL string
-	client  HTTPDoer
+	baseURL      string
+	client       HTTPDoer
+	capabilityMu sync.RWMutex
+	capabilities map[string]ThinkingCapability
 }
 
 func init() { Register("ollama", newOllama) }
@@ -24,10 +29,27 @@ func newOllama(config Config) (Provider, error) {
 	if baseURL == "" {
 		baseURL = "http://127.0.0.1:11434"
 	}
-	return &ollamaProvider{baseURL: baseURL, client: httpClient(config)}, nil
+	return &ollamaProvider{baseURL: baseURL, client: httpClient(config), capabilities: make(map[string]ThinkingCapability)}, nil
 }
 
 func (p *ollamaProvider) Name() string { return "ollama" }
+
+func (p *ollamaProvider) ThinkingCapability(model string) ThinkingCapability {
+	p.capabilityMu.RLock()
+	capability, ok := p.capabilities[model]
+	p.capabilityMu.RUnlock()
+	if ok {
+		capability.Levels = append([]string(nil), capability.Levels...)
+		return capability
+	}
+	return ollamaThinkingCapabilityForModel(model, nil)
+}
+
+func (p *ollamaProvider) rememberThinkingCapability(model string, capability ThinkingCapability) {
+	p.capabilityMu.Lock()
+	p.capabilities[model] = capability
+	p.capabilityMu.Unlock()
+}
 
 func (p *ollamaProvider) Models(ctx context.Context) ([]string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/api/tags", nil)
@@ -45,7 +67,8 @@ func (p *ollamaProvider) Models(ctx context.Context) ([]string, error) {
 	}
 	var payload struct {
 		Models []struct {
-			Name string `json:"name"`
+			Name         string    `json:"name"`
+			Capabilities *[]string `json:"capabilities"`
 		} `json:"models"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
@@ -53,11 +76,95 @@ func (p *ollamaProvider) Models(ctx context.Context) ([]string, error) {
 	}
 	models := make([]string, 0, len(payload.Models))
 	for _, model := range payload.Models {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if model.Name != "" {
 			models = append(models, model.Name)
+			capabilities := model.Capabilities
+			if capabilities == nil {
+				// Older Ollama versions omit capabilities from /api/tags.
+				// Keep model listing compatible while enriching the selector when
+				// /api/show is available.
+				capabilities = p.showModelCapabilities(ctx, model.Name)
+			}
+			p.rememberThinkingCapability(model.Name, ollamaThinkingCapabilityForModel(model.Name, capabilities))
 		}
 	}
 	return models, nil
+}
+
+func (p *ollamaProvider) showModelCapabilities(ctx context.Context, model string) *[]string {
+	if err := ctx.Err(); err != nil {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]string{"model": model})
+	if err != nil {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/api/show", bytes.NewReader(payload))
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil
+	}
+	var result struct {
+		Capabilities []string `json:"capabilities"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil
+	}
+	if len(result.Capabilities) == 0 {
+		return nil
+	}
+	return &result.Capabilities
+}
+
+func ollamaThinkingCapabilityForModel(model string, capabilities *[]string) ThinkingCapability {
+	if capabilities != nil {
+		found := false
+		for _, capability := range *capabilities {
+			if strings.EqualFold(capability, ollamaThinkingCapability) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ThinkingCapability{RequestFormat: ThinkingRequestNone, ReplayFormat: ThinkingReplayNone}
+		}
+	} else if !ollamaLikelyThinkingModel(model) {
+		return ThinkingCapability{RequestFormat: ThinkingRequestNone, ReplayFormat: ThinkingReplayNone}
+	}
+
+	levels := []string{"off", "low", "medium", "high", "max"}
+	if strings.Contains(strings.ToLower(model), "gpt-oss") {
+		levels = []string{"low", "medium", "high"}
+	}
+	return ThinkingCapability{
+		Supported:     true,
+		Adjustable:    true,
+		Levels:        levels,
+		Default:       "high",
+		RequestFormat: ThinkingRequestOllamaThink,
+		ReplayFormat:  ThinkingReplayNone,
+	}
+}
+
+func ollamaLikelyThinkingModel(model string) bool {
+	model = strings.ToLower(model)
+	for _, family := range []string{"qwen3", "deepseek-r1", "deepseek-v3.1", "gpt-oss"} {
+		if strings.Contains(model, family) {
+			return true
+		}
+	}
+	return false
 }
 
 type ollamaToolCall struct {
@@ -111,6 +218,9 @@ func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText Str
 	body := map[string]any{"model": input.Model, "messages": messages, "stream": true, "options": map[string]any{"temperature": input.Temperature}}
 	if len(tools) > 0 {
 		body["tools"] = tools
+	}
+	for field, value := range thinkingFields(p.ThinkingCapability(input.Model), input.Thinking) {
+		body[field] = value
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {

@@ -28,6 +28,7 @@ import (
 	"qcode/internal/tools"
 	"qcode/internal/trace"
 	"qcode/internal/tui"
+	qcodeupdate "qcode/internal/update"
 )
 
 var version = "dev"
@@ -62,6 +63,21 @@ func main() {
 }
 
 func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
+	if qcodeupdate.IsReplacementCommand(arguments) {
+		return qcodeupdate.RunReplacement(arguments, stdout)
+	}
+	if len(arguments) > 0 && arguments[0] == "update" {
+		err := qcodeupdate.Run(context.Background(), arguments[1:], qcodeupdate.Options{
+			CurrentVersion: version,
+			Stdout:         stdout,
+			Stderr:         stderr,
+		})
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+
 	opts := options{learningBudget: learning.DefaultBudget, autoCompactThreshold: agent.DefaultAutoCompactThreshold}
 	configPath := ""
 	var configuredSkillPaths []string
@@ -84,7 +100,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	flags.BoolVar(&opts.sandbox, "sandbox", false, "isolate tools with bubblewrap (Linux only)")
 	flags.BoolVar(&opts.dangerSkipTLSVerify, "danger-skip-tls-verify", false, "skip TLS certificate verification (insecure)")
 	flags.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\n\nOptions:\n")
+		fmt.Fprintf(stderr, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\nUse 'qcode update' to install the latest release.\n\nOptions:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(arguments); err != nil {

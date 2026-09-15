@@ -9,6 +9,23 @@ ollama pull qwen2.5-coder:7b
 qcode --model qwen2.5-coder:7b
 ```
 
+### Thinking levels
+
+Thinking-capable Ollama models expose the same two-stage model picker as OpenCode Go:
+select a model, then choose `off`, `low`, `medium`, `high`, or `max`. qcode sends
+the selected value through Ollama's native `think` request field. GPT-OSS supports
+`low`, `medium`, and `high`; its thinking cannot be disabled through that field.
+
+For automation, pass `--thinking` (or set `QCODE_THINKING` / `thinking` in
+`config.toml`):
+
+```sh
+qcode --provider ollama --model qwen3:8b --thinking high "reply with OK"
+```
+
+qcode discovers thinking capability from Ollama's model metadata and preserves
+Ollama's default behavior when no explicit level is selected.
+
 ## OpenAI-compatible
 
 ```sh

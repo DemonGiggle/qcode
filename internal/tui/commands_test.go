@@ -272,6 +272,50 @@ func TestStatusBarFitsTerminalWidth(t *testing.T) {
 	}
 }
 
+func TestStatusBarShortensWorkspacePathBeforeTruncatingBar(t *testing.T) {
+	got := statusBar("ollama", "qwen", "~/src/company/projects/qcode", 72, true, false, "73% left", "I:1.2K O:340")
+	if visibleWidth(got) > 72 {
+		t.Fatalf("status bar width = %d, want at most 72: %q", visibleWidth(got), got)
+	}
+	if !strings.Contains(got, "[WS ~/…/qcode]") {
+		t.Fatalf("status bar = %q, want an elided workspace path", got)
+	}
+	if !strings.Contains(got, "[TOK I:1.2K O:340]") {
+		t.Fatalf("status bar = %q, workspace shortening displaced token totals", got)
+	}
+}
+
+func TestStatusBarLimitsWorkspacePathOnWideTerminals(t *testing.T) {
+	got := statusBar("ollama", "qwen", "/home/user/src/company/projects/qcode", 120, true, false, "73% left", "I:1.2K O:340")
+	if visibleWidth(got) > 120 {
+		t.Fatalf("status bar width = %d, want at most 120: %q", visibleWidth(got), got)
+	}
+	if !strings.Contains(got, "[WS …/company/projects/qcode]") {
+		t.Fatalf("status bar = %q, want the workspace path capped to its useful tail", got)
+	}
+	if visibleWidth("…/company/projects/qcode") > maxWorkspaceStatusWidth {
+		t.Fatalf("workspace path exceeds cap: %q", got)
+	}
+}
+
+func TestShortenWorkspacePathKeepsTrailingComponents(t *testing.T) {
+	tests := []struct {
+		path    string
+		width   int
+		unicode bool
+		want    string
+	}{
+		{path: "~/src/company/projects/qcode", width: 18, unicode: true, want: "~/…/projects/qcode"},
+		{path: "/home/user/src/company/projects/qcode", width: 13, unicode: true, want: "…/qcode"},
+		{path: "/home/user/src/company/projects/qcode", width: 16, unicode: false, want: ".../qcode"},
+	}
+	for _, test := range tests {
+		if got := shortenWorkspacePath(test.path, test.width, test.unicode); got != test.want {
+			t.Errorf("shortenWorkspacePath(%q, %d, %t) = %q, want %q", test.path, test.width, test.unicode, got, test.want)
+		}
+	}
+}
+
 func TestTabBarShowsActiveAgentAndStatuses(t *testing.T) {
 	summaries := []session.Summary{
 		{ID: "main", Name: "main", Status: session.StatusIdle},
