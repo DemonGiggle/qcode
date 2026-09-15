@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -95,6 +96,65 @@ func TestRequiresNamedTailscaleIdentity(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestPureWebUsesQRSessionWithoutTailscaleIdentity(t *testing.T) {
+	presentation := &testPresentation{}
+	manager := New(presentation)
+	auth := newAuthStore(tui.RemoteModePureWeb)
+	manager.auth = auth
+	handler := manager.routesWithAuth(auth)
+	login, err := auth.issue("http://192.168.1.10:1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := strings.SplitN(login.URL, "#login=", 2)[1]
+	body := bytes.NewBufferString(`{"token":"` + token + `"}`)
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/login", body)
+	loginRequest.Host = "192.168.1.10:1234"
+	loginRequest.Header.Set("Origin", "http://192.168.1.10:1234")
+	loginResponse := httptest.NewRecorder()
+	handler.ServeHTTP(loginResponse, loginRequest)
+	if loginResponse.Code != http.StatusOK {
+		t.Fatalf("Pure Web login = %d %s", loginResponse.Code, loginResponse.Body.String())
+	}
+	var credentials struct {
+		Key string `json:"session_key"`
+	}
+	if err := json.NewDecoder(loginResponse.Body).Decode(&credentials); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/snapshot", nil)
+	request.Header.Set("Authorization", "Bearer "+credentials.Key)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"actor":"pure-web"`) {
+		t.Fatalf("Pure Web snapshot = %d %s", response.Code, response.Body.String())
+	}
+
+	rejected := httptest.NewRequest(http.MethodPost, "/api/v1/actions", bytes.NewBufferString(`{"line":"hello"}`))
+	rejected.Host = "192.168.1.10:1234"
+	rejected.Header.Set("Authorization", "Bearer "+credentials.Key)
+	rejected.Header.Set("Origin", "http://evil.example")
+	rejectedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(rejectedResponse, rejected)
+	if rejectedResponse.Code != http.StatusForbidden {
+		t.Fatalf("Pure Web cross-origin status = %d", rejectedResponse.Code)
+	}
+}
+
+func TestPureWebStatusDoesNotRequireTailscaleServe(t *testing.T) {
+	manager := New(&testPresentation{})
+	manager.server = &http.Server{}
+	manager.mode = tui.RemoteModePureWeb
+	manager.url = "http://192.168.1.10:1234"
+	status := manager.Status()
+	if !status.Running || status.Mode != tui.RemoteModePureWeb || status.URL != "http://192.168.1.10:1234" {
+		t.Fatalf("Pure Web status = %#v", status)
+	}
+	if manager.serve != nil || manager.ServeCommand() != "" {
+		t.Fatal("Pure Web unexpectedly started tailscale serve")
 	}
 }
 

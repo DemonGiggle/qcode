@@ -18,8 +18,6 @@ import (
 type fakeRemoteService struct {
 	running bool
 	url     string
-	command string
-	ip      string
 	stopped bool
 	issues  int
 }
@@ -159,54 +157,45 @@ func TestRemoteCanWinQuestionInteraction(t *testing.T) {
 	}
 }
 
-func (s *fakeRemoteService) Start(context.Context) (string, error) {
+func (s *fakeRemoteService) Start(_ context.Context, mode RemoteMode) (RemoteStatus, error) {
 	s.running = true
-	s.url = "https://host.tailnet.ts.net/qcode/test"
-	return s.url, nil
+	if mode == RemoteModePureWeb {
+		s.url = "http://192.168.1.10:1234"
+	} else {
+		s.url = "https://host.tailnet.ts.net/qcode/test"
+	}
+	return s.Status(), nil
 }
 func (s *fakeRemoteService) Stop() error { s.running, s.stopped = false, true; return nil }
 func (s *fakeRemoteService) IssueLogin(context.Context) (RemoteLogin, error) {
 	s.issues++
 	return RemoteLogin{URL: s.url + "#login=test-secret", ExpiresAt: time.Now().Add(3 * time.Minute)}, nil
 }
-func (s *fakeRemoteService) LoginState() string          { return "available" }
-func (s *fakeRemoteService) Status() (bool, string, int) { return s.running, s.url, 2 }
-func (s *fakeRemoteService) ServeCommand() string        { return s.command }
-func (s *fakeRemoteService) TailscaleIP() string         { return s.ip }
-
-func TestRemoteCommandLifecycle(t *testing.T) {
+func (s *fakeRemoteService) LoginState() string { return "available" }
+func (s *fakeRemoteService) Status() RemoteStatus {
+	return RemoteStatus{Running: s.running, Mode: RemoteModeTailscale, URL: s.url, Connections: 2}
+}
+func TestRemoteActiveScreenShowsConnectionsAndSecondaryClose(t *testing.T) {
 	var output bytes.Buffer
-	history := newHistoryWriter(&output)
-	service := &fakeRemoteService{command: "tailscale serve --https=443 --set-path=/qcode/test http://127.0.0.1:1234", ip: "100.64.0.1"}
-	u := &UI{display: history, remoteService: service}
-	u.handleRemoteCommand(context.Background(), []string{"/remote"})
-	defer u.clearRemoteLogin()
-	if !service.running {
-		t.Fatal("remote service did not start")
+	status := RemoteStatus{Running: true, Mode: RemoteModePureWeb, URL: "http://192.168.1.10:1234", Connections: 2}
+	rows := renderRemoteActiveMenu(&output, status, remoteKeepOpen, []string{"Remote login (click or scan; single use)"}, 120, false)
+	if rows == 0 || !strings.Contains(output.String(), "Connections: 2 active browser sessions") {
+		t.Fatalf("remote screen = %q", output.String())
 	}
-	if !strings.Contains(output.String(), "Tailscale command: "+service.command) {
-		t.Fatalf("remote command output = %q", output.String())
+	if !strings.Contains(output.String(), "> Keep connection open") || !strings.Contains(output.String(), "  Close Connection") {
+		t.Fatalf("remote close action is not secondary: %q", output.String())
 	}
-	if !strings.Contains(output.String(), "Remote access requires a browser signed in to this Tailscale tailnet.") {
-		t.Fatalf("remote access hint output = %q", output.String())
+	if !strings.Contains(output.String(), "unencrypted") {
+		t.Fatalf("Pure Web warning missing: %q", output.String())
 	}
-	if !strings.Contains(output.String(), "DNS check: this hostname should resolve to Tailscale IP "+service.ip) {
-		t.Fatalf("remote IP output = %q", output.String())
-	}
-	if strings.Contains(output.String(), "test-secret") {
-		t.Fatal("login link entered shared history")
-	}
-	u.handleRemoteCommand(context.Background(), []string{"/remote", "status"})
-	if service.issues != 1 {
-		t.Fatal("status issued a login")
-	}
-	u.handleRemoteCommand(context.Background(), []string{"/remote"})
-	if service.issues != 2 {
-		t.Fatal("repeated /remote did not issue a new login")
-	}
-	u.handleRemoteCommand(context.Background(), []string{"/remote", "off"})
-	if !service.stopped {
-		t.Fatal("remote service did not stop")
+}
+
+func TestRemoteModeMenuDefaultsToPureWeb(t *testing.T) {
+	var output bytes.Buffer
+	renderRemoteModeMenu(&output, []RemoteMode{RemoteModePureWeb, RemoteModeTailscale}, 0, 120, false)
+	got := output.String()
+	if !strings.Contains(got, "> Pure Web") || !strings.Contains(got, "  Tailscale") {
+		t.Fatalf("remote mode menu = %q", got)
 	}
 }
 

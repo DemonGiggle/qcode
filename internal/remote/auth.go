@@ -22,6 +22,7 @@ const loginLifetime = 3 * time.Minute
 // cancels authenticated requests, including long-lived event streams.
 type authStore struct {
 	mu       sync.Mutex
+	mode     tui.RemoteMode
 	now      func() time.Time
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -32,9 +33,13 @@ type authStore struct {
 	sessions map[[32]byte]string
 }
 
-func newAuthStore() *authStore {
+func newAuthStore(mode ...tui.RemoteMode) *authStore {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &authStore{now: time.Now, ctx: ctx, cancel: cancel, sessions: make(map[[32]byte]string)}
+	selectedMode := tui.RemoteModeTailscale
+	if len(mode) > 0 {
+		selectedMode = mode[0]
+	}
+	return &authStore{mode: selectedMode, now: time.Now, ctx: ctx, cancel: cancel, sessions: make(map[[32]byte]string)}
 }
 
 func newCredential() (string, error) {

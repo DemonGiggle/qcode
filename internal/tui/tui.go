@@ -233,6 +233,9 @@ type UI struct {
 	remoteLogin          *RemoteLogin
 	remoteQR             []string
 	remoteLoginTimer     *time.Timer
+	remoteMenuMu         sync.Mutex
+	remoteMenuActive     bool
+	remoteMenuWake       bool
 }
 
 // SetSkillCatalog configures the optional /skill selector.
@@ -1294,7 +1297,7 @@ func (u *UI) renderStatusBarLocked(force bool) {
 func (u *UI) statusBar() string {
 	remote := false
 	if u.remoteService != nil {
-		remote, _, _ = u.remoteService.Status()
+		remote = u.remoteService.Status().Running
 	}
 	return statusBarWithRemote(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), remote, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
 }

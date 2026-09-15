@@ -47,6 +47,7 @@ type Manager struct {
 	listener    net.Listener
 	serve       *exec.Cmd
 	serveDone   chan struct{}
+	mode        tui.RemoteMode
 	command     string
 	ip          string
 	url         string
@@ -56,32 +57,88 @@ type Manager struct {
 
 func New(ui presentation) *Manager { return &Manager{ui: ui, auth: newAuthStore()} }
 
-func (m *Manager) Start(ctx context.Context) (string, error) {
+func (m *Manager) Start(ctx context.Context, mode tui.RemoteMode) (tui.RemoteStatus, error) {
+	if mode != tui.RemoteModePureWeb && mode != tui.RemoteModeTailscale {
+		return tui.RemoteStatus{}, fmt.Errorf("unsupported remote mode %q", mode)
+	}
 	m.lifecycleMu.Lock()
 	defer m.lifecycleMu.Unlock()
 	m.mu.Lock()
 	if m.server != nil {
-		url := m.url
+		status := m.statusLocked()
 		m.mu.Unlock()
-		return url, nil
+		return status, nil
 	}
 	m.mu.Unlock()
 
+	listenAddress := "127.0.0.1:0"
+	publicURL := ""
+	publicIP := ""
+	if mode == tui.RemoteModePureWeb {
+		var err error
+		publicIP, err = primaryLANIPv4()
+		if err != nil {
+			return tui.RemoteStatus{}, err
+		}
+		listenAddress = "0.0.0.0:0"
+	}
+	listener, err := net.Listen("tcp", listenAddress)
+	if err != nil {
+		return tui.RemoteStatus{}, fmt.Errorf("listen for remote control: %w", err)
+	}
+	if mode == tui.RemoteModePureWeb {
+		publicURL = "http://" + net.JoinHostPort(publicIP, fmt.Sprintf("%d", listener.Addr().(*net.TCPAddr).Port))
+	}
+	if mode == tui.RemoteModeTailscale {
+		return m.startTailscale(ctx, listener)
+	}
+	return m.startPureWeb(listener, publicURL)
+}
+
+func (m *Manager) startPureWeb(listener net.Listener, publicURL string) (tui.RemoteStatus, error) {
+	auth := newAuthStore(tui.RemoteModePureWeb)
+	server := &http.Server{Handler: m.routesWithAuth(auth), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	m.mu.Lock()
+	if m.server != nil {
+		status := m.statusLocked()
+		m.mu.Unlock()
+		auth.close()
+		_ = server.Close()
+		_ = listener.Close()
+		return status, nil
+	}
+	if m.auth != nil {
+		m.auth.close()
+	}
+	m.auth = auth
+	m.server, m.listener, m.mode, m.url = server, listener, tui.RemoteModePureWeb, publicURL
+	status := m.statusLocked()
+	m.mu.Unlock()
+	go func() {
+		_ = server.Serve(listener)
+		m.mu.Lock()
+		if m.server == server {
+			auth.close()
+			m.server, m.listener, m.mode, m.url = nil, nil, "", ""
+		}
+		m.mu.Unlock()
+	}()
+	return status, nil
+}
+
+func (m *Manager) startTailscale(ctx context.Context, listener net.Listener) (tui.RemoteStatus, error) {
 	dnsName, tailscaleIP, err := tailscaleEndpoint(ctx)
 	if err != nil {
-		return "", err
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return "", fmt.Errorf("listen on loopback: %w", err)
+		_ = listener.Close()
+		return tui.RemoteStatus{}, err
 	}
 	id, err := randomID()
 	if err != nil {
 		_ = listener.Close()
-		return "", err
+		return tui.RemoteStatus{}, err
 	}
 	prefix := "/qcode/" + id
-	auth := newAuthStore()
+	auth := newAuthStore(tui.RemoteModeTailscale)
 	started := false
 	defer func() {
 		if !started {
@@ -96,13 +153,13 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 	if err != nil {
 		_ = server.Close()
 		_ = listener.Close()
-		return "", err
+		return tui.RemoteStatus{}, err
 	}
 	cmd.Stderr = cmd.Stdout
 	if err := cmd.Start(); err != nil {
 		_ = server.Close()
 		_ = listener.Close()
-		return "", fmt.Errorf("start tailscale serve: %w", annotateTailscaleError(err))
+		return tui.RemoteStatus{}, fmt.Errorf("start tailscale serve: %w", annotateTailscaleError(err))
 	}
 	ready := make(chan error, 1)
 	go watchServeOutput(stdout, ready)
@@ -114,31 +171,32 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 			_ = cmd.Wait()
 			_ = server.Close()
 			_ = listener.Close()
-			return "", annotateTailscaleError(err)
+			return tui.RemoteStatus{}, annotateTailscaleError(err)
 		}
 	case <-time.After(15 * time.Second):
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		_ = server.Close()
 		_ = listener.Close()
-		return "", errors.New("tailscale serve did not become ready; run `tailscale serve` once to complete HTTPS setup")
+		return tui.RemoteStatus{}, errors.New("tailscale serve did not become ready; run `tailscale serve` once to complete HTTPS setup")
 	case <-ctx.Done():
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		_ = server.Close()
 		_ = listener.Close()
-		return "", ctx.Err()
+		return tui.RemoteStatus{}, ctx.Err()
 	}
 
 	url := remoteURL(dnsName, prefix)
 	m.mu.Lock()
 	if m.server != nil {
+		status := m.statusLocked()
 		m.mu.Unlock()
 		_ = cmd.Process.Signal(os.Interrupt)
 		_ = cmd.Wait()
 		_ = server.Close()
 		_ = listener.Close()
-		return m.url, nil
+		return status, nil
 	}
 	done := make(chan struct{})
 	if m.auth != nil {
@@ -146,7 +204,8 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 	}
 	m.auth = auth
 	started = true
-	m.server, m.listener, m.serve, m.serveDone, m.command, m.ip, m.url = server, listener, cmd, done, strings.Join(cmd.Args, " "), tailscaleIP, url
+	m.server, m.listener, m.serve, m.serveDone, m.mode, m.command, m.ip, m.url = server, listener, cmd, done, tui.RemoteModeTailscale, strings.Join(cmd.Args, " "), tailscaleIP, url
+	status := m.statusLocked()
 	m.mu.Unlock()
 	go func() {
 		defer close(done)
@@ -156,7 +215,7 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 			auth.close()
 			staleServer, staleListener := m.server, m.listener
 			m.serve = nil
-			m.server, m.listener, m.serveDone, m.command, m.ip, m.url = nil, nil, nil, "", "", ""
+			m.server, m.listener, m.serveDone, m.mode, m.command, m.ip, m.url = nil, nil, nil, "", "", "", ""
 			m.mu.Unlock()
 			_ = staleServer.Close()
 			_ = staleListener.Close()
@@ -164,7 +223,33 @@ func (m *Manager) Start(ctx context.Context) (string, error) {
 		}
 		m.mu.Unlock()
 	}()
-	return url, nil
+	return status, nil
+}
+
+// primaryLANIPv4 chooses an address from an interface that a local-network
+// peer can reach. The interface order is supplied by the operating system.
+func primaryLANIPv4() (string, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return "", fmt.Errorf("list network interfaces: %w", err)
+	}
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			ip, _, err := net.ParseCIDR(address.String())
+			if err != nil || ip.To4() == nil || ip.IsLinkLocalUnicast() {
+				continue
+			}
+			return ip.String(), nil
+		}
+	}
+	return "", errors.New("Pure Web needs an active LAN IPv4 address")
 }
 
 // remoteURL is the browser-facing address for the Serve mount. The web page
@@ -266,7 +351,7 @@ func (m *Manager) Stop() error {
 	if m.auth != nil {
 		m.auth.close()
 	}
-	m.server, m.listener, m.serve, m.serveDone, m.command, m.ip, m.url = nil, nil, nil, nil, "", "", ""
+	m.server, m.listener, m.serve, m.serveDone, m.mode, m.command, m.ip, m.url = nil, nil, nil, nil, "", "", "", ""
 	m.mu.Unlock()
 	if server == nil {
 		return nil
@@ -293,10 +378,14 @@ func (m *Manager) Stop() error {
 	return nil
 }
 
-func (m *Manager) Status() (bool, string, int) {
+func (m *Manager) Status() tui.RemoteStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.server != nil && m.serve != nil, m.url, m.clients
+	return m.statusLocked()
+}
+
+func (m *Manager) statusLocked() tui.RemoteStatus {
+	return tui.RemoteStatus{Running: m.server != nil, Mode: m.mode, URL: m.url, Connections: m.clients}
 }
 
 // ServeCommand returns the Tailscale command that backs the active remote-control session.
@@ -337,7 +426,7 @@ func (m *Manager) routesWithAuth(auth *authStore, prefix ...string) http.Handler
 	api.HandleFunc("POST /api/v1/actions", m.action)
 	api.HandleFunc("POST /api/v1/interactions/{id}/resolve", m.resolveInteraction)
 	mux.Handle("/api/v1/", auth.requireSession(m, api))
-	handler := m.authenticate(mux)
+	handler := m.authenticate(auth.mode, mux)
 	if base == "" {
 		return handler
 	}
@@ -354,17 +443,24 @@ func (m *Manager) routesWithAuth(auth *authStore, prefix ...string) http.Handler
 	})
 }
 
-func (m *Manager) authenticate(next http.Handler) http.Handler {
+func (m *Manager) authenticate(mode tui.RemoteMode, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		identity := strings.TrimSpace(r.Header.Get(identityHeader))
-		if identity == "" {
-			m.reportRejectedRequest(r, "missing Tailscale-User-Login")
-			http.Error(w, "a named Tailscale user identity is required", http.StatusUnauthorized)
-			return
+		identity := "pure-web"
+		if mode == tui.RemoteModeTailscale {
+			identity = strings.TrimSpace(r.Header.Get(identityHeader))
+			if identity == "" {
+				m.reportRejectedRequest(r, "missing Tailscale-User-Login")
+				http.Error(w, "a named Tailscale user identity is required", http.StatusUnauthorized)
+				return
+			}
 		}
 		if r.Method != http.MethodGet {
 			origin := r.Header.Get("Origin")
-			if origin != "" && origin != "https://"+r.Host {
+			scheme := "http"
+			if mode == tui.RemoteModeTailscale {
+				scheme = "https"
+			}
+			if origin != "" && origin != scheme+"://"+r.Host {
 				m.reportRejectedRequest(r, "cross-origin request")
 				http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 				return

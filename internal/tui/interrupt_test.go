@@ -58,6 +58,28 @@ func TestInterruptReaderKeepsOtherInputDuringTask(t *testing.T) {
 	}
 }
 
+func TestInterruptReaderDefersInjectedInputWhileRawSelectorIsActive(t *testing.T) {
+	reader := newInterruptReader(nil)
+	reader.setRaw(true)
+	reader.inject([]byte("remote prompt\r"))
+	reader.data <- 'k'
+
+	buffer := make([]byte, 1)
+	if _, err := io.ReadFull(reader, buffer); err != nil || string(buffer) != "k" {
+		t.Fatalf("raw selector input = %q, %v", buffer, err)
+	}
+	reader.wakeRaw()
+	if _, err := io.ReadFull(reader, buffer); err != nil || buffer[0] != 0 {
+		t.Fatalf("raw selector wake = %q, %v", buffer, err)
+	}
+
+	reader.setRaw(false)
+	buffer = make([]byte, len("remote prompt\r"))
+	if _, err := io.ReadFull(reader, buffer); err != nil || string(buffer) != "remote prompt\r" {
+		t.Fatalf("deferred injected input = %q, %v", buffer, err)
+	}
+}
+
 func TestInterruptReaderRoutesPageKeys(t *testing.T) {
 	reader := newInterruptReader(nil)
 	var directions []int

@@ -37,9 +37,11 @@ var tabKeySequences = []tabKeySequence{
 // interruptReader owns terminal input so Ctrl+C can cancel an active agent
 // task while ordinary input remains available for queued prompts.
 type interruptReader struct {
-	source io.Reader
-	data   chan byte
-	once   sync.Once
+	source   io.Reader
+	data     chan byte
+	injected chan byte
+	rawWake  chan byte
+	once     sync.Once
 
 	mu       sync.Mutex
 	injectMu sync.Mutex
@@ -52,7 +54,7 @@ type interruptReader struct {
 }
 
 func newInterruptReader(source io.Reader) *interruptReader {
-	return &interruptReader{source: source, data: make(chan byte, 256)}
+	return &interruptReader{source: source, data: make(chan byte, 256), injected: make(chan byte, 256), rawWake: make(chan byte, 1)}
 }
 
 func (r *interruptReader) start() {
@@ -82,6 +84,30 @@ func (r *interruptReader) setRaw(raw bool) {
 	r.raw = raw
 	r.pending = nil
 	r.mu.Unlock()
+	if !raw {
+		for {
+			select {
+			case <-r.rawWake:
+			default:
+				return
+			}
+		}
+	}
+}
+
+// wakeRaw dismisses a raw selector without placing a synthetic key into the
+// normal line editor. Browser prompts use it to close the /remote panel.
+func (r *interruptReader) wakeRaw() {
+	r.mu.Lock()
+	raw := r.raw
+	r.mu.Unlock()
+	if !raw {
+		return
+	}
+	select {
+	case r.rawWake <- 0:
+	default:
+	}
 }
 
 func (r *interruptReader) interruptLine() {
@@ -94,7 +120,7 @@ func (r *interruptReader) inject(data []byte) {
 		r.injectMu.Lock()
 		defer r.injectMu.Unlock()
 		for _, key := range data {
-			r.data <- key
+			r.injected <- key
 		}
 	}()
 }
@@ -103,7 +129,7 @@ func (r *interruptReader) Read(buffer []byte) (int, error) {
 	if len(buffer) == 0 {
 		return 0, nil
 	}
-	first, ok := <-r.data
+	first, source, ok := r.nextByte()
 	if !ok {
 		r.mu.Lock()
 		err := r.err
@@ -117,7 +143,7 @@ func (r *interruptReader) Read(buffer []byte) (int, error) {
 	count := 1
 	for count < len(buffer) {
 		select {
-		case next, open := <-r.data:
+		case next, open := <-source:
 			if !open {
 				return count, nil
 			}
@@ -128,6 +154,29 @@ func (r *interruptReader) Read(buffer []byte) (int, error) {
 		}
 	}
 	return count, nil
+}
+
+// nextByte keeps programmatic input separate from terminal keystrokes while a
+// raw selector is active. Browser prompts injected during a selector wait for
+// the normal line editor instead of becoming selector navigation keys.
+func (r *interruptReader) nextByte() (byte, <-chan byte, bool) {
+	r.mu.Lock()
+	raw := r.raw
+	r.mu.Unlock()
+	if raw {
+		select {
+		case key, ok := <-r.data:
+			return key, r.data, ok
+		case key := <-r.rawWake:
+			return key, r.rawWake, true
+		}
+	}
+	select {
+	case key, ok := <-r.data:
+		return key, r.data, ok
+	case key := <-r.injected:
+		return key, r.injected, true
+	}
 }
 
 func (r *interruptReader) readLoop() {

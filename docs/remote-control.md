@@ -43,22 +43,27 @@ Tailscale support should initially expose the loopback HTTP listener through
 `tailscale serve`. An embedded `tsnet` listener can remain a later option when
 qcode needs its own tailnet node or programmatic Tailscale identity.
 
-Remote control defaults to loopback, requires a named Tailscale identity, and
-serializes human approvals through the interaction broker. The first browser
-adapter grants controller access after a tailnet user redeems a terminal-issued
-login link; a viewer role can be added later with Tailscale application capabilities.
+Remote control has two terminal-selected modes and serializes human approvals
+through the interaction broker. Tailscale binds a browser session to a named
+tailnet identity. Pure Web is a trusted-LAN HTTP option whose terminal-issued
+login link is its sole authorization gate. A viewer role can be added later
+with Tailscale application capabilities.
 
 ### Using it
 
-Run `/remote` in an interactive qcode session. qcode verifies that Tailscale is
-connected, starts a web server on a random `127.0.0.1` port, and runs a
-foreground `tailscale serve` proxy on a unique path. The command prints the
-base HTTPS URL and the exact `tailscale serve` command after Serve reports that
-it is ready, followed by a terminal-only login link and QR code. Click the login
-heading or open the complete login link, or scan the QR with a device signed in to the same
-Tailscale tailnet; it is not publicly reachable. qcode also prints the node's
-Tailscale IP as a DNS check, but HTTPS must use the hostname because the
-certificate is issued for that name.
+Run `/remote` in an interactive qcode session. When remote control is off, a
+terminal selector offers **Pure Web** first and **Tailscale** second. Pure Web
+binds an HTTP server to a random port on all interfaces and puts the host's
+primary LAN IPv4 address in the terminal-only QR link. It is unencrypted and
+must be used only on a trusted LAN. Tailscale starts a loopback server and its
+foreground `tailscale serve` proxy on a unique HTTPS path; browsers must belong
+to the same tailnet.
+
+When remote control is already on, `/remote` creates a fresh one-time QR login
+link for another browser and shows the mode, address, and current number of
+active browser sessions. The screen selects **Keep connection open** by default
+and exposes **Close Connection** as a secondary action. Closing requires an
+explicit confirmation and revokes every browser session.
 
 On Linux, the user running qcode must be allowed to manage the local Tailscale
 daemon. If `/remote` reports an operator-permission error, run this once as an
@@ -68,13 +73,14 @@ administrator:
 sudo tailscale set --operator=$USER
 ```
 
-qcode intentionally does not invoke `sudo` itself. `/remote off` and qcode exit
-stop the foreground Serve proxy and close the local listener.
+qcode intentionally does not invoke `sudo` itself. Closing from the `/remote`
+screen and exiting qcode stop the foreground Serve proxy and close the listener.
 
-The web UI requires the `Tailscale-User-Login` header injected by Serve. Direct
-network listeners, anonymous clients, tagged devices without a user identity,
-and Tailscale Funnel are not supported. A named tailnet user must also redeem
-a valid login link before reading or controlling the session.
+Tailscale mode requires the `Tailscale-User-Login` header injected by Serve.
+Direct anonymous clients, tagged devices without a user identity, and Tailscale
+Funnel are not supported in that mode. Pure Web allows the login exchange
+without a Tailscale identity, but a valid QR link is still required before any
+session can read or control qcode.
 
 The web UI is responsive: agent tabs scroll horizontally on narrow screens,
 the composer stacks on phone widths, and selectors remain touch-sized and
@@ -85,15 +91,9 @@ running, a dim `Waiting (⠋) · N queued` line with the same animated spinner
 frames appears above the status bar, and a Cancel button replaces the TUI's
 `Ctrl+C` hint so a queued or running prompt can be stopped without the keyboard.
 
-Use `/remote status` to see the URL and connected browser count. Use `/remote
-off` to close browsers, stop the loopback server, and interrupt the foreground
-Serve process. Exiting qcode performs the same cleanup without resetting other
-Serve mappings on the machine.
-
 Each `/remote` invocation issues a new single-use login link, valid for three
 minutes. Issuing another link invalidates the previous unredeemed link and
-leaves existing browser sessions connected. `/remote status` reports whether
-the current link is available, used, or expired; it never issues a new link.
+leaves existing browser sessions connected.
 
 The login link and QR appear in a local panel, outside the shared transcript,
 saved sessions, exports, and logs. The panel is dismissed by the next command.
@@ -103,9 +103,9 @@ The clickable heading targets the complete link even when the visible URL wraps.
 
 The link carries a random token in its URL fragment. The browser removes the
 fragment and exchanges the token for a random session key via `POST api/v1/login`.
-The exchange requires Tailscale identity and consumes the token atomically;
-fetching the HTML shell alone does not consume it. Used and expired links show a
-message directing the user to run `/remote` again.
+The exchange consumes the token atomically; Tailscale mode additionally requires
+its named identity. Fetching the HTML shell alone does not consume a link. Used
+and expired links show a message directing the user to run `/remote` again.
 
 The browser stores its key in `sessionStorage`, scoped to the remote session's
 path. Reloading the same tab resumes access. A fresh browser session needs a
@@ -114,13 +114,14 @@ cookies or persistent browser storage.
 
 Every API request, including transcript reads and the live event stream, sends
 `Authorization: Bearer <session_key>`. qcode checks the key against hashes held
-in server memory and requires the same named Tailscale identity that redeemed
-the link. Invalid sessions receive HTTP 401 and the browser disables controls
-and clears its stored key. Login tokens cannot be used as session keys.
+in server memory and, in Tailscale mode, requires the same named identity that
+redeemed the link. Invalid sessions receive HTTP 401 and the browser disables
+controls and clears its stored key. Login tokens cannot be used as session keys.
 
 The three-minute limit only applies to login links. Browser sessions last until
-`/remote off`, qcode exit, or Serve termination. Those events revoke all keys
-and close active event streams; keys never survive a remote-server restart.
+the confirmed Close Connection action, qcode exit, or Serve termination. Those
+events revoke all keys and close active event streams; keys never survive a
+remote-server restart.
 
 When `/verbose` is enabled, qcode records `Remote connect: <identity>` and
 `Remote disconnect: <identity>` in the active screen history for each browser

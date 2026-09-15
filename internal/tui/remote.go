@@ -84,20 +84,28 @@ type RemoteLogin struct {
 	ExpiresAt time.Time
 }
 
+// RemoteMode selects how the browser-facing listener is exposed.
+type RemoteMode string
+
+const (
+	RemoteModePureWeb   RemoteMode = "pure-web"
+	RemoteModeTailscale RemoteMode = "tailscale"
+)
+
+// RemoteStatus is the current browser remote-control lifecycle state.
+type RemoteStatus struct {
+	Running     bool
+	Mode        RemoteMode
+	URL         string
+	Connections int
+}
+
 type RemoteService interface {
-	Start(context.Context) (string, error)
+	Start(context.Context, RemoteMode) (RemoteStatus, error)
 	IssueLogin(context.Context) (RemoteLogin, error)
 	LoginState() string
 	Stop() error
-	Status() (bool, string, int)
-}
-
-type remoteCommandProvider interface {
-	ServeCommand() string
-}
-
-type remoteIPProvider interface {
-	TailscaleIP() string
+	Status() RemoteStatus
 }
 
 type interactionController interface {
@@ -112,56 +120,36 @@ func (u *UI) handleRemoteCommand(ctx context.Context, fields []string) {
 		u.printSystemMessage(yellow + "Remote control is unavailable." + reset)
 		return
 	}
-	if len(fields) > 2 {
-		u.printSystemMessage(yellow + "Usage: /remote [status|off]" + reset)
+	if len(fields) != 1 {
+		u.printSystemMessage(yellow + "Usage: /remote" + reset)
 		return
 	}
-	if len(fields) == 2 && fields[1] == "off" {
-		u.clearRemoteLogin()
-		if err := u.remoteService.Stop(); err != nil {
-			u.printSystemMessage(yellow + "Unable to stop remote control: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+	status := u.remoteService.Status()
+	if !status.Running {
+		mode, accepted, err := u.selectRemoteMode()
+		if err != nil {
+			u.printSystemMessage(yellow + "Unable to choose remote mode: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+			return
+		}
+		if !accepted {
+			return
+		}
+		status, err = u.remoteService.Start(ctx, mode)
+		if err != nil {
+			u.printSystemMessage(yellow + "Unable to start remote control: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 			return
 		}
 		u.drawStatusBar()
-		u.printSystemMessage(green + "Remote control stopped." + reset)
-		return
 	}
-	if len(fields) == 2 && fields[1] != "status" {
-		u.printSystemMessage(yellow + "Usage: /remote [status|off]" + reset)
-		return
-	}
-	if len(fields) == 2 {
-		if running, url, clients := u.remoteService.Status(); running {
-			u.printSystemMessage(fmt.Sprintf("%sRemote control: %s · %d connected · login link: %s%s", green, sanitizeDiffLine(url, "<ESC>"), clients, u.remoteService.LoginState(), reset))
-		} else {
-			u.printSystemMessage(dim + "Remote control is off." + reset)
-		}
-		return
-	}
-	url, err := u.remoteService.Start(ctx)
-	if err != nil {
-		u.printSystemMessage(yellow + "Unable to start remote control: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
-		return
-	}
-	u.drawStatusBar()
-	u.printSystemMessage(green + "Remote control available at " + sanitizeDiffLine(url, "<ESC>") + reset)
-	if service, ok := u.remoteService.(remoteCommandProvider); ok {
-		if command := service.ServeCommand(); command != "" {
-			u.printSystemMessage(dim + "Tailscale command: " + sanitizeDiffLine(command, "<ESC>") + reset)
-		}
-	}
-	if service, ok := u.remoteService.(remoteIPProvider); ok {
-		if ip := service.TailscaleIP(); ip != "" {
-			u.printSystemMessage(dim + "DNS check: this hostname should resolve to Tailscale IP " + sanitizeDiffLine(ip, "<ESC>") + ". HTTPS must use the hostname." + reset)
-		}
-	}
-	u.printSystemMessage(dim + "Remote access requires a browser signed in to this Tailscale tailnet." + reset)
 	login, err := u.remoteService.IssueLogin(ctx)
 	if err != nil {
 		u.printSystemMessage(yellow + "Unable to issue remote login link." + reset)
 		return
 	}
 	u.showRemoteLogin(login)
+	if err := u.showRemoteActive(status); err != nil {
+		u.printSystemMessage(yellow + "Remote control screen failed: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+	}
 }
 
 func (u *UI) RemotePresentation() RemotePresentation {
@@ -313,7 +301,7 @@ func remoteSessionPreview(preview string) string {
 func (u *UI) remoteStatusBar() string {
 	remote := false
 	if u.remoteService != nil {
-		remote, _, _ = u.remoteService.Status()
+		remote = u.remoteService.Status().Running
 	}
 	return statusBarWithRemoteColors(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, true, remote, webStatusModelColor, webStatusWorkspaceColor, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
 }
@@ -438,6 +426,7 @@ func (u *UI) SubmitRemote(actor, line string) error {
 		return fmt.Errorf("that command is restricted to the local terminal")
 	}
 	u.printSystemMessage(dim + "Remote " + sanitizeDiffLine(actor, "<ESC>") + ": " + sanitizeDiffLine(line, "<ESC>") + reset)
+	u.dismissRemoteMenuForInput()
 	// Clear any partially typed local draft before injecting one complete remote
 	// command. interruptReader serializes injected batches from concurrent clients.
 	u.input.inject(append([]byte{ctrlU}, []byte(line+"\r")...))
