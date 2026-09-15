@@ -69,6 +69,55 @@ func renderRemoteModeMenu(out interface{ Write([]byte) (int, error) }, modes []R
 	return len(rows)
 }
 
+func (u *UI) selectRemoteNetwork(networks []RemoteNetwork) (bool, RemoteNetwork, error) {
+	selected := 0
+	u.input.setRaw(true)
+	u.beginRawSelector()
+	defer func() { u.input.setRaw(false); u.endRawSelector() }()
+	for {
+		rows := renderRemoteNetworkMenu(u.terminal, networks, selected, u.width, ColorEnabled(u.out))
+		key, err := readSelectorKey(u.input)
+		if err != nil {
+			clearSelector(u.terminal, rows)
+			return false, RemoteNetwork{}, err
+		}
+		switch key {
+		case "\r", "\n":
+			clearSelector(u.terminal, rows)
+			return true, networks[selected], nil
+		case string([]byte{ctrlC}), "\x1b":
+			clearSelector(u.terminal, rows)
+			return false, RemoteNetwork{}, nil
+		case arrowUpSequence, arrowDownSequence:
+			if key == arrowUpSequence {
+				selected = (selected - 1 + len(networks)) % len(networks)
+			} else {
+				selected = (selected + 1) % len(networks)
+			}
+			clearSelector(u.terminal, rows)
+		}
+	}
+}
+
+func renderRemoteNetworkMenu(out interface{ Write([]byte) (int, error) }, networks []RemoteNetwork, selected, width int, color bool) int {
+	rows := []string{"Pure Web | Choose LAN interface | Up/Down, Enter, Ctrl+C to leave"}
+	for index, network := range networks {
+		prefix := "  "
+		if index == selected {
+			prefix = "> "
+		}
+		line := fmt.Sprintf("%s%s — %s (subnet %s)", prefix, network.Name, network.Address, network.Subnet)
+		if color && index == selected {
+			line = cyan + bold + line + reset
+		}
+		rows = append(rows, line)
+	}
+	for _, row := range rows {
+		fmt.Fprintln(out, truncateDiffLine(row, width, false))
+	}
+	return len(rows)
+}
+
 func (u *UI) showRemoteActive(status RemoteStatus) error {
 	selected := remoteKeepOpen
 	staticRows := 6 // title, address, connections, spacer, and two actions

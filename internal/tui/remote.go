@@ -102,8 +102,16 @@ type RemoteStatus struct {
 	Connections int
 }
 
+// RemoteNetwork is a LAN IPv4 address available for a Pure Web listener.
+type RemoteNetwork struct {
+	Name    string
+	Address string
+	Subnet  string
+}
+
 type RemoteService interface {
-	Start(context.Context, RemoteMode) (RemoteStatus, error)
+	Networks() ([]RemoteNetwork, error)
+	Start(context.Context, RemoteMode, string) (RemoteStatus, error)
 	IssueLogin(context.Context) (RemoteLogin, error)
 	LoginState() string
 	Stop() error
@@ -136,7 +144,32 @@ func (u *UI) handleRemoteCommand(ctx context.Context, fields []string) {
 		if !accepted {
 			return
 		}
-		status, err = u.remoteService.Start(ctx, mode)
+		address := ""
+		if mode != RemoteModeTailscale {
+			networks, networkErr := u.remoteService.Networks()
+			if networkErr != nil {
+				u.printSystemMessage(yellow + "Unable to list LAN interfaces: " + sanitizeDiffLine(networkErr.Error(), "<ESC>") + reset)
+				return
+			}
+			if len(networks) == 0 {
+				u.printSystemMessage(yellow + "Pure Web needs an active LAN IPv4 address." + reset)
+				return
+			}
+			if len(networks) == 1 {
+				address = networks[0].Address
+			} else {
+				selected, selectedNetwork, selectErr := u.selectRemoteNetwork(networks)
+				if selectErr != nil {
+					u.printSystemMessage(yellow + "Unable to choose LAN interface: " + sanitizeDiffLine(selectErr.Error(), "<ESC>") + reset)
+					return
+				}
+				if !selected {
+					return
+				}
+				address = selectedNetwork.Address
+			}
+		}
+		status, err = u.remoteService.Start(ctx, mode, address)
 		if err != nil {
 			u.printSystemMessage(yellow + "Unable to start remote control: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 			return

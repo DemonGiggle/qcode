@@ -59,6 +59,10 @@ must be used only on a trusted LAN. Tailscale starts a loopback server and its
 foreground `tailscale serve` proxy on a unique HTTPS path; browsers must belong
 to the same tailnet.
 
+If more than one active LAN IPv4 interface is available, qcode asks which one
+to expose and shows each interface name, address, and CIDR subnet. With only
+one eligible interface, it uses that address directly.
+
 The selector also includes **Pure Web (No auth, danger!)**. It uses the same
 LAN HTTP listener but encodes the bare service URL in the QR code: no login
 link, token, or browser session is required. Anyone who knows that URL can read

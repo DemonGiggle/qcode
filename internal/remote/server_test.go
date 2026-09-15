@@ -200,6 +200,12 @@ func TestPureWebStatusDoesNotRequireTailscaleServe(t *testing.T) {
 	}
 }
 
+func TestSelectedLANIPv4RejectsUnknownAddress(t *testing.T) {
+	if _, err := selectedLANIPv4("203.0.113.99"); err == nil {
+		t.Fatal("unknown LAN address was accepted")
+	}
+}
+
 func TestReportsRejectedRemoteRequest(t *testing.T) {
 	presentation := &testPresentation{rejections: make(chan string, 1)}
 	handler := New(presentation).routes()

@@ -57,7 +57,7 @@ type Manager struct {
 
 func New(ui presentation) *Manager { return &Manager{ui: ui, auth: newAuthStore()} }
 
-func (m *Manager) Start(ctx context.Context, mode tui.RemoteMode) (tui.RemoteStatus, error) {
+func (m *Manager) Start(ctx context.Context, mode tui.RemoteMode, address string) (tui.RemoteStatus, error) {
 	if mode != tui.RemoteModePureWeb && mode != tui.RemoteModePureWebOpen && mode != tui.RemoteModeTailscale {
 		return tui.RemoteStatus{}, fmt.Errorf("unsupported remote mode %q", mode)
 	}
@@ -76,7 +76,7 @@ func (m *Manager) Start(ctx context.Context, mode tui.RemoteMode) (tui.RemoteSta
 	publicIP := ""
 	if mode != tui.RemoteModeTailscale {
 		var err error
-		publicIP, err = primaryLANIPv4()
+		publicIP, err = selectedLANIPv4(address)
 		if err != nil {
 			return tui.RemoteStatus{}, err
 		}
@@ -94,6 +94,10 @@ func (m *Manager) Start(ctx context.Context, mode tui.RemoteMode) (tui.RemoteSta
 	}
 	return m.startPureWeb(listener, publicURL, mode)
 }
+
+// Networks returns the active, non-loopback IPv4 interfaces usable by Pure
+// Web. Subnet is included so the terminal can make multi-homed selection clear.
+func (m *Manager) Networks() ([]tui.RemoteNetwork, error) { return lanNetworks() }
 
 func (m *Manager) startPureWeb(listener net.Listener, publicURL string, mode tui.RemoteMode) (tui.RemoteStatus, error) {
 	auth := newAuthStore(mode)
@@ -226,13 +230,28 @@ func (m *Manager) startTailscale(ctx context.Context, listener net.Listener) (tu
 	return status, nil
 }
 
-// primaryLANIPv4 chooses an address from an interface that a local-network
-// peer can reach. The interface order is supplied by the operating system.
-func primaryLANIPv4() (string, error) {
+func selectedLANIPv4(selected string) (string, error) {
+	networks, err := lanNetworks()
+	if err != nil {
+		return "", err
+	}
+	for _, network := range networks {
+		if selected == "" || network.Address == selected {
+			return network.Address, nil
+		}
+	}
+	if selected != "" {
+		return "", fmt.Errorf("%q is not an active LAN IPv4 address", selected)
+	}
+	return "", errors.New("Pure Web needs an active LAN IPv4 address")
+}
+
+func lanNetworks() ([]tui.RemoteNetwork, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return "", fmt.Errorf("list network interfaces: %w", err)
+		return nil, fmt.Errorf("list network interfaces: %w", err)
 	}
+	var networks []tui.RemoteNetwork
 	for _, iface := range interfaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
@@ -242,14 +261,14 @@ func primaryLANIPv4() (string, error) {
 			continue
 		}
 		for _, address := range addresses {
-			ip, _, err := net.ParseCIDR(address.String())
+			ip, subnet, err := net.ParseCIDR(address.String())
 			if err != nil || ip.To4() == nil || ip.IsLinkLocalUnicast() {
 				continue
 			}
-			return ip.String(), nil
+			networks = append(networks, tui.RemoteNetwork{Name: iface.Name, Address: ip.String(), Subnet: subnet.String()})
 		}
 	}
-	return "", errors.New("Pure Web needs an active LAN IPv4 address")
+	return networks, nil
 }
 
 // remoteURL is the browser-facing address for the Serve mount. The web page

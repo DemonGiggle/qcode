@@ -157,7 +157,10 @@ func TestRemoteCanWinQuestionInteraction(t *testing.T) {
 	}
 }
 
-func (s *fakeRemoteService) Start(_ context.Context, mode RemoteMode) (RemoteStatus, error) {
+func (s *fakeRemoteService) Networks() ([]RemoteNetwork, error) {
+	return []RemoteNetwork{{Name: "wifi", Address: "192.168.1.10", Subnet: "192.168.1.0/24"}}, nil
+}
+func (s *fakeRemoteService) Start(_ context.Context, mode RemoteMode, _ string) (RemoteStatus, error) {
 	s.running = true
 	if mode == RemoteModePureWeb {
 		s.url = "http://192.168.1.10:1234"
@@ -196,6 +199,18 @@ func TestRemoteModeMenuDefaultsToPureWeb(t *testing.T) {
 	got := output.String()
 	if !strings.Contains(got, "> Pure Web") || !strings.Contains(got, "Pure Web (No auth, danger!)") || !strings.Contains(got, "  Tailscale") {
 		t.Fatalf("remote mode menu = %q", got)
+	}
+}
+
+func TestRemoteNetworkMenuShowsInterfacesAndSubnets(t *testing.T) {
+	var output bytes.Buffer
+	renderRemoteNetworkMenu(&output, []RemoteNetwork{
+		{Name: "wifi", Address: "192.168.1.10", Subnet: "192.168.1.0/24"},
+		{Name: "ethernet", Address: "10.0.0.5", Subnet: "10.0.0.0/24"},
+	}, 0, 120, false)
+	got := output.String()
+	if !strings.Contains(got, "> wifi — 192.168.1.10 (subnet 192.168.1.0/24)") || !strings.Contains(got, "ethernet — 10.0.0.5 (subnet 10.0.0.0/24)") {
+		t.Fatalf("network menu = %q", got)
 	}
 }
 
