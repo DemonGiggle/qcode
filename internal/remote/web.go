@@ -376,7 +376,8 @@ async function login(){
     status.textContent=sessionKey?'Unable to connect. Reload to retry.':'Unable to sign in. Run /remote for a new login link.';
   }
 }
-const ansi16=['#000000','#800000','#008000','#808000','#000080','#800080','#008080','#c0c0c0','#808080','#ff0000','#00ff00','#ffff00','#0000ff','#ff00ff','#00ffff','#ffffff'];
+/* Blue (4) and bright blue (12) are lifted so ANSI blue output, such as level 3+ markdown headings, stays readable on the dark transcript. */
+const ansi16=['#000000','#800000','#008000','#808000','#6cb6ff','#800080','#008080','#c0c0c0','#808080','#ff0000','#00ff00','#ffff00','#9ccbff','#ff00ff','#00ffff','#ffffff'];
 function schedule(){clearTimeout(timer);timer=setTimeout(load,70)}
 async function load(){if(closed)return;try{const r=await apiFetch('api/v1/snapshot',{cache:'no-store'});if(!r.ok)throw new Error(await r.text());const next=await r.json();if(closed)return;snapshot=next;render()}catch(e){status.innerHTML='<span class="notice">'+escapeHTML(String(e))+'</span>'}}
 function escapeHTML(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}

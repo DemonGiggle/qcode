@@ -388,9 +388,12 @@ func escapeHTML(value string) string {
 	return escaped.String()
 }
 
+// standardANSIColors powers the HTML export, which renders on the same dark
+// background as the remote web UI. Blue (4) and bright blue (12) are lightened
+// so ANSI blue text, such as level 3+ markdown headings, stays readable.
 var standardANSIColors = [...]string{
-	"#000000", "#800000", "#008000", "#808000", "#000080", "#800080", "#008080", "#c0c0c0",
-	"#808080", "#ff0000", "#00ff00", "#ffff00", "#0000ff", "#ff00ff", "#00ffff", "#ffffff",
+	"#000000", "#800000", "#008000", "#808000", "#6cb6ff", "#800080", "#008080", "#c0c0c0",
+	"#808080", "#ff0000", "#00ff00", "#ffff00", "#9ccbff", "#ff00ff", "#00ffff", "#ffffff",
 }
 
 func ansi16Color(index int) string {
