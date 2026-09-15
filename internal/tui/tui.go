@@ -440,6 +440,39 @@ func (u *UI) SetRunner(runner Runner) {
 	}
 }
 
+// VerboseEnabled reports whether detailed action traces are enabled. Agent
+// factories use it so agents created after startup mirror the current setting.
+func (u *UI) VerboseEnabled() bool {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	return u.verbose
+}
+
+// applyVerbose propagates the current verbose setting to every live agent.
+// Without this, background agents keep the trace logger's verbose default and
+// print raw start/finish spans even when /verbose is off.
+func (u *UI) applyVerbose() {
+	u.screenMu.Lock()
+	verbose := u.verbose
+	manager := u.manager
+	runner := u.runner
+	u.screenMu.Unlock()
+	if manager != nil {
+		for _, summary := range manager.List() {
+			configurable, ok := manager.Runner(summary.ID)
+			if !ok {
+				continue
+			}
+			if setter, ok := configurable.(verboseRunner); ok {
+				setter.SetVerbose(verbose)
+			}
+		}
+	}
+	if setter, ok := runner.(verboseRunner); ok {
+		setter.SetVerbose(verbose)
+	}
+}
+
 // SetStartupNotice displays sandbox status between the banner and first user
 // prompt. requireChoice offers Continue or Leave before the session starts.
 func (u *UI) SetStartupNotice(message string, requireChoice bool) {
@@ -643,9 +676,7 @@ func (u *UI) Run(ctx context.Context) error {
 			u.screenMu.Lock()
 			u.verbose = !u.verbose
 			u.screenMu.Unlock()
-			if configurable, ok := u.runner.(verboseRunner); ok {
-				configurable.SetVerbose(u.verbose)
-			}
+			u.applyVerbose()
 			state := "off"
 			if u.verbose {
 				state = "on"
