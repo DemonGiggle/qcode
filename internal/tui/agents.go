@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,19 @@ func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 	}
 	if len(fields) == 1 || len(fields) == 2 && fields[1] == "new" {
 		u.createAgent(ctx)
+		return
+	}
+	if len(fields) == 3 && fields[1] == "new" {
+		summary, err := u.manager.Create(fields[2])
+		if err != nil {
+			u.printSystemMessage(yellow + err.Error() + reset)
+			return
+		}
+		if err := u.switchAgent(summary.ID); err != nil {
+			u.printSystemMessage(yellow + err.Error() + reset)
+			return
+		}
+		u.printSystemMessage(green + "Created " + summary.ID + "." + reset)
 		return
 	}
 	switch fields[1] {
@@ -59,6 +73,18 @@ func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 			u.printSystemMessage(yellow + err.Error() + reset)
 		}
 	case "close":
+		if len(fields) == 4 && fields[3] == "--yes" {
+			if err := u.manager.Close(fields[2]); err != nil {
+				u.printSystemMessage(yellow + err.Error() + reset)
+				return
+			}
+			if u.activeAgent == fields[2] {
+				_ = u.switchAgent("main")
+			}
+			u.RemoveAgentView(fields[2])
+			u.drawTabBar()
+			return
+		}
 		if len(fields) != 3 {
 			u.agentUsage()
 			return
@@ -451,7 +477,7 @@ func (u *UI) thinkingLabel() string {
 // AgentDirectoryApprover suspends background approval requests until their tab
 // is active, keeping all terminal reads on the UI goroutine.
 func (u *UI) AgentDirectoryApprover(id string) func(context.Context, string, string) (string, bool, error) {
-	return func(ctx context.Context, requested, proposed string) (string, bool, error) {
+	local := func(ctx context.Context, requested, proposed string) (string, bool, error) {
 		if u.sessionHost != nil {
 			return u.sessionHost.AgentDirectoryApprover(id)(ctx, requested, proposed)
 		}
@@ -472,7 +498,98 @@ func (u *UI) AgentDirectoryApprover(id string) func(context.Context, string, str
 		case result := <-request.result:
 			return result.selected, result.approved, result.err
 		case <-ctx.Done():
+			u.removeApprovalRequest(id, request)
+			if u.manager != nil {
+				u.manager.SetWaitingForApproval(id, false)
+			}
 			return "", false, ctx.Err()
+		}
+	}
+	brokerOwner, ok := u.manager.(interactionController)
+	if !ok {
+		return local
+	}
+	type requestPayload struct {
+		Requested string `json:"requested"`
+		Proposed  string `json:"proposed"`
+	}
+	type answerPayload struct {
+		Selected string `json:"selected"`
+		Approved bool   `json:"approved"`
+	}
+	return func(ctx context.Context, requested, proposed string) (string, bool, error) {
+		payload, _ := json.Marshal(requestPayload{Requested: requested, Proposed: proposed})
+		handle, err := brokerOwner.BeginInteraction(session.Interaction{AgentID: id, Kind: session.InteractionDirectoryApproval, Payload: payload})
+		if err != nil {
+			return "", false, err
+		}
+		u.signalPresentation()
+		localCtx, cancelLocal := context.WithCancel(ctx)
+		defer cancelLocal()
+		brokerCtx, cancelBroker := context.WithCancel(ctx)
+		defer cancelBroker()
+		localResult := make(chan approvalResult, 1)
+		go func() {
+			selected, approved, err := local(localCtx, requested, proposed)
+			localResult <- approvalResult{selected: selected, approved: approved, err: err}
+		}()
+		remoteResult := make(chan struct {
+			resolution session.Resolution
+			err        error
+		}, 1)
+		go func() {
+			resolution, err := handle.Wait(brokerCtx)
+			remoteResult <- struct {
+				resolution session.Resolution
+				err        error
+			}{resolution, err}
+		}()
+		select {
+		case result := <-localResult:
+			if result.err != nil {
+				return "", false, result.err
+			}
+			value, _ := json.Marshal(answerPayload{Selected: result.selected, Approved: result.approved})
+			_ = brokerOwner.ResolveInteraction(session.Resolution{InteractionID: handle.InteractionInfo().ID, Value: value, ResolvedBy: "local-tui"})
+			u.signalPresentation()
+			resolved := <-remoteResult
+			if resolved.err != nil {
+				return "", false, resolved.err
+			}
+			var answer answerPayload
+			if err := json.Unmarshal(resolved.resolution.Value, &answer); err != nil {
+				return "", false, err
+			}
+			return answer.Selected, answer.Approved, nil
+		case resolved := <-remoteResult:
+			cancelLocal()
+			if u.input != nil {
+				u.input.interruptLine()
+			}
+			<-localResult
+			if resolved.err != nil {
+				return "", false, resolved.err
+			}
+			var answer answerPayload
+			if err := json.Unmarshal(resolved.resolution.Value, &answer); err != nil {
+				return "", false, err
+			}
+			if answer.Approved && strings.TrimSpace(answer.Selected) == "" {
+				answer.Selected = proposed
+			}
+			return answer.Selected, answer.Approved, nil
+		}
+	}
+}
+
+func (u *UI) removeApprovalRequest(id string, target *approvalRequest) {
+	u.approvalMu.Lock()
+	defer u.approvalMu.Unlock()
+	queue := u.approvals[id]
+	for i, request := range queue {
+		if request == target {
+			u.approvals[id] = append(queue[:i], queue[i+1:]...)
+			return
 		}
 	}
 }

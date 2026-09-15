@@ -36,7 +36,7 @@ func TestMatchingSlashCommands(t *testing.T) {
 		want []string
 	}{
 		{line: "", want: nil},
-		{line: "/", want: []string{"/agent", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/learn", "/maxsteps", "/model", "/new", "/plan", "/resume", "/skill", "/quit", "/tool", "/verbose"}},
+		{line: "/", want: []string{"/agent", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/learn", "/maxsteps", "/model", "/new", "/plan", "/resume", "/remote", "/skill", "/quit", "/tool", "/verbose"}},
 		{line: "/d", want: []string{"/diff"}},
 		{line: "/h", want: []string{"/help"}},
 		{line: "/m", want: []string{"/maxsteps", "/model"}},
@@ -232,6 +232,33 @@ func TestStatusBarUsesColoredSegments(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, reset) {
 		t.Fatalf("status bar does not restore terminal styling: %q", got)
+	}
+}
+
+func TestWebStatusBarUsesReadableModelAndWorkspaceColors(t *testing.T) {
+	got := statusBarWithRemoteColors("ollama", "qwen", "~/code", 80, true, true, false, webStatusModelColor, webStatusWorkspaceColor)
+	for _, color := range []string{webStatusModelColor, webStatusWorkspaceColor} {
+		if !strings.Contains(got, color) {
+			t.Fatalf("web status bar %q does not contain color %q", got, color)
+		}
+	}
+	if strings.Contains(got, magenta) || strings.Contains(got, blue) {
+		t.Fatalf("web status bar still contains dark ANSI model/workspace colors: %q", got)
+	}
+}
+
+func TestStatusBarShowsRemoteBadgeAtBeginning(t *testing.T) {
+	plain := statusBarWithRemote("ollama", "qwen", "~/code", 80, true, false, true)
+	if !strings.HasPrefix(plain, "[REMOTE] ") {
+		t.Fatalf("plain remote status bar = %q", plain)
+	}
+
+	colored := statusBarWithRemote("ollama", "qwen", "~/code", 80, true, true, true)
+	if !strings.HasPrefix(colored, "\x1b[1;30;42m REMOTE "+reset) {
+		t.Fatalf("colored remote status bar = %q", colored)
+	}
+	if visibleWidth(colored) > 80 {
+		t.Fatalf("colored remote status bar width = %d", visibleWidth(colored))
 	}
 }
 

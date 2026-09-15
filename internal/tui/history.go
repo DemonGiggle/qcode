@@ -18,7 +18,8 @@ type historyCell struct {
 // historyWriter records a styled copy of persistent terminal output while
 // interpreting cursor rewrites so transient progress animation is excluded.
 type historyWriter struct {
-	out io.Writer
+	out      io.Writer
+	onChange func()
 
 	mu      sync.Mutex
 	lines   []string
@@ -40,6 +41,9 @@ func (w *historyWriter) Write(data []byte) (int, error) {
 		w.mu.Lock()
 		w.record(data[:n])
 		w.mu.Unlock()
+		if w.onChange != nil {
+			w.onChange()
+		}
 	}
 	return n, err
 }
@@ -48,6 +52,9 @@ func (w *historyWriter) AddLine(line string) {
 	w.mu.Lock()
 	w.record([]byte(line + "\n"))
 	w.mu.Unlock()
+	if w.onChange != nil {
+		w.onChange()
+	}
 }
 
 func (w *historyWriter) Clear() {
@@ -61,6 +68,9 @@ func (w *historyWriter) Clear() {
 	w.pending = nil
 	w.style = ""
 	w.mu.Unlock()
+	if w.onChange != nil {
+		w.onChange()
+	}
 }
 
 type historyLine struct {

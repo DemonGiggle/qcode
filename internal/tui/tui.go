@@ -175,65 +175,78 @@ type agentController interface {
 }
 
 type UI struct {
-	fixedInput         bool
-	inputText          string
-	inputLabel         string
-	inputPosition      int
-	inputFrame         string
-	inputScreenRows    []string
-	inputCursorRow     int
-	inputCursorColumn  int
-	terminal           *lineedit.Terminal
-	display            historyDisplay
-	responseWriter     *MarkdownWriter
-	commandMenu        slashCommandMenu
-	input              *interruptReader
-	in                 *os.File
-	out                *os.File
-	runner             Runner
-	provider           string
-	model              string
-	root               string
-	verbose            bool
-	width              int
-	height             int
-	unicode            bool
-	viewport           viewport
-	statusActive       bool
-	statusBarText      string
-	planViewActive     bool
-	startupNotice      string
-	startupChoice      bool
-	skills             []prompt.SkillSummary
-	skillLocations     []string
-	skillCatalogLoader skillCatalogLoader
-	onSkills           func([]string)
-	consultationCursor uint64 // Guarded by screenMu; persisted with the transcript.
-	manager            agentController
-	activeAgent        string
-	views              map[string]*agentView
-	screenMu           sync.Mutex
-	drafts             map[string]string
-	approvalMu         sync.Mutex
-	approvals          map[string][]*approvalRequest
-	questionMu         sync.Mutex
-	questions          []*questionRequest
-	planDecisionMu     sync.Mutex
-	planDecisions      []*planDecisionRequest
-	tabMu              sync.Mutex
-	pendingTab         int
-	agentEventsDone    chan struct{}
-	uiEvents           chan struct{}
-	taskIndicatorText  string
-	demoPrompts        []string
-	demoPromptDelay    time.Duration
-	demoQueueDelay     time.Duration
-	persistence        *sessionPersistence
-	sessionHost        *UI
+	fixedInput           bool
+	inputText            string
+	inputLabel           string
+	inputPosition        int
+	inputFrame           string
+	inputScreenRows      []string
+	inputCursorRow       int
+	inputCursorColumn    int
+	terminal             *lineedit.Terminal
+	display              historyDisplay
+	responseWriter       *MarkdownWriter
+	commandMenu          slashCommandMenu
+	input                *interruptReader
+	in                   *os.File
+	out                  *os.File
+	runner               Runner
+	provider             string
+	model                string
+	root                 string
+	verbose              bool
+	width                int
+	height               int
+	unicode              bool
+	viewport             viewport
+	statusActive         bool
+	statusBarText        string
+	planViewActive       bool
+	startupNotice        string
+	startupChoice        bool
+	skills               []prompt.SkillSummary
+	skillLocations       []string
+	skillCatalogLoader   skillCatalogLoader
+	onSkills             func([]string)
+	consultationCursor   uint64 // Guarded by screenMu; persisted with the transcript.
+	manager              agentController
+	activeAgent          string
+	views                map[string]*agentView
+	screenMu             sync.Mutex
+	drafts               map[string]string
+	approvalMu           sync.Mutex
+	approvals            map[string][]*approvalRequest
+	questionMu           sync.Mutex
+	questions            []*questionRequest
+	planDecisionMu       sync.Mutex
+	planDecisions        []*planDecisionRequest
+	tabMu                sync.Mutex
+	pendingTab           int
+	agentEventsDone      chan struct{}
+	uiEvents             chan struct{}
+	presentationMu       sync.Mutex
+	presentationSubs     map[uint64]chan struct{}
+	nextPresentationSub  uint64
+	presentationSequence uint64
+	taskIndicatorText    string
+	demoPrompts          []string
+	demoPromptDelay      time.Duration
+	demoQueueDelay       time.Duration
+	persistence          *sessionPersistence
+	sessionHost          *UI
+	remoteService        RemoteService
+	remoteLogin          *RemoteLogin
+	remoteQR             []string
+	remoteLoginTimer     *time.Timer
+	remoteMenuMu         sync.Mutex
+	remoteMenuActive     bool
+	remoteMenuWake       bool
 }
 
 // SetSkillCatalog configures the optional /skill selector.
 func (u *UI) SetSkillCatalog(skills []prompt.SkillSummary, onChange func([]string)) {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
 	u.skills = append([]prompt.SkillSummary(nil), skills...)
 	u.onSkills = onChange
 }
@@ -241,25 +254,33 @@ func (u *UI) SetSkillCatalog(skills []prompt.SkillSummary, onChange func([]strin
 // SetSkillLocations configures the directories shown by /skill before its
 // selector. Missing directories are intentionally retained in this list.
 func (u *UI) SetSkillLocations(locations []string) {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
 	u.skillLocations = append([]string(nil), locations...)
 }
 
 // SetSkillCatalogLoader defers skill discovery until /skill needs the catalog.
 // The loader may refresh the catalog on each command invocation.
 func (u *UI) SetSkillCatalogLoader(loader skillCatalogLoader) {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
 	u.skillCatalogLoader = loader
 }
 
 func (u *UI) ensureSkillCatalog() bool {
-	if u.skillCatalogLoader == nil {
+	u.screenMu.Lock()
+	loader := u.skillCatalogLoader
+	onSkills := u.onSkills
+	u.screenMu.Unlock()
+	if loader == nil {
 		return true
 	}
-	summaries, err := u.skillCatalogLoader()
+	summaries, err := loader()
 	if err != nil {
 		u.printSystemMessage(yellow + "Cannot discover skills: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 		return false
 	}
-	u.SetSkillCatalog(summaries, u.onSkills)
+	u.SetSkillCatalog(summaries, onSkills)
 	return true
 }
 
@@ -275,25 +296,27 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	responseWriter.SetUnicode(unicodeEnabled)
 	responseWriter.EnableDiffs()
 	u := &UI{
-		terminal:       t,
-		display:        display,
-		responseWriter: responseWriter,
-		commandMenu:    slashCommandMenu{out: t, color: ColorEnabled(out), width: width},
-		input:          input,
-		in:             in,
-		out:            out,
-		runner:         runner,
-		provider:       provider,
-		model:          model,
-		root:           root,
-		width:          width,
-		height:         height,
-		unicode:        unicodeEnabled,
-		views:          make(map[string]*agentView),
-		drafts:         make(map[string]string),
-		approvals:      make(map[string][]*approvalRequest),
-		uiEvents:       make(chan struct{}, 1),
+		terminal:         t,
+		display:          display,
+		responseWriter:   responseWriter,
+		commandMenu:      slashCommandMenu{out: t, color: ColorEnabled(out), width: width},
+		input:            input,
+		in:               in,
+		out:              out,
+		runner:           runner,
+		provider:         provider,
+		model:            model,
+		root:             root,
+		width:            width,
+		height:           height,
+		unicode:          unicodeEnabled,
+		views:            make(map[string]*agentView),
+		drafts:           make(map[string]string),
+		approvals:        make(map[string][]*approvalRequest),
+		uiEvents:         make(chan struct{}, 1),
+		presentationSubs: make(map[uint64]chan struct{}),
 	}
+	display.history.onChange = u.signalPresentation
 	display.ui = u
 	t.AutoCompleteCallback = u.completeSlashCommand
 	input.setPageHandler(u.showPage)
@@ -339,6 +362,7 @@ func (u *UI) AddAgentView(id, provider, model string) (io.Writer, io.Writer) {
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
 	history := newHistoryWriter(io.Discard)
+	history.onChange = u.signalPresentation
 	display := &agentDisplay{ui: u, id: id, history: history}
 	response := NewMarkdownWriter(display, ColorEnabled(u.out), u.width)
 	response.SetUnicode(u.unicode)
@@ -421,6 +445,39 @@ func (u *UI) SetRunner(runner Runner) {
 	}
 }
 
+// VerboseEnabled reports whether detailed action traces are enabled. Agent
+// factories use it so agents created after startup mirror the current setting.
+func (u *UI) VerboseEnabled() bool {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	return u.verbose
+}
+
+// applyVerbose propagates the current verbose setting to every live agent.
+// Without this, background agents keep the trace logger's verbose default and
+// print raw start/finish spans even when /verbose is off.
+func (u *UI) applyVerbose() {
+	u.screenMu.Lock()
+	verbose := u.verbose
+	manager := u.manager
+	runner := u.runner
+	u.screenMu.Unlock()
+	if manager != nil {
+		for _, summary := range manager.List() {
+			configurable, ok := manager.Runner(summary.ID)
+			if !ok {
+				continue
+			}
+			if setter, ok := configurable.(verboseRunner); ok {
+				setter.SetVerbose(verbose)
+			}
+		}
+	}
+	if setter, ok := runner.(verboseRunner); ok {
+		setter.SetVerbose(verbose)
+	}
+}
+
 // SetStartupNotice displays sandbox status between the banner and first user
 // prompt. requireChoice offers Continue or Leave before the session starts.
 func (u *UI) SetStartupNotice(message string, requireChoice bool) {
@@ -438,6 +495,7 @@ func (u *UI) SetDemoPromptScript(prompts []string, firstDelay, queueDelay time.D
 }
 
 func (u *UI) Run(ctx context.Context) error {
+	defer u.clearRemoteLogin()
 	if u.runner == nil {
 		return fmt.Errorf("terminal UI has no agent runner")
 	}
@@ -523,8 +581,16 @@ func (u *UI) Run(ctx context.Context) error {
 		if line == "" {
 			continue
 		}
-		if line == "/resume" {
-			u.resumeSession()
+		u.clearRemoteLogin()
+		if line == "/resume" || strings.HasPrefix(line, "/resume ") {
+			fields := strings.Fields(line)
+			if len(fields) > 2 {
+				u.printSystemMessage(yellow + "Usage: /resume [session-id]" + reset)
+			} else if len(fields) == 2 {
+				u.resumeSessionID(fields[1])
+			} else {
+				u.resumeSession()
+			}
 			continue
 		}
 		if u.fixedInput {
@@ -534,6 +600,22 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		u.resetPage()
 		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == "/remote" {
+			u.handleRemoteCommand(ctx, fields)
+			continue
+		}
+		if len(fields) > 1 && fields[0] == "/model" {
+			u.setModelCommand(ctx, fields)
+			continue
+		}
+		if len(fields) > 1 && fields[0] == "/tool" {
+			u.setToolCommand(fields)
+			continue
+		}
+		if len(fields) > 1 && fields[0] == "/skill" {
+			u.setSkillCommand(fields)
+			continue
+		}
 		if len(fields) > 0 && fields[0] == "/agent" {
 			u.handleAgentCommand(ctx, fields)
 			continue
@@ -599,9 +681,7 @@ func (u *UI) Run(ctx context.Context) error {
 			u.screenMu.Lock()
 			u.verbose = !u.verbose
 			u.screenMu.Unlock()
-			if configurable, ok := u.runner.(verboseRunner); ok {
-				configurable.SetVerbose(u.verbose)
-			}
+			u.applyVerbose()
 			state := "off"
 			if u.verbose {
 				state = "on"
@@ -699,6 +779,9 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 	if err != nil {
 		return "", false, err
 	}
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
 	selected := strings.TrimSpace(line)
 	if selected == "" {
 		selected = proposed
@@ -717,6 +800,9 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 	if err != nil {
 		return "", false, err
 	}
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
 	approved := strings.EqualFold(strings.TrimSpace(answer), "y") || strings.EqualFold(strings.TrimSpace(answer), "yes")
 	if approved && sensitive {
 		u.terminal.SetPrompt(yellow + bold + "Confirm broad home access by typing YES: " + reset)
@@ -724,6 +810,9 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 		u.terminal.SetPrompt(inputPrompt)
 		if confirmErr != nil {
 			return "", false, confirmErr
+		}
+		if err := ctx.Err(); err != nil {
+			return "", false, err
 		}
 		approved = strings.TrimSpace(confirmation) == "YES"
 	}
@@ -867,6 +956,80 @@ func (u *UI) chooseModel(ctx context.Context) {
 		message += " · thinking: " + level
 	}
 	u.printSystemMessage(message + reset)
+}
+
+func (u *UI) setModelCommand(ctx context.Context, fields []string) {
+	if len(fields) < 2 || len(fields) > 3 {
+		u.printSystemMessage(yellow + "Usage: /model <model> [thinking]" + reset)
+		return
+	}
+	if !u.activeAgentConfigurable() {
+		return
+	}
+	runner, ok := u.runner.(modelRunner)
+	if !ok {
+		u.printSystemMessage(yellow + "Model selection is unavailable." + reset)
+		return
+	}
+	models, err := runner.ListModels(ctx)
+	if err != nil {
+		u.printSystemMessage(yellow + "Unable to list models: " + err.Error() + reset)
+		return
+	}
+	found := false
+	for _, model := range models {
+		if model == fields[1] {
+			found = true
+			break
+		}
+	}
+	if !found {
+		u.printSystemMessage(yellow + "Unknown model: " + sanitizeDiffLine(fields[1], "<ESC>") + reset)
+		return
+	}
+	level := ""
+	if len(fields) == 3 {
+		thinking, ok := runner.(thinkingRunner)
+		if !ok {
+			u.printSystemMessage(yellow + "Thinking configuration is unavailable." + reset)
+			return
+		}
+		capability := thinking.ThinkingCapabilityFor(fields[1])
+		for _, candidate := range capability.Levels {
+			if candidate == fields[2] {
+				level = candidate
+				break
+			}
+		}
+		if level == "" {
+			u.printSystemMessage(yellow + "Unsupported thinking level: " + sanitizeDiffLine(fields[2], "<ESC>") + reset)
+			return
+		}
+	}
+	runner.SetModel(fields[1])
+	if thinking, ok := runner.(thinkingRunner); ok {
+		if err := thinking.SetThinking(level); err != nil {
+			u.printSystemMessage(yellow + err.Error() + reset)
+			return
+		}
+	}
+	if u.manager != nil {
+		if err := u.manager.UpdateModel(u.activeAgent, fields[1]); err != nil {
+			u.printSystemMessage(yellow + err.Error() + reset)
+			return
+		}
+	}
+	u.screenMu.Lock()
+	u.model = fields[1]
+	if view := u.views[u.activeAgent]; view != nil {
+		view.model = fields[1]
+	}
+	u.screenMu.Unlock()
+	if tracker, ok := u.runner.(contextRunner); ok {
+		tracker.RefreshContext(ctx)
+	}
+	u.drawStatusBar()
+	u.printSystemMessage(green + "Model: " + sanitizeDiffLine(fields[1], "<ESC>") + reset)
 }
 
 // selectThinkingLevel is a second, model-aware selector. It never presents a
@@ -1104,7 +1267,7 @@ func (u *UI) printHeader() {
 	fmt.Fprintf(u.display, "\r\n")
 	u.printToolSummary()
 	if !u.statusActive {
-		fmt.Fprintf(u.display, "%s\r\n", statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel()))
+		fmt.Fprintf(u.display, "%s\r\n", u.statusBar())
 	}
 }
 
@@ -1159,12 +1322,20 @@ func (u *UI) renderStatusBarLocked(force bool) {
 	if !u.statusActive {
 		return
 	}
-	bar := statusBar(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+	bar := u.statusBar()
 	if !force && bar == u.statusBarText {
 		return
 	}
 	u.statusBarText = bar
 	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", u.height, bar)
+}
+
+func (u *UI) statusBar() string {
+	remote := false
+	if u.remoteService != nil {
+		remote = u.remoteService.Status().Running
+	}
+	return statusBarWithRemote(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), remote, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
 }
 
 func (u *UI) teardownStatusBar() {
@@ -1178,12 +1349,20 @@ func (u *UI) teardownStatusBar() {
 }
 
 func statusBar(provider, model, root string, width int, unicodeEnabled, color bool, contextLabel ...string) string {
+	return statusBarWithRemote(provider, model, root, width, unicodeEnabled, color, false, contextLabel...)
+}
+
+func statusBarWithRemote(provider, model, root string, width int, unicodeEnabled, color, remote bool, contextLabel ...string) string {
+	return statusBarWithRemoteColors(provider, model, root, width, unicodeEnabled, color, remote, magenta, blue, contextLabel...)
+}
+
+func statusBarWithRemoteColors(provider, model, root string, width int, unicodeEnabled, color, remote bool, modelColor, workspaceColor string, contextLabel ...string) string {
 	provider = sanitizeDiffLine(provider, "<ESC>")
 	model = sanitizeDiffLine(model, "<ESC>")
 	root = sanitizeDiffLine(root, "<ESC>")
 
 	render := func(workspace string) string {
-		return buildStatusBar(provider, model, workspace, unicodeEnabled, color, contextLabel...)
+		return buildStatusBar(provider, model, workspace, unicodeEnabled, color, remote, modelColor, workspaceColor, contextLabel...)
 	}
 
 	bar := render(root)
@@ -1202,7 +1381,7 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 
 	if !color {
 		if width > 0 && visibleWidth(bar) > width {
-			if dynamic := compactStatusBar(contextLabel, false, unicodeEnabled); dynamic != "" && visibleWidth(dynamic) <= width {
+			if dynamic := compactStatusBar(contextLabel, false, unicodeEnabled, remote); dynamic != "" && visibleWidth(dynamic) <= width {
 				return dynamic
 			}
 		}
@@ -1210,7 +1389,7 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 	}
 
 	if width > 0 && visibleWidth(bar) > width {
-		if dynamic := compactStatusBar(contextLabel, true, unicodeEnabled); dynamic != "" && visibleWidth(dynamic) <= width {
+		if dynamic := compactStatusBar(contextLabel, true, unicodeEnabled, remote); dynamic != "" && visibleWidth(dynamic) <= width {
 			return dynamic + reset
 		}
 		bar = truncateDiffLine(bar, width, unicodeEnabled)
@@ -1218,9 +1397,13 @@ func statusBar(provider, model, root string, width int, unicodeEnabled, color bo
 	return bar + reset
 }
 
-func buildStatusBar(provider, model, root string, unicodeEnabled, color bool, contextLabel ...string) string {
+func buildStatusBar(provider, model, root string, unicodeEnabled, color, remote bool, modelColor, workspaceColor string, contextLabel ...string) string {
 	if !color {
-		parts := []string{provider, "[MODEL " + model + "]"}
+		parts := []string{}
+		if remote {
+			parts = append(parts, remoteStatusBadge(false))
+		}
+		parts = append(parts, provider, "[MODEL "+model+"]")
 		if len(contextLabel) > 0 {
 			parts = append(parts, "[CTX "+contextLabel[0]+"]")
 		}
@@ -1240,11 +1423,15 @@ func buildStatusBar(provider, model, root string, unicodeEnabled, color bool, co
 		return strings.Join(parts, " ")
 	}
 
-	segments := []string{statusValue(provider, cyan), statusSegment("MODEL", model, magenta)}
+	segments := []string{}
+	if remote {
+		segments = append(segments, remoteStatusBadge(true))
+	}
+	segments = append(segments, statusValue(provider, cyan), statusSegment("MODEL", model, modelColor))
 	if len(contextLabel) > 0 {
 		segments = append(segments, statusSegment("CTX", contextLabel[0], green))
 	}
-	segments = append(segments, statusSegment("WS", root, blue))
+	segments = append(segments, statusSegment("WS", root, workspaceColor))
 	if len(contextLabel) > 1 {
 		segments = append(segments, statusSegment("TOK", contextLabel[1], cyan))
 	}
@@ -1307,15 +1494,21 @@ func shortenWorkspacePath(path string, width int, unicodeEnabled bool) string {
 	return truncateDiffLine(base, width, unicodeEnabled)
 }
 
-func compactStatusBar(labels []string, color, unicodeEnabled bool) string {
-	if len(labels) == 0 {
+func compactStatusBar(labels []string, color, unicodeEnabled, remote bool) string {
+	if len(labels) == 0 && !remote {
 		return ""
 	}
 	separator := "  │  "
 	if !unicodeEnabled {
 		separator = "  |  "
 	}
-	segments := []string{statusSegment("CTX", labels[0], green)}
+	segments := []string{}
+	if remote {
+		segments = append(segments, remoteStatusBadge(color))
+	}
+	if len(labels) > 0 {
+		segments = append(segments, statusSegment("CTX", labels[0], green))
+	}
 	if len(labels) > 2 && labels[2] != "" {
 		// Keep step progress visible on narrow terminals; token totals are less
 		// actionable while a request is running.
@@ -1324,7 +1517,13 @@ func compactStatusBar(labels []string, color, unicodeEnabled bool) string {
 		segments = append(segments, statusSegment("TOK", labels[1], cyan))
 	}
 	if !color {
-		parts := []string{"[CTX " + labels[0] + "]"}
+		parts := []string{}
+		if remote {
+			parts = append(parts, remoteStatusBadge(false))
+		}
+		if len(labels) > 0 {
+			parts = append(parts, "[CTX "+labels[0]+"]")
+		}
 		if len(labels) > 2 && labels[2] != "" {
 			parts = append(parts, "[STEP "+labels[2]+"]")
 		} else if len(labels) > 1 {
@@ -1333,6 +1532,13 @@ func compactStatusBar(labels []string, color, unicodeEnabled bool) string {
 		return strings.Join(parts, " ")
 	}
 	return strings.Join(segments, separator)
+}
+
+func remoteStatusBadge(color bool) string {
+	if !color {
+		return "[REMOTE]"
+	}
+	return "\x1b[1;30;42m REMOTE " + reset
 }
 
 func statusSegment(label, value, color string) string {

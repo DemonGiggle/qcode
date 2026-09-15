@@ -56,6 +56,45 @@ func (u *UI) chooseSkills() {
 	u.printSystemMessage(formatSkillSelection("Skills enabled", names, u.width, u.unicode, ColorEnabled(u.out), green))
 }
 
+func (u *UI) setSkillCommand(fields []string) {
+	if !u.activeAgentConfigurable() {
+		return
+	}
+	if !u.ensureSkillCatalog() {
+		return
+	}
+	runner, ok := u.runner.(skillRunner)
+	if !ok {
+		u.printSystemMessage(dim + "Skill selection is unavailable." + reset)
+		return
+	}
+	requested := strings.Split(strings.Join(fields[1:], " "), ",")
+	byName := make(map[string]prompt.SkillSummary, len(u.skills))
+	for _, skill := range u.skills {
+		byName[skill.Name] = skill
+	}
+	var names []string
+	var summaries []prompt.SkillSummary
+	for _, raw := range requested {
+		name := strings.TrimSpace(raw)
+		if name == "none" && len(requested) == 1 {
+			continue
+		}
+		summary, found := byName[name]
+		if !found {
+			u.printSystemMessage(yellow + "Unknown skill: " + sanitizeDiffLine(name, "<ESC>") + reset)
+			return
+		}
+		names, summaries = append(names, name), append(summaries, summary)
+	}
+	if u.onSkills != nil {
+		u.onSkills(names)
+	}
+	runner.SetSkills(summaries)
+	u.drawStatusBar()
+	u.printSystemMessage(formatSkillSelection("Skills enabled", names, u.width, u.unicode, ColorEnabled(u.out), green))
+}
+
 func (u *UI) skillLocationHint(color bool) string {
 	locations := u.skillLocations
 	if len(locations) == 0 {

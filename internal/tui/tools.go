@@ -52,6 +52,38 @@ func (u *UI) chooseTools() {
 	u.printSystemMessage(fmt.Sprintf("%sTools enabled: %d of %d%s", green, enabled, len(names), reset))
 }
 
+func (u *UI) setToolCommand(fields []string) {
+	if len(fields) != 3 || fields[2] != "on" && fields[2] != "off" {
+		u.printSystemMessage(yellow + "Usage: /tool <name> <on|off>" + reset)
+		return
+	}
+	if !u.activeAgentConfigurable() {
+		return
+	}
+	runner, ok := u.runner.(toolRunner)
+	if !ok {
+		u.printSystemMessage(dim + "Tool selection is unavailable." + reset)
+		return
+	}
+	found := false
+	for _, name := range runner.ToolNames() {
+		if name == fields[1] {
+			found = true
+			break
+		}
+	}
+	if !found {
+		u.printSystemMessage(yellow + "Unknown tool: " + sanitizeDiffLine(fields[1], "<ESC>") + reset)
+		return
+	}
+	want := fields[2] == "on"
+	if runner.ToolEnabled(fields[1]) != want {
+		runner.ToggleTool(fields[1], want)
+	}
+	u.drawStatusBar()
+	u.printSystemMessage(fmt.Sprintf("%sTool %s: %s%s", green, sanitizeDiffLine(fields[1], "<ESC>"), fields[2], reset))
+}
+
 func selectTools(in io.Reader, out io.Writer, names []string, runner toolRunner, visible, width int, color bool) (bool, error) {
 	if len(names) == 0 {
 		return false, nil

@@ -2,7 +2,39 @@
 // multi-agent orchestration and terminal presentation.
 package session
 
-import "time"
+import (
+	"context"
+	"encoding/json"
+	"time"
+)
+
+type InteractionKind string
+
+const (
+	InteractionDirectoryApproval InteractionKind = "directory_approval"
+	InteractionQuestions         InteractionKind = "questions"
+	InteractionPlanDecision      InteractionKind = "plan_decision"
+	InteractionLearningApproval  InteractionKind = "learning_approval"
+)
+
+type Interaction struct {
+	ID        string          `json:"id"`
+	AgentID   string          `json:"agent_id"`
+	Kind      InteractionKind `json:"kind"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+type Resolution struct {
+	InteractionID string          `json:"interaction_id"`
+	Value         json.RawMessage `json:"value,omitempty"`
+	ResolvedBy    string          `json:"resolved_by,omitempty"`
+}
+
+type InteractionWaiter interface {
+	InteractionInfo() Interaction
+	Wait(context.Context) (Resolution, error)
+}
 
 type Status string
 
