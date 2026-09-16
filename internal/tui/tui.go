@@ -295,7 +295,6 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	responseWriter := NewMarkdownWriter(display, ColorEnabled(out), width)
 	responseWriter.SetUnicode(unicodeEnabled)
 	responseWriter.EnableDiffs()
-	responseWriter.EnableSmartThinking()
 	u := &UI{
 		terminal:         t,
 		display:          display,
@@ -322,19 +321,8 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	t.AutoCompleteCallback = u.completeSlashCommand
 	input.setPageHandler(u.showPage)
 	input.setTabHandler(u.requestTabSwitch)
-	input.setThinkingHandler(u.toggleThinking)
 	u.SetRunner(runner)
 	return u
-}
-
-func (u *UI) toggleThinking() bool {
-	u.screenMu.Lock()
-	writer := u.responseWriter
-	u.screenMu.Unlock()
-	if writer == nil {
-		return false
-	}
-	return writer.ToggleThinking()
 }
 
 func (u *UI) Writer() io.Writer { return u.display }
@@ -379,7 +367,6 @@ func (u *UI) AddAgentView(id, provider, model string) (io.Writer, io.Writer) {
 	response := NewMarkdownWriter(display, ColorEnabled(u.out), u.width)
 	response.SetUnicode(u.unicode)
 	response.EnableDiffs()
-	response.EnableSmartThinking()
 	u.views[id] = &agentView{id: id, provider: provider, model: model, display: display, response: response}
 	if u.activeAgent == "" || id == "main" {
 		u.activeAgent = id
@@ -639,12 +626,6 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		if len(fields) > 0 && fields[0] == "/diff" {
 			u.expandDiff(fields)
-			continue
-		}
-		if line == "/thinking" {
-			if !u.toggleThinking() {
-				u.printSystemMessage(dim + "No thinking trace is available." + reset)
-			}
 			continue
 		}
 		if len(fields) > 0 && fields[0] == "/export" {

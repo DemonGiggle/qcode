@@ -98,8 +98,10 @@ func TestOpenCodeGoReplaysReasoningContentOnToolContinuation(t *testing.T) {
 		if requests == 2 {
 			var body struct {
 				Messages []struct {
-					Role             string  `json:"role"`
-					ReasoningContent *string `json:"reasoning_content"`
+					Role             string          `json:"role"`
+					Content          json.RawMessage `json:"content"`
+					ReasoningContent *string         `json:"reasoning_content"`
+					ToolCalls        []any           `json:"tool_calls"`
 				} `json:"messages"`
 			}
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
@@ -107,6 +109,9 @@ func TestOpenCodeGoReplaysReasoningContentOnToolContinuation(t *testing.T) {
 			}
 			if len(body.Messages) != 1 || body.Messages[0].Role != "assistant" || body.Messages[0].ReasoningContent == nil || *body.Messages[0].ReasoningContent != "check first" {
 				t.Fatalf("replayed messages = %#v", body.Messages)
+			}
+			if string(body.Messages[0].Content) != `""` {
+				t.Fatalf("replayed empty content = %s, want an explicit empty string", body.Messages[0].Content)
 			}
 		}
 		stream := "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"check first\"}}]}\n\ndata: [DONE]\n\n"

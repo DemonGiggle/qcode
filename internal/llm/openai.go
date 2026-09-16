@@ -112,7 +112,7 @@ type openAIToolCall struct {
 
 type openAIMessage struct {
 	Role             string           `json:"role"`
-	Content          any              `json:"content,omitempty"`
+	Content          any              `json:"content"`
 	ReasoningContent *string          `json:"reasoning_content,omitempty"`
 	ReasoningDetails json.RawMessage  `json:"reasoning_details,omitempty"`
 	Name             string           `json:"name,omitempty"`
@@ -191,9 +191,6 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 
 func openAIContent(message Message) any {
 	if len(message.Images) == 0 {
-		if message.Content == "" {
-			return nil
-		}
 		return message.Content
 	}
 	parts := make([]map[string]any, 0, len(message.Images)+1)

@@ -58,21 +58,6 @@ func TestInterruptReaderKeepsOtherInputDuringTask(t *testing.T) {
 	}
 }
 
-func TestInterruptReaderConsumesCtrlTWhenThinkingIsAvailable(t *testing.T) {
-	reader := newInterruptReader(nil)
-	toggles := 0
-	reader.setThinkingHandler(func() bool { toggles++; return true })
-	reader.route([]byte{ctrlT})
-	if toggles != 1 {
-		t.Fatalf("thinking toggles = %d", toggles)
-	}
-	select {
-	case key := <-reader.data:
-		t.Fatalf("Ctrl+T leaked to line editor as %q", key)
-	default:
-	}
-}
-
 func TestInterruptReaderDefersInjectedInputWhileRawSelectorIsActive(t *testing.T) {
 	reader := newInterruptReader(nil)
 	reader.setRaw(true)

@@ -10,110 +10,6 @@ import (
 
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
-type memoryThinkingSink struct {
-	blocks   map[string]storedThinking
-	expanded bool
-}
-
-func (s *memoryThinkingSink) Write(data []byte) (int, error) { return len(data), nil }
-
-func (s *memoryThinkingSink) SetThinkingBlock(id string, compact, full []string, expanded, collapsible bool) {
-	if s.blocks == nil {
-		s.blocks = map[string]storedThinking{}
-	}
-	s.blocks[id] = storedThinking{compact: compact, full: full, expanded: expanded, collapsible: collapsible}
-	s.expanded = expanded
-}
-func (s *memoryThinkingSink) SetThinkingExpanded(expanded bool) bool {
-	found := false
-	for _, block := range s.blocks {
-		if block.collapsible {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return false
-	}
-	s.expanded = expanded
-	return true
-}
-func (s *memoryThinkingSink) ThinkingExpanded() (bool, bool) {
-	for _, block := range s.blocks {
-		if block.collapsible {
-			return s.expanded, true
-		}
-	}
-	return false, false
-}
-
-func TestMarkdownWriterSmartThinkingCompactsAndToggles(t *testing.T) {
-	sink := &memoryThinkingSink{}
-	writer := NewMarkdownWriter(sink, true, 80)
-	writer.EnableSmartThinking()
-	writer.BeginResponse()
-	writer.BeginThinking()
-	_, _ = writer.Write([]byte("One. Two. Three. Four. Five. Six."))
-	block := sink.blocks["1"]
-	opening := ansiPattern.ReplaceAllString(strings.Join(block.compact, "\n"), "")
-	if opening != "One.\nTwo.\nThree. ..." {
-		t.Fatalf("folded opening = %q", opening)
-	}
-	writer.EndThinking()
-	block = sink.blocks["1"]
-	compact := ansiPattern.ReplaceAllString(strings.Join(block.compact, "\n"), "")
-	if !strings.Contains(compact, "Four.\nFive.\nSix.") || !strings.Contains(compact, "Ctrl+T to expand all thinking") {
-		t.Fatalf("compact thinking = %q", compact)
-	}
-	if strings.Contains(compact, "Six. ...") {
-		t.Fatalf("final thinking preview retained ellipsis: %q", compact)
-	}
-	if !writer.ToggleThinking() || !sink.expanded {
-		t.Fatal("Ctrl+T did not expand thinking")
-	}
-	block = sink.blocks["1"]
-	if got := ansiPattern.ReplaceAllString(strings.Join(block.full, "\n"), ""); got != "One. Two. Three. Four. Five. Six." {
-		t.Fatalf("full thinking = %q", got)
-	}
-	if !writer.ToggleThinking() || sink.expanded {
-		t.Fatal("Ctrl+T did not collapse thinking")
-	}
-}
-
-func TestMarkdownWriterSmartThinkingKeepsPartialSentenceVisible(t *testing.T) {
-	sink := &memoryThinkingSink{}
-	writer := NewMarkdownWriter(sink, true, 80)
-	writer.EnableSmartThinking()
-	writer.BeginResponse()
-	writer.BeginThinking()
-	_, _ = writer.Write([]byte("Let"))
-	if got := ansiPattern.ReplaceAllString(strings.Join(sink.blocks["1"].compact, "\n"), ""); got != "Let" {
-		t.Fatalf("token-sized preview = %q", got)
-	}
-	_, _ = writer.Write([]byte(" me look at the key files."))
-	if got := ansiPattern.ReplaceAllString(strings.Join(sink.blocks["1"].compact, "\n"), ""); got != "Let me look at the key files." {
-		t.Fatalf("opening preview did not grow in place: %q", got)
-	}
-	writer.EndThinking()
-}
-
-func TestMarkdownWriterSmartThinkingLeavesFiveSentencesUnfolded(t *testing.T) {
-	sink := &memoryThinkingSink{}
-	writer := NewMarkdownWriter(sink, true, 80)
-	writer.EnableSmartThinking()
-	writer.BeginResponse()
-	writer.BeginThinking()
-	_, _ = writer.Write([]byte("One. Two. Three. Four. Five."))
-	writer.EndThinking()
-	compact := ansiPattern.ReplaceAllString(strings.Join(sink.blocks["1"].compact, "\n"), "")
-	if compact != "One. Two. Three. Four. Five." || strings.Contains(compact, "Ctrl+T") {
-		t.Fatalf("short thinking was folded: %q", compact)
-	}
-	if writer.ToggleThinking() {
-		t.Fatal("short thinking exposed an expansion toggle")
-	}
-}
-
 func TestMarkdownWriterRendersStreamedSyntax(t *testing.T) {
 	var output bytes.Buffer
 	writer := NewMarkdownWriter(&output, true)
@@ -351,6 +247,21 @@ func TestMarkdownWriterStylesThinkingGray(t *testing.T) {
 	plain := ansiPattern.ReplaceAllString(output.String(), "")
 	if plain != "• considering options\n• final answer" {
 		t.Fatalf("plain output = %q", plain)
+	}
+}
+
+func TestMarkdownWriterAlignsStructuredThinking(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true, 40)
+	writer.BeginResponse()
+	writer.BeginThinking()
+	_, _ = writer.Write([]byte("Two things to look at:\n\n1. make print-config piped into python json.load failed because the command is echoed before its JSON output\n"))
+	writer.EndThinking()
+
+	plain := ansiPattern.ReplaceAllString(output.String(), "")
+	want := "• Two things to look at:\n\n  1. make print-config piped into python\n     json.load failed because the\n     command is echoed before its JSON\n     output\n"
+	if plain != want {
+		t.Fatalf("thinking output = %q, want %q", plain, want)
 	}
 }
 
