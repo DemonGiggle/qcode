@@ -582,7 +582,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("agent stopped after %d model steps", a.MaxSteps())
+	return fmt.Errorf("Reached the maximum of %d model steps. You can say \"continue\" to keep working, or use /maxsteps <NUM> to increase the limit.", a.MaxSteps())
 }
 
 func toolMayChangeWorkspace(name string) bool {

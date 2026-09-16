@@ -342,6 +342,17 @@ func TestAgentMaxStepsCanChangeWhileRunning(t *testing.T) {
 	}
 }
 
+func TestAgentReportsActionableMaxStepsMessage(t *testing.T) {
+	provider := &repeatingProvider{}
+	runner := New(provider, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 2)
+
+	err := runner.Run(context.Background(), "keep going")
+	want := `Reached the maximum of 2 model steps. You can say "continue" to keep working, or use /maxsteps <NUM> to increase the limit.`
+	if err == nil || err.Error() != want {
+		t.Fatalf("max-steps error = %v, want %q", err, want)
+	}
+}
+
 func TestAgentResetSessionDiscardsConversationHistory(t *testing.T) {
 	registry, err := tools.New(t.TempDir())
 	if err != nil {

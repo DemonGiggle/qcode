@@ -383,7 +383,7 @@ func (u *UI) handleAgentEvent(event session.Event) {
 				message = "Cancelled"
 			}
 			if event.Agent.Error != "" {
-				message = "error: " + sanitizeDiffLine(event.Agent.Error, "<ESC>")
+				message = formatAgentError(sanitizeDiffLine(event.Agent.Error, "<ESC>"))
 			}
 			fmt.Fprintf(view.display, "\n%s%s%s\n\n", dim, message, reset)
 		}
@@ -402,7 +402,12 @@ func (u *UI) notifyMain(summary session.Summary) {
 	}
 	message := fmt.Sprintf("Agent %s %s", sanitizeDiffLine(summary.Name, "<ESC>"), summary.Status)
 	if summary.Error != "" {
-		message = fmt.Sprintf("Agent %s error: %s", sanitizeDiffLine(summary.Name, "<ESC>"), sanitizeDiffLine(summary.Error, "<ESC>"))
+		errorMessage := sanitizeDiffLine(summary.Error, "<ESC>")
+		if strings.HasPrefix(errorMessage, maxStepsNoticePrefix) {
+			message = fmt.Sprintf("Agent %s: %s", sanitizeDiffLine(summary.Name, "<ESC>"), errorMessage)
+		} else {
+			message = fmt.Sprintf("Agent %s error: %s", sanitizeDiffLine(summary.Name, "<ESC>"), errorMessage)
+		}
 	}
 	fmt.Fprintf(view.display, "\n%s%s%s\n\n", dim, message, reset)
 }

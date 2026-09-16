@@ -108,6 +108,16 @@ func TestPrintSystemMessageHasBlankLinesAroundIt(t *testing.T) {
 	}
 }
 
+func TestFormatAgentErrorKeepsMaxStepsNoticeCalm(t *testing.T) {
+	notice := maxStepsNoticePrefix + "5 model steps."
+	if got := formatAgentError(notice); got != notice {
+		t.Fatalf("max-steps message = %q, want %q", got, notice)
+	}
+	if got := formatAgentError("provider unavailable"); got != "error: provider unavailable" {
+		t.Fatalf("provider error = %q", got)
+	}
+}
+
 func TestExitMessageHighlightsResumeCommand(t *testing.T) {
 	plain := exitMessage(false)
 	if strings.Contains(plain, "\x1b[") || !strings.Contains(plain, "+-----------------------------------------------------------+") || !strings.Contains(plain, "type /resume to resume it") {

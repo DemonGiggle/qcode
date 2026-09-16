@@ -35,6 +35,8 @@ const (
 const inputPrompt = cyan + bold + "> " + reset
 const planInputPrompt = cyan + bold + "(Plan)> " + reset
 
+const maxStepsNoticePrefix = "Reached the maximum of "
+
 // Keep the workspace path from crowding out the model and usage segments on
 // wide terminals. The path is still allowed to use less space when the
 // terminal itself is narrow.
@@ -694,7 +696,7 @@ func (u *UI) Run(ctx context.Context) error {
 		if u.manager != nil {
 			err = u.runActiveTask(ctx, line)
 			if err != nil {
-				u.printSystemMessage(yellow + "error: " + err.Error() + reset)
+				u.printSystemMessage(yellow + formatAgentError(err.Error()) + reset)
 			}
 			continue
 		}
@@ -707,11 +709,18 @@ func (u *UI) Run(ctx context.Context) error {
 		if errors.Is(err, context.Canceled) {
 			u.printSystemMessage(yellow + "Cancelled" + reset)
 		} else if err != nil {
-			u.printSystemMessage(yellow + "error: " + err.Error() + reset)
+			u.printSystemMessage(yellow + formatAgentError(err.Error()) + reset)
 		} else {
 			u.printSystemMessage(fmt.Sprintf("%s%sCompleted in %s%s", magenta, bold, formatRunDuration(time.Since(started)), reset))
 		}
 	}
+}
+
+func formatAgentError(message string) string {
+	if strings.HasPrefix(message, maxStepsNoticePrefix) {
+		return message
+	}
+	return "error: " + message
 }
 
 func (u *UI) startDemoPromptScript(ctx context.Context) func() {
