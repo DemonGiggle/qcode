@@ -24,19 +24,20 @@ const (
 // Buffering by line keeps syntax correct when a provider splits a delimiter
 // such as ** or ``` across streamed chunks.
 type MarkdownWriter struct {
-	out      io.Writer
-	enabled  bool
-	width    int
-	unicode  bool
-	active   bool
-	inFence  bool
-	thinking bool
-	diffs    bool
-	stateMu  sync.Mutex
-	diffMu   sync.Mutex
-	diffList []string
-	buffer   bytes.Buffer
-	table    []markdownTableLine
+	out           io.Writer
+	enabled       bool
+	width         int
+	unicode       bool
+	active        bool
+	inFence       bool
+	thinking      bool
+	thinkingFence bool
+	diffs         bool
+	stateMu       sync.Mutex
+	diffMu        sync.Mutex
+	diffList      []string
+	buffer        bytes.Buffer
+	table         []markdownTableLine
 }
 
 func NewMarkdownWriter(out io.Writer, enabled bool, width ...int) *MarkdownWriter {
@@ -406,6 +407,7 @@ func (w *MarkdownWriter) BeginResponse() {
 	defer w.stateMu.Unlock()
 	w.active = true
 	w.thinking = false
+	w.thinkingFence = false
 	w.inFence = false
 	w.buffer.Reset()
 	w.table = nil
@@ -429,6 +431,7 @@ func (w *MarkdownWriter) EndThinking() {
 		fmt.Fprintln(w.out)
 	}
 	w.thinking = false
+	w.thinkingFence = false
 }
 
 func (w *MarkdownWriter) EndResponse() {
@@ -444,6 +447,7 @@ func (w *MarkdownWriter) EndResponse() {
 	w.buffer.Reset()
 	w.inFence = false
 	w.thinking = false
+	w.thinkingFence = false
 	w.table = nil
 	w.active = false
 	if w.enabled {
@@ -619,6 +623,19 @@ func (w *MarkdownWriter) writeStatement(line, style string) {
 // explicit block indent because they bypass that marker path.
 func (w *MarkdownWriter) writeThinkingStatement(line string) {
 	content := strings.TrimLeftFunc(line, unicode.IsSpace)
+	trimmed := strings.TrimSpace(content)
+	if w.thinkingFence {
+		w.writeIndentedThinkingLine(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			w.thinkingFence = false
+		}
+		return
+	}
+	if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+		w.writeIndentedThinkingLine(line)
+		w.thinkingFence = true
+		return
+	}
 	if content == "" || isPlainStatement(line, w.unicode) {
 		w.writeStatement(line, gray)
 		return
@@ -635,6 +652,17 @@ func (w *MarkdownWriter) writeThinkingStatement(line string) {
 		continuation += strings.Repeat(" ", visibleWidth(marker))
 	}
 	w.writeRendered(rendered, continuation)
+}
+
+func (w *MarkdownWriter) writeIndentedThinkingLine(line string) {
+	leading := leadingWhitespace(line)
+	content := strings.TrimLeftFunc(line, unicode.IsSpace)
+	indent := leading + "  "
+	rendered := indent + content
+	if w.enabled {
+		rendered = gray + rendered + reset
+	}
+	w.writeRendered(rendered, indent)
 }
 
 func isPlainStatement(line string, unicodeEnabled bool) bool {

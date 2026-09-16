@@ -265,6 +265,21 @@ func TestMarkdownWriterAlignsStructuredThinking(t *testing.T) {
 	}
 }
 
+func TestMarkdownWriterKeepsThinkingCodeTreesFreeOfMarkers(t *testing.T) {
+	var output bytes.Buffer
+	writer := NewMarkdownWriter(&output, true, 80)
+	writer.BeginResponse()
+	writer.BeginThinking()
+	_, _ = writer.Write([]byte("I'll create a clean pipeline:\n```\nllm_training_pipeline/\n├── config/\n│   └── config.yaml\n└── README.md\n```\n"))
+	writer.EndThinking()
+
+	plain := ansiPattern.ReplaceAllString(output.String(), "")
+	want := "• I'll create a clean pipeline:\n  ```\n  llm_training_pipeline/\n  ├── config/\n  │   └── config.yaml\n  └── README.md\n  ```\n"
+	if plain != want {
+		t.Fatalf("thinking tree output = %q, want %q", plain, want)
+	}
+}
+
 func TestMarkdownWriterRendersColoredDiff(t *testing.T) {
 	var output bytes.Buffer
 	writer := NewMarkdownWriter(&output, true, 80)
