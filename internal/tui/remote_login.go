@@ -129,7 +129,11 @@ func (u *UI) remoteLoginHeading(row string) string {
 	if u.remoteLogin == nil || u.remoteLogin.URL == "" || (!u.remoteLogin.OpenAccess && !time.Now().Before(u.remoteLogin.ExpiresAt)) {
 		return row
 	}
-	return "\x1b]8;;" + u.remoteLogin.URL + "\x1b\\" + row + "\x1b]8;;\x1b\\"
+	return terminalLink(row, u.remoteLogin.URL)
+}
+
+func terminalLink(label, target string) string {
+	return "\x1b]8;;" + target + "\x1b\\" + label + "\x1b]8;;\x1b\\"
 }
 
 func terminalQR(bitmap [][]bool) []string {

@@ -181,7 +181,7 @@ func (s *fakeRemoteService) Status() RemoteStatus {
 func TestRemoteActiveScreenShowsConnectionsAndSecondaryClose(t *testing.T) {
 	var output bytes.Buffer
 	status := RemoteStatus{Running: true, Mode: RemoteModePureWeb, URL: "http://192.168.1.10:1234", Connections: 2}
-	rows := renderRemoteActiveMenu(&output, status, remoteKeepOpen, []string{"Remote login (click or scan; single use)"}, 120, false)
+	rows := renderRemoteActiveMenu(&output, status, remoteKeepOpen, []string{"Remote login (click or scan; single use)"}, "", 120, false)
 	if rows == 0 || !strings.Contains(output.String(), "Connections: 2 active browser sessions") {
 		t.Fatalf("remote screen = %q", output.String())
 	}
@@ -190,6 +190,23 @@ func TestRemoteActiveScreenShowsConnectionsAndSecondaryClose(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "unencrypted") {
 		t.Fatalf("Pure Web warning missing: %q", output.String())
+	}
+}
+
+func TestRemoteActiveScreenKeepsWrappedLoginURLClickable(t *testing.T) {
+	var output bytes.Buffer
+	status := RemoteStatus{Running: true, Mode: RemoteModeTailscale, URL: "https://host.tailnet.ts.net/qcode/test"}
+	loginURL := status.URL + "#login=" + strings.Repeat("a", 43)
+	loginRows := []string{
+		"Remote login (click or scan; single use)",
+		"Valid for 3 minutes; expires at 12:34:56",
+		loginURL[:60],
+		loginURL[60:],
+	}
+	renderRemoteActiveMenu(&output, status, remoteKeepOpen, loginRows, loginURL, 80, false)
+	linkStart := "\x1b]8;;" + loginURL + "\x1b\\"
+	if got := strings.Count(output.String(), linkStart); got != 3 {
+		t.Fatalf("complete login target appears %d times, want heading and 2 URL rows in %q", got, output.String())
 	}
 }
 

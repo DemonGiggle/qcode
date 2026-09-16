@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 )
 
 const remoteMenuWake = "\x00"
@@ -133,7 +134,14 @@ func (u *UI) showRemoteActive(status RemoteStatus) error {
 		u.endRawSelector()
 	}()
 	for {
-		rows := renderRemoteActiveMenu(u.terminal, status, selected, u.remoteLoginRows(u.width, loginHeight), u.width, ColorEnabled(u.out))
+		u.screenMu.Lock()
+		loginRows := u.remoteLoginRows(u.width, loginHeight)
+		loginURL := ""
+		if u.remoteLogin != nil {
+			loginURL = u.remoteLogin.URL
+		}
+		u.screenMu.Unlock()
+		rows := renderRemoteActiveMenu(u.terminal, status, selected, loginRows, loginURL, u.width, ColorEnabled(u.out))
 		key, err := readSelectorKey(u.input)
 		if err != nil {
 			clearSelector(u.terminal, rows)
@@ -197,7 +205,7 @@ func (u *UI) dismissRemoteMenuForInput() {
 	}
 }
 
-func renderRemoteActiveMenu(out interface{ Write([]byte) (int, error) }, status RemoteStatus, selected remoteMenuChoice, loginRows []string, width int, color bool) int {
+func renderRemoteActiveMenu(out interface{ Write([]byte) (int, error) }, status RemoteStatus, selected remoteMenuChoice, loginRows []string, loginURL string, width int, color bool) int {
 	mode := "Pure Web · trusted LAN HTTP"
 	if status.Mode == RemoteModePureWebOpen {
 		mode = "Pure Web (NO AUTH) · anyone with the URL can control qcode"
@@ -215,7 +223,9 @@ func renderRemoteActiveMenu(out interface{ Write([]byte) (int, error) }, status 
 	} else if status.Mode == RemoteModePureWebOpen {
 		rows = append(rows, "DANGER: no login is required; anyone with this URL has full remote control.")
 	}
+	loginStart := len(rows)
 	rows = append(rows, loginRows...)
+	loginEnd := len(rows)
 	rows = append(rows, "", "  Keep connection open", "  Close Connection")
 	actionStart := len(rows) - 2
 	for index := range rows {
@@ -226,7 +236,14 @@ func renderRemoteActiveMenu(out interface{ Write([]byte) (int, error) }, status 
 				row = cyan + bold + row + reset
 			}
 		}
-		fmt.Fprintln(out, truncateDiffLine(row, width, false))
+		row = truncateDiffLine(row, width, false)
+		if loginURL != "" && index >= loginStart && index < loginEnd {
+			loginRow := index - loginStart
+			if loginRow == 0 || (row != "" && strings.Contains(loginURL, row)) {
+				row = terminalLink(row, loginURL)
+			}
+		}
+		fmt.Fprintln(out, row)
 	}
 	return len(rows)
 }
