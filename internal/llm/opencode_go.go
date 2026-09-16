@@ -51,9 +51,6 @@ func (p *openAIProvider) ValidateModel(model string) error {
 	if p.name != "opencode-go" {
 		return nil
 	}
-	if endpoint := openCodeGoModelRoutes[model]; endpoint == openCodeGoResponsesRoute {
-		return fmt.Errorf("OpenCode Go model %q requires the Responses endpoint, which qcode does not support yet", model)
-	}
 	return nil
 }
 

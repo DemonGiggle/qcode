@@ -40,7 +40,7 @@ export QCODE_API_KEY=...
 qcode --provider opencode-go --model kimi-k3
 ```
 
-The OpenCode Go API base URL defaults to `https://opencode.ai/zen/go/v1` and can be overridden with `--base-url`. qcode supports both its OpenAI-compatible Chat Completions route and its Anthropic Messages route, so Qwen and MiniMax models are available alongside Chat Completions models. Models assigned to the Responses route are not supported yet.
+The OpenCode Go API base URL defaults to `https://opencode.ai/zen/go/v1` and can be overridden with `--base-url`. qcode routes models through the API protocol OpenCode Go assigns to them: OpenAI-compatible Chat Completions, Anthropic Messages, or OpenAI Responses. This makes Muse Spark, GPT Luna, and Grok Responses models available alongside Chat Completions and Qwen/MiniMax Messages models.
 
 ### Thinking levels
 
@@ -53,18 +53,21 @@ the interactive `/model` picker. For automation, pass an explicit level with
 qcode --provider opencode-go --model deepseek-v4-flash --thinking high "reply with OK"
 ```
 
-Known models may support `off`, `on`, `none`, `low`, `high`, or `max`; the available
-set is model-specific. With no setting, qcode preserves the provider default
-and omits optional thinking fields. Unknown model IDs remain usable and also
-omit those fields. An unsupported explicit level fails before making a model
-request. qcode preserves required reasoning replay data across tool turns for
-known models that require it.
+Known models may support `off`, `on`, `none`, `minimal`, `low`, `medium`,
+`high`, `xhigh`, or `max`; the available set is model-specific. With no
+setting, qcode preserves the provider default and omits optional thinking
+fields. Unknown model IDs remain usable and also omit those fields. An
+unsupported explicit level fails before making a model request. qcode preserves
+required reasoning replay data across tool turns for known models that require
+it.
 
-`/model` hides known OpenCode Go models assigned to its unsupported Responses
-route (including GPT 5.6 Luna), and a direct `--model` selection of one fails
-before a request. Chat Completions and Anthropic Messages models use their
-dedicated qcode adapters; a generic thinking flag is not a replacement for an
-endpoint adapter.
+Responses-route models receive the selected level as a `reasoning` object with
+an `effort` field. GPT 5.6 Luna accepts `none`, `low`, `medium`, `high`,
+`xhigh`, and `max`, so it can disable reasoning. Grok 4.6 and the Muse Spark
+contributor models accept `minimal`, `low`, `medium`, `high`, and `xhigh`; they
+can lower reasoning effort but cannot turn it off. qcode shows reasoning
+summaries streamed by these models in its thinking view. These routes omit
+`temperature`; Luna rejects it as an unsupported parameter.
 
 ## Vision
 

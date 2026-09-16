@@ -200,7 +200,7 @@ func TestOpenCodeGoAllowsBaseURLOverride(t *testing.T) {
 	}
 }
 
-func TestOpenCodeGoHidesAndRejectsModelsOnUnsupportedEndpoints(t *testing.T) {
+func TestOpenCodeGoListsAndAcceptsResponsesModels(t *testing.T) {
 	client := doerFunc(func(request *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -217,11 +217,16 @@ func TestOpenCodeGoHidesAndRejectsModelsOnUnsupportedEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(models, ",") != "glm-5.2,qwen3.8-max" {
+	if strings.Join(models, ",") != "glm-5.2,gpt-5.6-luna,qwen3.8-max" {
 		t.Fatalf("models = %v", models)
 	}
-	if err := provider.(ModelValidator).ValidateModel("gpt-5.6-luna"); err == nil || !strings.Contains(err.Error(), "Responses") {
-		t.Fatalf("luna validation error = %v", err)
+	for _, model := range []string{"gpt-5.6-luna", "grok-4.6", "muse-spark-1.2-contributor", "muse-spark-1.3-contributor"} {
+		if openCodeGoModelRoutes[model] != openCodeGoResponsesRoute {
+			t.Errorf("route for %q = %q", model, openCodeGoModelRoutes[model])
+		}
+		if err := provider.(ModelValidator).ValidateModel(model); err != nil {
+			t.Errorf("%s validation error = %v", model, err)
+		}
 	}
 	if err := provider.(ModelValidator).ValidateModel("glm-5.2"); err != nil {
 		t.Fatalf("chat model validation error = %v", err)
@@ -283,5 +288,33 @@ func TestOpenCodeGoUsesAnthropicMessagesForQwen(t *testing.T) {
 	call := response.Message.ToolCalls[0]
 	if call.ID != "tool_1" || call.Name != "read" || string(call.Arguments) != `{"path":"."}` {
 		t.Fatalf("tool call = %#v", call)
+	}
+}
+
+func TestOpenCodeGoResponsesThinkingCatalog(t *testing.T) {
+	provider, err := newOpenCodeGo(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		model  string
+		levels []string
+	}{
+		{"gpt-5.6-luna", []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"grok-4.6", []string{"minimal", "low", "medium", "high", "xhigh"}},
+		{"muse-spark-1.2-contributor", []string{"minimal", "low", "medium", "high", "xhigh"}},
+		{"muse-spark-1.3-contributor", []string{"minimal", "low", "medium", "high", "xhigh"}},
+	}
+	for _, test := range tests {
+		capability := provider.(ThinkingProvider).ThinkingCapability(test.model)
+		if !capability.Supported || !capability.Adjustable || capability.AlwaysOn {
+			t.Errorf("%s capability = %#v", test.model, capability)
+		}
+		if capability.RequestFormat != ThinkingRequestResponsesReasoning || capability.ReplayFormat != ThinkingReplayReasoningDetails {
+			t.Errorf("%s formats = %q/%q", test.model, capability.RequestFormat, capability.ReplayFormat)
+		}
+		if strings.Join(capability.Levels, ",") != strings.Join(test.levels, ",") {
+			t.Errorf("%s levels = %v, want %v", test.model, capability.Levels, test.levels)
+		}
 	}
 }
