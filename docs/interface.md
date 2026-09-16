@@ -46,7 +46,9 @@ Each agent tab remembers its reading position across tab switches and terminal r
 
 ## Thinking streams
 
-Provider-delimited model thinking streams in subtle gray, while the final answer retains normal Markdown styling. Ollama uses `message.thinking`; OpenAI-compatible providers may use `reasoning_content` or `reasoning` deltas.
+Provider-delimited model thinking streams in subtle gray, while the final answer retains normal Markdown styling. Interactive tabs keep thinking with five or fewer sentences fully visible. A sixth sentence folds the stream to a three-sentence preview followed by `...`; a latest three-sentence heartbeat appears every 10 seconds when new reasoning arrives. The final preview drops the ellipsis and advertises `Ctrl+T to expand all thinking`. Short thinking has no folding hint.
+
+Press Ctrl+T to toggle every retained thinking block in the active tab between compact previews and the complete in-place trace; while expanded, new thinking streams in full. Browser remote control offers the equivalent Show/Hide thinking control for the selected tab. One-shot commands retain their full streamed thinking output. Ollama uses `message.thinking`; OpenAI-compatible providers may use `reasoning_content` or `reasoning` deltas.
 
 ## Diff previews
 

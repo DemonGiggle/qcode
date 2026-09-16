@@ -17,13 +17,21 @@ type savedCell struct {
 	Style string
 }
 type savedHistory struct {
-	Lines   []string
-	Archive []string
-	Current []savedCell
-	Cursor  int
-	Pending []byte
-	Style   string
-	BaseID  uint64
+	Lines    []string
+	Archive  []string
+	Current  []savedCell
+	Cursor   int
+	Pending  []byte
+	Style    string
+	BaseID   uint64
+	Thinking []savedThinkingBlock
+}
+type savedThinkingBlock struct {
+	ID          string
+	Compact     []string
+	Full        []string
+	Expanded    bool
+	Collapsible bool
 }
 type savedView struct {
 	ID, Provider, Model string
@@ -33,6 +41,7 @@ type savedView struct {
 	InFence, Thinking   bool
 	Active              bool
 	Table               []savedTableLine
+	ThinkingID          uint64
 	Browsing            bool
 	AnchorLine          uint64
 	AnchorColumn        int
@@ -99,7 +108,10 @@ func (u *UI) snapshotPresentation() savedPresentation {
 		sv := savedView{ID: v.id, Provider: v.provider, Model: v.model, Unseen: v.unseen,
 			Browsing: v.viewport.browsing, AnchorLine: v.viewport.anchor.line, AnchorColumn: v.viewport.anchor.column,
 			Diffs: append([]string(nil), v.response.diffList...), Buffer: v.response.buffer.String(), InFence: v.response.inFence, Thinking: v.response.thinking,
-			History: savedHistory{Lines: append([]string(nil), h.lines...), Archive: append([]string(nil), h.archive...), Cursor: h.cursor, Pending: append([]byte(nil), h.pending...), Style: h.style, BaseID: h.baseID}}
+			History: savedHistory{Lines: append([]string(nil), h.lines...), Archive: append([]string(nil), h.archive...), Cursor: h.cursor, Pending: append([]byte(nil), h.pending...), Style: h.style, BaseID: h.baseID}, ThinkingID: v.response.thinkingID}
+		for id, block := range h.thinking {
+			sv.History.Thinking = append(sv.History.Thinking, savedThinkingBlock{ID: id, Compact: append([]string(nil), block.compact...), Full: append([]string(nil), block.full...), Expanded: block.expanded, Collapsible: block.collapsible})
+		}
 		for _, c := range h.current {
 			sv.History.Current = append(sv.History.Current, savedCell{c.char, c.style})
 		}
@@ -146,12 +158,23 @@ func (u *UI) RestorePresentation(data json.RawMessage) error {
 		h.pending = sv.History.Pending
 		h.style = sv.History.Style
 		h.baseID = sv.History.BaseID
+		h.thinking = nil
+		if len(sv.History.Thinking) > 0 {
+			h.thinking = make(map[string]storedThinking, len(sv.History.Thinking))
+			for _, block := range sv.History.Thinking {
+				if block.ID == "" {
+					return fmt.Errorf("invalid saved thinking block")
+				}
+				h.thinking[block.ID] = storedThinking{compact: append([]string(nil), block.Compact...), full: append([]string(nil), block.Full...), expanded: block.Expanded, collapsible: block.Collapsible}
+			}
+		}
 		for _, c := range sv.History.Current {
 			h.current = append(h.current, historyCell{c.Char, c.Style})
 		}
 		v.response.diffList = sv.Diffs
 		v.response.buffer.WriteString(sv.Buffer)
 		v.response.inFence, v.response.thinking, v.response.active = sv.InFence, sv.Thinking, sv.Active
+		v.response.thinkingID = sv.ThinkingID
 		for _, line := range sv.Table {
 			v.response.table = append(v.response.table, markdownTableLine{text: line.Text, newline: line.Newline})
 		}

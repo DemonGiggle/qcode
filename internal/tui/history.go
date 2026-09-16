@@ -21,15 +21,25 @@ type historyWriter struct {
 	out      io.Writer
 	onChange func()
 
-	mu      sync.Mutex
-	lines   []string
-	archive []string
-	current []historyCell
-	cursor  int
-	pending []byte
-	style   string
-	baseID  uint64
+	mu       sync.Mutex
+	lines    []string
+	archive  []string
+	current  []historyCell
+	cursor   int
+	pending  []byte
+	style    string
+	baseID   uint64
+	thinking map[string]storedThinking
 }
+
+type storedThinking struct {
+	compact     []string
+	full        []string
+	expanded    bool
+	collapsible bool
+}
+
+const thinkingMarkerPrefix = "\x00qcode-thinking:"
 
 func newHistoryWriter(out io.Writer) *historyWriter {
 	return &historyWriter{out: out}
@@ -67,10 +77,83 @@ func (w *historyWriter) Clear() {
 	w.cursor = 0
 	w.pending = nil
 	w.style = ""
+	w.thinking = nil
 	w.mu.Unlock()
 	if w.onChange != nil {
 		w.onChange()
 	}
+}
+
+func thinkingMarker(id string) string { return thinkingMarkerPrefix + id }
+
+func (w *historyWriter) setThinking(id string, compact, full []string, expanded, collapsible bool) {
+	w.mu.Lock()
+	if w.thinking == nil {
+		w.thinking = make(map[string]storedThinking)
+	}
+	_, exists := w.thinking[id]
+	w.thinking[id] = storedThinking{compact: append([]string(nil), compact...), full: append([]string(nil), full...), expanded: expanded, collapsible: collapsible}
+	if !exists {
+		w.commit([]historyCell{{char: 0}})
+		// commit cannot represent a NUL marker (it filters controls), so replace
+		// the recorded line directly after it has allocated archive/history slots.
+		w.lines[len(w.lines)-1] = thinkingMarker(id)
+		w.archive[len(w.archive)-1] = thinkingMarker(id)
+	}
+	w.mu.Unlock()
+	if w.onChange != nil {
+		w.onChange()
+	}
+}
+
+func (w *historyWriter) setThinkingExpanded(expanded bool) bool {
+	w.mu.Lock()
+	if len(w.thinking) == 0 {
+		w.mu.Unlock()
+		return false
+	}
+	changed := false
+	for id, block := range w.thinking {
+		if !block.collapsible {
+			continue
+		}
+		block.expanded = expanded
+		w.thinking[id] = block
+		changed = true
+	}
+	w.mu.Unlock()
+	if !changed {
+		return false
+	}
+	if w.onChange != nil {
+		w.onChange()
+	}
+	return true
+}
+
+func (w *historyWriter) thinkingExpanded() (bool, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, block := range w.thinking {
+		if block.collapsible {
+			return block.expanded, true
+		}
+	}
+	return false, false
+}
+
+func (w *historyWriter) resolveThinking(line string) []string {
+	if !strings.HasPrefix(line, thinkingMarkerPrefix) {
+		return []string{line}
+	}
+	block, ok := w.thinking[strings.TrimPrefix(line, thinkingMarkerPrefix)]
+	if !ok {
+		return nil
+	}
+	if block.expanded {
+		return append([]string(nil), block.full...)
+	}
+	return append([]string(nil), block.compact...)
 }
 
 type historyLine struct {
@@ -104,7 +187,9 @@ func (w *historyWriter) Snapshot() historySnapshot {
 		s.cursor += len(string(cell.char))
 	}
 	for i, line := range w.lines {
-		s.lines = append(s.lines, historyLine{w.baseID + uint64(i), line})
+		for _, resolved := range w.resolveThinking(line) {
+			s.lines = append(s.lines, historyLine{w.baseID + uint64(i), resolved})
+		}
 	}
 	s.lines = append(s.lines, historyLine{w.baseID + uint64(len(w.lines)), renderHistoryCells(w.current)})
 	return s
@@ -116,7 +201,18 @@ func (w *historyWriter) Snapshot() historySnapshot {
 func (w *historyWriter) ExportSnapshot() historyExportSnapshot {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	s := historyExportSnapshot{lines: append([]string(nil), w.archive...)}
+	s := historyExportSnapshot{}
+	for _, line := range w.archive {
+		// Exports intentionally preserve the complete reasoning trace, even when
+		// the interactive transcript is compact.
+		if strings.HasPrefix(line, thinkingMarkerPrefix) {
+			if block, ok := w.thinking[strings.TrimPrefix(line, thinkingMarkerPrefix)]; ok {
+				s.lines = append(s.lines, block.full...)
+			}
+			continue
+		}
+		s.lines = append(s.lines, line)
+	}
 	if len(s.lines) == 0 && len(w.lines) > 0 {
 		// This fallback keeps manually constructed or restored writers useful
 		// when they predate the archive field.
@@ -131,7 +227,11 @@ func (w *historyWriter) ExportSnapshot() historyExportSnapshot {
 func (w *historyWriter) Lines() []string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return append([]string(nil), w.lines...)
+	var result []string
+	for _, line := range w.lines {
+		result = append(result, w.resolveThinking(line)...)
+	}
+	return result
 }
 
 func (w *historyWriter) record(data []byte) {

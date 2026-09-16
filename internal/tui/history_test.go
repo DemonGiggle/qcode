@@ -98,3 +98,23 @@ func TestHistoryExportIncludesRenderedCurrentLine(t *testing.T) {
 		t.Fatalf("current export = %q", snapshot.current)
 	}
 }
+
+func TestHistoryWriterResolvesThinkingBlocksInlineAndExportsFullTrace(t *testing.T) {
+	history := newHistoryWriter(&bytes.Buffer{})
+	history.AddLine("before")
+	history.setThinking("thought-1", []string{"\x1b[90mbrief...\x1b[0m"}, []string{"\x1b[90mfirst\x1b[0m", "\x1b[90msecond\x1b[0m"}, false, true)
+	history.AddLine("after")
+	if got := history.Lines(); !reflect.DeepEqual(got, []string{"before", "\x1b[90mbrief...\x1b[0m", "after"}) {
+		t.Fatalf("compact lines = %#v", got)
+	}
+	if !history.setThinkingExpanded(true) {
+		t.Fatal("thinking blocks were not expanded")
+	}
+	if got := history.Lines(); !reflect.DeepEqual(got, []string{"before", "\x1b[90mfirst\x1b[0m", "\x1b[90msecond\x1b[0m", "after"}) {
+		t.Fatalf("expanded lines = %#v", got)
+	}
+	export := history.ExportSnapshot()
+	if !reflect.DeepEqual(export.lines, []string{"before", "\x1b[90mfirst\x1b[0m", "\x1b[90msecond\x1b[0m", "after"}) {
+		t.Fatalf("export lines = %#v", export.lines)
+	}
+}

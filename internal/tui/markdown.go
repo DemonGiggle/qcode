@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 )
 
@@ -24,19 +25,42 @@ const (
 // Buffering by line keeps syntax correct when a provider splits a delimiter
 // such as ** or ``` across streamed chunks.
 type MarkdownWriter struct {
-	out      io.Writer
-	enabled  bool
-	width    int
-	unicode  bool
-	active   bool
-	inFence  bool
-	thinking bool
-	diffs    bool
-	stateMu  sync.Mutex
-	diffMu   sync.Mutex
-	diffList []string
-	buffer   bytes.Buffer
-	table    []markdownTableLine
+	out           io.Writer
+	enabled       bool
+	width         int
+	unicode       bool
+	active        bool
+	inFence       bool
+	thinking      bool
+	diffs         bool
+	stateMu       sync.Mutex
+	diffMu        sync.Mutex
+	diffList      []string
+	buffer        bytes.Buffer
+	table         []markdownTableLine
+	smartThinking bool
+	thinkingID    uint64
+	activeThought *activeThinking
+	thinkingTimer *time.Timer
+}
+
+const thinkingHeartbeatInterval = 10 * time.Second
+
+type activeThinking struct {
+	id            string
+	raw           strings.Builder
+	compact       []string
+	collapsed     bool
+	lastHeartbeat int
+	finished      bool
+}
+
+// thinkingBlockSink keeps hidden reasoning out of the normal transcript while
+// retaining enough data to render it in place later.
+type thinkingBlockSink interface {
+	SetThinkingBlock(string, []string, []string, bool, bool)
+	SetThinkingExpanded(bool) bool
+	ThinkingExpanded() (bool, bool)
 }
 
 func NewMarkdownWriter(out io.Writer, enabled bool, width ...int) *MarkdownWriter {
@@ -63,6 +87,36 @@ func (w *MarkdownWriter) EnableDiffs() {
 	w.stateMu.Lock()
 	w.diffs = true
 	w.stateMu.Unlock()
+}
+
+// EnableSmartThinking enables compact, expandable thinking only for the
+// interactive transcript. One-shot writers deliberately retain full streams.
+func (w *MarkdownWriter) EnableSmartThinking() {
+	w.stateMu.Lock()
+	w.smartThinking = true
+	w.stateMu.Unlock()
+}
+
+// ToggleThinking expands or compacts every retained thinking block emitted by
+// this writer. It returns false when this output has no thinking trace.
+func (w *MarkdownWriter) ToggleThinking() bool {
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	sink, ok := w.out.(thinkingBlockSink)
+	if !ok {
+		return false
+	}
+	expanded, exists := sink.ThinkingExpanded()
+	if !exists {
+		return false
+	}
+	if !sink.SetThinkingExpanded(!expanded) {
+		return false
+	}
+	if w.activeThought != nil {
+		w.publishThinkingLocked(false)
+	}
+	return true
 }
 
 func (w *MarkdownWriter) DiffEnabled() bool {
@@ -413,6 +467,11 @@ func (w *MarkdownWriter) BeginResponse() {
 
 func (w *MarkdownWriter) BeginThinking() {
 	w.stateMu.Lock()
+	if w.smartThinking {
+		w.thinkingID++
+		w.activeThought = &activeThinking{id: fmt.Sprintf("%d", w.thinkingID)}
+		w.startThinkingTimerLocked()
+	}
 	w.thinking = true
 	w.stateMu.Unlock()
 }
@@ -421,6 +480,11 @@ func (w *MarkdownWriter) EndThinking() {
 	w.stateMu.Lock()
 	defer w.stateMu.Unlock()
 	if !w.thinking {
+		return
+	}
+	if w.smartThinking {
+		w.finishThinkingLocked()
+		w.thinking = false
 		return
 	}
 	if w.buffer.Len() > 0 {
@@ -436,6 +500,9 @@ func (w *MarkdownWriter) EndResponse() {
 	defer w.stateMu.Unlock()
 	if !w.active {
 		return
+	}
+	if w.smartThinking && w.thinking {
+		w.finishThinkingLocked()
 	}
 	if w.buffer.Len() > 0 && (w.enabled || w.width > 0) {
 		w.consumeLine(strings.TrimSuffix(w.buffer.String(), "\r"), false)
@@ -454,6 +521,13 @@ func (w *MarkdownWriter) EndResponse() {
 func (w *MarkdownWriter) Write(data []byte) (int, error) {
 	w.stateMu.Lock()
 	defer w.stateMu.Unlock()
+	if w.active && w.thinking && w.smartThinking {
+		if w.activeThought != nil {
+			_, _ = w.activeThought.raw.Write(data)
+			w.publishThinkingLocked(false)
+		}
+		return len(data), nil
+	}
 	if !w.active || (!w.enabled && w.width <= 0) {
 		return w.out.Write(data)
 	}
@@ -470,6 +544,138 @@ func (w *MarkdownWriter) Write(data []byte) (int, error) {
 		data = data[newline+1:]
 	}
 	return written, nil
+}
+
+func (w *MarkdownWriter) startThinkingTimerLocked() {
+	if w.thinkingTimer != nil {
+		w.thinkingTimer.Stop()
+	}
+	w.thinkingTimer = time.AfterFunc(thinkingHeartbeatInterval, func() {
+		w.stateMu.Lock()
+		defer w.stateMu.Unlock()
+		if !w.thinking || !w.smartThinking || w.activeThought == nil {
+			return
+		}
+		w.publishThinkingLocked(true)
+		w.startThinkingTimerLocked()
+	})
+}
+
+func (w *MarkdownWriter) finishThinkingLocked() {
+	if w.thinkingTimer != nil {
+		w.thinkingTimer.Stop()
+		w.thinkingTimer = nil
+	}
+	if w.activeThought == nil {
+		return
+	}
+	w.activeThought.finished = true
+	w.publishThinkingLocked(false)
+	w.activeThought = nil
+}
+
+func thinkingPreview(lines []string, trailing bool) []string {
+	if len(lines) == 0 {
+		return nil
+	}
+	start := max(0, len(lines)-3)
+	preview := append([]string(nil), lines[start:]...)
+	if trailing {
+		preview[len(preview)-1] += " ..."
+	}
+	return preview
+}
+
+func initialThinkingPreview(lines []string) []string {
+	if len(lines) == 0 {
+		return nil
+	}
+	preview := append([]string(nil), lines[:min(3, len(lines))]...)
+	if len(lines) > 3 {
+		preview[len(preview)-1] += " ..."
+	}
+	return preview
+}
+
+func thinkingSentences(raw string) []string {
+	var result []string
+	var current strings.Builder
+	for _, char := range raw {
+		current.WriteRune(char)
+		switch char {
+		case '.', '!', '?', '。', '！', '？':
+			if sentence := strings.TrimSpace(current.String()); sentence != "" {
+				result = append(result, sentence)
+			}
+			current.Reset()
+		}
+	}
+	if sentence := strings.TrimSpace(current.String()); sentence != "" {
+		result = append(result, sentence)
+	}
+	return result
+}
+
+func grayThinking(lines []string) []string {
+	styled := make([]string, 0, len(lines))
+	for _, line := range lines {
+		styled = append(styled, gray+line+reset)
+	}
+	return styled
+}
+
+func (w *MarkdownWriter) publishThinkingLocked(heartbeat bool) {
+	thought := w.activeThought
+	if thought == nil || thought.raw.Len() == 0 {
+		return
+	}
+	sink, ok := w.out.(thinkingBlockSink)
+	if !ok {
+		return
+	}
+	raw := strings.TrimSuffix(thought.raw.String(), "\n")
+	sentences := thinkingSentences(raw)
+	if len(sentences) == 0 {
+		return
+	}
+	if heartbeat && thought.lastHeartbeat == thought.raw.Len() {
+		return
+	}
+	full := strings.Split(raw, "\n")
+	if len(sentences) <= 5 {
+		// Keep short thinking transparent. This also lets a token-sized first
+		// chunk grow naturally instead of folding it prematurely.
+		thought.compact = append([]string(nil), full...)
+	} else {
+		preview := thinkingPreview(sentences, !thought.finished)
+		if !thought.collapsed {
+			thought.compact = initialThinkingPreview(sentences)
+			thought.collapsed = true
+		} else if heartbeat {
+			thought.compact = append(thought.compact, preview...)
+		} else if thought.finished {
+			if thought.lastHeartbeat == 0 {
+				thought.compact = append([]string(nil), preview...)
+			} else if thought.lastHeartbeat == thought.raw.Len() && len(thought.compact) >= len(preview) {
+				thought.compact = append(thought.compact[:len(thought.compact)-len(preview)], preview...)
+			} else {
+				thought.compact = append(thought.compact, preview...)
+			}
+		}
+	}
+	if thought.finished && thought.collapsed {
+		expanded, _ := sink.ThinkingExpanded()
+		hint := "Ctrl+T to expand all thinking"
+		if expanded {
+			hint = "Ctrl+T to collapse thinking"
+		}
+		thought.compact = append(thought.compact, hint)
+	}
+	expanded, _ := sink.ThinkingExpanded()
+	sink.SetThinkingBlock(thought.id, grayThinking(thought.compact), grayThinking(full), expanded, thought.collapsed)
+	if heartbeat && thought.collapsed {
+		thought.lastHeartbeat = thought.raw.Len()
+	}
 }
 
 func (w *MarkdownWriter) renderCompleteLine(line string, newline bool) {

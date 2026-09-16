@@ -298,6 +298,27 @@ func (d *agentDisplay) ExportSnapshot() historyExportSnapshot {
 	return d.history.ExportSnapshot()
 }
 
+func (d *agentDisplay) SetThinkingBlock(id string, compact, full []string, expanded, collapsible bool) {
+	d.ui.screenMu.Lock()
+	defer d.ui.screenMu.Unlock()
+	d.history.setThinking(id, compact, full, expanded, collapsible)
+	if d.ui.fixedInput && d.ui.activeAgent == d.id {
+		d.ui.paintFixedLocked(0)
+	}
+}
+
+func (d *agentDisplay) SetThinkingExpanded(expanded bool) bool {
+	d.ui.screenMu.Lock()
+	defer d.ui.screenMu.Unlock()
+	ok := d.history.setThinkingExpanded(expanded)
+	if ok && d.ui.fixedInput && d.ui.activeAgent == d.id {
+		d.ui.paintFixedLocked(0)
+	}
+	return ok
+}
+
+func (d *agentDisplay) ThinkingExpanded() (bool, bool) { return d.history.thinkingExpanded() }
+
 func (u *UI) watchAgentEvents(events <-chan session.Event) {
 	defer close(u.agentEventsDone)
 	u.replayConsultationEvents()

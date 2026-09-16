@@ -8,6 +8,7 @@ import (
 
 const (
 	ctrlC = byte(3)
+	ctrlT = byte(20)
 	ctrlU = byte(21)
 
 	pageUpSequence       = "\x1b[5~"
@@ -48,6 +49,7 @@ type interruptReader struct {
 	cancel   context.CancelFunc
 	page     func(int)
 	tab      func(int)
+	thinking func() bool
 	err      error
 	pending  []byte
 	raw      bool
@@ -76,6 +78,12 @@ func (r *interruptReader) setPageHandler(page func(int)) {
 func (r *interruptReader) setTabHandler(tab func(int)) {
 	r.mu.Lock()
 	r.tab = tab
+	r.mu.Unlock()
+}
+
+func (r *interruptReader) setThinkingHandler(thinking func() bool) {
+	r.mu.Lock()
+	r.thinking = thinking
 	r.mu.Unlock()
 }
 
@@ -209,6 +217,7 @@ func (r *interruptReader) route(input []byte) {
 	cancel := r.cancel
 	page := r.page
 	tab := r.tab
+	thinking := r.thinking
 	pending := append([]byte(nil), r.pending...)
 	r.pending = nil
 	r.mu.Unlock()
@@ -249,6 +258,9 @@ func (r *interruptReader) route(input []byte) {
 				cancel()
 				return
 			}
+		}
+		if key == ctrlT && thinking != nil && thinking() {
+			continue
 		}
 		if key == ctrlC {
 			// Clear the current input and submit an empty line. x/term treats a
