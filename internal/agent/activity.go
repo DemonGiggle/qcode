@@ -15,9 +15,6 @@ import (
 
 const (
 	maxActivityTargetRunes = 96
-	// Keep the entire shell activity comfortably within a typical terminal row,
-	// including its label and duration.
-	maxShellCommandRunes = 48
 )
 
 // toolActivity turns an allowlisted subset of a tool call into safe terminal
@@ -177,11 +174,22 @@ func activityTarget(value string) string {
 	return truncateActivityTarget(value, maxActivityTargetRunes)
 }
 
-// shellActivityCommand gives the command enough room to be recognizable while
-// keeping the persistent activity event on one terminal row. It uses the same
-// control-character sanitization as other activity targets.
+// shellActivityCommand keeps the full command for the persistent activity
+// history. Long commands are wrapped across a few terminal rows with
+// indentation when rendered instead of being shortened with an ellipsis.
+// It uses the same control-character sanitization as other activity targets.
 func shellActivityCommand(command string) string {
-	return truncateActivityTarget(command, maxShellCommandRunes)
+	command = strings.TrimSpace(command)
+	var out strings.Builder
+	out.Grow(len(command))
+	for _, character := range command {
+		if unicode.IsControl(character) {
+			out.WriteRune('?')
+		} else {
+			out.WriteRune(character)
+		}
+	}
+	return out.String()
 }
 
 func truncateActivityTarget(value string, maxRunes int) string {

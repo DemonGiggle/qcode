@@ -377,8 +377,21 @@ func (l *Logger) writeActivityProgress(s *ActivitySpan, frame string) {
 	if l.unicode {
 		marker = "↗"
 	}
-	message := l.style(l.activityColor(s.activity.Category), marker+" "+s.activity.Start)
-	spinner := l.style(traceDim, " ("+frame+")")
+	// The progress row is transient and animated in place with a carriage
+	// return, so it stays on a single terminal row. The persistent completed
+	// event below wraps instead of shortening.
+	width := l.width
+	if width <= 0 {
+		width = activityOutputDefaultWidth
+	}
+	spinnerSuffix := " (" + frame + ")"
+	avail := width - runewidth.StringWidth(marker) - 1 - runewidth.StringWidth(spinnerSuffix)
+	if avail < 1 {
+		avail = 1
+	}
+	start := truncateActivityLine(s.activity.Start, avail, l.unicode, false)
+	message := l.style(l.activityColor(s.activity.Category), marker+" "+start)
+	spinner := l.style(traceDim, spinnerSuffix)
 	fmt.Fprintf(l.out, "\r%s%s", message, spinner)
 }
 
@@ -522,10 +535,36 @@ func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration,
 		color = traceRed
 		message = s.activity.Start
 	}
-	fmt.Fprint(l.out, l.style(color, marker)+" ")
-	fmt.Fprint(l.out, l.style(l.activityColor(s.activity.Category), message))
-	fmt.Fprint(l.out, l.style(traceDim, " ("+duration.Round(time.Millisecond).String()+")"))
-	fmt.Fprintln(l.out)
+	durationSuffix := " (" + duration.Round(time.Millisecond).String() + ")"
+	accent := l.activityColor(s.activity.Category)
+	if s.activity.Action == "shell" {
+		// Shell commands keep their full text and wrap across a few
+		// indented rows instead of being shortened. Other activities stay
+		// bounded single-line summaries.
+		width := l.width
+		if width <= 0 {
+			width = activityOutputDefaultWidth
+		}
+		lines := wrapActivityMessage(message, durationSuffix, width, runewidth.StringWidth(marker)+1, activityOutputIndent, maxActivityMessageLines, l.unicode)
+		for index, line := range lines {
+			if index == 0 {
+				fmt.Fprint(l.out, l.style(color, marker)+" ")
+				fmt.Fprint(l.out, l.style(accent, line))
+			} else {
+				fmt.Fprint(l.out, activityMessageIndent)
+				fmt.Fprint(l.out, l.style(accent, line))
+			}
+			if index == len(lines)-1 {
+				fmt.Fprint(l.out, l.style(traceDim, durationSuffix))
+			}
+			fmt.Fprintln(l.out)
+		}
+	} else {
+		fmt.Fprint(l.out, l.style(color, marker)+" ")
+		fmt.Fprint(l.out, l.style(accent, message))
+		fmt.Fprint(l.out, l.style(traceDim, durationSuffix))
+		fmt.Fprintln(l.out)
+	}
 	preview := ""
 	if len(output) > 0 {
 		preview = output[0]
@@ -540,7 +579,178 @@ const (
 	maxActivityPreviewLines    = 3
 	activityOutputIndent       = 2
 	activityOutputDefaultWidth = 120
+	// maxActivityMessageLines bounds the persistent activity line (for
+	// example a long "Ran shell command: ..." message) after wrapping.
+	// The full command stays in the message and in JSON summaries; only its
+	// terminal rendering wraps across a few indented rows with an ellipsis
+	// when it still does not fit.
+	maxActivityMessageLines = 5
+	activityMessageIndent   = "  "
 )
+
+// wrapActivityMessage word-wraps a single-line activity message (such as the
+// full shell command in "Ran shell command: ...") to the terminal width.
+// The first row shares its width with a marker prefix, continuation rows use
+// a short indent, and the last row reserves room for the duration suffix so
+// the suffix never overflows. At most maxLines rows are returned; the last
+// row carries an ellipsis when content is omitted. It must be called while
+// l.mu is held.
+func wrapActivityMessage(message, suffix string, width, prefixWidth, indentWidth, maxLines int, unicodeEnabled bool) []string {
+	message = strings.Join(strings.Fields(message), " ")
+	if message == "" {
+		return []string{""}
+	}
+	if width <= 0 {
+		width = activityOutputDefaultWidth
+	}
+	if prefixWidth < 0 {
+		prefixWidth = 0
+	}
+	if indentWidth < 0 {
+		indentWidth = 0
+	}
+	if maxLines < 1 {
+		maxLines = 1
+	}
+	suffixWidth := runewidth.StringWidth(suffix)
+	firstAvail := width - prefixWidth - suffixWidth
+	contAvail := width - indentWidth - suffixWidth
+	// Intermediate rows do not carry the suffix, but reserving its width for
+	// every row keeps the last row from overflowing with a simple one-pass
+	// pack. The unused cells on intermediate rows are negligible.
+	if firstAvail < 1 {
+		firstAvail = 1
+	}
+	if contAvail < 1 {
+		contAvail = 1
+	}
+	if runewidth.StringWidth(message) <= firstAvail {
+		return []string{message}
+	}
+	splitWidth := firstAvail
+	if contAvail > splitWidth {
+		splitWidth = contAvail
+	}
+	words := make([]string, 0, len(strings.Fields(message)))
+	for _, word := range strings.Fields(message) {
+		if runewidth.StringWidth(word) <= splitWidth {
+			words = append(words, word)
+			continue
+		}
+		words = append(words, splitActivityWord(word, splitWidth)...)
+	}
+	lines := make([]string, 0, maxLines+1)
+	var current strings.Builder
+	currentWidth := 0
+	flush := func() {
+		if current.Len() > 0 {
+			lines = append(lines, current.String())
+			current.Reset()
+			currentWidth = 0
+		}
+	}
+	availFor := func(lineIndex int) int {
+		if lineIndex == 0 {
+			return firstAvail
+		}
+		return contAvail
+	}
+	for _, word := range words {
+		wordWidth := runewidth.StringWidth(word)
+		if current.Len() == 0 {
+			avail := availFor(len(lines))
+			if wordWidth <= avail {
+				current.WriteString(word)
+				currentWidth = wordWidth
+				continue
+			}
+			for _, piece := range splitActivityWord(word, avail) {
+				pieceWidth := runewidth.StringWidth(piece)
+				if current.Len() == 0 && pieceWidth <= availFor(len(lines)) {
+					current.WriteString(piece)
+					currentWidth = pieceWidth
+					continue
+				}
+				flush()
+				current.WriteString(piece)
+				currentWidth = pieceWidth
+				avail = availFor(len(lines))
+			}
+			continue
+		}
+		avail := availFor(len(lines))
+		if currentWidth+1+wordWidth <= avail {
+			current.WriteByte(' ')
+			current.WriteString(word)
+			currentWidth += 1 + wordWidth
+			continue
+		}
+		flush()
+		avail = availFor(len(lines))
+		if wordWidth <= avail {
+			current.WriteString(word)
+			currentWidth = wordWidth
+			continue
+		}
+		for _, piece := range splitActivityWord(word, avail) {
+			pieceWidth := runewidth.StringWidth(piece)
+			if current.Len() == 0 && pieceWidth <= availFor(len(lines)) {
+				current.WriteString(piece)
+				currentWidth = pieceWidth
+				continue
+			}
+			flush()
+			current.WriteString(piece)
+			currentWidth = pieceWidth
+		}
+	}
+	flush()
+	if len(lines) <= maxLines {
+		return lines
+	}
+	kept := make([]string, maxLines)
+	copy(kept, lines[:maxLines])
+	lastAvail := firstAvail
+	if maxLines > 1 {
+		lastAvail = contAvail
+	}
+	kept[maxLines-1] = truncateActivityLine(kept[maxLines-1], lastAvail, unicodeEnabled, true)
+	return kept
+}
+
+// splitActivityWord hard-wraps a single word that is wider than the available
+// terminal cells.
+func splitActivityWord(word string, width int) []string {
+	if width <= 0 {
+		width = 1
+	}
+	if runewidth.StringWidth(word) <= width {
+		return []string{word}
+	}
+	var pieces []string
+	var current strings.Builder
+	used := 0
+	for _, r := range word {
+		unit := runewidth.RuneWidth(r)
+		if unit < 0 {
+			unit = 0
+		}
+		if used+unit > width && current.Len() > 0 {
+			pieces = append(pieces, current.String())
+			current.Reset()
+			used = 0
+		}
+		current.WriteRune(r)
+		used += unit
+	}
+	if current.Len() > 0 {
+		pieces = append(pieces, current.String())
+	}
+	if len(pieces) == 0 {
+		return []string{word}
+	}
+	return pieces
+}
 
 // activityOutputLines returns at most three non-empty, terminal-safe output
 // lines. It must be called while l.mu is held.

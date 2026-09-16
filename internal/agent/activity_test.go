@@ -59,16 +59,19 @@ func TestToolActivitySanitizesAndBoundsTargets(t *testing.T) {
 	}
 }
 
-func TestToolActivityShellCommandIsSingleLineAndBounded(t *testing.T) {
-	command := "printf 'first\nsecond' " + strings.Repeat("x", maxShellCommandRunes)
+func TestToolActivityShellCommandIsSingleLineAndFull(t *testing.T) {
+	command := "printf 'first\nsecond' " + strings.Repeat("x", 200)
 	got := toolActivity(activityCall("shell", `{"command":`+strconv.Quote(command)+`}`))
 	if strings.ContainsAny(got.Start, "\r\n") || !strings.Contains(got.Start, "first?second") {
 		t.Fatalf("shell activity = %q", got.Start)
 	}
-	if !strings.HasSuffix(got.Start, "…") {
-		t.Fatalf("shell activity was not truncated: %q", got.Start)
+	if strings.ContainsRune(got.Start, '…') {
+		t.Fatalf("shell activity was shortened: %q", got.Start)
 	}
-	if len([]rune(got.Start)) > len([]rune("Running shell command: "))+maxShellCommandRunes+1 {
-		t.Fatalf("shell activity is too long: %q", got.Start)
+	if !strings.HasSuffix(got.Start, strings.Repeat("x", 200)) {
+		t.Fatalf("shell activity did not keep the full command: %q", got.Start)
+	}
+	if !strings.HasSuffix(got.Completed, strings.Repeat("x", 200)) {
+		t.Fatalf("shell completed did not keep the full command: %q", got.Completed)
 	}
 }

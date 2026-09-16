@@ -298,6 +298,84 @@ func TestActivityHonorsDisabledColorAndASCII(t *testing.T) {
 	}
 }
 
+func TestShellActivityWrapsLongCommandWithIndent(t *testing.T) {
+	var output bytes.Buffer
+	logger := New(&output, false)
+	logger.SetColor(false)
+	logger.SetWidth(60)
+	long := "Ran shell command: " + strings.Repeat("echo foo ", 20)
+	activity := logger.StartActivity(Activity{Action: "shell", Start: long, Completed: long, Category: ActivityWrite})
+	activity.End(nil)
+	got := output.String()
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("long shell command stayed on one line: %q", got)
+	}
+	if len(lines) > maxActivityMessageLines {
+		t.Fatalf("wrapped lines = %d, want <= %d: %q", len(lines), maxActivityMessageLines, got)
+	}
+	if !strings.HasPrefix(lines[0], "✓ Ran shell command: ") {
+		t.Fatalf("first wrapped line lost its prefix: %q", got)
+	}
+	for _, line := range lines[1:] {
+		if !strings.HasPrefix(line, activityMessageIndent) {
+			t.Fatalf("continuation line misses indent %q: %q", activityMessageIndent, got)
+		}
+	}
+	if strings.Contains(got, "…") || strings.Contains(got, "...") {
+		t.Fatalf("wrapped shell command was shortened: %q", got)
+	}
+	// The full command survives wrapping; joining the indented rows must
+	// recover every word.
+	joined := strings.Join(lines, " ")
+	for _, word := range strings.Fields(long) {
+		if !strings.Contains(joined, word) {
+			t.Fatalf("wrapped output lost %q: %q", word, got)
+		}
+	}
+	if !strings.Contains(lines[len(lines)-1], "(") {
+		t.Fatalf("duration missing from last wrapped line: %q", got)
+	}
+}
+
+func TestShellActivityWrapCapsAtMaxLines(t *testing.T) {
+	var output bytes.Buffer
+	logger := New(&output, false)
+	logger.SetColor(false)
+	logger.SetWidth(60)
+	huge := "Ran shell command: " + strings.Repeat("x", 2000)
+	activity := logger.StartActivity(Activity{Action: "shell", Start: huge, Completed: huge, Category: ActivityWrite})
+	activity.End(nil)
+	got := output.String()
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	if len(lines) != maxActivityMessageLines {
+		t.Fatalf("capped lines = %d, want %d: %q", len(lines), maxActivityMessageLines, got)
+	}
+	if !strings.Contains(lines[len(lines)-1], "…") {
+		t.Fatalf("capped shell command misses omission marker: %q", got)
+	}
+	if !strings.HasPrefix(lines[1], activityMessageIndent) {
+		t.Fatalf("capped continuation misses indent: %q", got)
+	}
+}
+
+func TestShellActivityShortCommandStaysSingleLine(t *testing.T) {
+	var output bytes.Buffer
+	logger := New(&output, false)
+	logger.SetColor(false)
+	logger.SetWidth(120)
+	short := "Ran shell command: echo hi"
+	activity := logger.StartActivity(Activity{Action: "shell", Start: short, Completed: short, Category: ActivityWrite})
+	activity.End(nil)
+	got := output.String()
+	if strings.Count(got, "\n") != 1 {
+		t.Fatalf("short shell command wrapped unexpectedly: %q", got)
+	}
+	if !strings.Contains(got, "✓ Ran shell command: echo hi (") {
+		t.Fatalf("short shell command changed: %q", got)
+	}
+}
+
 type assertionError string
 
 func (e assertionError) Error() string { return string(e) }
