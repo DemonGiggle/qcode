@@ -12,6 +12,10 @@ const (
 	ThinkingReplayReasoningDetails = "reasoning_details"
 )
 
+// ThinkingRequestResponsesReasoning encodes a level as the Responses API
+// reasoning object: {"reasoning": {"effort": "<level>"}}.
+const ThinkingRequestResponsesReasoning = "responses_reasoning"
+
 // openCodeGoThinkingCatalog is deliberately exact-match only. OpenCode Go
 // model names can look alike while accepting different request fields; an
 // unknown model must therefore receive no optional thinking fields.
@@ -85,6 +89,26 @@ var openCodeGoThinkingCatalog = map[string]ThinkingCapability{
 		Supported: true, Adjustable: true, Levels: []string{"none", "high"}, Default: "high",
 		RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayReasoningContent,
 	},
+	// Responses-route models accept a reasoning object whose effort is the only
+	// knob qcode exposes. Effort sets are model-specific and were verified
+	// against the live endpoint on 2026-09-16. Muse Spark 1.3 lists "max" in
+	// some upstream error text but rejects it, so it stays hidden.
+	"gpt-5.6-luna": {
+		Supported: true, Adjustable: true, Levels: []string{"none", "low", "medium", "high", "xhigh", "max"}, Default: "medium",
+		RequestFormat: ThinkingRequestResponsesReasoning, ReplayFormat: ThinkingReplayReasoningDetails,
+	},
+	"grok-4.6": {
+		Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high", "xhigh"},
+		RequestFormat: ThinkingRequestResponsesReasoning, ReplayFormat: ThinkingReplayReasoningDetails,
+	},
+	"muse-spark-1.2-contributor": {
+		Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high", "xhigh"}, Default: "high",
+		RequestFormat: ThinkingRequestResponsesReasoning, ReplayFormat: ThinkingReplayReasoningDetails,
+	},
+	"muse-spark-1.3-contributor": {
+		Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high", "xhigh"}, Default: "high",
+		RequestFormat: ThinkingRequestResponsesReasoning, ReplayFormat: ThinkingReplayReasoningDetails,
+	},
 }
 
 func (p *openAIProvider) ThinkingCapability(model string) ThinkingCapability {
@@ -121,6 +145,17 @@ func thinkingFields(capability ThinkingCapability, level string) map[string]any 
 			return map[string]any{"think": false}
 		}
 		return map[string]any{"think": level}
+	}
+	// Responses models pass the wire-native effort through directly, including
+	// "none" when the model supports disabling reasoning. Request an automatic
+	// summary for enabled reasoning so the Responses reasoning-summary stream is
+	// available to qcode's thinking view.
+	if capability.RequestFormat == ThinkingRequestResponsesReasoning {
+		reasoning := map[string]any{"effort": level}
+		if level != "none" {
+			reasoning["summary"] = "auto"
+		}
+		return map[string]any{"reasoning": reasoning}
 	}
 	if level == "off" {
 		return map[string]any{"thinking": map[string]any{"type": "disabled"}}

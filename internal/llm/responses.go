@@ -19,12 +19,18 @@ type responsesPartialCall struct{ id, name, arguments string }
 // OpenAI Responses protocol used by the OpenCode Go Muse, Luna, and Grok
 // routes. It intentionally lives beside, rather than inside, the older Chat
 // Completions adapter: the two APIs have different continuation semantics.
+// Thinking levels are sent as the Responses reasoning object when the model
+// advertises them.
 func (p *openAIProvider) completeResponses(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
+	// Reasoning Responses models reject temperature (Luna returns 400).
+	// Omit it and keep the provider default, as the Anthropic adapter does.
 	body := map[string]any{
-		"model":       input.Model,
-		"input":       responsesInput(input.Messages),
-		"stream":      true,
-		"temperature": input.Temperature,
+		"model":  input.Model,
+		"input":  responsesInput(input.Messages),
+		"stream": true,
+	}
+	for field, value := range thinkingFields(p.ThinkingCapability(input.Model), input.Thinking) {
+		body[field] = value
 	}
 	if len(input.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(input.Tools))
@@ -136,8 +142,12 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 					InputTokens  int `json:"input_tokens"`
 					OutputTokens int `json:"output_tokens"`
 				} `json:"usage"`
+				Error *struct {
+					Message string `json:"message"`
+				} `json:"error"`
 			} `json:"response"`
-			Error *struct {
+			Message string `json:"message"`
+			Error   *struct {
 				Message string `json:"message"`
 			} `json:"error"`
 		}
@@ -147,11 +157,28 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 		if event.Error != nil {
 			return Response{}, fmt.Errorf("Responses: %s", event.Error.Message)
 		}
+		if event.Type == "error" {
+			if event.Message == "" {
+				return Response{}, fmt.Errorf("Responses: stream error")
+			}
+			return Response{}, fmt.Errorf("Responses: %s", event.Message)
+		}
+		if event.Type == "response.failed" {
+			if event.Response.Error != nil && event.Response.Error.Message != "" {
+				return Response{}, fmt.Errorf("Responses: %s", event.Response.Error.Message)
+			}
+			return Response{}, fmt.Errorf("Responses: response failed")
+		}
 		switch event.Type {
 		case "response.output_text.delta":
 			result.Content += event.Delta
 			if onText != nil {
 				onText(StreamEvent{Kind: StreamOutput, Text: event.Delta})
+			}
+		case "response.reasoning_summary_text.delta":
+			result.Thinking += event.Delta
+			if onText != nil {
+				onText(StreamEvent{Kind: StreamThinking, Text: event.Delta})
 			}
 		case "response.output_item.added":
 			if event.Item.Type == "function_call" {

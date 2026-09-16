@@ -290,3 +290,31 @@ func TestOpenCodeGoUsesAnthropicMessagesForQwen(t *testing.T) {
 		t.Fatalf("tool call = %#v", call)
 	}
 }
+
+func TestOpenCodeGoResponsesThinkingCatalog(t *testing.T) {
+	provider, err := newOpenCodeGo(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		model  string
+		levels []string
+	}{
+		{"gpt-5.6-luna", []string{"none", "low", "medium", "high", "xhigh", "max"}},
+		{"grok-4.6", []string{"minimal", "low", "medium", "high", "xhigh"}},
+		{"muse-spark-1.2-contributor", []string{"minimal", "low", "medium", "high", "xhigh"}},
+		{"muse-spark-1.3-contributor", []string{"minimal", "low", "medium", "high", "xhigh"}},
+	}
+	for _, test := range tests {
+		capability := provider.(ThinkingProvider).ThinkingCapability(test.model)
+		if !capability.Supported || !capability.Adjustable || capability.AlwaysOn {
+			t.Errorf("%s capability = %#v", test.model, capability)
+		}
+		if capability.RequestFormat != ThinkingRequestResponsesReasoning || capability.ReplayFormat != ThinkingReplayReasoningDetails {
+			t.Errorf("%s formats = %q/%q", test.model, capability.RequestFormat, capability.ReplayFormat)
+		}
+		if strings.Join(capability.Levels, ",") != strings.Join(test.levels, ",") {
+			t.Errorf("%s levels = %v, want %v", test.model, capability.Levels, test.levels)
+		}
+	}
+}
