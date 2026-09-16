@@ -200,7 +200,7 @@ func TestOpenCodeGoAllowsBaseURLOverride(t *testing.T) {
 	}
 }
 
-func TestOpenCodeGoHidesAndRejectsModelsOnUnsupportedEndpoints(t *testing.T) {
+func TestOpenCodeGoListsAndAcceptsResponsesModels(t *testing.T) {
 	client := doerFunc(func(request *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -217,11 +217,16 @@ func TestOpenCodeGoHidesAndRejectsModelsOnUnsupportedEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(models, ",") != "glm-5.2,qwen3.8-max" {
+	if strings.Join(models, ",") != "glm-5.2,gpt-5.6-luna,qwen3.8-max" {
 		t.Fatalf("models = %v", models)
 	}
-	if err := provider.(ModelValidator).ValidateModel("gpt-5.6-luna"); err == nil || !strings.Contains(err.Error(), "Responses") {
-		t.Fatalf("luna validation error = %v", err)
+	for _, model := range []string{"gpt-5.6-luna", "grok-4.6", "muse-spark-1.2-contributor", "muse-spark-1.3-contributor"} {
+		if openCodeGoModelRoutes[model] != openCodeGoResponsesRoute {
+			t.Errorf("route for %q = %q", model, openCodeGoModelRoutes[model])
+		}
+		if err := provider.(ModelValidator).ValidateModel(model); err != nil {
+			t.Errorf("%s validation error = %v", model, err)
+		}
 	}
 	if err := provider.(ModelValidator).ValidateModel("glm-5.2"); err != nil {
 		t.Fatalf("chat model validation error = %v", err)

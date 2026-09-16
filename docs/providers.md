@@ -40,7 +40,7 @@ export QCODE_API_KEY=...
 qcode --provider opencode-go --model kimi-k3
 ```
 
-The OpenCode Go API base URL defaults to `https://opencode.ai/zen/go/v1` and can be overridden with `--base-url`. qcode supports both its OpenAI-compatible Chat Completions route and its Anthropic Messages route, so Qwen and MiniMax models are available alongside Chat Completions models. Models assigned to the Responses route are not supported yet.
+The OpenCode Go API base URL defaults to `https://opencode.ai/zen/go/v1` and can be overridden with `--base-url`. qcode routes models through the API protocol OpenCode Go assigns to them: OpenAI-compatible Chat Completions, Anthropic Messages, or OpenAI Responses. This makes Muse Spark, GPT Luna, and Grok Responses models available alongside Chat Completions and Qwen/MiniMax Messages models.
 
 ### Thinking levels
 
