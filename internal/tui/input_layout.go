@@ -103,7 +103,7 @@ func (u *UI) paintFixedLocked(direction int) {
 	if u.inputLabel != inputPrompt && u.inputLabel != planInputPrompt {
 		matches = nil
 	}
-	count := min(5, len(matches), max(0, promptRow-3))
+	count := min(len(matches), max(0, promptRow-3))
 	outputHeight := max(0, promptRow-count-2)
 	screenRows := make([]string, u.height+1)
 	if u.manager != nil && u.height > 3 {
