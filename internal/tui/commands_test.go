@@ -460,7 +460,7 @@ func TestSlashCommandMenuReplacesPreviousRows(t *testing.T) {
 	if strings.Count(got, "\x1b[1A\r\x1b[2K") != len(slashCommands) {
 		t.Fatalf("menu did not clear all previous rows: %q", got)
 	}
-	if !strings.Contains(got, "/help    Show available commands") || strings.Contains(got, "/clear") {
+	if !strings.Contains(got, "/help    List commands and what they do") || strings.Contains(got, "/clear") {
 		t.Fatalf("menu did not render filtered command: %q", got)
 	}
 }
