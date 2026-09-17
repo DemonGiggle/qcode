@@ -61,6 +61,34 @@ func TestMatchingSlashCommands(t *testing.T) {
 	}
 }
 
+func TestPrintCommandHelp(t *testing.T) {
+	var output bytes.Buffer
+	u := &UI{display: newHistoryWriter(&output), width: 100}
+
+	u.printCommandHelp([]string{"model"})
+	if got := output.String(); !strings.Contains(got, "/model [<model> [thinking]]") || !strings.Contains(got, "Choose a model and optional thinking level") {
+		t.Fatalf("model help = %q", got)
+	}
+
+	output.Reset()
+	u.printCommandHelp([]string{"/PLAN"})
+	if got := output.String(); !strings.Contains(got, "/plan [off|show|act]") {
+		t.Fatalf("plan help = %q", got)
+	}
+
+	output.Reset()
+	u.printCommandHelp([]string{"missing"})
+	if got := output.String(); !strings.Contains(got, "Unknown command: missing") || !strings.Contains(got, "Use /help to list commands") {
+		t.Fatalf("unknown command help = %q", got)
+	}
+
+	output.Reset()
+	u.printCommandHelp([]string{"model", "extra"})
+	if got := output.String(); !strings.Contains(got, "Usage: /help [command]") {
+		t.Fatalf("help usage = %q", got)
+	}
+}
+
 func TestUpdateMaxSteps(t *testing.T) {
 	var output bytes.Buffer
 	runner := &configurableMaxStepsRunner{maxSteps: 32}
@@ -460,7 +488,7 @@ func TestSlashCommandMenuReplacesPreviousRows(t *testing.T) {
 	if strings.Count(got, "\x1b[1A\r\x1b[2K") != len(slashCommands) {
 		t.Fatalf("menu did not clear all previous rows: %q", got)
 	}
-	if !strings.Contains(got, "/help    List commands and what they do") || strings.Contains(got, "/clear") {
+	if !strings.Contains(got, "/help    List commands or explain one command") || strings.Contains(got, "/clear") {
 		t.Fatalf("menu did not render filtered command: %q", got)
 	}
 }

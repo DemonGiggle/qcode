@@ -602,6 +602,10 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		u.resetPage()
 		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == "/help" {
+			u.printCommandHelp(fields[1:])
+			continue
+		}
 		if len(fields) > 0 && fields[0] == "/remote" {
 			u.handleRemoteCommand(ctx, fields)
 			continue
@@ -661,9 +665,6 @@ func (u *UI) Run(ctx context.Context) error {
 			continue
 		case "/compact":
 			u.compactConversation(ctx)
-			continue
-		case "/help":
-			u.printCommandHelp()
 			continue
 		case "/model":
 			u.chooseModel(ctx)
@@ -1256,11 +1257,60 @@ func (u *UI) rememberDraft(line string) {
 	u.screenMu.Unlock()
 }
 
-func (u *UI) printCommandHelp() {
-	for _, command := range slashCommands {
-		line := fmt.Sprintf("%s%-8s%s %s%s%s", cyan, command.name, reset, dim, command.description, reset)
-		fmt.Fprintln(u.display, wrapANSI(line, u.width, "         "))
+func (u *UI) printCommandHelp(arguments []string) {
+	color := u.out != nil && ColorEnabled(u.out)
+	if len(arguments) == 0 {
+		for _, command := range slashCommands {
+			line := fmt.Sprintf("%-8s %s", command.name, command.description)
+			if color {
+				line = fmt.Sprintf("%s%-8s%s %s%s%s", cyan, command.name, reset, dim, command.description, reset)
+			}
+			fmt.Fprintln(u.display, wrapANSI(line, u.width, "         "))
+		}
+		return
 	}
+	if len(arguments) != 1 {
+		u.printSystemMessage(yellow + "Usage: /help [command]" + reset)
+		return
+	}
+	command, ok := findSlashCommand(arguments[0])
+	if !ok {
+		u.printSystemMessage(yellow + "Unknown command: " + sanitizeDiffLine(arguments[0], "<ESC>") + ". Use /help to list commands." + reset)
+		return
+	}
+
+	style := func(code, text string) string {
+		if !color {
+			return text
+		}
+		return code + text + reset
+	}
+	lines := []string{
+		style(bold+cyan, command.usage),
+		style(dim, command.description),
+	}
+	if len(command.arguments) > 0 {
+		lines = append(lines, "", style(bold+yellow, "Arguments"))
+		argumentWidth := 0
+		for _, argument := range command.arguments {
+			argumentWidth = max(argumentWidth, visibleWidth(argument.name))
+		}
+		for _, argument := range command.arguments {
+			label := fmt.Sprintf("%-*s", argumentWidth+2, argument.name)
+			lines = append(lines, "  "+style(cyan, label)+style(dim, argument.description))
+		}
+	}
+	if len(command.examples) > 0 {
+		lines = append(lines, "", style(bold+yellow, "Examples"))
+		for _, example := range command.examples {
+			lines = append(lines, "  "+style(green, example))
+		}
+	}
+	wrapped := make([]string, 0, len(lines))
+	for _, line := range lines {
+		wrapped = append(wrapped, wrapANSI(line, u.width, "  "))
+	}
+	u.printSystemMessage(strings.Join(wrapped, "\n"))
 }
 
 func (u *UI) printHeader() {

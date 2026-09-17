@@ -9,28 +9,123 @@ import (
 
 type slashCommand struct {
 	name        string
+	usage       string
+	description string
+	arguments   []helpArgument
+	examples    []string
+}
+
+type helpArgument struct {
+	name        string
 	description string
 }
 
 var slashCommands = []slashCommand{
-	{name: "/agent", description: "Create and manage extra agents"},
-	{name: "/clear", description: "Clear the visible conversation"},
-	{name: "/compact", description: "Summarize old context to make room"},
-	{name: "/diff", description: "View more lines of a recent file change"},
-	{name: "/exit", description: "Exit qcode"},
-	{name: "/export", description: "Save this session as an HTML file"},
-	{name: "/help", description: "List commands and what they do"},
-	{name: "/learn", description: "Save, list, remove, or combine instructions"},
-	{name: "/maxsteps", description: "Show or change the model-turn limit"},
-	{name: "/model", description: "Change the model or thinking level"},
-	{name: "/new", description: "Start a fresh conversation"},
-	{name: "/plan", description: "Plan, review, or implement changes"},
-	{name: "/resume", description: "Continue a saved session"},
-	{name: "/remote", description: "Control qcode from a web browser"},
-	{name: "/skill", description: "Choose skills for the agent"},
-	{name: "/quit", description: "Exit qcode"},
-	{name: "/tool", description: "Enable or disable tools"},
-	{name: "/verbose", description: "Show or hide detailed action traces"},
+	{
+		name: "/agent", usage: "/agent [new [name]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]]",
+		description: "Create and manage extra agents",
+		arguments: []helpArgument{
+			{name: "new [name]", description: "Create an agent, optionally with a name."},
+			{name: "list", description: "Show agents and their current status."},
+			{name: "switch <id>", description: "Make another agent active."},
+			{name: "rename <id> <name>", description: "Give an agent a new display name."},
+			{name: "cancel <id>", description: "Stop the agent's current work."},
+			{name: "close <id> [--yes]", description: "Close an agent; --yes skips confirmation."},
+		},
+		examples: []string{"/agent new review", "/agent switch agent-2"},
+	},
+	{
+		name: "/clear", usage: "/clear", description: "Clear the visible conversation and redraw the header",
+		examples: []string{"/clear"},
+	},
+	{
+		name: "/compact", usage: "/compact", description: "Summarize old context to make room for new work",
+		examples: []string{"/compact"},
+	},
+	{
+		name: "/diff", usage: "/diff [number]", description: "View more lines of a recent file change",
+		arguments: []helpArgument{{name: "number", description: "Diff number to expand; omit it to expand the latest diff."}},
+		examples:  []string{"/diff", "/diff 2"},
+	},
+	{
+		name: "/exit", usage: "/exit", description: "Save the session and exit qcode",
+		examples: []string{"/exit"},
+	},
+	{
+		name: "/export", usage: "/export [path]", description: "Save this session as an HTML file",
+		arguments: []helpArgument{{name: "path", description: "Output path; defaults to a timestamped file in the workspace."}},
+		examples:  []string{"/export", "/export review.html"},
+	},
+	{
+		name: "/help", usage: "/help [command]", description: "List commands or explain one command",
+		arguments: []helpArgument{{name: "command", description: "Command to explain; the leading / is optional."}},
+		examples:  []string{"/help", "/help model"},
+	},
+	{
+		name: "/learn", usage: "/learn [list|forget <id>|compact]", description: "Save, list, remove, or combine reusable instructions",
+		arguments: []helpArgument{
+			{name: "list", description: "Show saved learning and its IDs."},
+			{name: "forget <id>", description: "Review and remove one saved item."},
+			{name: "compact", description: "Review changes that consolidate duplicate items."},
+		},
+		examples: []string{"/learn", "/learn list", "/learn forget record-123"},
+	},
+	{
+		name: "/maxsteps", usage: "/maxsteps [positive integer]", description: "Show or change the model-turn limit for each request",
+		arguments: []helpArgument{{name: "positive integer", description: "New limit; omit it to show the current limit."}},
+		examples:  []string{"/maxsteps", "/maxsteps 64"},
+	},
+	{
+		name: "/model", usage: "/model [<model> [thinking]]", description: "Choose a model and optional thinking level",
+		arguments: []helpArgument{
+			{name: "model", description: "Provider model ID; omit it to open the model picker."},
+			{name: "thinking", description: "Optional level supported by that model, such as low or high."},
+		},
+		examples: []string{"/model", "/model gpt-5.6-luna medium"},
+	},
+	{
+		name: "/new", usage: "/new", description: "Start a fresh conversation for the active agent",
+		examples: []string{"/new"},
+	},
+	{
+		name: "/plan", usage: "/plan [off|show|act]", description: "Plan, review, or implement changes",
+		arguments: []helpArgument{
+			{name: "off", description: "Leave Plan mode without implementing the plan."},
+			{name: "show", description: "Open the latest submitted plan."},
+			{name: "act", description: "Approve and start implementing the latest plan."},
+		},
+		examples: []string{"/plan", "/plan show", "/plan act"},
+	},
+	{
+		name: "/resume", usage: "/resume [session-id]", description: "Continue a saved session",
+		arguments: []helpArgument{{name: "session-id", description: "Session to restore; omit it to open the session picker."}},
+		examples:  []string{"/resume", "/resume 20260917-abc123"},
+	},
+	{
+		name: "/remote", usage: "/remote", description: "Control qcode from a web browser",
+		examples: []string{"/remote"},
+	},
+	{
+		name: "/skill", usage: "/skill [name[,name...]]", description: "Choose skills for the agent",
+		arguments: []helpArgument{{name: "name[,name...]", description: "Skills to enable; omit it to open the picker, or use none to clear them."}},
+		examples:  []string{"/skill", "/skill review,testing", "/skill none"},
+	},
+	{
+		name: "/quit", usage: "/quit", description: "Save the session and exit qcode",
+		examples: []string{"/quit"},
+	},
+	{
+		name: "/tool", usage: "/tool [<name> <on|off>]", description: "Enable or disable tools",
+		arguments: []helpArgument{
+			{name: "name", description: "Tool to change; omit both arguments to open the tool picker."},
+			{name: "on|off", description: "Whether to enable or disable the tool."},
+		},
+		examples: []string{"/tool", "/tool web_search on"},
+	},
+	{
+		name: "/verbose", usage: "/verbose", description: "Show or hide detailed action traces",
+		examples: []string{"/verbose"},
+	},
 }
 
 func matchingSlashCommands(line string) []slashCommand {
@@ -44,6 +139,19 @@ func matchingSlashCommands(line string) []slashCommand {
 		}
 	}
 	return matches
+}
+
+func findSlashCommand(name string) (slashCommand, bool) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if !strings.HasPrefix(name, "/") {
+		name = "/" + name
+	}
+	for _, command := range slashCommands {
+		if command.name == name {
+			return command, true
+		}
+	}
+	return slashCommand{}, false
 }
 
 type slashCommandMenu struct {

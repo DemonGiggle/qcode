@@ -14,6 +14,8 @@ Set `NO_COLOR=1` to disable response styling. UTF-8 terminals use Unicode interf
 
 The following UI-focused commands are available in interactive mode. Feature-specific commands (`/agent`, `/skill`, `/learn`) are documented in their respective topic pages.
 
+Use `/help` to list commands, or `/help <command>` to see a command's arguments and a short description. The leading `/` is optional in the command name.
+
 - `/model` fetches the provider's models. Search a large catalog by typing, move through matches with Up/Down, and select with Enter.
 - `/new` discards the current conversation context and resets session token totals without restarting qcode or changing the provider, model, or workspace.
 - `/resume` opens saved sessions for this workspace. Use Up/Down and Enter to restore, or Ctrl+C to cancel. Each entry shows its latest main-agent conversation preview (up to two lines) and how long ago you left it, newest first. Finish or cancel running agents before switching. Sessions open in another process cannot be selected.
