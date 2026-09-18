@@ -44,6 +44,13 @@ func (u *UI) learn(ctx context.Context, arguments string) {
 	defer cancel()
 	u.input.setCancel(cancel)
 	defer u.input.setCancel(nil)
+	needsProposal := true
+	if fields := strings.Fields(arguments); len(fields) > 0 && fields[0] == "forget" {
+		needsProposal = false
+	}
+	if needsProposal {
+		u.printSystemMessage(dim + "Waiting for learning proposal...  Ctrl+C to cancel" + reset)
+	}
 	localApprover := func(ctx context.Context, review []learning.Change) (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return false, err

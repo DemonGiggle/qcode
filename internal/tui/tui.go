@@ -894,6 +894,7 @@ func (u *UI) chooseModel(ctx context.Context) {
 	}
 	fetchCtx, cancel := context.WithCancel(ctx)
 	u.input.setCancel(cancel)
+	u.printSystemMessage(dim + "Waiting for models...  Ctrl+C to cancel" + reset)
 	models, err := runner.ListModels(fetchCtx)
 	u.input.setCancel(nil)
 	cancel()
@@ -981,7 +982,16 @@ func (u *UI) setModelCommand(ctx context.Context, fields []string) {
 		u.printSystemMessage(yellow + "Model selection is unavailable." + reset)
 		return
 	}
-	models, err := runner.ListModels(ctx)
+	fetchCtx, cancel := context.WithCancel(ctx)
+	u.input.setCancel(cancel)
+	defer u.input.setCancel(nil)
+	defer cancel()
+	u.printSystemMessage(dim + "Waiting for models...  Ctrl+C to cancel" + reset)
+	models, err := runner.ListModels(fetchCtx)
+	if errors.Is(err, context.Canceled) {
+		u.printSystemMessage(yellow + "Model selection cancelled." + reset)
+		return
+	}
 	if err != nil {
 		u.printSystemMessage(yellow + "Unable to list models: " + err.Error() + reset)
 		return
