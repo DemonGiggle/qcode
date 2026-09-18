@@ -1238,7 +1238,7 @@ func (u *UI) completeSlashCommand(line string, pos int, key rune) (string, int, 
 		u.rememberDraft(completed)
 		return completed, len(completed), true
 	}
-	if key < 32 || pos < 0 || pos > len(line) {
+	if key < 32 || key >= 0xd800 || pos < 0 || pos > len(line) {
 		return line, pos, false
 	}
 	inserted := string(key)

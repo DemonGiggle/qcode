@@ -133,6 +133,7 @@ const (
 	keyAltRight
 	keyHome
 	keyEnd
+	keyDelete
 	keyDeleteWord
 	keyDeleteLine
 	keyClearScreen
@@ -204,14 +205,28 @@ func bytesToKey(b []byte, pasteActive bool) (rune, []byte) {
 	}
 
 	if !pasteActive && len(b) >= 4 && b[0] == keyEscape && b[1] == '[' {
-		// xterm and Linux console commonly encode Home/End as CSI 1~/4~.
-		// rxvt uses CSI 7~/8~ for the same keys.
+		// xterm and Linux console commonly encode Home/End as CSI 1~/4~ and
+		// Delete as CSI 3~. rxvt uses CSI 7~/8~ for Home/End.
 		if b[3] == '~' {
 			switch b[2] {
 			case '1', '7':
 				return keyHome, b[4:]
+			case '3':
+				return keyDelete, b[4:]
 			case '4', '8':
 				return keyEnd, b[4:]
+			}
+		}
+		// CSI 3;<modifier>~ is Delete with modifiers (e.g. Shift, Alt, Ctrl).
+		// The modifier does not change the editing operation.
+		if b[2] == '3' && b[3] == ';' {
+			for i := 4; i < len(b); i++ {
+				if b[i] == '~' {
+					return keyDelete, b[i+1:]
+				}
+				if b[i] < '0' || b[i] > '9' {
+					break
+				}
 			}
 		}
 	}
@@ -482,6 +497,13 @@ func (t *Terminal) handleKey(key rune) (line string, ok bool) {
 		if t.pos == 0 {
 			return
 		}
+		t.eraseNPreviousChars(1)
+	case keyDelete:
+		// Erase the character under the current position.
+		if t.pos >= len(t.line) {
+			return
+		}
+		t.pos++
 		t.eraseNPreviousChars(1)
 	case keyAltLeft:
 		// move left by a word.
