@@ -52,7 +52,21 @@ type options struct {
 	showVersion          bool
 	demo                 bool
 	sandbox              bool
+	sandboxCommandPaths  []string
 	dangerSkipTLSVerify  bool
+}
+
+// sandboxCommandPathsFlag collects repeatable --sandbox-command-path values.
+// When set, it overrides the merged sandbox_command_paths configuration.
+type sandboxCommandPathsFlag []string
+
+func (s *sandboxCommandPathsFlag) String() string {
+	return strings.Join(*s, string(os.PathListSeparator))
+}
+
+func (s *sandboxCommandPathsFlag) Set(value string) error {
+	*s = append(*s, value)
+	return nil
 }
 
 func main() {
@@ -81,6 +95,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	opts := options{learningBudget: learning.DefaultBudget, autoCompactThreshold: agent.DefaultAutoCompactThreshold}
 	var configPaths []string
 	var configuredSkillPaths []string
+	var sandboxCommandPathFlags sandboxCommandPathsFlag
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider: ollama, openai, or opencode-go")
@@ -98,6 +113,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	flags.BoolVar(&opts.showVersion, "version", false, "print version")
 	flags.BoolVar(&opts.demo, "demo", false, "run without an LLM or real tool execution")
 	flags.BoolVar(&opts.sandbox, "sandbox", false, "isolate tools with bubblewrap (Linux only)")
+	flags.Var(&sandboxCommandPathFlags, "sandbox-command-path", "trusted executable directory to mount read-only in the sandbox and prepend to PATH (repeatable, overrides sandbox_command_paths)")
 	flags.BoolVar(&opts.dangerSkipTLSVerify, "danger-skip-tls-verify", false, "skip TLS certificate verification (insecure)")
 	flags.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\nUse 'qcode update' to install the latest release.\n\nOptions:\n")
@@ -132,7 +148,12 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		configuredSkillPaths = append([]string(nil), cfg.Skills.Paths...)
 		setFlags := make(map[string]bool)
 		flags.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+		if setFlags["sandbox-command-path"] {
+			opts.sandboxCommandPaths = append([]string(nil), sandboxCommandPathFlags...)
+		}
 		applyConfig(&opts, cfg, setFlags)
+	} else if len(sandboxCommandPathFlags) > 0 {
+		opts.sandboxCommandPaths = append([]string(nil), sandboxCommandPathFlags...)
 	}
 	if !opts.demo && opts.model == "" {
 		return errors.New("model must not be empty")
@@ -151,6 +172,15 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		stdinPiped = stat.Mode()&os.ModeCharDevice == 0
 	}
 	interactive := promptText == "" && !stdinPiped
+	protectedPaths := append([]string(nil), configPaths...)
+	var sandboxCommandPaths []string
+	if opts.sandbox && !opts.demo {
+		resolved, warnings := tools.ResolveSandboxCommandPaths(opts.sandboxCommandPaths, protectedPaths)
+		for _, warning := range warnings {
+			fmt.Fprintln(stderr, "WARNING:", warning)
+		}
+		sandboxCommandPaths = resolved
+	}
 	sandboxActive := false
 	sandboxPath := ""
 	sandboxNotice := ""
@@ -159,7 +189,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		if tools.WorkspaceExposesHome(root) {
 			sandboxNotice = "Sandbox disabled: the selected workspace contains your home directory and would expose its secrets."
 			sandboxChoice = interactive
-		} else if checkedPath, checkErr := tools.CheckSandbox(root, false); checkErr != nil {
+		} else if checkedPath, checkErr := tools.CheckSandbox(root, false, sandboxCommandPaths...); checkErr != nil {
 			sandboxNotice = "Sandbox unavailable: " + checkErr.Error()
 			sandboxChoice = interactive
 		} else {
@@ -171,13 +201,12 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			fmt.Fprintln(stderr, "WARNING:", sandboxNotice, "Continuing without sandbox.")
 		}
 	}
-	protectedPaths := append([]string(nil), configPaths...)
 	skillLocations := skills.Locations(root, configuredSkillPaths...)
 	loadSkills := func() ([]prompt.SkillSummary, error) {
 		return skillCatalogData(root, configuredSkillPaths...)
 	}
 	skillSelection := skills.NewLazySelection(root, configuredSkillPaths...)
-	registry, err := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, Skills: skillSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
+	registry, err := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, SandboxCommandPaths: sandboxCommandPaths, Skills: skillSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
 	if err != nil {
 		return err
 	}
@@ -253,7 +282,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			currentEndpoint := providerConfig.BaseURL
 			if !isMain || saved != nil {
 				currentSelection = skills.NewLazySelection(root, configuredSkillPaths...)
-				createdRegistry, createErr := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, Skills: currentSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
+				createdRegistry, createErr := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, SandboxCommandPaths: sandboxCommandPaths, Skills: currentSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
 				if createErr != nil {
 					return nil, createErr
 				}
@@ -442,6 +471,9 @@ func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
 	}
 	if !setFlags["sandbox"] && cfg.Sandbox != nil {
 		opts.sandbox = *cfg.Sandbox
+	}
+	if !setFlags["sandbox-command-path"] && cfg.SandboxCommandPaths != nil {
+		opts.sandboxCommandPaths = append([]string(nil), cfg.SandboxCommandPaths...)
 	}
 	if !setFlags["danger-skip-tls-verify"] && cfg.DangerSkipTLSVerify != nil {
 		opts.dangerSkipTLSVerify = *cfg.DangerSkipTLSVerify

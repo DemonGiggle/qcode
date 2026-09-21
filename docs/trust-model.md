@@ -21,6 +21,24 @@ Each shell call receives a fresh namespace with no network by default, a hidden 
 
 The model can call `request_directory_access` when work requires another directory. qcode asks the interactive user to approve an editable directory path, grants it read/write for the current session, and clears added grants on `/new`. The filesystem root cannot be granted. Non-interactive directory requests are denied.
 
+## Persistent command directories
+
+For tools you always want available, set `sandbox_command_paths` (or repeatable
+`--sandbox-command-path`, which overrides it):
+
+```toml
+sandbox = true
+sandbox_command_paths = ["~/.local/bin", "~/go/bin"]
+```
+
+Each directory is an explicit persistent trusted-code allowlist entry: it is
+mounted read-only at its original path, only its empty ancestors are created
+under the hidden home, and it is prepended to the sandbox `PATH` ahead of the
+safe system path. Siblings and the rest of home stay hidden. Unlike
+`request_directory_access`, these mounts survive `/new`, are never read/write,
+and never prompt. Invalid, missing, root, duplicate, symlinked, and protected
+overlaps are skipped with a warning.
+
 ## Fallback behavior
 
 If bubblewrap is missing or unusable, or if the selected workspace contains the user's home, interactive mode offers to continue without the sandbox or leave; one-shot mode prints a warning and continues unsandboxed. A shell command's complete requested arguments are shown in the timestamped start event before execution.

@@ -11,12 +11,22 @@ thinking = "high"
 max_steps = 32
 agent_timeout = "5m"
 sandbox = true
+sandbox_command_paths = ["~/.local/bin", "~/go/bin"]
 auto_compact_threshold = 80
 disable_auto_compact = false
 
 [skills]
 paths = ["/opt/qcode/team-skills", ".team/skills"]
 ```
+
+`sandbox_command_paths` is a persistent trusted-code allowlist for sandbox
+mode. Each entry expands `~`, resolves symlinks, deduplicates, and must be an
+existing directory. The filesystem root and any directory overlapping a
+protected qcode configuration file are rejected with a startup warning.
+Accepted directories are mounted read-only at their original absolute paths
+(home stays hidden except these mounts) and prepended to the sandbox `PATH`.
+Repeatable `--sandbox-command-path` overrides the configured list. Omitting
+the key preserves the existing sandbox behaviour without migration.
 
 `skills.paths` adds directories to the built-in skill locations. Paths from all
 configuration layers are appended from lowest to highest priority. Blank paths

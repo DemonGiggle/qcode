@@ -18,6 +18,12 @@ max_steps = 32
 # Isolate model-triggered tools with bubblewrap on Linux. Disabled by default.
 # sandbox = true
 
+# Persistent trusted executable directories for sandbox mode. Each existing
+# directory is mounted read-only at its original path and prepended to the
+# sandbox PATH, while the rest of home stays hidden. Session
+# request_directory_access grants remain separate, read/write, and temporary.
+# sandbox_command_paths = ["~/.local/bin", "~/go/bin"]
+
 # Optional provider API base URL override.
 # base_url = "http://127.0.0.1:11434"
 
