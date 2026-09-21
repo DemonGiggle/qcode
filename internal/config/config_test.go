@@ -13,6 +13,7 @@ func TestCandidatePaths(t *testing.T) {
 		filepath.Join("", "opt", "qcode", "bin", "config.toml"),
 		filepath.Join("", "home", "ada", ".local", "etc", "qcode", "config.toml"),
 		filepath.Join(string(filepath.Separator), "usr", "local", "etc", "qcode", "config.toml"),
+		filepath.Join("", "opt", "qcode", "bin", "etc", "config.toml"),
 	}
 	for i := range want {
 		if paths[i] != want[i] {
@@ -27,6 +28,7 @@ func TestCandidatePathsDarwin(t *testing.T) {
 		"/Applications/config.toml",
 		"/Users/ada/Library/Application Support/qcode/config.toml",
 		"/Library/Application Support/qcode/config.toml",
+		"/Applications/etc/config.toml",
 	}
 	for i := range want {
 		if paths[i] != filepath.FromSlash(want[i]) {
@@ -37,14 +39,17 @@ func TestCandidatePathsDarwin(t *testing.T) {
 
 func TestCandidatePathsWindows(t *testing.T) {
 	paths := candidatePaths("windows", filepath.Join("C:", "Tools", "qcode.exe"), "", filepath.Join("C:", "Users", "ada", "AppData", "Roaming"), filepath.Join("C:", "ProgramData"))
-	if len(paths) != 3 {
-		t.Fatalf("got %d paths, want 3", len(paths))
+	if len(paths) != 4 {
+		t.Fatalf("got %d paths, want 4", len(paths))
 	}
 	if paths[1] != filepath.Join("C:", "Users", "ada", "AppData", "Roaming", "qcode", "config.toml") {
 		t.Fatalf("user path = %q", paths[1])
 	}
 	if paths[2] != filepath.Join("C:", "ProgramData", "qcode", "config.toml") {
 		t.Fatalf("system path = %q", paths[2])
+	}
+	if paths[3] != filepath.Join("C:", "Tools", "etc", "config.toml") {
+		t.Fatalf("executable-relative path = %q", paths[3])
 	}
 }
 

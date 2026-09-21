@@ -46,15 +46,19 @@ background tasks submitted through `delegate_task`.
 ## Lookup order
 
 The lookup order is platform-specific. Priority 1 is highest: it overrides
-settings from priority 2 and 3, while priority 3 supplies the base layer.
+settings from lower-priority locations, while the last priority supplies the
+base layer.
 
 | Priority | Linux | macOS | Windows |
 | --- | --- | --- | --- |
 | 1 | `config.toml` beside the executable | `config.toml` beside the executable | `config.toml` beside the executable |
 | 2 | `~/.local/etc/qcode/config.toml` | `~/Library/Application Support/qcode/config.toml` | `%AppData%\qcode\config.toml` |
 | 3 | `/usr/local/etc/qcode/config.toml` | `/Library/Application Support/qcode/config.toml` | `%ProgramData%\qcode\config.toml` |
+| 4 | `etc/config.toml` relative to the executable | `etc/config.toml` relative to the executable | `etc/config.toml` relative to the executable |
 
-Other Unix-like systems use the operating system's user configuration directory followed by `/usr/local/etc/qcode/config.toml`.
+Other Unix-like systems use the executable-adjacent config, followed by the
+operating system's user configuration directory, `/usr/local/etc/qcode/config.toml`,
+and finally the executable-relative `etc/config.toml` path.
 
 Missing files are ignored. If an existing configuration file cannot be read,
 contains invalid TOML or unknown settings, or fails validation, qcode prints a

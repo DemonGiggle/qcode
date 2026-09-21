@@ -78,7 +78,8 @@ func Load() (Config, []string, []error, error) {
 }
 
 func candidatePaths(goos, executable, home, userConfigDir, programData string) []string {
-	paths := []string{filepath.Join(filepath.Dir(executable), fileName)}
+	executableDir := filepath.Dir(executable)
+	paths := []string{filepath.Join(executableDir, fileName)}
 	switch goos {
 	case "linux":
 		paths = append(paths,
@@ -101,6 +102,7 @@ func candidatePaths(goos, executable, home, userConfigDir, programData string) [
 			filepath.Join(string(filepath.Separator), "usr", "local", "etc", "qcode", fileName),
 		)
 	}
+	paths = append(paths, filepath.Join(executableDir, "etc", fileName))
 	return paths
 }
 
