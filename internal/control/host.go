@@ -150,6 +150,7 @@ func (h *Host) SaveSessionState() ([]session.SavedAgent, int, *session.WorkHisto
 	return h.manager.SaveSessionState()
 }
 func (h *Host) SaveWorkHistory() *session.WorkHistory { return h.manager.SaveWorkHistory() }
+func (h *Host) WorkRecords() []session.WorkRecord     { return h.manager.WorkRecords() }
 func (h *Host) RestoreAgents(saved []session.SavedAgent, nextID int) error {
 	return h.manager.RestoreAgents(saved, nextID)
 }

@@ -23,6 +23,7 @@ Use `/help` to list commands, or `/help <command>` to see a command's arguments 
 - `/verbose` adds detailed timestamped telemetry, including raw tool arguments, without disabling concise activity events.
 - `/maxsteps` shows the current per-request model-turn limit; `/maxsteps N` updates it for the active agent.
 - `/diff` and `/diff N` expand the latest write/edit diff preview (see below).
+- `/history` opens a searchable, newest-first list of completed prompts for the active agent. Select a prompt to read only that prompt and its final response; leaving the browser restores the conversation view without changing its reading position.
 - `/tool` enables or disables the web tools independently; see [Web tools](web-tools.md).
 - `/plan` enters read-only planning mode; `/plan show` opens the latest plan in a scrollable view; `/plan off` leaves it; `/plan act` implements the latest submitted plan. See [Plan mode](plan-mode.md).
 

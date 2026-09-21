@@ -62,6 +62,10 @@ var slashCommands = []slashCommand{
 		examples:  []string{"/help", "/help model"},
 	},
 	{
+		name: "/history", usage: "/history", description: "Browse completed prompts and responses for the active agent",
+		examples: []string{"/history"},
+	},
+	{
 		name: "/learn", usage: "/learn [list|forget <id>|compact]", description: "Save, list, remove, or combine reusable instructions",
 		arguments: []helpArgument{
 			{name: "list", description: "Show saved learning and its IDs."},

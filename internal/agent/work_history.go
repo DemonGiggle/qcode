@@ -202,6 +202,19 @@ func (m *AgentManager) SaveWorkHistory() *session.WorkHistory {
 	return m.saveWorkHistoryLocked()
 }
 
+// WorkRecords returns an independent snapshot of the durable request journal.
+// Presentation code uses this narrower view instead of the persistence shape.
+func (m *AgentManager) WorkRecords() []session.WorkRecord {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	records := make([]session.WorkRecord, len(m.work))
+	for i, work := range m.work {
+		work.ChangedFiles = append([]string(nil), work.ChangedFiles...)
+		records[i] = work
+	}
+	return records
+}
+
 func (m *AgentManager) saveWorkHistoryLocked() *session.WorkHistory {
 	state := &session.WorkHistory{NextRequestID: m.nextRequestID, Events: append([]session.ConsultationEvent(nil), m.consultationEvents...)}
 	for _, work := range m.work {

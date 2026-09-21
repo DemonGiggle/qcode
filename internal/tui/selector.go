@@ -11,6 +11,10 @@ const (
 	selectorLeaveHint = "Ctrl+C to leave"
 )
 
+type selectorEscapeReader interface {
+	readSelectorEscapeTail() []byte
+}
+
 func readSelectorKey(in io.Reader) (string, error) {
 	var first [1]byte
 	if _, err := io.ReadFull(in, first[:]); err != nil {
@@ -18,6 +22,12 @@ func readSelectorKey(in io.Reader) (string, error) {
 	}
 	if first[0] != 27 {
 		return string(first[:]), nil
+	}
+	// A terminal does not delimit a standalone Escape key. Interactive input
+	// therefore waits briefly for a possible CSI tail, while finite readers
+	// used by tests can continue relying on EOF as the delimiter.
+	if reader, ok := in.(selectorEscapeReader); ok {
+		return string(append(first[:], reader.readSelectorEscapeTail()...)), nil
 	}
 	var tail [2]byte
 	if _, err := io.ReadFull(in, tail[:]); err != nil {

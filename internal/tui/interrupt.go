@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"time"
 )
 
 const (
@@ -93,6 +94,60 @@ func (r *interruptReader) setRaw(raw bool) {
 			}
 		}
 	}
+}
+
+const selectorEscapeWait = 30 * time.Millisecond
+
+// readSelectorEscapeTail disambiguates a standalone Escape key from terminal
+// escape sequences. Sequence bytes are normally already buffered together;
+// the short wait matters only when Escape has no tail.
+func (r *interruptReader) readSelectorEscapeTail() []byte {
+	read := func() (byte, bool) {
+		timer := time.NewTimer(selectorEscapeWait)
+		defer timer.Stop()
+		r.mu.Lock()
+		raw := r.raw
+		r.mu.Unlock()
+		if raw {
+			select {
+			case value, open := <-r.data:
+				return value, open
+			case value := <-r.rawWake:
+				return value, true
+			case <-timer.C:
+				return 0, false
+			}
+		}
+		select {
+		case value, open := <-r.data:
+			return value, open
+		case value := <-r.injected:
+			return value, true
+		case <-timer.C:
+			return 0, false
+		}
+	}
+
+	first, ok := read()
+	if !ok {
+		return nil
+	}
+	tail := []byte{first}
+	if first != '[' {
+		return tail
+	}
+	second, ok := read()
+	if !ok {
+		return tail
+	}
+	tail = append(tail, second)
+	if second != '5' && second != '6' {
+		return tail
+	}
+	if terminator, ok := read(); ok {
+		tail = append(tail, terminator)
+	}
+	return tail
 }
 
 // wakeRaw dismisses a raw selector without placing a synthetic key into the

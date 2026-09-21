@@ -210,3 +210,30 @@ func TestInterruptReaderRawModeForwardsControlAndPageKeys(t *testing.T) {
 		t.Fatalf("raw input = %q, page called = %v", buffer, called)
 	}
 }
+
+func TestSelectorKeyRecognizesStandaloneEscapeFromInterruptReader(t *testing.T) {
+	reader := newInterruptReader(nil)
+	reader.setRaw(true)
+	reader.route([]byte{27})
+	started := time.Now()
+
+	key, err := readSelectorKey(reader)
+	if err != nil || key != "\x1b" {
+		t.Fatalf("key = %q, err = %v", key, err)
+	}
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf("standalone Escape took %s", elapsed)
+	}
+}
+
+func TestSelectorKeyKeepsTerminalEscapeSequencesTogether(t *testing.T) {
+	for _, want := range []string{arrowDownSequence, selectorPageDown} {
+		reader := newInterruptReader(nil)
+		reader.setRaw(true)
+		reader.route([]byte(want))
+		key, err := readSelectorKey(reader)
+		if err != nil || key != want {
+			t.Fatalf("key = %q, want %q, err = %v", key, want, err)
+		}
+	}
+}

@@ -62,6 +62,10 @@ func TestHostSharesRuntimeWithIndependentSubscribers(t *testing.T) {
 	if snapshot.Sequence == 0 || len(snapshot.Agents) != 1 || snapshot.Agents[0].Status != agent.StatusCompleted {
 		t.Fatalf("snapshot = %+v", snapshot)
 	}
+	records := host.WorkRecords()
+	if len(records) != 1 || records[0].AgentID != "main" || records[0].Prompt != "work" || records[0].Response != "done" {
+		t.Fatalf("work records = %+v", records)
+	}
 }
 
 func TestHostPublishesInteractionLifecycle(t *testing.T) {

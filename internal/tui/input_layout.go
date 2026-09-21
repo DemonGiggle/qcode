@@ -103,7 +103,9 @@ func (u *UI) paintFixedLocked(direction int) {
 	if u.inputLabel != inputPrompt && u.inputLabel != planInputPrompt {
 		matches = nil
 	}
-	count := min(len(matches), max(0, promptRow-3))
+	// Keep two output rows available: history snapshots end with an unfinished
+	// line, so a single row can otherwise show only that empty tail.
+	count := min(len(matches), max(0, promptRow-4))
 	outputHeight := max(0, promptRow-count-2)
 	screenRows := make([]string, u.height+1)
 	if u.manager != nil && u.height > 3 {

@@ -46,7 +46,7 @@ func TestFixedInputSurvivesStreamingAndFiltersCandidates(t *testing.T) {
 		_, _ = u.display.Write([]byte("streamed output\n"))
 	}
 	got := frame()
-	for _, want := range []string{"(Queue)> /", "  /agent", "  /exit", "  /verbose", "streamed output"} {
+	for _, want := range []string{"(Queue)> /", "  /agent", "  /exit", "  /history", "type to filter", "streamed output"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in frame %q", want, got)
 		}

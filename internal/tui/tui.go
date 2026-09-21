@@ -595,6 +595,16 @@ func (u *UI) Run(ctx context.Context) error {
 			}
 			continue
 		}
+		historyFields := strings.Fields(line)
+		if len(historyFields) > 0 && historyFields[0] == "/history" {
+			fields := historyFields
+			if len(fields) != 1 {
+				u.printSystemMessage(yellow + "Usage: /history" + reset)
+			} else {
+				u.showHistory(ctx)
+			}
+			continue
+		}
 		if u.fixedInput {
 			u.display.AddLine(reset + "\n> " + line)
 		} else {

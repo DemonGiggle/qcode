@@ -82,6 +82,21 @@ func TestWorkHistorySurvivesEvictionResetClosureAndResume(t *testing.T) {
 	}
 }
 
+func TestWorkRecordsReturnsIndependentSnapshot(t *testing.T) {
+	m := NewAgentManager(context.Background(), 1)
+	t.Cleanup(m.Shutdown)
+	m.work = []session.WorkRecord{{RequestID: "request-1", AgentID: "main", ChangedFiles: []string{"one.go"}}}
+
+	records := m.WorkRecords()
+	records[0].ChangedFiles[0] = "changed.go"
+	records = append(records, session.WorkRecord{RequestID: "request-2"})
+
+	got := m.WorkRecords()
+	if len(got) != 1 || len(got[0].ChangedFiles) != 1 || got[0].ChangedFiles[0] != "one.go" {
+		t.Fatalf("journal was mutated through snapshot: %+v", got)
+	}
+}
+
 func TestHistorySearchPaginationAndRelevantExcerpts(t *testing.T) {
 	m := newTestManager(t, 2)
 	worker, _ := m.Create("model")
