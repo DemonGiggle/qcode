@@ -74,3 +74,31 @@ func TestSelectThinkingShowsOnlyThinkingLevels(t *testing.T) {
 		t.Fatalf("thinking selector output = %q", got)
 	}
 }
+
+func TestSelectThinkingEscapeReturnsToParent(t *testing.T) {
+	selected, accepted, back, err := selectThinkingWithBack(strings.NewReader("\x1b"), &bytes.Buffer{}, []string{"low", "high"}, "low", 2, 80, false)
+	if err != nil || accepted || !back || selected != "" {
+		t.Fatalf("selection = %q, accepted = %v, back = %v, err = %v", selected, accepted, back, err)
+	}
+}
+
+func TestSelectModelBackPreservesQueryAndSelection(t *testing.T) {
+	models := []string{"alpha-code", "beta-code", "gamma-chat"}
+	var output bytes.Buffer
+	selected, result, query, err := selectModelWithQuery(strings.NewReader("code"+arrowDownSequence+"\x1b"), &output, models, "alpha-code", "", 3, 80, false)
+	if err != nil || result != selectorBack || selected != "beta-code" || query != "code" {
+		t.Fatalf("back result = %q, %v, query %q, err %v", selected, result, query, err)
+	}
+
+	selected, result, query, err = selectModelWithQuery(strings.NewReader("\r"), &output, models, selected, query, 3, 80, false)
+	if err != nil || result != selectorAccepted || selected != "beta-code" || query != "code" {
+		t.Fatalf("restored result = %q, %v, query %q, err %v", selected, result, query, err)
+	}
+}
+
+func TestSelectorHeaderKeepsLeaveHintVisible(t *testing.T) {
+	header := selectorHeader("Select model (2/3) | Up/Down, PgUp/PgDn | Search: a very long query", 40)
+	if visibleWidth(header) > 40 || !strings.HasSuffix(header, selectorLeaveHint) {
+		t.Fatalf("header = %q, width = %d", header, visibleWidth(header))
+	}
+}

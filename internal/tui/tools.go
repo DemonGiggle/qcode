@@ -26,7 +26,7 @@ func (u *UI) chooseTools() {
 		u.printSystemMessage(dim + "No tools are available." + reset)
 		return
 	}
-	u.printSystemMessage(dim + "Type to filter. Use Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, or Ctrl+C to cancel." + reset)
+	u.printSystemMessage(dim + "Type to filter. Use Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, Esc to leave, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
 	defer func() {
@@ -106,7 +106,7 @@ func selectTools(in io.Reader, out io.Writer, names []string, runner toolRunner,
 			return false, err
 		}
 		switch key {
-		case string([]byte{ctrlC}):
+		case string([]byte{ctrlC}), "\x1b":
 			clearSelector(out, rows)
 			return false, nil
 		case "\r", "\n":
@@ -185,10 +185,7 @@ func matchingToolIndices(statuses []toolStatus, query string) []int {
 }
 
 func renderToolSelector(out io.Writer, statuses []toolStatus, matches []int, current, start, visible, width int, query string, color bool) {
-	header := fmt.Sprintf("%s | Select tools (%d/%d) | Filter: %s", selectorLeaveHint, len(matches), len(statuses), query)
-	if width > 0 {
-		header = truncateDiffLine(header, width, false)
-	}
+	header := selectorHeader(fmt.Sprintf("Select tools (%d/%d) | Filter: %s", len(matches), len(statuses), query), width)
 	fmt.Fprintln(out, header)
 	for row := 0; row < visible; row++ {
 		matchIndex := start + row

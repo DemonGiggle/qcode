@@ -136,38 +136,48 @@ func (u *UI) handleRemoteCommand(ctx context.Context, fields []string) {
 	}
 	status := u.remoteService.Status()
 	if !status.Running {
-		mode, accepted, err := u.selectRemoteMode()
-		if err != nil {
-			u.printSystemMessage(yellow + "Unable to choose remote mode: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
-			return
-		}
-		if !accepted {
-			return
-		}
-		address := ""
-		if mode != RemoteModeTailscale {
-			networks, networkErr := u.remoteService.Networks()
-			if networkErr != nil {
-				u.printSystemMessage(yellow + "Unable to list LAN interfaces: " + sanitizeDiffLine(networkErr.Error(), "<ESC>") + reset)
+		var mode RemoteMode
+		var address string
+		var err error
+		for {
+			var accepted bool
+			mode, accepted, err := u.selectRemoteMode(mode)
+			if err != nil {
+				u.printSystemMessage(yellow + "Unable to choose remote mode: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 				return
 			}
-			if len(networks) == 0 {
-				u.printSystemMessage(yellow + "Pure Web needs an active LAN IPv4 address." + reset)
+			if !accepted {
 				return
 			}
-			if len(networks) == 1 {
-				address = networks[0].Address
-			} else {
-				selected, selectedNetwork, selectErr := u.selectRemoteNetwork(networks)
-				if selectErr != nil {
-					u.printSystemMessage(yellow + "Unable to choose LAN interface: " + sanitizeDiffLine(selectErr.Error(), "<ESC>") + reset)
+			address = ""
+			if mode != RemoteModeTailscale {
+				networks, networkErr := u.remoteService.Networks()
+				if networkErr != nil {
+					u.printSystemMessage(yellow + "Unable to list LAN interfaces: " + sanitizeDiffLine(networkErr.Error(), "<ESC>") + reset)
 					return
 				}
-				if !selected {
+				if len(networks) == 0 {
+					u.printSystemMessage(yellow + "Pure Web needs an active LAN IPv4 address." + reset)
 					return
 				}
-				address = selectedNetwork.Address
+				if len(networks) == 1 {
+					address = networks[0].Address
+				} else {
+					selected, selectedNetwork, back, selectErr := u.selectRemoteNetwork(networks)
+					if selectErr != nil {
+						u.printSystemMessage(yellow + "Unable to choose LAN interface: " + sanitizeDiffLine(selectErr.Error(), "<ESC>") + reset)
+						return
+					}
+					if back {
+						continue
+					}
+					if !selected {
+						return
+					}
+					address = selectedNetwork.Address
+				}
 			}
+			break
 		}
 		status, err = u.remoteService.Start(ctx, mode, address)
 		if err != nil {

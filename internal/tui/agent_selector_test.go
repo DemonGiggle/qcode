@@ -19,7 +19,7 @@ func TestSelectAgentMovesAndShowsKnowledge(t *testing.T) {
 		t.Fatalf("selection = %q, accepted = %v, err = %v", selected, accepted, err)
 	}
 	text := output.String()
-	for _, want := range []string{"Ctrl+C to leave", "main", "worker-model", "knowledge: worker finding", "changed files: game.js"} {
+	for _, want := range []string{selectorLeaveHint, "main", "worker-model", "knowledge: worker finding", "changed files: game.js"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("selector output missing %q: %q", want, text)
 		}

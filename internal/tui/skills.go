@@ -33,7 +33,7 @@ func (u *UI) chooseSkills() {
 		}
 	}
 	u.printSystemMessage(formatSkillSelection("Currently enabled", selectedSkillNames(u.skills, initial), u.width, u.unicode, ColorEnabled(u.out), dim))
-	u.printSystemMessage(dim + "Type to filter. Use Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, or Ctrl+C to cancel." + reset)
+	u.printSystemMessage(dim + "Type to filter. Use Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, Esc to leave, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
 	defer func() {
@@ -196,7 +196,7 @@ func selectSkills(in io.Reader, out io.Writer, skills []prompt.SkillSummary, ini
 			return nil, nil, false, err
 		}
 		switch key {
-		case string([]byte{ctrlC}):
+		case string([]byte{ctrlC}), "\x1b":
 			clearSelector(out, rows)
 			return nil, nil, false, nil
 		case "\r", "\n":
@@ -299,15 +299,12 @@ func renderSkillSelector(out io.Writer, skills []prompt.SkillSummary, matches []
 
 func renderSkillHeader(skills []prompt.SkillSummary, matches []int, selected map[int]bool, query string, width int, color bool) string {
 	enabled := skillSelectionValue(selectedSkillNames(skills, selected))
-	header := fmt.Sprintf("%s | Select skills (%d/%d) | Enabled: %s | Filter: %s", selectorLeaveHint, len(matches), len(skills), enabled, sanitizeDiffLine(query, "<ESC>"))
+	header := fmt.Sprintf("Select skills (%d/%d) | Enabled: %s | Filter: %s", len(matches), len(skills), enabled, sanitizeDiffLine(query, "<ESC>"))
 	if color {
-		prefix := fmt.Sprintf("%s | Select skills (%d/%d) | Enabled: ", selectorLeaveHint, len(matches), len(skills))
-		header = dim + prefix + reset + cyan + enabled + reset + dim + " | Filter: " + reset + sanitizeDiffLine(query, "<ESC>")
+		prefix := fmt.Sprintf("Select skills (%d/%d) | Enabled: ", len(matches), len(skills))
+		header = dim + prefix + reset + cyan + enabled + reset + dim + " | Filter: " + reset + sanitizeDiffLine(query, "<ESC>") + reset
 	}
-	if width > 0 {
-		header = truncateDiffLine(header, width, false)
-	}
-	return header
+	return selectorHeader(header, width)
 }
 
 func renderSkillLine(skill prompt.SkillSummary, selected, current bool, width int, color bool) string {

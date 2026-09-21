@@ -187,17 +187,27 @@ func (u *UI) selectAgentModel(ctx context.Context, runner modelRunner) (string, 
 		return "", "", false, fmt.Errorf("provider returned no models")
 	}
 	visible := min(12, max(3, u.height-6))
-	u.printSystemMessage(dim + "Type to search; use Up/Down to move, Enter to select, or Ctrl+C to cancel." + reset)
-	u.input.setRaw(true)
-	u.beginRawSelector()
-	selected, accepted, selectErr := selectModel(u.input, u.terminal, models, u.model, visible, u.width, ColorEnabled(u.out))
-	u.input.setRaw(false)
-	u.endRawSelector()
-	if selectErr != nil || !accepted {
-		return selected, "", accepted, selectErr
+	u.printSystemMessage(dim + "Type to search; use Up/Down to move, Enter to select, Esc to leave, or Ctrl+C to cancel." + reset)
+	modelQuery := ""
+	for {
+		u.input.setRaw(true)
+		u.beginRawSelector()
+		selected, result, nextQuery, selectErr := selectModelWithQuery(u.input, u.terminal, models, u.model, modelQuery, visible, u.width, ColorEnabled(u.out))
+		modelQuery = nextQuery
+		u.input.setRaw(false)
+		u.endRawSelector()
+		if selectErr != nil || result != selectorAccepted {
+			return selected, "", result == selectorAccepted, selectErr
+		}
+		level, selectedThinking, back, thinkingErr := u.selectThinkingLevelWithBack(runner, selected, visible)
+		if thinkingErr != nil {
+			return selected, "", false, thinkingErr
+		}
+		if back {
+			continue
+		}
+		return selected, level, selectedThinking, nil
 	}
-	level, selectedThinking, thinkingErr := u.selectThinkingLevel(runner, selected, visible)
-	return selected, level, selectedThinking, thinkingErr
 }
 
 func (u *UI) closeAgent(id string) {

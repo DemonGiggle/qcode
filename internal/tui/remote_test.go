@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"qcode/internal/control"
+	"qcode/internal/lineedit"
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
 	"qcode/internal/question"
@@ -190,6 +192,36 @@ func TestRemoteActiveScreenShowsConnectionsAndSecondaryClose(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "unencrypted") {
 		t.Fatalf("Pure Web warning missing: %q", output.String())
+	}
+}
+
+func TestRemoteCloseConfirmationDistinguishesBackAndCancel(t *testing.T) {
+	testConfirmation := func(t *testing.T, inputData string) remoteCloseResult {
+		t.Helper()
+		input := newInterruptReader(strings.NewReader(inputData))
+		input.setRaw(true)
+		input.start()
+		t.Cleanup(func() { input.setRaw(false) })
+		var screen bytes.Buffer
+		terminal := lineedit.NewTerminal(readWriter{Reader: input, Writer: &screen}, inputPrompt)
+		out, err := os.CreateTemp(t.TempDir(), "remote-close")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer out.Close()
+		u := &UI{input: input, terminal: terminal, out: out, width: 80}
+		result, err := u.confirmRemoteClose(RemoteStatus{Connections: 2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+
+	if got := testConfirmation(t, "\x1b"); got != remoteCloseBack {
+		t.Fatalf("Escape result = %v, want back", got)
+	}
+	if got := testConfirmation(t, string([]byte{ctrlC})); got != remoteCloseCancelled {
+		t.Fatalf("Ctrl+C result = %v, want cancelled", got)
 	}
 }
 

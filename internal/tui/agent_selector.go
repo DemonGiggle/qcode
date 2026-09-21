@@ -63,10 +63,7 @@ func selectAgent(in io.Reader, out io.Writer, entries []agentSelectorEntry, curr
 }
 
 func renderAgentSelector(out io.Writer, entries []agentSelectorEntry, selected, start, visible, width int, color bool) int {
-	header := fmt.Sprintf("%s | Select agent (%d/%d) | Up/Down, PgUp/PgDn, Enter to switch", selectorLeaveHint, selected+1, len(entries))
-	if width > 0 {
-		header = truncateDiffLine(header, width, false)
-	}
+	header := selectorHeader(fmt.Sprintf("Select agent (%d/%d) | Up/Down, PgUp/PgDn, Enter to switch", selected+1, len(entries)), width)
 	fmt.Fprintln(out, header)
 	rows := 1
 	end := min(len(entries), start+visible)

@@ -927,25 +927,35 @@ func (u *UI) chooseModel(ctx context.Context) {
 	if visible < 3 {
 		visible = 3
 	}
-	u.input.setRaw(true)
-	u.beginRawSelector()
-	selected, accepted, selectErr := selectModel(u.input, u.terminal, models, u.model, visible, u.width, ColorEnabled(u.out))
-	u.input.setRaw(false)
-	u.endRawSelector()
-	if selectErr != nil {
-		u.printSystemMessage(yellow + "Unable to select model: " + selectErr.Error() + reset)
-		return
-	}
-	if !accepted {
-		return
-	}
-	level, selectedThinking, err := u.selectThinkingLevel(runner, selected, visible)
-	if err != nil {
-		u.printSystemMessage(yellow + "Unable to select thinking level: " + err.Error() + reset)
-		return
-	}
-	if !selectedThinking {
-		return
+	var selected, level, modelQuery string
+	for {
+		u.input.setRaw(true)
+		u.beginRawSelector()
+		var result selectorResult
+		var selectErr error
+		selected, result, modelQuery, selectErr = selectModelWithQuery(u.input, u.terminal, models, u.model, modelQuery, visible, u.width, ColorEnabled(u.out))
+		u.input.setRaw(false)
+		u.endRawSelector()
+		if selectErr != nil {
+			u.printSystemMessage(yellow + "Unable to select model: " + selectErr.Error() + reset)
+			return
+		}
+		if result != selectorAccepted {
+			return
+		}
+		var selectedThinking, back bool
+		level, selectedThinking, back, err = u.selectThinkingLevelWithBack(runner, selected, visible)
+		if err != nil {
+			u.printSystemMessage(yellow + "Unable to select thinking level: " + err.Error() + reset)
+			return
+		}
+		if back {
+			continue
+		}
+		if !selectedThinking {
+			return
+		}
+		break
 	}
 	runner.SetModel(selected)
 	if thinking, ok := runner.(thinkingRunner); ok {
@@ -1062,32 +1072,33 @@ func (u *UI) setModelCommand(ctx context.Context, fields []string) {
 	u.printSystemMessage(green + "Model: " + sanitizeDiffLine(fields[1], "<ESC>") + reset)
 }
 
-// selectThinkingLevel is a second, model-aware selector. It never presents a
-// selector for unknown or fixed models, and an empty result means the model
-// default (no optional request field) rather than an invented effort level.
-func (u *UI) selectThinkingLevel(runner modelRunner, model string, visible int) (string, bool, error) {
+// selectThinkingLevelWithBack is a second, model-aware selector. It never
+// presents a selector for unknown or fixed models, and an empty result means
+// the model default (no optional request field) rather than an invented effort
+// level.
+func (u *UI) selectThinkingLevelWithBack(runner modelRunner, model string, visible int) (string, bool, bool, error) {
 	thinking, ok := runner.(thinkingRunner)
 	if !ok {
-		return "", true, nil
+		return "", true, false, nil
 	}
 	capability := thinking.ThinkingCapabilityFor(model)
 	if !capability.Adjustable || len(capability.Levels) == 0 {
-		return "", true, nil
+		return "", true, false, nil
 	}
 	current := ""
 	if model == u.model {
 		current = thinking.ThinkingLevel()
 	}
-	u.printSystemMessage(dim + "Select a thinking level; Ctrl+C leaves the model unchanged." + reset)
+	u.printSystemMessage(dim + "Select a thinking level; Esc returns to the model list; Ctrl+C cancels." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
-	selected, accepted, err := selectThinking(u.input, u.terminal, capability.Levels, current, visible, u.width, ColorEnabled(u.out))
+	selected, accepted, back, err := selectThinkingWithBack(u.input, u.terminal, capability.Levels, current, visible, u.width, ColorEnabled(u.out))
 	u.input.setRaw(false)
 	u.endRawSelector()
 	if err != nil || !accepted {
-		return "", false, err
+		return "", false, back, err
 	}
-	return selected, true, nil
+	return selected, true, false, nil
 }
 
 func (u *UI) expandDiff(fields []string) {

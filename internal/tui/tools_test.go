@@ -39,6 +39,14 @@ func TestToolSelectionRequiresApply(t *testing.T) {
 	}
 }
 
+func TestToolSelectionEscapeLeavesWithoutApplying(t *testing.T) {
+	runner := selectionRunner{"web_fetch": false, "web_search": false}
+	accepted, err := selectTools(strings.NewReader("\x1b"), io.Discard, runner.ToolNames(), runner, 2, 80, false)
+	if err != nil || accepted || runner.ToolEnabled("web_fetch") || runner.ToolEnabled("web_search") {
+		t.Fatalf("escape result = accepted %v, runner = %v, err = %v", accepted, runner, err)
+	}
+}
+
 func TestToolSelectionPagesThroughBoundedViewport(t *testing.T) {
 	names := make([]string, 30)
 	runner := selectionRunner{}

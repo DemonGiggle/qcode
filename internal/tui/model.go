@@ -15,6 +15,10 @@ func selectModel(in io.Reader, out io.Writer, models []string, current string, v
 	return selectOption(in, out, models, current, visible, width, color, "model", true)
 }
 
+func selectModelWithQuery(in io.Reader, out io.Writer, models []string, current, query string, visible, width int, color bool) (string, selectorResult, string, error) {
+	return selectOptionWithQuery(in, out, models, current, query, visible, width, color, "model", true)
+}
+
 // selectThinking is intentionally a separate entry point so the two-stage
 // model picker can use the same bounded keyboard selector without calling
 // thinking levels models in its prompt.
@@ -22,9 +26,27 @@ func selectThinking(in io.Reader, out io.Writer, levels []string, current string
 	return selectOption(in, out, levels, current, visible, width, color, "thinking level", false)
 }
 
+func selectThinkingWithBack(in io.Reader, out io.Writer, levels []string, current string, visible, width int, color bool) (string, bool, bool, error) {
+	selected, result, err := selectOptionWithResult(in, out, levels, current, visible, width, color, "thinking level", false)
+	return selected, result == selectorAccepted, result == selectorBack, err
+}
+
 func selectOption(in io.Reader, out io.Writer, models []string, current string, visible, width int, color bool, noun string, searchable bool) (string, bool, error) {
+	selected, result, err := selectOptionWithResult(in, out, models, current, visible, width, color, noun, searchable)
+	return selected, result == selectorAccepted, err
+}
+
+func selectOptionWithResult(in io.Reader, out io.Writer, models []string, current string, visible, width int, color bool, noun string, searchable bool) (string, selectorResult, error) {
+	selected, result, _, err := selectOptionWithQuery(in, out, models, current, "", visible, width, color, noun, searchable)
+	if result != selectorAccepted {
+		selected = ""
+	}
+	return selected, result, err
+}
+
+func selectOptionWithQuery(in io.Reader, out io.Writer, models []string, current, initialQuery string, visible, width int, color bool, noun string, searchable bool) (string, selectorResult, string, error) {
 	if len(models) == 0 {
-		return "", false, nil
+		return "", selectorCancelled, initialQuery, nil
 	}
 	selected := 0
 	for index, model := range models {
@@ -35,7 +57,10 @@ func selectOption(in io.Reader, out io.Writer, models []string, current string, 
 	}
 	visible = selectorVisible(len(models), visible)
 	rows := visible + 1
-	query := ""
+	query := initialQuery
+	if !searchable {
+		query = ""
+	}
 	matches := matchingModelIndices(models, query)
 	selected = selectedMatch(matches, selected)
 	start := selectorInitialStart(selected, len(matches), visible)
@@ -43,7 +68,7 @@ func selectOption(in io.Reader, out io.Writer, models []string, current string, 
 	for {
 		key, err := readSelectorKey(in)
 		if err != nil {
-			return "", false, err
+			return "", selectorCancelled, query, err
 		}
 		switch key {
 		case "\r", "\n":
@@ -51,10 +76,17 @@ func selectOption(in io.Reader, out io.Writer, models []string, current string, 
 				continue
 			}
 			clearModelSelector(out, rows)
-			return models[matches[selected]], true, nil
-		case string([]byte{ctrlC}), "\x1b":
+			return models[matches[selected]], selectorAccepted, query, nil
+		case string([]byte{ctrlC}):
 			clearModelSelector(out, rows)
-			return "", false, nil
+			return "", selectorCancelled, query, nil
+		case "\x1b":
+			clearModelSelector(out, rows)
+			selectedModel := ""
+			if len(matches) > 0 {
+				selectedModel = models[matches[selected]]
+			}
+			return selectedModel, selectorBack, query, nil
 		case arrowUpSequence, arrowDownSequence, selectorPageUp, selectorPageDown:
 			if len(matches) == 0 {
 				continue
@@ -135,13 +167,11 @@ func selectedMatch(matches []int, modelIndex int) int {
 }
 
 func renderModelSelector(out io.Writer, models []string, matches []int, selected, start, visible, width int, query string, color bool, noun string, searchable bool) {
-	header := fmt.Sprintf("%s | Select %s (%d/%d) | Up/Down, PgUp/PgDn", selectorLeaveHint, noun, len(matches), len(models))
+	header := fmt.Sprintf("Select %s (%d/%d) | Up/Down, PgUp/PgDn", noun, len(matches), len(models))
 	if searchable {
 		header += " | Search: " + query
 	}
-	if width > 0 {
-		header = truncateDiffLine(header, width, false)
-	}
+	header = selectorHeader(header, width)
 	fmt.Fprintln(out, header)
 	for row := 0; row < visible; row++ {
 		matchIndex := start + row

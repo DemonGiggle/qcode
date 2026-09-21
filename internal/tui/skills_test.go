@@ -181,3 +181,11 @@ func TestSelectSkillsCancelsAndIgnoresUnknownKeys(t *testing.T) {
 		t.Fatalf("unknown input changed selection: %q", output.String())
 	}
 }
+
+func TestSelectSkillsEscapeLeavesSelector(t *testing.T) {
+	skills := []prompt.SkillSummary{{Name: "review", Description: "Review code"}}
+	names, summaries, accepted, err := selectSkills(strings.NewReader("\x1b"), &bytes.Buffer{}, skills, nil, 1, 80, false)
+	if err != nil || accepted || names != nil || summaries != nil {
+		t.Fatalf("escape result = names %v, summaries %v, accepted %v, err %v", names, summaries, accepted, err)
+	}
+}

@@ -8,7 +8,15 @@ import (
 const (
 	selectorPageUp    = "\x1b[5~"
 	selectorPageDown  = "\x1b[6~"
-	selectorLeaveHint = "Ctrl+C to leave"
+	selectorLeaveHint = "Esc back | Ctrl+C cancel"
+)
+
+type selectorResult int
+
+const (
+	selectorCancelled selectorResult = iota
+	selectorAccepted
+	selectorBack
 )
 
 type selectorEscapeReader interface {
@@ -65,6 +73,21 @@ func selectorStart(selected, total, visible, _ int) int {
 func selectorPage(selected, _ int, total, visible, direction int) (int, int) {
 	selected = min(total-1, max(0, selected+direction*visible))
 	return selected, selectorStart(selected, total, visible, 0)
+}
+
+// selectorHeader keeps the common navigation hint visible when a selector's
+// body grows beyond the terminal width (for example after typing a long
+// search query).
+func selectorHeader(body string, width int) string {
+	suffix := " " + selectorLeaveHint
+	if width <= 0 {
+		return body + suffix
+	}
+	bodyWidth := width - visibleWidth(suffix)
+	if bodyWidth <= 0 {
+		return truncateDiffLine(selectorLeaveHint, width, false)
+	}
+	return truncateDiffLine(body, bodyWidth, false) + suffix
 }
 
 // replaceSelectorRow changes one row while preserving the cursor immediately

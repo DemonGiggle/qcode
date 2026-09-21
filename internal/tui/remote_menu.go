@@ -14,9 +14,24 @@ const (
 	remoteCloseConnection
 )
 
-func (u *UI) selectRemoteMode() (RemoteMode, bool, error) {
+type remoteCloseResult int
+
+const (
+	remoteCloseKeepOpen remoteCloseResult = iota
+	remoteCloseConfirmed
+	remoteCloseBack
+	remoteCloseCancelled
+)
+
+func (u *UI) selectRemoteMode(current RemoteMode) (RemoteMode, bool, error) {
 	modes := []RemoteMode{RemoteModePureWeb, RemoteModePureWebOpen, RemoteModeTailscale}
 	selected := 0
+	for index, mode := range modes {
+		if mode == current {
+			selected = index
+			break
+		}
+	}
 	u.input.setRaw(true)
 	u.beginRawSelector()
 	defer func() { u.input.setRaw(false); u.endRawSelector() }()
@@ -46,7 +61,7 @@ func (u *UI) selectRemoteMode() (RemoteMode, bool, error) {
 }
 
 func renderRemoteModeMenu(out interface{ Write([]byte) (int, error) }, modes []RemoteMode, selected, width int, color bool) int {
-	rows := []string{"Remote control | Choose how to connect | Up/Down, Enter, Ctrl+C to leave"}
+	rows := []string{selectorHeader("Remote control | Choose how to connect | Up/Down, Enter", width)}
 	for index, mode := range modes {
 		name, detail := "Pure Web", "Trusted LAN HTTP; scan a one-time QR link"
 		if mode == RemoteModePureWebOpen {
@@ -70,7 +85,7 @@ func renderRemoteModeMenu(out interface{ Write([]byte) (int, error) }, modes []R
 	return len(rows)
 }
 
-func (u *UI) selectRemoteNetwork(networks []RemoteNetwork) (bool, RemoteNetwork, error) {
+func (u *UI) selectRemoteNetwork(networks []RemoteNetwork) (bool, RemoteNetwork, bool, error) {
 	selected := 0
 	u.input.setRaw(true)
 	u.beginRawSelector()
@@ -80,15 +95,18 @@ func (u *UI) selectRemoteNetwork(networks []RemoteNetwork) (bool, RemoteNetwork,
 		key, err := readSelectorKey(u.input)
 		if err != nil {
 			clearSelector(u.terminal, rows)
-			return false, RemoteNetwork{}, err
+			return false, RemoteNetwork{}, false, err
 		}
 		switch key {
 		case "\r", "\n":
 			clearSelector(u.terminal, rows)
-			return true, networks[selected], nil
-		case string([]byte{ctrlC}), "\x1b":
+			return true, networks[selected], false, nil
+		case string([]byte{ctrlC}):
 			clearSelector(u.terminal, rows)
-			return false, RemoteNetwork{}, nil
+			return false, RemoteNetwork{}, false, nil
+		case "\x1b":
+			clearSelector(u.terminal, rows)
+			return false, RemoteNetwork{}, true, nil
 		case arrowUpSequence, arrowDownSequence:
 			if key == arrowUpSequence {
 				selected = (selected - 1 + len(networks)) % len(networks)
@@ -101,7 +119,7 @@ func (u *UI) selectRemoteNetwork(networks []RemoteNetwork) (bool, RemoteNetwork,
 }
 
 func renderRemoteNetworkMenu(out interface{ Write([]byte) (int, error) }, networks []RemoteNetwork, selected, width int, color bool) int {
-	rows := []string{"Pure Web | Choose LAN interface | Up/Down, Enter, Ctrl+C to leave"}
+	rows := []string{selectorHeader("Pure Web | Choose LAN interface | Up/Down, Enter", width)}
 	for index, network := range networks {
 		prefix := "  "
 		if index == selected {
@@ -162,7 +180,14 @@ func (u *UI) showRemoteActive(status RemoteStatus) error {
 			if selected == remoteKeepOpen {
 				return nil
 			}
-			if !u.confirmRemoteClose(status) {
+			confirmation, err := u.confirmRemoteClose(status)
+			if err != nil {
+				return err
+			}
+			switch confirmation {
+			case remoteCloseBack:
+				continue
+			case remoteCloseKeepOpen, remoteCloseCancelled:
 				return nil
 			}
 			u.clearRemoteLogin()
@@ -248,7 +273,7 @@ func renderRemoteActiveMenu(out interface{ Write([]byte) (int, error) }, status 
 	return len(rows)
 }
 
-func (u *UI) confirmRemoteClose(status RemoteStatus) bool {
+func (u *UI) confirmRemoteClose(status RemoteStatus) (remoteCloseResult, error) {
 	selected := remoteKeepOpen
 	for {
 		rows := []string{
@@ -267,14 +292,23 @@ func (u *UI) confirmRemoteClose(status RemoteStatus) bool {
 		}
 		key, err := readSelectorKey(u.input)
 		clearSelector(u.terminal, len(rows))
-		if err != nil || key == string([]byte{ctrlC}) || key == "\x1b" {
-			return false
+		if err != nil {
+			return remoteCloseCancelled, err
+		}
+		if key == string([]byte{ctrlC}) {
+			return remoteCloseCancelled, nil
+		}
+		if key == "\x1b" {
+			return remoteCloseBack, nil
 		}
 		switch key {
 		case arrowUpSequence, arrowDownSequence:
 			selected = 1 - selected
 		case "\r", "\n":
-			return selected == remoteCloseConnection
+			if selected == remoteCloseConnection {
+				return remoteCloseConfirmed, nil
+			}
+			return remoteCloseKeepOpen, nil
 		}
 	}
 }
