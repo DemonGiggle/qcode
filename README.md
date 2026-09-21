@@ -71,7 +71,9 @@ qcode update --arch arm64
 
 ## 🔧 Configuration
 
-qcode loads the first `config.toml` file it finds. Copy [`config.toml.example`](config.toml.example) to one of the supported locations:
+qcode layers every existing `config.toml` file it finds, with higher-priority
+locations overriding settings supplied by lower-priority ones. Copy
+[`config.toml.example`](config.toml.example) to one of the supported locations:
 
 ```toml
 provider = "openai"

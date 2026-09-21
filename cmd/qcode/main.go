@@ -79,7 +79,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	}
 
 	opts := options{learningBudget: learning.DefaultBudget, autoCompactThreshold: agent.DefaultAutoCompactThreshold}
-	configPath := ""
+	var configPaths []string
 	var configuredSkillPaths []string
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -121,11 +121,14 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		return nil
 	}
 	if !opts.demo {
-		cfg, loadedPath, err := config.Load()
+		cfg, inspectedPaths, diagnostics, err := config.Load()
 		if err != nil {
 			return err
 		}
-		configPath = loadedPath
+		configPaths = inspectedPaths
+		for _, diagnostic := range diagnostics {
+			fmt.Fprintln(stderr, "WARNING:", diagnostic, "Skipping file.")
+		}
 		configuredSkillPaths = append([]string(nil), cfg.Skills.Paths...)
 		setFlags := make(map[string]bool)
 		flags.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
@@ -168,10 +171,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			fmt.Fprintln(stderr, "WARNING:", sandboxNotice, "Continuing without sandbox.")
 		}
 	}
-	protectedPaths := []string(nil)
-	if configPath != "" {
-		protectedPaths = append(protectedPaths, configPath)
-	}
+	protectedPaths := append([]string(nil), configPaths...)
 	skillLocations := skills.Locations(root, configuredSkillPaths...)
 	loadSkills := func() ([]prompt.SkillSummary, error) {
 		return skillCatalogData(root, configuredSkillPaths...)

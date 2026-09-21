@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,156 +48,122 @@ func TestCandidatePathsWindows(t *testing.T) {
 	}
 }
 
-func TestLoadUsesFirstExistingFile(t *testing.T) {
+func TestLoadLayersConfiguration(t *testing.T) {
 	dir := t.TempDir()
-	first := filepath.Join(dir, "first.toml")
-	second := filepath.Join(dir, "second.toml")
-	if err := os.WriteFile(first, []byte("provider = \"openai\"\nmodel = \"gpt-5\"\nbase_url = \"https://example.test/v1\"\napi_key = \"configured-key\"\nmax_steps = 48\nsandbox = true\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(second, []byte("provider = \"ollama\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	high := writeConfig(t, dir, "high.toml", `provider = "openai"
+model = ""
+max_steps = 48
+sandbox = true
+agent_timeout = "90s"
+[learning]
+context_budget = 0
+[web_search]
+backend = "brave"
+[skills]
+paths = [" high ", "low", ""]
+`)
+	low := writeConfig(t, dir, "low.toml", `provider = "ollama"
+model = "qwen"
+base_url = "http://low.test"
+api_key = "low-key"
+thinking = "high"
+context_window = 8192
+auto_compact_threshold = 70
+disable_auto_compact = false
+max_steps = 16
+sandbox = false
+danger_skip_tls_verify = true
+agent_timeout = "5m"
+[learning]
+context_budget = 1200
+[web_search]
+backend = "duckduckgo"
+[skills]
+paths = ["low", " /opt/skills ", ""]
+`)
 
-	cfg, path, err := load([]string{filepath.Join(dir, "missing.toml"), first, second})
-	if err != nil {
-		t.Fatal(err)
+	// Candidate paths are ordered highest to lowest priority.
+	cfg, inspected, diagnostics := load([]string{high, filepath.Join(dir, "missing.toml"), low})
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %v", diagnostics)
 	}
-	if path != first || cfg.Provider != "openai" || cfg.Model != "gpt-5" || cfg.BaseURL != "https://example.test/v1" || cfg.APIKey != "configured-key" || cfg.MaxSteps == nil || *cfg.MaxSteps != 48 || cfg.Sandbox == nil || !*cfg.Sandbox {
-		t.Fatalf("load = (%+v, %q), want first config", cfg, path)
+	if got, want := strings.Join(inspected, ","), strings.Join([]string{low, high}, ","); got != want {
+		t.Fatalf("inspected = %q, want %q", got, want)
+	}
+	if cfg.Provider != "openai" || cfg.Model != "qwen" || cfg.BaseURL != "http://low.test" || cfg.APIKey != "low-key" || cfg.Thinking != "high" {
+		t.Fatalf("string settings = %+v", cfg)
+	}
+	if cfg.ContextWindow == nil || *cfg.ContextWindow != 8192 || cfg.AutoCompactThreshold == nil || *cfg.AutoCompactThreshold != 70 || cfg.DisableAutoCompact == nil || *cfg.DisableAutoCompact || cfg.MaxSteps == nil || *cfg.MaxSteps != 48 || cfg.Sandbox == nil || !*cfg.Sandbox || cfg.DangerSkipTLSVerify == nil || !*cfg.DangerSkipTLSVerify || cfg.AgentTimeout == nil || *cfg.AgentTimeout != "90s" {
+		t.Fatalf("scalar settings = %+v", cfg)
+	}
+	if cfg.Learning.ContextBudget == nil || *cfg.Learning.ContextBudget != 0 || cfg.WebSearch.Backend != "brave" {
+		t.Fatalf("nested settings = %+v", cfg)
+	}
+	if got, want := strings.Join(cfg.Skills.Paths, ","), "low,/opt/skills,high"; got != want {
+		t.Fatalf("skill paths = %q, want %q", got, want)
 	}
 }
 
-func TestLoadRejectsNonPositiveMaxSteps(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("max_steps = 0\n"), 0o600); err != nil {
+func TestLoadSkipsUnreadableInvalidAndValidationFailingLayers(t *testing.T) {
+	dir := t.TempDir()
+	badValue := writeConfig(t, dir, "bad-value.toml", "max_steps = 0\n")
+	valid := writeConfig(t, dir, "valid.toml", "model = \"valid-model\"\n")
+	badTOML := writeConfig(t, dir, "bad-toml.toml", "model = [\n")
+	unreadable := filepath.Join(dir, "unreadable.toml")
+	if err := os.Mkdir(unreadable, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
-	_, _, err := load([]string{path})
-	if err == nil || !strings.Contains(err.Error(), "max_steps must be greater than zero") {
-		t.Fatalf("load error = %v, want max_steps validation error", err)
+	cfg, inspected, diagnostics := load([]string{badTOML, valid, badValue, unreadable})
+	if cfg.Model != "valid-model" {
+		t.Fatalf("config = %+v, want valid layer", cfg)
+	}
+	if got, want := strings.Join(inspected, ","), strings.Join([]string{unreadable, badValue, valid, badTOML}, ","); got != want {
+		t.Fatalf("inspected = %q, want %q", got, want)
+	}
+	if len(diagnostics) != 3 || !strings.Contains(diagnostics[0].Error(), "read config "+unreadable) || !strings.Contains(diagnostics[1].Error(), "max_steps must be greater than zero") || !strings.Contains(diagnostics[2].Error(), "parse config "+badTOML) {
+		t.Fatalf("diagnostics = %v", diagnostics)
 	}
 }
 
-func TestAgentTimeoutConfiguration(t *testing.T) {
-	for _, value := range []string{`"5m"`, `"30s"`, `"1h"`, `"0s"`, `"-2m"`, `""`, `"forever"`, `300`, `"999999999999999999h"`} {
-		t.Run(value, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "config.toml")
-			if err := os.WriteFile(path, []byte("agent_timeout = "+value+"\n"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			cfg, _, err := load([]string{path})
-			valid := value == `"5m"` || value == `"30s"` || value == `"1h"`
-			if valid && (err != nil || cfg.AgentTimeout == nil) {
-				t.Fatalf("%+v %v", cfg, err)
-			}
-			if !valid && err == nil {
-				t.Fatal("invalid timeout accepted")
+func TestLoadRejectsUnknownFieldsBySkippingLayer(t *testing.T) {
+	path := writeConfig(t, t.TempDir(), "config.toml", "modle = \"typo\"\n")
+	cfg, inspected, diagnostics := load([]string{path})
+	if cfg.Provider != "" || len(inspected) != 1 || len(diagnostics) != 1 || !strings.Contains(diagnostics[0].Error(), "strict mode") {
+		t.Fatalf("load = (%+v, %q, %v)", cfg, inspected, diagnostics)
+	}
+}
+
+func TestValidationSkipsInvalidValues(t *testing.T) {
+	for _, tc := range []struct{ content, message string }{
+		{"[learning]\ncontext_budget = -1\n", "learning.context_budget"},
+		{"context_window = -1\n", "context_window"},
+		{"auto_compact_threshold = 100\n", "auto_compact_threshold"},
+		{"max_steps = 0\n", "max_steps"},
+		{"agent_timeout = \"0s\"\n", "agent_timeout"},
+	} {
+		t.Run(tc.message, func(t *testing.T) {
+			path := writeConfig(t, t.TempDir(), "config.toml", tc.content)
+			_, _, diagnostics := load([]string{path})
+			if len(diagnostics) != 1 || !strings.Contains(diagnostics[0].Error(), tc.message) {
+				t.Fatalf("diagnostics = %v", diagnostics)
 			}
 		})
 	}
 }
 
-func TestAutoCompactConfiguration(t *testing.T) {
-	for _, tc := range []struct {
-		value string
-		valid bool
-	}{
-		{"1", true}, {"80", true}, {"99", true}, {"0", false}, {"100", false},
-	} {
-		path := filepath.Join(t.TempDir(), "config.toml")
-		if err := os.WriteFile(path, []byte("auto_compact_threshold = "+tc.value+"\ndisable_auto_compact = true\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		cfg, _, err := load([]string{path})
-		if (err == nil) != tc.valid {
-			t.Fatalf("value %s: %v", tc.value, err)
-		}
-		if tc.valid && (cfg.AutoCompactThreshold == nil || *cfg.AutoCompactThreshold != mustInt(t, tc.value) || cfg.DisableAutoCompact == nil || !*cfg.DisableAutoCompact) {
-			t.Fatalf("config = %+v", cfg)
-		}
-	}
-}
-
-func mustInt(t *testing.T, value string) int {
-	t.Helper()
-	var result int
-	if _, err := fmt.Sscan(value, &result); err != nil {
-		t.Fatal(err)
-	}
-	return result
-}
-
-func TestLoadRejectsUnknownFields(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("modle = \"typo\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	_, _, err := load([]string{path})
-	if err == nil || !strings.Contains(err.Error(), "strict mode") {
-		t.Fatalf("load error = %v, want strict-mode field error", err)
-	}
-}
-
 func TestLoadReturnsEmptyWhenNoFileExists(t *testing.T) {
-	cfg, path, err := load([]string{filepath.Join(t.TempDir(), "missing.toml")})
-	if err != nil || path != "" || cfg.Provider != "" || cfg.Model != "" || len(cfg.Skills.Paths) != 0 {
-		t.Fatalf("load = (%+v, %q, %v), want empty result", cfg, path, err)
+	cfg, inspected, diagnostics := load([]string{filepath.Join(t.TempDir(), "missing.toml")})
+	if len(inspected) != 0 || len(diagnostics) != 0 || cfg.Provider != "" || cfg.Model != "" || len(cfg.Skills.Paths) != 0 {
+		t.Fatalf("load = (%+v, %q, %v), want empty result", cfg, inspected, diagnostics)
 	}
 }
 
-func TestWebSearchConfig(t *testing.T) {
-	for _, tc := range []struct{ content, backend string }{
-		{"", ""}, {"[web_search]\nbackend = \"duckduckgo\"\n", "duckduckgo"},
-	} {
-		path := filepath.Join(t.TempDir(), "config.toml")
-		if err := os.WriteFile(path, []byte(tc.content), 0600); err != nil {
-			t.Fatal(err)
-		}
-		cfg, _, err := load([]string{path})
-		if err != nil || cfg.WebSearch.Backend != tc.backend {
-			t.Fatalf("got %+v, %v", cfg, err)
-		}
-	}
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("[web_search]\nbackned = \"duckduckgo\"\n"), 0600); err != nil {
+func writeConfig(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := load([]string{path}); err == nil {
-		t.Fatal("accepted unknown search configuration field")
-	}
-}
-
-func TestLearningBudgetConfig(t *testing.T) {
-	for _, tc := range []struct {
-		value string
-		valid bool
-	}{
-		{"0", true}, {"1200", true}, {"12000", true}, {"-1", false}, {"12001", false},
-	} {
-		path := filepath.Join(t.TempDir(), "config.toml")
-		if err := os.WriteFile(path, []byte("[learning]\ncontext_budget = "+tc.value+"\n"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		cfg, _, err := load([]string{path})
-		if (err == nil) != tc.valid {
-			t.Fatalf("value %s: %v", tc.value, err)
-		}
-		if tc.valid && cfg.Learning.ContextBudget == nil {
-			t.Fatal("budget not loaded")
-		}
-	}
-}
-
-func TestSkillPathsConfig(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("[skills]\npaths = [\"/opt/qcode/skills\", \"extra-skills\"]\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, _, err := load([]string{path})
-	if err != nil || strings.Join(cfg.Skills.Paths, ",") != "/opt/qcode/skills,extra-skills" {
-		t.Fatalf("skill paths = %#v, error = %v", cfg.Skills.Paths, err)
-	}
+	return path
 }

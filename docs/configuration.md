@@ -1,6 +1,6 @@
 # Configuration
 
-qcode loads the first `config.toml` file it finds; files are not merged. Copy [`config.toml.example`](../config.toml.example) to one of the locations below and adapt it as needed. All fields are optional:
+qcode loads every existing `config.toml` file in the locations below. Lower-priority files load first and higher-priority files override only the settings they provide. Copy [`config.toml.example`](../config.toml.example) to one of the locations below and adapt it as needed. All fields are optional:
 
 ```toml
 provider = "openai"
@@ -18,10 +18,13 @@ disable_auto_compact = false
 paths = ["/opt/qcode/team-skills", ".team/skills"]
 ```
 
-`skills.paths` adds directories to the built-in skill locations. Absolute paths
-are used as written; relative paths are resolved from the selected workspace,
-and `~` expands to the current user's home directory. A missing directory is
-kept in the `/skill` hint and contributes no skills.
+`skills.paths` adds directories to the built-in skill locations. Paths from all
+configuration layers are appended from lowest to highest priority. Blank paths
+are ignored and duplicate trimmed path strings are kept only at their first
+occurrence, so their ordering is stable. Absolute paths are used as written;
+relative paths are resolved from the selected workspace, and `~` expands to the
+current user's home directory. A missing directory is kept in the `/skill` hint
+and contributes no skills.
 
 The qcode repository also contains optional official release skills in
 [`docs/skills/`](skills/). Browse that collection and decide whether any of
@@ -42,7 +45,8 @@ background tasks submitted through `delegate_task`.
 
 ## Lookup order
 
-The lookup order is platform-specific:
+The lookup order is platform-specific. Priority 1 is highest: it overrides
+settings from priority 2 and 3, while priority 3 supplies the base layer.
 
 | Priority | Linux | macOS | Windows |
 | --- | --- | --- | --- |
@@ -52,9 +56,13 @@ The lookup order is platform-specific:
 
 Other Unix-like systems use the operating system's user configuration directory followed by `/usr/local/etc/qcode/config.toml`.
 
+Missing files are ignored. If an existing configuration file cannot be read,
+contains invalid TOML or unknown settings, or fails validation, qcode prints a
+startup warning, skips that file, and continues loading the remaining layers.
+
 ## Precedence
 
-Explicit command-line flags take precedence over environment variables, which take precedence over the configuration file, which takes precedence over built-in defaults.
+Explicit command-line flags take precedence over environment variables, which take precedence over the merged configuration, which takes precedence over built-in defaults. Within the configuration, non-empty scalar settings and supplied numeric, duration, and boolean settings override lower-priority values. Empty string settings remain unset and inherit a lower-priority value.
 
 When a flag or environment variable selects a provider different from the configured provider, the configured `model`, `base_url`, and `api_key` are not inherited; set any of them explicitly if they should apply to the selected provider.
 

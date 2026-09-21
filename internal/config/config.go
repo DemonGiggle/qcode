@@ -50,27 +50,31 @@ type Config struct {
 	DangerSkipTLSVerify  *bool     `toml:"danger_skip_tls_verify"`
 }
 
-// Load returns the first configuration found in lookup order. An empty path
-// means no configuration file exists.
-func Load() (Config, string, error) {
+// Load returns the configuration assembled from every existing configuration
+// file. Candidate paths are listed from highest to lowest priority, so layers
+// are applied in reverse order. paths contains every existing file inspected;
+// diagnostics describe files that were skipped without preventing other
+// layers from loading.
+func Load() (Config, []string, []error, error) {
 	executable, err := os.Executable()
 	if err != nil {
-		return Config{}, "", fmt.Errorf("locate executable: %w", err)
+		return Config{}, nil, nil, fmt.Errorf("locate executable: %w", err)
 	}
 	home := ""
 	userConfigDir := ""
 	if runtime.GOOS == "linux" {
 		home, err = os.UserHomeDir()
 		if err != nil {
-			return Config{}, "", fmt.Errorf("locate home directory: %w", err)
+			return Config{}, nil, nil, fmt.Errorf("locate home directory: %w", err)
 		}
 	} else {
 		userConfigDir, err = os.UserConfigDir()
 		if err != nil {
-			return Config{}, "", fmt.Errorf("locate user config directory: %w", err)
+			return Config{}, nil, nil, fmt.Errorf("locate user config directory: %w", err)
 		}
 	}
-	return load(candidatePaths(runtime.GOOS, executable, home, userConfigDir, os.Getenv("ProgramData")))
+	cfg, paths, diagnostics := load(candidatePaths(runtime.GOOS, executable, home, userConfigDir, os.Getenv("ProgramData")))
+	return cfg, paths, diagnostics, nil
 }
 
 func candidatePaths(goos, executable, home, userConfigDir, programData string) []string {
@@ -100,41 +104,118 @@ func candidatePaths(goos, executable, home, userConfigDir, programData string) [
 	return paths
 }
 
-func load(paths []string) (Config, string, error) {
-	for _, path := range paths {
+func load(paths []string) (Config, []string, []error) {
+	var merged Config
+	var inspected []string
+	var diagnostics []error
+	for i := len(paths) - 1; i >= 0; i-- {
+		path := paths[i]
 		data, err := os.ReadFile(path)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
+		inspected = append(inspected, path)
 		if err != nil {
-			return Config{}, path, fmt.Errorf("read config %s: %w", path, err)
+			diagnostics = append(diagnostics, fmt.Errorf("read config %s: %w", path, err))
+			continue
 		}
 
 		var cfg Config
 		decoder := toml.NewDecoder(strings.NewReader(string(data)))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&cfg); err != nil {
-			return Config{}, path, fmt.Errorf("parse config %s: %w", path, err)
+			diagnostics = append(diagnostics, fmt.Errorf("parse config %s: %w", path, err))
+			continue
 		}
-		if cfg.Learning.ContextBudget != nil && (*cfg.Learning.ContextBudget < 0 || *cfg.Learning.ContextBudget > 12000) {
-			return Config{}, path, fmt.Errorf("parse config %s: learning.context_budget must be between 0 and 12000", path)
+		if err := validate(path, cfg); err != nil {
+			diagnostics = append(diagnostics, err)
+			continue
 		}
-		if cfg.ContextWindow != nil && *cfg.ContextWindow < 0 {
-			return Config{}, path, fmt.Errorf("parse config %s: context_window must be non-negative", path)
-		}
-		if cfg.AutoCompactThreshold != nil && (*cfg.AutoCompactThreshold < 1 || *cfg.AutoCompactThreshold > 99) {
-			return Config{}, path, fmt.Errorf("parse config %s: auto_compact_threshold must be between 1 and 99", path)
-		}
-		if cfg.MaxSteps != nil && *cfg.MaxSteps <= 0 {
-			return Config{}, path, fmt.Errorf("parse config %s: max_steps must be greater than zero", path)
-		}
-		if cfg.AgentTimeout != nil {
-			duration, err := time.ParseDuration(*cfg.AgentTimeout)
-			if err != nil || duration <= 0 {
-				return Config{}, path, fmt.Errorf("parse config %s: agent_timeout must be a positive duration, such as \"5m\"", path)
-			}
-		}
-		return cfg, path, nil
+		merge(&merged, cfg)
 	}
-	return Config{}, "", nil
+	return merged, inspected, diagnostics
+}
+
+func validate(path string, cfg Config) error {
+	if cfg.Learning.ContextBudget != nil && (*cfg.Learning.ContextBudget < 0 || *cfg.Learning.ContextBudget > 12000) {
+		return fmt.Errorf("parse config %s: learning.context_budget must be between 0 and 12000", path)
+	}
+	if cfg.ContextWindow != nil && *cfg.ContextWindow < 0 {
+		return fmt.Errorf("parse config %s: context_window must be non-negative", path)
+	}
+	if cfg.AutoCompactThreshold != nil && (*cfg.AutoCompactThreshold < 1 || *cfg.AutoCompactThreshold > 99) {
+		return fmt.Errorf("parse config %s: auto_compact_threshold must be between 1 and 99", path)
+	}
+	if cfg.MaxSteps != nil && *cfg.MaxSteps <= 0 {
+		return fmt.Errorf("parse config %s: max_steps must be greater than zero", path)
+	}
+	if cfg.AgentTimeout != nil {
+		duration, err := time.ParseDuration(*cfg.AgentTimeout)
+		if err != nil || duration <= 0 {
+			return fmt.Errorf("parse config %s: agent_timeout must be a positive duration, such as \"5m\"", path)
+		}
+	}
+	return nil
+}
+
+// merge overlays values supplied by incoming onto dst. Empty string fields are
+// intentionally unset, while skill paths are additive across layers.
+func merge(dst *Config, incoming Config) {
+	if incoming.Learning.ContextBudget != nil {
+		dst.Learning.ContextBudget = incoming.Learning.ContextBudget
+	}
+	if incoming.WebSearch.Backend != "" {
+		dst.WebSearch.Backend = incoming.WebSearch.Backend
+	}
+	if incoming.Provider != "" {
+		dst.Provider = incoming.Provider
+	}
+	if incoming.BaseURL != "" {
+		dst.BaseURL = incoming.BaseURL
+	}
+	if incoming.APIKey != "" {
+		dst.APIKey = incoming.APIKey
+	}
+	if incoming.Model != "" {
+		dst.Model = incoming.Model
+	}
+	if incoming.Thinking != "" {
+		dst.Thinking = incoming.Thinking
+	}
+	if incoming.ContextWindow != nil {
+		dst.ContextWindow = incoming.ContextWindow
+	}
+	if incoming.AutoCompactThreshold != nil {
+		dst.AutoCompactThreshold = incoming.AutoCompactThreshold
+	}
+	if incoming.DisableAutoCompact != nil {
+		dst.DisableAutoCompact = incoming.DisableAutoCompact
+	}
+	if incoming.MaxSteps != nil {
+		dst.MaxSteps = incoming.MaxSteps
+	}
+	if incoming.AgentTimeout != nil {
+		dst.AgentTimeout = incoming.AgentTimeout
+	}
+	if incoming.Sandbox != nil {
+		dst.Sandbox = incoming.Sandbox
+	}
+	if incoming.DangerSkipTLSVerify != nil {
+		dst.DangerSkipTLSVerify = incoming.DangerSkipTLSVerify
+	}
+	seen := make(map[string]struct{}, len(dst.Skills.Paths))
+	for _, path := range dst.Skills.Paths {
+		seen[path] = struct{}{}
+	}
+	for _, path := range incoming.Skills.Paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		dst.Skills.Paths = append(dst.Skills.Paths, path)
+	}
 }
