@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,55 @@ import (
 
 	"qcode/internal/session"
 )
+
+// ErrExportUsage indicates an unsupported mode or obsolete output-path argument.
+var ErrExportUsage = errors.New("Usage: /export [pretty|raw] (output filenames are generated automatically)")
+
+// ExportDocument is shared by workspace saves and browser downloads.
+type ExportDocument struct {
+	Filename string
+	Data     []byte
+}
+
+func exportMode(argument string) (string, error) {
+	switch strings.TrimSpace(argument) {
+	case "", "pretty":
+		return "pretty", nil
+	case "raw":
+		return "raw", nil
+	default:
+		return "", ErrExportUsage
+	}
+}
+
+// GenerateExport takes a read-only snapshot and renders it without writing a file.
+// No terminal output is parsed to reconstruct prompt/response pairs.
+func (u *UI) GenerateExport(argument string) (ExportDocument, error) {
+	mode, err := exportMode(argument)
+	if err != nil {
+		return ExportDocument{}, err
+	}
+	now := time.Now()
+	u.screenMu.Lock()
+	manager, active, root := u.manager, u.activeAgent, u.root
+	u.screenMu.Unlock()
+	document := ExportDocument{Filename: "qcode-session-" + mode + "-" + now.Format("20060102-150405.000000000") + ".html"}
+	if mode == "raw" {
+		views, rawActive := u.exportViews()
+		document.Data = renderSessionHTML(root, rawActive, now, views)
+		return document, nil
+	}
+	var records []session.WorkRecord
+	var summaries []session.Summary
+	if manager != nil {
+		summaries = manager.List()
+		if reader, ok := manager.(workHistoryReader); ok {
+			records = reader.WorkRecords()
+		}
+	}
+	document.Data, err = renderPrettyExport(root, active, now, summaries, records)
+	return document, err
+}
 
 type exportView struct {
 	id       string
@@ -27,20 +77,24 @@ type exportView struct {
 // HTML document. The snapshot is taken before the success message is added to
 // the terminal, so a failed write cannot be mistaken for a completed export.
 func (u *UI) exportSession(argument string) (string, error) {
-	now := time.Now()
-	path := exportPath(u.root, argument, now)
-	views, active := u.exportViews()
-	data := renderSessionHTML(u.root, active, now, views)
-	if err := writeExportFile(path, data); err != nil {
+	document, err := u.GenerateExport(argument)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(u.root, document.Filename)
+	if err := writeExportFile(path, document.Data); err != nil {
 		return path, err
 	}
 	return path, nil
 }
 
 func (u *UI) exportViews() ([]exportView, string) {
+	u.screenMu.Lock()
+	manager := u.manager
+	u.screenMu.Unlock()
 	var summaries []session.Summary
-	if u.manager != nil {
-		summaries = u.manager.List()
+	if manager != nil {
+		summaries = manager.List()
 	}
 	byID := make(map[string]session.Summary, len(summaries))
 	orderedIDs := make([]string, 0, len(summaries))
@@ -87,17 +141,6 @@ func (u *UI) exportViews() ([]exportView, string) {
 		})
 	}
 	return views, active
-}
-
-func exportPath(root, argument string, now time.Time) string {
-	argument = strings.TrimSpace(argument)
-	if argument == "" {
-		return filepath.Join(root, "qcode-session-"+now.Format("20060102-150405")+".html")
-	}
-	if filepath.IsAbs(argument) {
-		return filepath.Clean(argument)
-	}
-	return filepath.Join(root, argument)
 }
 
 func writeExportFile(path string, data []byte) error {

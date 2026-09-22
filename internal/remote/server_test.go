@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -16,16 +17,28 @@ import (
 
 	"golang.org/x/net/html"
 
+	"qcode/internal/agent"
+	"qcode/internal/session"
 	"qcode/internal/tui"
 )
 
 type testPresentation struct {
-	mu          sync.Mutex
-	actor       string
-	line        string
-	catalog     tui.RemoteCatalog
-	connections chan string
-	rejections  chan string
+	mu             sync.Mutex
+	actor          string
+	line           string
+	catalog        tui.RemoteCatalog
+	connections    chan string
+	rejections     chan string
+	exportDocument tui.ExportDocument
+	exportErr      error
+	exportMode     string
+}
+
+func (p *testPresentation) GenerateExport(mode string) (tui.ExportDocument, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.exportMode = mode
+	return p.exportDocument, p.exportErr
 }
 
 func (p *testPresentation) RemotePresentation() tui.RemotePresentation {
@@ -517,5 +530,124 @@ func TestRemoteResolvesSharedInteraction(t *testing.T) {
 	defer presentation.mu.Unlock()
 	if presentation.actor != "alice@example.com" || presentation.line != `interaction-1:["Postgres"]` {
 		t.Fatalf("resolution = (%q, %q)", presentation.actor, presentation.line)
+	}
+}
+
+func TestExportDownloadUsesSharedDocument(t *testing.T) {
+	for _, mode := range []string{"", "pretty", "raw"} {
+		t.Run(mode, func(t *testing.T) {
+			handler, p := newTestHandler(t)
+			p.exportDocument = tui.ExportDocument{Filename: "qcode-session-pretty-20260922-120000-000000001.html", Data: []byte("<!doctype html><p>Shared export</p>")}
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/export?mode="+mode, nil)
+			authorizeTestRequest(request)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK || response.Body.String() != string(p.exportDocument.Data) || p.exportMode != mode {
+				t.Fatalf("download: %d %s mode=%q", response.Code, response.Body.String(), p.exportMode)
+			}
+			if response.Header().Get("Content-Type") != "text/html; charset=utf-8" || response.Header().Get("Cache-Control") != "no-store" || !strings.Contains(response.Header().Get("Content-Disposition"), p.exportDocument.Filename) {
+				t.Fatalf("headers: %v", response.Header())
+			}
+		})
+	}
+}
+
+func TestExportDownloadErrorsAndAuthorization(t *testing.T) {
+	handler, p := newTestHandler(t)
+	for _, authorized := range []bool{false, true} {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/export?mode=pretty", nil)
+		if authorized {
+			authorizeTestRequest(request)
+			p.exportErr = tui.ErrExportUsage
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		expected := http.StatusUnauthorized
+		if authorized {
+			expected = http.StatusBadRequest
+		}
+		if response.Code != expected {
+			t.Fatalf("status = %d want %d", response.Code, expected)
+		}
+	}
+	p.exportErr = errors.New("render failed")
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/export?mode=raw", nil)
+	authorizeTestRequest(request)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("render failure: %d", response.Code)
+	}
+	for _, query := range []string{"path=report.html", "mode=raw&path=x", "mode=raw&mode=pretty"} {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/export?"+query, nil)
+		authorizeTestRequest(request)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("query %q: %d", query, response.Code)
+		}
+	}
+}
+
+// Exercise the real shared renderer at the download boundary, independently
+// of the browser's limited presentation snapshot.
+type exportUIPresentation struct {
+	*testPresentation
+	ui *tui.UI
+}
+
+func (p *exportUIPresentation) GenerateExport(mode string) (tui.ExportDocument, error) {
+	return p.ui.GenerateExport(mode)
+}
+
+func newExportPresentation(t *testing.T) (*exportUIPresentation, string) {
+	t.Helper()
+	root := t.TempDir()
+	out, err := os.CreateTemp(t.TempDir(), "terminal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { out.Close() })
+	ui := tui.New(out, out, nil, "test", "test-model", root)
+	writer, _ := ui.AddAgentView("main", "test", "test-model")
+	writer.Write([]byte("full archive tool output\n"))
+	manager := agent.NewAgentManager(context.Background(), 20)
+	t.Cleanup(manager.Shutdown)
+	err = manager.RestoreWorkHistory(&session.WorkHistory{NextRequestID: 1, Records: []session.WorkRecord{{RequestID: "request-1", AgentID: "main", Status: "completed", Prompt: "Journal prompt", Response: "**Journal answer**"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ui.SetDetachedAgentManager(manager)
+	return &exportUIPresentation{testPresentation: &testPresentation{}, ui: ui}, root
+}
+
+func TestExportEndpointRendersFullHistoryWithoutWritingFiles(t *testing.T) {
+	p, root := newExportPresentation(t)
+	handler := authorizedTestManager(p).routes()
+	for _, tc := range []struct{ mode, want, absent string }{
+		{"pretty", "<strong>Journal answer</strong>", "full archive tool output"},
+		{"raw", "full archive tool output", "Journal answer"},
+		{"", "<strong>Journal answer</strong>", "full archive tool output"},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/export?mode="+tc.mode, nil)
+		authorizeTestRequest(request)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), tc.want) || strings.Contains(response.Body.String(), tc.absent) {
+			t.Fatalf("%s export: %d %s", tc.mode, response.Code, response.Body.String())
+		}
+	}
+	for _, arg := range []string{"report.html", "pretty raw"} {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/export?mode="+url.QueryEscape(arg), nil)
+		authorizeTestRequest(request)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid argument %q: %d", arg, response.Code)
+		}
+	}
+	files, err := os.ReadDir(root)
+	if err != nil || len(files) != 0 {
+		t.Fatalf("download wrote host files: %v %v", files, err)
 	}
 }

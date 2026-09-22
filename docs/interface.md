@@ -60,3 +60,31 @@ Interactive `write` and `edit` tool calls display numbered, 10-line Codex-style 
 ## Run completion notice
 
 Successful interactive runs end with a distinct colored `Completed in ... (MM/DD HH:mm)` notice measuring the complete run across every model turn and tool call.
+
+## HTML exports
+
+Use `/export` or `/export pretty` to save a readable conversation export. Each
+agent has its own tab, with completed prompts and final responses ordered oldest
+first by submission time. Responses render as Markdown, including code blocks
+and tables. Closed agents with completed history are included. Consultations,
+unsuccessful requests, and work still in progress are omitted from this view.
+
+Use `/export raw` for the full styled transcript, including tool activity,
+thinking, errors, and diffs. Raw exports use the full available archive, including
+output removed from the terminal's 5,000-line viewing window or by `/clear`.
+
+Both modes generate a standalone HTML file. The terminal saves it in the
+workspace as `qcode-session-<mode>-<timestamp>.html`; browser remote control
+downloads the same document. Filenames include subsecond precision. Custom output
+paths are no longer accepted: `/export report.html` shows the new command usage.
+
+Pretty exports initially select the active agent. Use the tab bar to switch
+agents; Left/Right and Home/End work while a tab has keyboard focus. Printing
+includes all agents. Without JavaScript, all agent sections remain readable.
+Images in Markdown appear as links, so opening an export does not fetch them.
+
+Pretty exports use the saved request journal, so recorded work survives context
+compaction, `/new`, and session restores. Older sessions without a journal may
+have no structured prompt history; use `/export raw` to read their available
+transcript instead. Times use the exporting machine's local timezone and show
+the UTC offset.

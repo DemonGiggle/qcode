@@ -154,3 +154,15 @@ chosen model supports adjustable thinking levels. Skill/tool selectors preserve
 the current multi-selection until Apply. Cancel or Escape leaves the qcode
 session unchanged. Saved-session choices exclude the current session and
 snapshots that are busy or unreadable.
+
+### Exporting from the browser
+
+`/export` and `/export pretty` download a standalone HTML document with one tab
+per agent and completed prompt/response pairs in chronological order. `/export raw`
+downloads the full styled transcript. The browser uses the same renderer and
+saved history as the terminal, rather than exporting only its visible output.
+Filenames are generated automatically; custom paths are no longer accepted.
+
+Downloads use `GET api/v1/export?mode=pretty` (or `raw`) through the existing
+remote access controls. The response is an HTML attachment with caching disabled.
+Browser exports do not write files in the host workspace.

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -28,6 +29,7 @@ type presentation interface {
 	SubscribePresentation(context.Context) <-chan struct{}
 	SubmitRemote(string, string) error
 	ResolveRemoteInteraction(string, string, []byte) error
+	GenerateExport(string) (tui.ExportDocument, error)
 }
 
 type remoteConnectionLogger interface {
@@ -441,6 +443,7 @@ func (m *Manager) routesWithAuth(auth *authStore, prefix ...string) http.Handler
 	api := http.NewServeMux()
 	api.HandleFunc("GET /api/v1/snapshot", m.snapshot)
 	api.HandleFunc("GET /api/v1/catalog", m.catalog)
+	api.HandleFunc("GET /api/v1/export", m.export)
 	api.HandleFunc("GET /api/v1/events", m.events)
 	api.HandleFunc("POST /api/v1/actions", m.action)
 	api.HandleFunc("POST /api/v1/interactions/{id}/resolve", m.resolveInteraction)
@@ -524,6 +527,28 @@ func (m *Manager) catalog(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	writeJSON(w, http.StatusOK, m.ui.RemoteCatalog(ctx))
+}
+
+func (m *Manager) export(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	query := r.URL.Query()
+	if len(query) > 1 || len(query["mode"]) > 1 || len(query) == 1 && !query.Has("mode") {
+		http.Error(w, tui.ErrExportUsage.Error(), http.StatusBadRequest)
+		return
+	}
+	document, err := m.ui.GenerateExport(query.Get("mode"))
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, tui.ErrExportUsage) {
+			status = http.StatusBadRequest
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": document.Filename}))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(document.Data)
 }
 
 func (m *Manager) action(w http.ResponseWriter, r *http.Request) {

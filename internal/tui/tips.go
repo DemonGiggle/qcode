@@ -67,9 +67,9 @@ var tipTexts = []string{
 	"Finish or cancel running agents before `/resume`; a session already open in another process cannot be selected.",
 	"After a crash, `/resume` restores the latest checkpoint; unfinished requests are interrupted and need your direction.",
 	"Run `/new` to reset the active agent's conversation, token totals, plan, web tools, and added directory grants.",
-	"Run `/export review.html` to save all retained agent transcripts as a standalone HTML document.",
-	"Run `/export` without a path to create a timestamped HTML file in the workspace.",
-	"Each tab retains up to 5,000 output lines; export useful transcripts before older output drops out of history.",
+	"Run `/export` or `/export pretty` for an HTML timeline of completed prompts and responses, with a tab for each agent.",
+	"Run `/export raw` for the full styled transcript, including tool activity, thinking, and diffs.",
+	"Export filenames are generated automatically; the terminal saves in your workspace and the browser downloads the file.",
 	"Run `/exit` or `/quit` to save and leave; one-shot and demo runs do not create saved sessions.",
 	"Saved sessions follow the workspace's canonical path: symlink aliases share sessions, separate worktrees do not.",
 

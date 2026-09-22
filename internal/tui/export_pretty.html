@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>qcode conversation export</title>
+<style>
+:root { color-scheme: dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #101318; color: #e5e9ef; }
+* { box-sizing: border-box; }
+body { margin: 0; line-height: 1.65; }
+header, main, .tabs { width: min(100% - 3rem, 960px); margin-inline: auto; }
+header { padding-block: 2.5rem 1.5rem; }
+.eyebrow { color: #6ed5d0; text-transform: uppercase; letter-spacing: .13em; font-size: .75rem; font-weight: 700; margin: 0; }
+h1 { font-size: 1.8rem; letter-spacing: -.025em; margin: .3rem 0 .7rem; line-height: 1.25; }
+.meta, .stamp, .model, .count { color: #a3afbf; font-size: .8rem; }
+.meta { margin: .2rem 0; overflow-wrap: anywhere; }
+.tab-bar { position: sticky; top: 0; z-index: 1; background: #101318; border-block: 1px solid #303945; }
+.tabs { display: flex; gap: .4rem; overflow-x: auto; padding-block: .65rem; }
+.tabs a { flex: none; color: #b9c4d3; padding: .45rem .8rem; border: 1px solid transparent; border-radius: .45rem; text-decoration: none; font-size: .9rem; }
+.tabs a[aria-selected="true"] { color: #eaffff; border-color: #397d7e; background: #1b353b; }
+.tabs a:focus-visible { outline: 2px solid #6ed5d0; outline-offset: 2px; }
+.count { padding-left: .4rem; }
+main { padding-block: 1.5rem 3rem; }
+.agent-title { font-size: 1rem; font-weight: 600; margin: 0 0 1.2rem; color: #b9c4d3; }
+.exchange { border: 1px solid #303945; border-radius: .7rem; margin-bottom: 1.4rem; overflow: hidden; background: #171d25; }
+.exchange-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .3rem 1rem; padding: .55rem 1.4rem; border-bottom: 1px solid #303945; background: #1c242e; }
+.exchange-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: #b9c4d3; }
+.model { overflow-wrap: anywhere; }
+.prompt, .response { padding: 1.2rem 1.4rem; min-width: 0; }
+.prompt { background: #1b222b; border-bottom: 1px solid #303945; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .25rem 1rem; margin-bottom: .65rem; }
+.section-head h3 { margin: 0; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; color: #f4ce86; }
+.response .section-head h3 { color: #92d5ac; }
+.prompt-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.markdown { overflow-wrap: anywhere; }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown h1, .markdown h2, .markdown h3 { line-height: 1.35; margin: 1.5em 0 .65em; }
+.markdown h1 { font-size: 1.5rem; }
+.markdown h2 { font-size: 1.25rem; }
+.markdown h3 { font-size: 1.05rem; }
+.markdown p, .markdown ul, .markdown ol { margin-block: .75rem; }
+.markdown li + li { margin-top: .35rem; }
+.markdown a { color: #87c7ff; text-underline-offset: .15em; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: .875em; }
+code { background: #26303d; padding: .12em .3em; border-radius: .25rem; }
+pre { background: #10151c; border: 1px solid #303945; border-radius: .4rem; padding: 1rem; overflow-x: auto; line-height: 1.6; }
+pre code { background: none; padding: 0; border-radius: 0; font-size: inherit; overflow-wrap: normal; }
+blockquote { margin-inline: 0; padding-left: 1rem; border-left: 3px solid #597482; color: #b9c4d3; }
+table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin-block: 1rem; font-size: .9rem; }
+th, td { padding: .6rem .9rem; border: 1px solid #3a4655; text-align: left; }
+th { background: #26303d; }
+hr { border: 0; border-top: 1px solid #3a4655; margin-block: 1.5rem; }
+.empty { color: #a3afbf; padding: 1.25rem; border: 1px dashed #3a4655; border-radius: .5rem; }
+.empty code { color: #e5e9ef; }
+@media (max-width: 600px) {
+  header, main, .tabs { width: calc(100% - 1.5rem); }
+  header { padding-top: 1.5rem; }
+  h1 { font-size: 1.5rem; }
+  .prompt, .response { padding: 1rem; }
+  .exchange-head { padding-inline: 1rem; }
+  .stamp { font-size: .7rem; }
+}
+@media print {
+  :root { color-scheme: light; background: white; color: black; }
+  .tab-bar { display: none; }
+  header, main { width: 100%; }
+  .agent-panel[hidden] { display: block !important; }
+  .agent-panel + .agent-panel { break-before: page; }
+  .exchange, .exchange-head, .prompt, pre, code, th { background: white; color: black; }
+  .meta, .stamp, .model, .agent-title, .section-head h3, .response .section-head h3 { color: #333; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  pre code { overflow-wrap: anywhere; }
+  table { display: table; width: 100%; }
+  .section-head { break-after: avoid; }
+}
+</style>
+</head>
+<body>
+<header>
+  <p class="eyebrow">qcode · conversation export</p>
+  <h1>Conversation history</h1>
+  <p class="meta">Workspace: {{.Workspace}}</p>
+  <p class="meta">Exported {{.Exported}} · {{.Total}} completed exchanges · Oldest first</p>
+</header>
+{{if .Agents}}
+<div class="tab-bar"><nav class="tabs" aria-label="Agents">
+{{range $i, $agent := .Agents}}
+  <a id="tab-{{$i}}" href="#agent-{{$i}}" data-active="{{$agent.Active}}">{{$agent.Name}}{{if $agent.Closed}} (closed){{end}} <span class="count">{{len $agent.Exchanges}}</span></a>
+{{end}}
+</nav></div>
+{{end}}
+<main>
+{{if not .Total}}<p class="empty">No completed prompt history is available. Older saved sessions may contain only a transcript; use <code>/export raw</code> to export it.</p>{{end}}
+{{range $i, $agent := .Agents}}
+<section id="agent-{{$i}}" class="agent-panel" aria-labelledby="tab-{{$i}}">
+  <h2 class="agent-title">{{$agent.Name}}{{if ne $agent.Name $agent.ID}} · {{$agent.ID}}{{end}}{{if $agent.Closed}} · Closed{{end}}</h2>
+  {{if not $agent.Exchanges}}<p class="empty">No completed prompts for this agent.</p>{{end}}
+  {{range $exchange := $agent.Exchanges}}
+  <article class="exchange">
+    <div class="exchange-head"><span class="exchange-label">Exchange {{printf "%02d" $exchange.Number}}</span>{{if $exchange.Model}}<span class="model">{{$exchange.Model}}</span>{{end}}</div>
+    <div class="prompt">
+      <div class="section-head"><h3>Prompt</h3><span class="stamp">Submitted {{$exchange.Submitted}}</span></div>
+      <div class="prompt-text">{{$exchange.Prompt}}</div>
+    </div>
+    <div class="response">
+      <div class="section-head"><h3>Response</h3><span class="stamp">Completed {{$exchange.Completed}}</span></div>
+      <div class="markdown">{{$exchange.Response}}</div>
+    </div>
+  </article>
+  {{end}}
+</section>
+{{end}}
+</main>
+<script>
+(() => {
+  const nav = document.querySelector('.tabs');
+  if (!nav) return;
+  const tabs = Array.from(nav.querySelectorAll('a'));
+  const panels = tabs.map(tab => document.querySelector(tab.getAttribute('href')));
+  nav.setAttribute('role', 'tablist');
+  const positions = new Map();
+  let current = -1;
+  function activate(index, focus = false) {
+    if (current >= 0) positions.set(current, window.scrollY);
+    tabs.forEach((tab, i) => {
+      tab.setAttribute('role', 'tab');
+      tab.setAttribute('aria-controls', panels[i].id);
+      tab.setAttribute('aria-selected', String(i === index));
+      tab.tabIndex = i === index ? 0 : -1;
+      panels[i].setAttribute('role', 'tabpanel');
+      panels[i].tabIndex = 0;
+      panels[i].hidden = i !== index;
+    });
+    current = index;
+    if (focus) {
+      tabs[index].focus({preventScroll: true});
+      tabs[index].scrollIntoView({block: 'nearest', inline: 'nearest'});
+      window.scrollTo(0, positions.get(index) || 0);
+    }
+  }
+  tabs.forEach((tab, i) => {
+    tab.addEventListener('click', event => { event.preventDefault(); activate(i, true); });
+    tab.addEventListener('keydown', event => {
+      let next = i;
+      if (event.key === 'ArrowRight') next = (i + 1) % tabs.length;
+      else if (event.key === 'ArrowLeft') next = (i + tabs.length - 1) % tabs.length;
+      else if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = tabs.length - 1;
+      else return;
+      event.preventDefault(); activate(next, true);
+    });
+  });
+  activate(Math.max(0, tabs.findIndex(tab => tab.dataset.active === 'true')));
+})();
+</script>
+</body>
+</html>

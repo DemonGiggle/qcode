@@ -44,19 +44,8 @@ func TestRenderSessionHTMLPreservesStylesAndEscapesText(t *testing.T) {
 	}
 }
 
-func TestExportPathAndAtomicWrite(t *testing.T) {
+func TestExportAtomicWrite(t *testing.T) {
 	root := t.TempDir()
-	now := time.Date(2026, time.September, 9, 14, 32, 0, 0, time.Local)
-	if got, want := exportPath(root, "", now), filepath.Join(root, "qcode-session-20260909-143200.html"); got != want {
-		t.Fatalf("default export path = %q, want %q", got, want)
-	}
-	if got, want := exportPath(root, "reports/session.html", now), filepath.Join(root, "reports/session.html"); got != want {
-		t.Fatalf("relative export path = %q, want %q", got, want)
-	}
-	abs := filepath.Join(root, "absolute.html")
-	if got := exportPath(root, abs, now); got != abs {
-		t.Fatalf("absolute export path = %q, want %q", got, abs)
-	}
 
 	path := filepath.Join(root, "session.html")
 	if err := writeExportFile(path, []byte("first")); err != nil {
@@ -87,9 +76,12 @@ func TestUIExportSessionCapturesAllAgentViews(t *testing.T) {
 	_, _ = mainDisplay.Write([]byte("main output\n"))
 	_, _ = reviewDisplay.Write([]byte("review output\n"))
 
-	path, err := u.exportSession("transcript.html")
+	path, err := u.exportSession("raw")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if filepath.Dir(path) != root || !strings.HasPrefix(filepath.Base(path), "qcode-session-raw-") {
+		t.Fatalf("unexpected generated path: %q", path)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

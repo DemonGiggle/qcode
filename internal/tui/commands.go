@@ -63,9 +63,12 @@ var slashCommands = []slashCommand{
 		examples: []string{"/exit"},
 	},
 	{
-		name: "/export", usage: "/export [path]", description: "Save this session as an HTML file",
-		arguments: []helpArgument{{name: "path", description: "Output path; defaults to a timestamped file in the workspace."}},
-		examples:  []string{"/export", "/export review.html"},
+		name: "/export", usage: "/export [pretty|raw]", description: "Export conversations or the full transcript as HTML",
+		arguments: []helpArgument{
+			{name: "pretty", description: "Default: agent tabs with completed prompt/response pairs, oldest first."},
+			{name: "raw", description: "Full styled transcript, including tool activity and thinking."},
+		},
+		examples: []string{"/export", "/export pretty", "/export raw"},
 	},
 	{
 		name: "/help", usage: "/help [command]", description: "List commands or explain one command",
