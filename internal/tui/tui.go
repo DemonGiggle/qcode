@@ -744,7 +744,8 @@ func (u *UI) Run(ctx context.Context) error {
 		} else if err != nil {
 			u.printSystemMessage(yellow + formatAgentError(err.Error()) + reset)
 		} else {
-			u.printSystemMessage(fmt.Sprintf("%s%sCompleted in %s%s", magenta, bold, formatRunDuration(time.Since(started)), reset))
+			completedAt := time.Now()
+			u.printSystemMessage(fmt.Sprintf("%s%s%s%s", magenta, bold, formatCompletedMessage(completedAt.Sub(started), completedAt), reset))
 		}
 	}
 }
@@ -1299,6 +1300,12 @@ func formatRunDuration(duration time.Duration) string {
 		return duration.Round(time.Second).String()
 	}
 	return duration.Round(time.Millisecond).String()
+}
+
+// formatCompletedMessage renders the task completion notice as
+// "Completed in xxx (MM/DD HH:mm)".
+func formatCompletedMessage(duration time.Duration, completedAt time.Time) string {
+	return "Completed in " + formatRunDuration(duration) + " (" + completedAt.Format("01/02 15:04") + ")"
 }
 
 func (u *UI) completeSlashCommand(line string, pos int, key rune) (string, int, bool) {

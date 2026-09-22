@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"qcode/internal/session"
 )
@@ -388,7 +389,7 @@ func (u *UI) handleAgentEvent(event session.Event) {
 		if view != nil {
 			message := string(event.Agent.Status)
 			if event.Agent.Status == session.StatusCompleted {
-				message = "Completed in " + formatRunDuration(event.Duration)
+				message = formatCompletedMessage(event.Duration, time.Now())
 			} else if event.Agent.Status == session.StatusCancelled {
 				message = "Cancelled"
 			}

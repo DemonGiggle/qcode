@@ -59,4 +59,4 @@ Interactive `write` and `edit` tool calls display numbered, 10-line Codex-style 
 
 ## Run completion notice
 
-Successful interactive runs end with a distinct colored `Completed in ...` notice measuring the complete run across every model turn and tool call.
+Successful interactive runs end with a distinct colored `Completed in ... (MM/DD HH:mm)` notice measuring the complete run across every model turn and tool call.
