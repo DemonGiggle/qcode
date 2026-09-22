@@ -120,6 +120,14 @@ type maxStepsReader interface {
 	MaxSteps() int
 }
 
+// RuntimePreferenceWriter persists changes made by the main interactive tab.
+// It is injected so the UI remains independent from the configuration file
+// format and can report write failures without changing runtime state back.
+type RuntimePreferenceWriter interface {
+	PersistModel(model, thinking string) error
+	PersistMaxSteps(maxSteps int) error
+}
+
 type planController interface {
 	PlanMode() bool
 	SetPlanMode(bool)
@@ -234,6 +242,7 @@ type UI struct {
 	demoPrompts          []string
 	demoPromptDelay      time.Duration
 	demoQueueDelay       time.Duration
+	runtimePreferences   RuntimePreferenceWriter
 	persistence          *sessionPersistence
 	sessionHost          *UI
 	remoteService        RemoteService
@@ -485,6 +494,15 @@ func (u *UI) applyVerbose() {
 func (u *UI) SetStartupNotice(message string, requireChoice bool) {
 	u.startupNotice = message
 	u.startupChoice = requireChoice
+}
+
+// SetRuntimePreferenceWriter enables persistence for the main interactive
+// tab. Demo and restored UIs only receive this when normal interactive
+// startup configured it.
+func (u *UI) SetRuntimePreferenceWriter(writer RuntimePreferenceWriter) {
+	u.screenMu.Lock()
+	u.runtimePreferences = writer
+	u.screenMu.Unlock()
 }
 
 // SetDemoPromptScript configures prompts that are injected into the line
@@ -981,6 +999,7 @@ func (u *UI) chooseModel(ctx context.Context) {
 	u.screenMu.Lock()
 	u.model = selected
 	u.screenMu.Unlock()
+	u.persistModelPreference(selected, level)
 	u.drawStatusBar()
 	message := fmt.Sprintf("%sModel: %s", green, selected)
 	if level != "" {
@@ -1065,6 +1084,7 @@ func (u *UI) setModelCommand(ctx context.Context, fields []string) {
 		view.model = fields[1]
 	}
 	u.screenMu.Unlock()
+	u.persistModelPreference(fields[1], level)
 	if tracker, ok := u.runner.(contextRunner); ok {
 		tracker.RefreshContext(ctx)
 	}
@@ -1150,7 +1170,36 @@ func (u *UI) updateMaxSteps(fields []string) {
 		return
 	}
 	runner.SetMaxSteps(maxSteps)
+	u.persistMaxStepsPreference(maxSteps)
 	u.printSystemMessage(fmt.Sprintf("%sMax steps: %d%s", green, maxSteps, reset))
+}
+
+func (u *UI) persistModelPreference(model, thinking string) {
+	writer, main := u.runtimePreferenceTarget()
+	if writer == nil || !main {
+		return
+	}
+	if err := writer.PersistModel(model, thinking); err != nil {
+		u.printSystemMessage(yellow + "Warning: unable to persist model preference: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+	}
+}
+
+func (u *UI) persistMaxStepsPreference(maxSteps int) {
+	writer, main := u.runtimePreferenceTarget()
+	if writer == nil || !main {
+		return
+	}
+	if err := writer.PersistMaxSteps(maxSteps); err != nil {
+		u.printSystemMessage(yellow + "Warning: unable to persist max steps preference: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+	}
+}
+
+func (u *UI) runtimePreferenceTarget() (RuntimePreferenceWriter, bool) {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	// A UI without an agent manager is the legacy single/main-agent mode.
+	main := u.manager == nil || u.activeAgent == "main"
+	return u.runtimePreferences, main
 }
 
 func (u *UI) handlePlanCommand(ctx context.Context, fields []string) {
