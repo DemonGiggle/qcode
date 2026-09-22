@@ -69,6 +69,12 @@ first by submission time. Responses render as Markdown, including code blocks
 and tables. Closed agents with completed history are included. Consultations,
 unsuccessful requests, and work still in progress are omitted from this view.
 
+Use the **Show detailed tool events** checkbox to reveal recorded operations
+such as shell commands, file edits, searches, and agent actions. Events are
+hidden by default and appear in the exchange where they ran. qcode retains up to
+256 concise events per request; tool output is not included. Older saved sessions
+may not have structured tool events to display.
+
 Use `/export raw` for the full styled transcript, including tool activity,
 thinking, errors, and diffs. Raw exports use the full available archive, including
 output removed from the terminal's 5,000-line viewing window or by `/clear`.

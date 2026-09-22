@@ -210,6 +210,7 @@ func (m *AgentManager) WorkRecords() []session.WorkRecord {
 	records := make([]session.WorkRecord, len(m.work))
 	for i, work := range m.work {
 		work.ChangedFiles = append([]string(nil), work.ChangedFiles...)
+		work.Activities = append([]session.WorkActivity(nil), work.Activities...)
 		records[i] = work
 	}
 	return records
@@ -219,6 +220,7 @@ func (m *AgentManager) saveWorkHistoryLocked() *session.WorkHistory {
 	state := &session.WorkHistory{NextRequestID: m.nextRequestID, Events: append([]session.ConsultationEvent(nil), m.consultationEvents...)}
 	for _, work := range m.work {
 		work.ChangedFiles = append([]string(nil), work.ChangedFiles...)
+		work.Activities = append([]session.WorkActivity(nil), work.Activities...)
 		state.Records = append(state.Records, work)
 	}
 	return state
@@ -259,6 +261,7 @@ func (m *AgentManager) RestoreWorkHistory(saved *session.WorkHistory) error {
 		}
 		seen[work.RequestID] = true
 		work.ChangedFiles = append([]string(nil), work.ChangedFiles...)
+		work.Activities = append([]session.WorkActivity(nil), work.Activities...)
 		records = append(records, work)
 	}
 	for i, event := range saved.Events {

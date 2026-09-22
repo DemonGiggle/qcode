@@ -185,6 +185,7 @@ func (m *AgentManager) create(id, name, model string, main bool) (AgentSummary, 
 	if err != nil {
 		return AgentSummary{}, err
 	}
+	runner.SetActivityRecorder(func(event session.WorkActivity) { m.RecordActivity(id, event) })
 	summary := AgentSummary{ID: id, Name: name, Model: model, Status: StatusIdle}
 	m.mu.Lock()
 	if m.shutdown {
@@ -565,6 +566,31 @@ func (m *AgentManager) AddChangedFiles(id string, files ...string) {
 		}
 	}
 	sort.Strings(s.summary.ChangedFiles)
+}
+
+// RecordActivity attaches one concise activity summary to the agent's running
+// request. Tool output never enters the work journal.
+func (m *AgentManager) RecordActivity(id string, event session.WorkActivity) {
+	if event.Action == "" || event.Summary == "" {
+		return
+	}
+	if event.Time.IsZero() {
+		event.Time = time.Now().UTC()
+	}
+	event.Action = truncateUTF8(event.Action, 64)
+	event.Summary = truncateUTF8(event.Summary, 1024)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.sessions[id]
+	if s == nil || s.active == nil || s.active.journalIndex < 0 || s.active.journalIndex >= len(m.work) {
+		return
+	}
+	work := &m.work[s.active.journalIndex]
+	if len(work.Activities) >= session.MaxWorkActivities {
+		work.ActivitiesTruncated = true
+		return
+	}
+	work.Activities = append(work.Activities, event)
 }
 
 func (m *AgentManager) RosterContext() string {

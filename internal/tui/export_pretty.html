@@ -21,6 +21,19 @@ h1 { font-size: 1.8rem; letter-spacing: -.025em; margin: .3rem 0 .7rem; line-hei
 .tabs a[aria-selected="true"] { color: #eaffff; border-color: #397d7e; background: #1b353b; }
 .tabs a:focus-visible { outline: 2px solid #6ed5d0; outline-offset: 2px; }
 .count { padding-left: .4rem; }
+.activity-toggle { display: flex; align-items: center; gap: .55rem; margin-top: 1rem; color: #b9c4d3; font-size: .9rem; }
+.activity-toggle input { accent-color: #6ed5d0; width: 1rem; height: 1rem; }
+.activity-toggle input:focus-visible { outline: 2px solid #6ed5d0; outline-offset: 3px; }
+.activity-events { padding: .85rem 1.4rem; border-top: 1px solid #303945; background: #131920; }
+.activity-events[hidden] { display: none; }
+.activity-events h4 { margin: 0 0 .5rem; font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; color: #91b8c3; }
+.activity-events ol { margin: 0; padding-left: 1.25rem; }
+.activity-events li { padding-block: .15rem; overflow-wrap: anywhere; white-space: pre-wrap; }
+.activity-time { color: #8494a6; font-size: .8rem; margin-right: .6rem; font-variant-numeric: tabular-nums; }
+.activity-status { color: #efaa9b; font-size: .8rem; margin-left: .5rem; }
+.activity-failed { color: #f0beb3; }
+.activity-truncated { color: #d9b978; font-size: .8rem; }
+.activity-help { color: #8494a6; font-size: .75rem; margin: 0 0 0 .25rem; }
 main { padding-block: 1.5rem 3rem; }
 .agent-title { font-size: 1rem; font-weight: 600; margin: 0 0 1.2rem; color: #b9c4d3; }
 .exchange { border: 1px solid #303945; border-radius: .7rem; margin-bottom: 1.4rem; overflow: hidden; background: #171d25; }
@@ -60,6 +73,7 @@ hr { border: 0; border-top: 1px solid #3a4655; margin-block: 1.5rem; }
   h1 { font-size: 1.5rem; }
   .prompt, .response { padding: 1rem; }
   .exchange-head { padding-inline: 1rem; }
+  .activity-events { padding-inline: 1rem; }
   .stamp { font-size: .7rem; }
 }
 @media print {
@@ -69,6 +83,8 @@ hr { border: 0; border-top: 1px solid #3a4655; margin-block: 1.5rem; }
   .agent-panel[hidden] { display: block !important; }
   .agent-panel + .agent-panel { break-before: page; }
   .exchange, .exchange-head, .prompt, pre, code, th { background: white; color: black; }
+  .activity-events { background: white; color: black; border-color: #bbb; }
+  .activity-events h4, .activity-time, .activity-status, .activity-failed, .activity-truncated { color: #333; }
   .meta, .stamp, .model, .agent-title, .section-head h3, .response .section-head h3 { color: #333; }
   pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   pre code { overflow-wrap: anywhere; }
@@ -83,6 +99,11 @@ hr { border: 0; border-top: 1px solid #3a4655; margin-block: 1.5rem; }
   <h1>Conversation history</h1>
   <p class="meta">Workspace: {{.Workspace}}</p>
   <p class="meta">Exported {{.Exported}} · {{.Total}} completed exchanges · Oldest first</p>
+  {{if .ActivityCount}}<div class="activity-toggle">
+    <input id="show-activity" type="checkbox" aria-describedby="activity-help" disabled>
+    <label for="show-activity">Show detailed tool events ({{.ActivityCount}})</label>
+    <span id="activity-help" class="activity-help">Shell, file, search, and agent activity</span>
+  </div>{{end}}
 </header>
 {{if .Agents}}
 <div class="tab-bar"><nav class="tabs" aria-label="Agents">
@@ -108,6 +129,16 @@ hr { border: 0; border-top: 1px solid #3a4655; margin-block: 1.5rem; }
       <div class="section-head"><h3>Response</h3><span class="stamp">Completed {{$exchange.Completed}}</span></div>
       <div class="markdown">{{$exchange.Response}}</div>
     </div>
+    {{if $exchange.Activities}}
+    <div class="activity-events" hidden>
+      <h4>Tool events</h4>
+      <ol>
+        {{range $activity := $exchange.Activities}}
+        <li class="{{if $activity.Action}}{{if not $activity.Success}}activity-failed{{end}}{{else}}activity-truncated{{end}}">{{if $activity.Time}}<time class="activity-time">{{$activity.Time}}</time>{{end}}{{$activity.Summary}}{{if and $activity.Action (not $activity.Success)}}<span class="activity-status">Failed</span>{{end}}</li>
+        {{end}}
+      </ol>
+    </div>
+    {{end}}
   </article>
   {{end}}
 </section>
@@ -116,6 +147,13 @@ hr { border: 0; border-top: 1px solid #3a4655; margin-block: 1.5rem; }
 <script>
 (() => {
   const nav = document.querySelector('.tabs');
+  const activityToggle = document.querySelector('#show-activity');
+  if (activityToggle) {
+    activityToggle.disabled = false;
+    activityToggle.addEventListener('change', () => {
+      document.querySelectorAll('.activity-events').forEach(events => { events.hidden = !activityToggle.checked; });
+    });
+  }
   if (!nav) return;
   const tabs = Array.from(nav.querySelectorAll('a'));
   const panels = tabs.map(tab => document.querySelector(tab.getAttribute('href')));

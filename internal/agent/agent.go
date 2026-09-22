@@ -11,11 +11,13 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"qcode/internal/learning"
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
 	"qcode/internal/question"
+	"qcode/internal/session"
 	"qcode/internal/tools"
 	"qcode/internal/trace"
 )
@@ -62,6 +64,7 @@ type Agent struct {
 	questioner           Questioner
 	latestPlan           *Plan
 	planDecisionPending  bool
+	activityRecorder     func(session.WorkActivity)
 	checkpoint           atomic.Pointer[[]byte]
 }
 
@@ -124,6 +127,24 @@ func (a *Agent) SetQuestioner(questioner Questioner) {
 	a.stateMu.Lock()
 	a.questioner = questioner
 	a.stateMu.Unlock()
+}
+
+// SetActivityRecorder attaches the concise activity text shown in the terminal
+// to the active journal entry. Tool output is not recorded.
+func (a *Agent) SetActivityRecorder(recorder func(session.WorkActivity)) {
+	a.stateMu.Lock()
+	a.activityRecorder = recorder
+	a.stateMu.Unlock()
+}
+
+func (a *Agent) recordActivity(event session.WorkActivity) {
+	a.stateMu.RLock()
+	recorder := a.activityRecorder
+	a.stateMu.RUnlock()
+	if recorder != nil {
+		event.Time = time.Now().UTC()
+		recorder(event)
+	}
 }
 
 // SetAutoCompact configures automatic compaction. Manual compaction remains
@@ -543,11 +564,13 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 				call.ID = fmt.Sprintf("call_%d_%d", step+1, index+1)
 			}
 			arguments := compactJSON(call.Arguments)
-			activity := a.trace.StartActivity(toolActivity(call))
+			activityDetails := toolActivity(call)
+			activity := a.trace.StartActivity(activityDetails)
 			toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": arguments})
 			execution, toolErr := a.executeDetailed(ctx, call)
 			toolSpan.End(toolErr)
 			activity.EndWithOutput(toolErr, execution.Output)
+			a.recordActivity(session.WorkActivity{Action: activityDetails.Action, Summary: activityDetails.Completed, Success: toolErr == nil})
 			if err := ctx.Err(); err != nil {
 				return err
 			}

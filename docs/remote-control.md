@@ -161,7 +161,9 @@ snapshots that are busy or unreadable.
 per agent and completed prompt/response pairs in chronological order. `/export raw`
 downloads the full styled transcript. The browser uses the same renderer and
 saved history as the terminal, rather than exporting only its visible output.
-Filenames are generated automatically; custom paths are no longer accepted.
+In pretty exports, the **Show detailed tool events** checkbox reveals concise
+activity summaries beside each exchange; it is unchecked by default. Filenames
+are generated automatically; custom paths are no longer accepted.
 
 Downloads use `GET api/v1/export?mode=pretty` (or `raw`) through the existing
 remote access controls. The response is an HTML attachment with caching disabled.

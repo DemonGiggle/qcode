@@ -26,6 +26,12 @@ type prettyExchange struct {
 	Number                              int
 	Prompt, Model, Submitted, Completed string
 	Response                            template.HTML
+	Activities                          []prettyActivity
+}
+
+type prettyActivity struct {
+	Action, Summary, Time string
+	Success               bool
 }
 
 type prettyAgent struct {
@@ -131,6 +137,7 @@ func exportMarkdown(markdown string) (template.HTML, error) {
 func renderPrettyExport(workspace, active string, exportedAt time.Time, summaries []session.Summary, records []session.WorkRecord) ([]byte, error) {
 	agents := prettyExportAgents(summaries, records, active)
 	total := 0
+	activityCount := 0
 	for i := range agents {
 		for _, record := range agents[i].Records {
 			response := record.Response
@@ -141,19 +148,36 @@ func renderPrettyExport(workspace, active string, exportedAt time.Time, summarie
 			if err != nil {
 				return nil, err
 			}
-			agents[i].Exchanges = append(agents[i].Exchanges, prettyExchange{
+			exchange := prettyExchange{
 				Number: len(agents[i].Exchanges) + 1,
 				Prompt: record.Prompt, Model: record.Model, Response: rendered,
 				Submitted: exportTimestamp(record.Created), Completed: exportTimestamp(record.Finished),
-			})
+			}
+			for _, activity := range record.Activities {
+				activityTime := ""
+				if !activity.Time.IsZero() {
+					activityTime = activity.Time.Local().Format("15:04:05 -07:00")
+				}
+				exchange.Activities = append(exchange.Activities, prettyActivity{
+					Action: activity.Action, Summary: activity.Summary,
+					Time: activityTime, Success: activity.Success,
+				})
+				activityCount++
+			}
+			if record.ActivitiesTruncated {
+				exchange.Activities = append(exchange.Activities, prettyActivity{
+					Summary: "Some activity events were omitted after reaching the per-request limit.",
+				})
+			}
+			agents[i].Exchanges = append(agents[i].Exchanges, exchange)
 			total++
 		}
 	}
 	var output bytes.Buffer
 	err := prettyExportTemplate.Execute(&output, struct {
-		Workspace, Exported string
-		Agents              []prettyAgent
-		Total               int
-	}{workspace, exportTimestamp(exportedAt), agents, total})
+		Workspace, Exported  string
+		Agents               []prettyAgent
+		Total, ActivityCount int
+	}{workspace, exportTimestamp(exportedAt), agents, total, activityCount})
 	return output.Bytes(), err
 }

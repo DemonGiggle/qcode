@@ -74,6 +74,17 @@ type PromptResult struct {
 	Response  string `json:"response,omitempty"`
 }
 
+// WorkActivity is a concise, user-facing tool event recorded for one request.
+// Its summary matches the activity text shown in the terminal, not tool output.
+type WorkActivity struct {
+	Time    time.Time `json:"time"`
+	Action  string    `json:"action"`
+	Summary string    `json:"summary"`
+	Success bool      `json:"success"`
+}
+
+const MaxWorkActivities = 256
+
 type Event struct {
 	Agent    Summary
 	Duration time.Duration
@@ -86,19 +97,21 @@ type Event struct {
 // WorkRecord retains one request independently of conversation compaction,
 // result-cache eviction, and closing an agent tab.
 type WorkRecord struct {
-	RequestID    string    `json:"request_id"`
-	AgentID      string    `json:"agent_id"`
-	AgentName    string    `json:"agent_name"`
-	Model        string    `json:"model"`
-	Prompt       string    `json:"prompt"`
-	Response     string    `json:"response,omitempty"`
-	ChangedFiles []string  `json:"changed_files,omitempty"`
-	Status       string    `json:"status"`
-	Error        string    `json:"error,omitempty"`
-	Created      time.Time `json:"created"`
-	Started      time.Time `json:"started,omitempty"`
-	Finished     time.Time `json:"finished,omitempty"`
-	Consultation bool      `json:"consultation,omitempty"`
+	RequestID           string         `json:"request_id"`
+	AgentID             string         `json:"agent_id"`
+	AgentName           string         `json:"agent_name"`
+	Model               string         `json:"model"`
+	Prompt              string         `json:"prompt"`
+	Response            string         `json:"response,omitempty"`
+	ChangedFiles        []string       `json:"changed_files,omitempty"`
+	Activities          []WorkActivity `json:"activities,omitempty"`
+	ActivitiesTruncated bool           `json:"activities_truncated,omitempty"`
+	Status              string         `json:"status"`
+	Error               string         `json:"error,omitempty"`
+	Created             time.Time      `json:"created"`
+	Started             time.Time      `json:"started,omitempty"`
+	Finished            time.Time      `json:"finished,omitempty"`
+	Consultation        bool           `json:"consultation,omitempty"`
 }
 
 type ConsultationEvent struct {
