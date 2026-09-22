@@ -1416,6 +1416,7 @@ func (u *UI) printHeader() {
 	}
 	fmt.Fprintf(u.display, "\r\n")
 	u.printToolSummary()
+	u.printTip()
 	if !u.statusActive {
 		fmt.Fprintf(u.display, "%s\r\n", u.statusBar())
 	}
