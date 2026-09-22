@@ -82,9 +82,12 @@ func NewWithOptions(root string, options Options) (*Registry, error) {
 		for _, protected := range options.ProtectedPaths {
 			if canonical, protectErr := filepath.EvalSymlinks(protected); protectErr == nil {
 				r.protected = append(r.protected, canonical)
+			} else if absProt, absErr := filepath.Abs(protected); absErr == nil {
+				r.protected = append(r.protected, filepath.Clean(absProt))
 			}
 		}
-		r.sandbox = &sandboxState{bwrap: bwrap, home: home, allowNetwork: options.AllowNetwork, configuredAllowNetwork: options.AllowNetwork, insecureSkipTLSVerify: options.InsecureSkipTLSVerify, protected: r.protected}
+		resolvedCommands, _ := ResolveSandboxCommandPaths(options.SandboxCommandPaths, r.protected)
+		r.sandbox = &sandboxState{bwrap: bwrap, home: home, allowNetwork: options.AllowNetwork, configuredAllowNetwork: options.AllowNetwork, insecureSkipTLSVerify: options.InsecureSkipTLSVerify, protected: r.protected, commandPaths: resolvedCommands}
 	}
 	r.web, err = newWebTools(options.SearchBackend, options.InsecureSkipTLSVerify)
 	if err != nil {

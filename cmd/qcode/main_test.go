@@ -195,3 +195,23 @@ func TestLearningConfiguration(t *testing.T) {
 		t.Fatal("zero budget not applied")
 	}
 }
+
+func TestSandboxCommandPathsConfigPrecedence(t *testing.T) {
+	opts := options{}
+	applyConfig(&opts, config.Config{SandboxCommandPaths: []string{"/opt/a", "/opt/b"}}, nil)
+	if len(opts.sandboxCommandPaths) != 2 {
+		t.Fatalf("config paths not applied: %q", opts.sandboxCommandPaths)
+	}
+	// Explicit flag wins over configuration.
+	opts = options{sandboxCommandPaths: []string{"/flag/tools"}}
+	applyConfig(&opts, config.Config{SandboxCommandPaths: []string{"/opt/a"}}, map[string]bool{"sandbox-command-path": true})
+	if len(opts.sandboxCommandPaths) != 1 || opts.sandboxCommandPaths[0] != "/flag/tools" {
+		t.Fatalf("flag did not override config: %q", opts.sandboxCommandPaths)
+	}
+	// Absent key leaves existing (flag) value alone and remains valid.
+	opts = options{}
+	applyConfig(&opts, config.Config{}, nil)
+	if opts.sandboxCommandPaths != nil {
+		t.Fatalf("missing key changed default: %q", opts.sandboxCommandPaths)
+	}
+}

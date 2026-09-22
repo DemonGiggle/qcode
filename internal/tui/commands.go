@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -20,6 +22,10 @@ type helpArgument struct {
 	description string
 }
 
+type shellCommandRunner interface {
+	RunShell(context.Context, string) (string, error)
+}
+
 var slashCommands = []slashCommand{
 	{
 		name: "/agent", usage: "/agent [new [name]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]]",
@@ -33,6 +39,11 @@ var slashCommands = []slashCommand{
 			{name: "close <id> [--yes]", description: "Close an agent; --yes skips confirmation."},
 		},
 		examples: []string{"/agent new review", "/agent switch agent-2"},
+	},
+	{
+		name: "/bash", usage: "/bash <cmd>", description: "Run a shell command in the active agent's environment",
+		arguments: []helpArgument{{name: "cmd", description: "Shell command to run from the workspace."}},
+		examples:  []string{"/bash pwd", "/bash printenv | sort"},
 	},
 	{
 		name: "/clear", usage: "/clear", description: "Clear the visible conversation and redraw the header",
@@ -156,6 +167,53 @@ func findSlashCommand(name string) (slashCommand, bool) {
 		}
 	}
 	return slashCommand{}, false
+}
+
+func (u *UI) runBashCommand(ctx context.Context, command string) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		u.printSystemMessage(yellow + "Usage: /bash <cmd>" + reset)
+		return
+	}
+	runner, ok := u.runner.(shellCommandRunner)
+	if !ok {
+		u.printSystemMessage(yellow + "The active agent cannot run shell commands." + reset)
+		return
+	}
+
+	commandCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if u.input != nil {
+		u.input.setCancel(cancel)
+		defer func() {
+			u.input.setCancel(nil)
+			u.updateActiveCancellation()
+		}()
+	}
+	u.printSystemMessage(dim + "Running shell command (Ctrl+C to cancel): " + sanitizeDiffLine(command, "<ESC>") + reset)
+	output, err := runner.RunShell(commandCtx, command)
+	if output != "" {
+		u.printSystemMessage(dim + "Shell output:" + reset + "\n" + sanitizeShellOutput(output))
+	}
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			u.printSystemMessage(yellow + "Cancelled" + reset)
+		} else {
+			u.printSystemMessage(yellow + "Shell command failed: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+		}
+		return
+	}
+	if output == "" {
+		u.printSystemMessage(dim + "Command completed with no output." + reset)
+	}
+}
+
+func sanitizeShellOutput(output string) string {
+	lines := strings.Split(output, "\n")
+	for i := range lines {
+		lines[i] = sanitizeDiffLine(lines[i], "<ESC>")
+	}
+	return strings.Join(lines, "\n")
 }
 
 type slashCommandMenu struct {

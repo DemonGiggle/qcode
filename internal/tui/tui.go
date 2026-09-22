@@ -634,6 +634,10 @@ func (u *UI) Run(ctx context.Context) error {
 			u.printCommandHelp(fields[1:])
 			continue
 		}
+		if len(fields) > 0 && fields[0] == "/bash" {
+			u.runBashCommand(ctx, strings.TrimSpace(strings.TrimPrefix(line, "/bash")))
+			continue
+		}
 		if len(fields) > 0 && fields[0] == "/remote" {
 			u.handleRemoteCommand(ctx, fields)
 			continue

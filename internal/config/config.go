@@ -47,6 +47,7 @@ type Config struct {
 	MaxSteps             *int      `toml:"max_steps"`
 	AgentTimeout         *string   `toml:"agent_timeout"`
 	Sandbox              *bool     `toml:"sandbox"`
+	SandboxCommandPaths  []string  `toml:"sandbox_command_paths"`
 	DangerSkipTLSVerify  *bool     `toml:"danger_skip_tls_verify"`
 }
 
@@ -162,6 +163,10 @@ func validate(path string, cfg Config) error {
 
 // merge overlays values supplied by incoming onto dst. Empty string fields are
 // intentionally unset, while skill paths are additive across layers.
+// Sandbox command paths use override semantics: a higher-priority layer with a
+// non-nil list (including an explicit empty list) replaces lower layers, so a
+// user can narrow or clear system-wide defaults. Repeatable
+// --sandbox-command-path flags override the merged configuration entirely.
 func merge(dst *Config, incoming Config) {
 	if incoming.Learning.ContextBudget != nil {
 		dst.Learning.ContextBudget = incoming.Learning.ContextBudget
@@ -201,6 +206,9 @@ func merge(dst *Config, incoming Config) {
 	}
 	if incoming.Sandbox != nil {
 		dst.Sandbox = incoming.Sandbox
+	}
+	if incoming.SandboxCommandPaths != nil {
+		dst.SandboxCommandPaths = append([]string(nil), incoming.SandboxCommandPaths...)
 	}
 	if incoming.DangerSkipTLSVerify != nil {
 		dst.DangerSkipTLSVerify = incoming.DangerSkipTLSVerify

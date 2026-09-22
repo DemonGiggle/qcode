@@ -162,6 +162,28 @@ func TestLoadReturnsEmptyWhenNoFileExists(t *testing.T) {
 	if len(inspected) != 0 || len(diagnostics) != 0 || cfg.Provider != "" || cfg.Model != "" || len(cfg.Skills.Paths) != 0 {
 		t.Fatalf("load = (%+v, %q, %v), want empty result", cfg, inspected, diagnostics)
 	}
+	if cfg.SandboxCommandPaths != nil {
+		t.Fatalf("command paths = %q, want nil for missing file", cfg.SandboxCommandPaths)
+	}
+}
+
+func TestLoadSandboxCommandPathsOverride(t *testing.T) {
+	dir := t.TempDir()
+	low := writeConfig(t, dir, "low.toml", "sandbox_command_paths = [\"/opt/a\", \"/opt/b\"]\n")
+	high := writeConfig(t, dir, "high.toml", "sandbox_command_paths = [\"/opt/c\"]\n")
+	cfg, _, diagnostics := load([]string{high, low})
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %v", diagnostics)
+	}
+	if got, want := strings.Join(cfg.SandboxCommandPaths, ","), "/opt/c"; got != want {
+		t.Fatalf("command paths = %q, want %q (override, not additive)", got, want)
+	}
+	// Existing sandbox=true config without the new key remains valid.
+	legacy := writeConfig(t, dir, "legacy.toml", "sandbox = true\n")
+	legacyCfg, _, legacyDiags := load([]string{legacy})
+	if len(legacyDiags) != 0 || legacyCfg.Sandbox == nil || !*legacyCfg.Sandbox || legacyCfg.SandboxCommandPaths != nil {
+		t.Fatalf("legacy config = (%+v, %v)", legacyCfg, legacyDiags)
+	}
 }
 
 func writeConfig(t *testing.T, dir, name, content string) string {
