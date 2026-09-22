@@ -22,7 +22,13 @@ max_steps = 32
 # directory is mounted read-only at its original path and prepended to the
 # sandbox PATH, while the rest of home stays hidden. Session
 # request_directory_access grants remain separate, read/write, and temporary.
-# sandbox_command_paths = ["~/.local/bin", "~/go/bin"]
+# Common user-installed tool directories; keep only paths that exist for you.
+# sandbox_command_paths = [
+#   "~/.local/bin", "~/bin", "~/go/bin", "~/.cargo/bin",
+#   "~/.npm-global/bin", "~/.local/share/pnpm", "~/.bun/bin", "~/.deno/bin",
+# ]
+# With nvm, also add the active Node/npm version's bin directory, for example
+# "~/.nvm/versions/node/v22.16.0/bin" (replace with your installed version).
 
 # Optional provider API base URL override.
 # base_url = "http://127.0.0.1:11434"
