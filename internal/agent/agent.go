@@ -369,6 +369,19 @@ func (a *Agent) ToolEnabled(name string) bool {
 	return false
 }
 
+// RunShell executes a user-requested command through the agent's shell tool,
+// preserving its workspace, sandbox, and tool policy.
+func (a *Agent) RunShell(ctx context.Context, command string) (string, error) {
+	arguments, err := json.Marshal(struct {
+		Command string `json:"command"`
+	}{Command: command})
+	if err != nil {
+		return "", err
+	}
+	result, err := a.executeDetailed(ctx, llm.ToolCall{Name: "shell", Arguments: arguments})
+	return result.Output, err
+}
+
 func (a *Agent) Run(ctx context.Context, userText string) error {
 	if validator, ok := a.provider.(llm.ModelValidator); ok {
 		if err := validator.ValidateModel(a.model); err != nil {
