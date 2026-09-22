@@ -135,6 +135,45 @@ func TestLazySelectionDefersDiscoveryUntilLoad(t *testing.T) {
 	}
 }
 
+func TestCreateWritesReviewedSkillWithoutOverwriting(t *testing.T) {
+	root := t.TempDir()
+	content := "---\ndescription: Review migrations safely.\n---\n\n# Review migrations\n"
+	path, err := Create(root, ".qcode/skills", "review-migrations", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, ".qcode", "skills", "review-migrations", "SKILL.md")
+	if path != want {
+		t.Fatalf("Create() path = %q, want %q", path, want)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != content {
+		t.Fatalf("created content = %q, %v", data, err)
+	}
+	if _, err := Create(root, ".qcode/skills", "review-migrations", "replacement"); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("overwrite error = %v", err)
+	}
+}
+
+func TestCreateRejectsUnsupportedDrafts(t *testing.T) {
+	root := t.TempDir()
+	tests := []struct {
+		location string
+		name     string
+		content  string
+	}{
+		{location: ".qcode/skills", name: "Not Valid", content: "instructions"},
+		{location: "custom/skills", name: "valid", content: "instructions"},
+		{location: ".agents/skills", name: "valid", content: ""},
+		{location: ".agents/skills", name: "valid", content: strings.Repeat("x", maxFileSize+1)},
+	}
+	for _, test := range tests {
+		if _, err := Create(root, test.location, test.name, test.content); err == nil {
+			t.Fatalf("Create(%q, %q) unexpectedly succeeded", test.location, test.name)
+		}
+	}
+}
+
 func writeSkill(t *testing.T, root, name, content string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(name))

@@ -61,8 +61,10 @@ type Agent struct {
 	selectedSkills       []prompt.SkillSummary
 	pendingImages        []llm.Image
 	planMode             atomic.Bool
+	skillPlanMode        atomic.Bool
 	questioner           Questioner
 	latestPlan           *Plan
+	latestSkillDraft     *SkillDraft
 	planDecisionPending  bool
 	activityRecorder     func(session.WorkActivity)
 	checkpoint           atomic.Pointer[[]byte]
@@ -274,7 +276,7 @@ func thinkingLevelAllowed(capability llm.ThinkingCapability, level string) bool 
 func (a *Agent) SetSkills(skills []prompt.SkillSummary) {
 	a.selectedSkills = append([]prompt.SkillSummary(nil), skills...)
 	defer a.invalidateContextUsage()
-	a.system = prompt.SystemForMode(skills, a.PlanMode())
+	a.system = prompt.SystemForModes(skills, a.PlanMode(), a.SkillPlanMode())
 	if len(a.messages) > 0 && a.messages[0].Role == "system" {
 		a.messages[0].Content = a.system
 	}
@@ -316,11 +318,13 @@ func (a *Agent) ResetSession() {
 	a.learningContext = ""
 	a.learningSessionID = ""
 	a.planMode.Store(false)
+	a.skillPlanMode.Store(false)
 	a.stateMu.Lock()
 	a.latestPlan = nil
+	a.latestSkillDraft = nil
 	a.stateMu.Unlock()
 	defer a.invalidateContextUsage()
-	a.system = prompt.SystemForMode(a.selectedSkills, false)
+	a.system = prompt.SystemForModes(a.selectedSkills, false, false)
 	a.messages = []llm.Message{{Role: "system", Content: a.system}}
 	if resetter, ok := a.tools.(interface{ ResetSession() }); ok {
 		resetter.ResetSession()
@@ -329,14 +333,18 @@ func (a *Agent) ResetSession() {
 
 // ToolNames returns the names of all registered tools.
 func (a *Agent) ToolNames() []string {
-	if a.PlanMode() {
+	if a.PlanMode() || a.SkillPlanMode() {
 		names := make([]string, 0)
 		for _, tool := range a.tools.Schemas() {
-			if planAllowedTool(tool.Name) {
+			if a.modeAllowedTool(tool.Name) {
 				names = append(names, tool.Name)
 			}
 		}
-		return append(names, "ask_questions", "propose_plan")
+		names = append(names, "ask_questions")
+		if a.PlanMode() {
+			return append(names, "propose_plan")
+		}
+		return append(names, "propose_skill")
 	}
 	if configurable, ok := a.tools.(interface{ ToolNames() []string }); ok {
 		return configurable.ToolNames()
@@ -354,7 +362,7 @@ func (a *Agent) ToolNames() []string {
 
 // ToggleTool enables or disables a tool by name.
 func (a *Agent) ToggleTool(name string, enabled bool) {
-	if a.PlanMode() && !planAllowedTool(name) {
+	if (a.PlanMode() || a.SkillPlanMode()) && !a.modeAllowedTool(name) {
 		return
 	}
 	defer a.invalidateContextUsage()
@@ -373,7 +381,11 @@ func (a *Agent) ToggleTool(name string, enabled bool) {
 
 // ToolEnabled reports whether a tool is currently enabled.
 func (a *Agent) ToolEnabled(name string) bool {
-	if a.PlanMode() && !planAllowedTool(name) {
+	if (a.PlanMode() && (name == "ask_questions" || name == "propose_plan")) ||
+		(a.SkillPlanMode() && (name == "ask_questions" || name == "propose_skill")) {
+		return true
+	}
+	if (a.PlanMode() || a.SkillPlanMode()) && !a.modeAllowedTool(name) {
 		return false
 	}
 	if configurable, ok := a.tools.(interface{ ToolEnabled(string) bool }); ok {

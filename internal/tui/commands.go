@@ -129,6 +129,16 @@ var slashCommands = []slashCommand{
 		examples:  []string{"/skill", "/skill review,testing", "/skill none"},
 	},
 	{
+		name: "/skillplan", usage: "/skillplan [off|show|create|<rough intention>]", description: "Design, review, and create a qcode skill",
+		arguments: []helpArgument{
+			{name: "rough intention", description: "Start the guided flow with an initial idea for the skill."},
+			{name: "show", description: "Open the latest complete skill draft."},
+			{name: "create", description: "Approve and write the latest draft."},
+			{name: "off", description: "Leave Skill Plan mode without creating the draft."},
+		},
+		examples: []string{"/skillplan", "/skillplan review database migrations", "/skillplan show", "/skillplan create"},
+	},
+	{
 		name: "/quit", usage: "/quit", description: "Save the session and exit qcode",
 		examples: []string{"/quit"},
 	},

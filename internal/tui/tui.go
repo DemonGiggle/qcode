@@ -20,6 +20,7 @@ import (
 
 	"qcode/internal/prompt"
 	"qcode/internal/session"
+	"qcode/internal/skills"
 )
 
 const (
@@ -34,6 +35,7 @@ const (
 
 const inputPrompt = cyan + bold + "> " + reset
 const planInputPrompt = cyan + bold + "(Plan)> " + reset
+const skillPlanInputPrompt = cyan + bold + "(Skill plan)> " + reset
 
 const maxStepsNoticePrefix = "Reached the maximum of "
 
@@ -133,6 +135,14 @@ type planController interface {
 	SetPlanMode(bool)
 	LatestPlanText() (string, bool)
 	ClearLatestPlan()
+}
+
+type skillPlanController interface {
+	SkillPlanMode() bool
+	SetSkillPlanMode(bool)
+	LatestSkillDraftParts() (name, location, content string, ok bool)
+	LatestSkillDraftText() (string, bool)
+	ClearLatestSkillDraft()
 }
 
 type stepRunner interface {
@@ -435,18 +445,22 @@ func (u *UI) shutdownAgentManager() {
 func (u *UI) SetRunner(runner Runner) {
 	u.screenMu.Lock()
 	u.runner = runner
-	if controller, ok := runner.(planController); ok && controller.PlanMode() {
+	if controller, ok := runner.(skillPlanController); ok && controller.SkillPlanMode() {
+		u.inputLabel = skillPlanInputPrompt
+	} else if controller, ok := runner.(planController); ok && controller.PlanMode() {
 		u.inputLabel = planInputPrompt
 	} else {
 		u.inputLabel = inputPrompt
 	}
 	u.screenMu.Unlock()
-	if controller, ok := runner.(planController); ok {
-		if controller.PlanMode() {
-			u.terminal.SetPrompt(planInputPrompt)
-		} else {
-			u.terminal.SetPrompt(inputPrompt)
-		}
+	label := inputPrompt
+	if controller, ok := runner.(skillPlanController); ok && controller.SkillPlanMode() {
+		label = skillPlanInputPrompt
+	} else if controller, ok := runner.(planController); ok && controller.PlanMode() {
+		label = planInputPrompt
+	}
+	if u.terminal != nil {
+		u.terminal.SetPrompt(label)
 	}
 	if configurable, ok := runner.(verboseRunner); ok {
 		configurable.SetVerbose(u.verbose)
@@ -541,13 +555,8 @@ func (u *UI) Run(ctx context.Context) error {
 	}
 	u.input.start()
 	u.fixedInput = true
-	u.inputLabel = inputPrompt
-	if controller, ok := u.runner.(planController); ok && controller.PlanMode() {
-		u.inputLabel = planInputPrompt
-		u.terminal.SetPrompt(planInputPrompt)
-	} else {
-		u.terminal.SetPrompt(inputPrompt)
-	}
+	u.inputLabel = u.currentInputPrompt()
+	u.terminal.SetPrompt(u.inputLabel)
 	u.terminal.RenderInput = u.renderInput
 	u.setupStatusBar()
 	stopResize := u.watchResize()
@@ -683,6 +692,10 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		if len(fields) > 0 && fields[0] == "/plan" {
 			u.handlePlanCommand(ctx, fields)
+			continue
+		}
+		if len(fields) > 0 && fields[0] == "/skillplan" {
+			u.handleSkillPlanCommand(ctx, fields)
 			continue
 		}
 		switch line {
@@ -1272,6 +1285,78 @@ func (u *UI) handlePlanCommand(ctx context.Context, fields []string) {
 	}
 }
 
+func (u *UI) handleSkillPlanCommand(ctx context.Context, fields []string) {
+	controller, ok := u.runner.(skillPlanController)
+	if !ok {
+		u.printSystemMessage(yellow + "Skill Plan mode is unavailable." + reset)
+		return
+	}
+	if len(fields) == 2 && fields[1] == "show" {
+		draft, exists := controller.LatestSkillDraftText()
+		if !exists {
+			u.printSystemMessage(yellow + "No complete skill draft is available. Describe the skill and let qcode prepare one first." + reset)
+			return
+		}
+		if err := u.showPlanView(ctx, draft); err != nil && !errors.Is(err, context.Canceled) {
+			u.printSystemMessage(yellow + "Unable to show skill draft: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+		}
+		return
+	}
+	if !u.activeAgentConfigurable() {
+		return
+	}
+	setPrompt := func(enabled bool) {
+		u.setSkillPlanInputPrompt(enabled)
+		u.drawStatusBar()
+	}
+	switch {
+	case len(fields) == 1:
+		if !controller.SkillPlanMode() {
+			controller.ClearLatestSkillDraft()
+		}
+		controller.SetSkillPlanMode(true)
+		setPrompt(true)
+		u.printSystemMessage(green + "Skill Plan mode enabled; describe your rough idea. Files cannot be changed until you approve a draft with /skillplan create." + reset)
+	case len(fields) == 2 && fields[1] == "off":
+		controller.SetSkillPlanMode(false)
+		setPrompt(false)
+		u.printSystemMessage(green + "Skill Plan mode disabled." + reset)
+	case len(fields) == 2 && fields[1] == "create":
+		name, location, content, exists := controller.LatestSkillDraftParts()
+		if !exists {
+			u.printSystemMessage(yellow + "No complete skill draft is available. Describe the skill and let qcode prepare one first." + reset)
+			return
+		}
+		path, err := skills.Create(u.root, location, name, content)
+		if err != nil {
+			u.printSystemMessage(yellow + "Unable to create skill: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+			return
+		}
+		controller.SetSkillPlanMode(false)
+		setPrompt(false)
+		u.skills = nil
+		u.printSystemMessage(green + "Skill created at " + sanitizeDiffLine(path, "<ESC>") + ". Use /skill to refresh and enable it." + reset)
+	case len(fields) >= 2 && fields[1] != "off" && fields[1] != "show" && fields[1] != "create":
+		if u.manager == nil {
+			u.printSystemMessage(yellow + "Starting a guided skill draft requires the interactive agent manager." + reset)
+			return
+		}
+		controller.ClearLatestSkillDraft()
+		controller.SetSkillPlanMode(true)
+		setPrompt(true)
+		intention := strings.Join(fields[1:], " ")
+		if _, err := u.manager.Submit(u.activeAgent, intention); err != nil {
+			controller.SetSkillPlanMode(false)
+			setPrompt(false)
+			u.printSystemMessage(yellow + "Unable to start skill planning: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+			return
+		}
+		u.printSystemMessage(green + "Skill Plan mode enabled; guided skill design started." + reset)
+	default:
+		u.printSystemMessage(yellow + "Usage: /skillplan [off|show|create|<rough intention>]" + reset)
+	}
+}
+
 func (u *UI) setInputModePrompt(plan bool) {
 	label := inputPrompt
 	if plan {
@@ -1284,6 +1369,30 @@ func (u *UI) setInputModePrompt(plan bool) {
 	u.inputLabel = label
 	u.paintFixedLocked(0)
 	u.screenMu.Unlock()
+}
+
+func (u *UI) setSkillPlanInputPrompt(enabled bool) {
+	label := inputPrompt
+	if enabled {
+		label = skillPlanInputPrompt
+	}
+	if u.terminal != nil {
+		u.terminal.SetPrompt(label)
+	}
+	u.screenMu.Lock()
+	u.inputLabel = label
+	u.paintFixedLocked(0)
+	u.screenMu.Unlock()
+}
+
+func (u *UI) currentInputPrompt() string {
+	if controller, ok := u.runner.(skillPlanController); ok && controller.SkillPlanMode() {
+		return skillPlanInputPrompt
+	}
+	if controller, ok := u.runner.(planController); ok && controller.PlanMode() {
+		return planInputPrompt
+	}
+	return inputPrompt
 }
 
 // printSystemMessage separates status and command feedback from surrounding
@@ -1798,6 +1907,9 @@ func (u *UI) contextLabel() string {
 }
 
 func (u *UI) modeLabel() string {
+	if controller, ok := u.runner.(skillPlanController); ok && controller.SkillPlanMode() {
+		return "SKILL PLAN"
+	}
 	if controller, ok := u.runner.(planController); ok && controller.PlanMode() {
 		return "PLAN"
 	}

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 const (
@@ -127,6 +128,79 @@ func Locations(_ string, customPaths ...string) []string {
 		}
 	}
 	return locations
+}
+
+// Create writes one reviewed skill document to a built-in qcode skill root.
+// It never overwrites an existing SKILL.md.
+func Create(root, location, name, content string) (string, error) {
+	if !validName(name) {
+		return "", fmt.Errorf("skill name must contain 1-64 lowercase letters, digits, hyphens, or underscores")
+	}
+	if content == "" {
+		return "", fmt.Errorf("skill content must not be empty")
+	}
+	if !utf8.ValidString(content) {
+		return "", fmt.Errorf("skill content must be valid UTF-8")
+	}
+	if len(content) > maxFileSize {
+		return "", fmt.Errorf("skill content exceeds qcode's 64 KiB limit")
+	}
+
+	workspace, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace: %w", err)
+	}
+	var skillRoot string
+	switch location {
+	case "~/.qcode/skills":
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return "", fmt.Errorf("resolve home skill directory: %w", homeErr)
+		}
+		if home == "" {
+			return "", fmt.Errorf("resolve home skill directory: home directory is empty")
+		}
+		skillRoot = filepath.Join(home, ".qcode", "skills")
+	case ".agents/skills":
+		skillRoot = filepath.Join(workspace, ".agents", "skills")
+	case ".qcode/skills":
+		skillRoot = filepath.Join(workspace, ".qcode", "skills")
+	default:
+		return "", fmt.Errorf("unsupported skill location %q", location)
+	}
+
+	if err := os.MkdirAll(skillRoot, 0o755); err != nil {
+		return "", fmt.Errorf("create skill root: %w", err)
+	}
+	directory := filepath.Join(skillRoot, name)
+	if info, statErr := os.Lstat(directory); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return "", fmt.Errorf("skill directory %s is not a regular directory", directory)
+		}
+	} else if !os.IsNotExist(statErr) {
+		return "", fmt.Errorf("inspect skill directory: %w", statErr)
+	} else if mkdirErr := os.Mkdir(directory, 0o755); mkdirErr != nil {
+		return "", fmt.Errorf("create skill directory: %w", mkdirErr)
+	}
+
+	path := filepath.Join(directory, fileName)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			return "", fmt.Errorf("skill %q already exists at %s; choose another name or location", name, path)
+		}
+		return "", fmt.Errorf("create skill document: %w", err)
+	}
+	if _, err = io.WriteString(file, content); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", fmt.Errorf("write skill document: %w", err)
+	}
+	if err = file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("close skill document: %w", err)
+	}
+	return path, nil
 }
 
 // Discover finds skills in the built-in locations and any custom paths. A

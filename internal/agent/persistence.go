@@ -43,6 +43,8 @@ type SavedState struct {
 	Skills                                          []prompt.SkillSummary
 	PlanMode                                        bool
 	LatestPlan                                      *Plan
+	SkillPlanMode                                   bool
+	LatestSkillDraft                                *SkillDraft
 	Tools                                           json.RawMessage
 }
 
@@ -85,9 +87,12 @@ func (a *Agent) publishCheckpoint() {
 		ContextUsage: a.contextUsage, AutoCompact: a.autoCompact, AutoCompactThreshold: a.autoCompactThreshold,
 		MaxSteps: a.MaxSteps(), LearningContext: a.learningContext, LearningSessionID: a.learningSessionID,
 		LearningBudget: a.learningBudget, Skills: a.selectedSkills, PendingImages: a.pendingImages,
-		PlanMode: a.PlanMode()}
+		PlanMode: a.PlanMode(), SkillPlanMode: a.SkillPlanMode()}
 	if plan, ok := a.LatestPlan(); ok {
 		s.LatestPlan = &plan
+	}
+	if draft, ok := a.LatestSkillDraft(); ok {
+		s.LatestSkillDraft = &draft
 	}
 	a.stateMu.RLock()
 	s.LastResponse, s.Usage = a.lastResponse, a.sessionUsage
@@ -187,9 +192,14 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 	a.contextUsage, a.sessionUsage = s.ContextUsage, s.Usage
 	a.autoCompact, a.autoCompactThreshold = s.AutoCompact, s.AutoCompactThreshold
 	a.planMode.Store(s.PlanMode)
+	a.skillPlanMode.Store(s.SkillPlanMode)
 	if s.LatestPlan != nil {
 		plan := s.LatestPlan.clone()
 		a.latestPlan = &plan
+	}
+	if s.LatestSkillDraft != nil {
+		draft := s.LatestSkillDraft.clone()
+		a.latestSkillDraft = &draft
 	}
 	a.maxSteps.Store(int64(s.MaxSteps))
 	a.learningContext, a.learningSessionID, a.learningBudget = s.LearningContext, s.LearningSessionID, s.LearningBudget

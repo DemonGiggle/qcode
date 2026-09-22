@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
@@ -14,8 +15,9 @@ import (
 type ExecutionMode string
 
 const (
-	ModeAct  ExecutionMode = "act"
-	ModePlan ExecutionMode = "plan"
+	ModeAct       ExecutionMode = "act"
+	ModePlan      ExecutionMode = "plan"
+	ModeSkillPlan ExecutionMode = "skillplan"
 )
 
 // Plan is the latest complete plan submitted by a Plan-mode agent. It is kept
@@ -27,6 +29,21 @@ type Plan struct {
 	Steps         []string `json:"steps"`
 	Validation    []string `json:"validation"`
 	OpenQuestions []string `json:"open_questions,omitempty"`
+}
+
+// SkillDraft is the complete, reviewable artifact produced in Skill Plan
+// mode. Location is one of qcode's built-in skill roots.
+type SkillDraft struct {
+	Name     string `json:"name"`
+	Location string `json:"location"`
+	Content  string `json:"content"`
+}
+
+func (d SkillDraft) clone() SkillDraft { return d }
+
+func renderSkillDraft(d SkillDraft) string {
+	path := strings.TrimSuffix(d.Location, "/") + "/" + d.Name + "/SKILL.md"
+	return fmt.Sprintf("# Skill draft: %s\n\nTarget: `%s`\n\n```markdown\n%s\n```", d.Name, path, strings.TrimSpace(d.Content))
 }
 
 func (p Plan) clone() Plan {
@@ -63,16 +80,82 @@ func (a *Agent) PlanMode() bool { return a.planMode.Load() }
 // authority midway through a request.
 func (a *Agent) SetPlanMode(enabled bool) {
 	a.planMode.Store(enabled)
+	if enabled {
+		a.skillPlanMode.Store(false)
+	}
 	if !enabled {
 		a.stateMu.Lock()
 		a.planDecisionPending = false
 		a.stateMu.Unlock()
 	}
-	a.system = prompt.SystemForMode(a.selectedSkills, enabled)
+	a.system = prompt.SystemForModes(a.selectedSkills, enabled, a.SkillPlanMode())
 	if len(a.messages) > 0 && a.messages[0].Role == "system" {
 		a.messages[0].Content = a.system
 	}
 	a.invalidateContextUsage()
+	a.publishCheckpoint()
+}
+
+// SkillPlanMode reports whether this agent is designing a qcode skill in the
+// read-only guided workflow.
+func (a *Agent) SkillPlanMode() bool { return a.skillPlanMode.Load() }
+
+// SetSkillPlanMode changes the default mode for future requests. Skill Plan
+// and implementation Plan modes are mutually exclusive.
+func (a *Agent) SetSkillPlanMode(enabled bool) {
+	a.skillPlanMode.Store(enabled)
+	if enabled {
+		a.planMode.Store(false)
+		a.stateMu.Lock()
+		a.planDecisionPending = false
+		a.stateMu.Unlock()
+	}
+	a.system = prompt.SystemForModes(a.selectedSkills, a.PlanMode(), enabled)
+	if len(a.messages) > 0 && a.messages[0].Role == "system" {
+		a.messages[0].Content = a.system
+	}
+	a.invalidateContextUsage()
+	a.publishCheckpoint()
+}
+
+// LatestSkillDraft returns a copy of the most recently submitted draft.
+func (a *Agent) LatestSkillDraft() (SkillDraft, bool) {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	if a.latestSkillDraft == nil {
+		return SkillDraft{}, false
+	}
+	return a.latestSkillDraft.clone(), true
+}
+
+// LatestSkillDraftParts exposes the draft through primitive return values so
+// UI packages can consume it without depending on Agent's concrete type.
+func (a *Agent) LatestSkillDraftParts() (name, location, content string, ok bool) {
+	draft, ok := a.LatestSkillDraft()
+	return draft.Name, draft.Location, draft.Content, ok
+}
+
+// LatestSkillDraftText returns a reviewable rendering of the current draft.
+func (a *Agent) LatestSkillDraftText() (string, bool) {
+	draft, ok := a.LatestSkillDraft()
+	if !ok {
+		return "", false
+	}
+	return renderSkillDraft(draft), true
+}
+
+// ClearLatestSkillDraft starts a fresh guided skill-design flow.
+func (a *Agent) ClearLatestSkillDraft() {
+	a.stateMu.Lock()
+	a.latestSkillDraft = nil
+	a.stateMu.Unlock()
+	a.publishCheckpoint()
+}
+
+func (a *Agent) saveSkillDraft(draft SkillDraft) {
+	a.stateMu.Lock()
+	a.latestSkillDraft = &draft
+	a.stateMu.Unlock()
 	a.publishCheckpoint()
 }
 
@@ -118,20 +201,24 @@ func (a *Agent) TakePlanDecision() (string, bool) {
 }
 
 func (a *Agent) enabledSchemas() []llm.Tool {
-	if !a.PlanMode() {
+	if !a.PlanMode() && !a.SkillPlanMode() {
 		return a.tools.EnabledSchemas()
 	}
 	filtered := make([]llm.Tool, 0)
 	for _, tool := range a.tools.EnabledSchemas() {
-		if planAllowedTool(tool.Name) {
+		if a.modeAllowedTool(tool.Name) {
 			filtered = append(filtered, tool)
 		}
 	}
-	return append(filtered, askQuestionsSchema(), proposePlanSchema())
+	filtered = append(filtered, askQuestionsSchema())
+	if a.PlanMode() {
+		return append(filtered, proposePlanSchema())
+	}
+	return append(filtered, proposeSkillSchema())
 }
 
 func (a *Agent) executeDetailed(ctx context.Context, call llm.ToolCall) (llm.ToolResult, error) {
-	if !a.PlanMode() {
+	if !a.PlanMode() && !a.SkillPlanMode() {
 		return a.tools.ExecuteDetailed(ctx, call)
 	}
 	return (&modeToolset{base: a.tools, owner: a}).ExecuteDetailed(ctx, call)
@@ -159,6 +246,18 @@ func proposePlanSchema() llm.Tool {
 			"open_questions": stringArray(prompt.PlanQuestionsParameter),
 		},
 		"required": []string{"title", "summary", "steps", "validation"},
+	}}
+}
+
+func proposeSkillSchema() llm.Tool {
+	return llm.Tool{Name: "propose_skill", Description: prompt.ProposeSkillTool, Parameters: map[string]any{
+		"type": "object", "additionalProperties": false,
+		"properties": map[string]any{
+			"name":     map[string]any{"type": "string", "description": prompt.SkillDraftNameParameter},
+			"location": map[string]any{"type": "string", "enum": []string{"~/.qcode/skills", ".agents/skills", ".qcode/skills"}, "description": prompt.SkillLocationParameter},
+			"content":  map[string]any{"type": "string", "description": prompt.SkillContentParameter},
+		},
+		"required": []string{"name", "location", "content"},
 	}}
 }
 
@@ -248,6 +347,25 @@ func planAllowedTool(name string) bool {
 	}
 }
 
+func skillPlanAllowedTool(name string) bool {
+	switch name {
+	case "web_fetch", "web_search", "read", "list", "search", "view_image", "skill", "list_agents", "search_agent_work", "ask_questions", "propose_skill":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *Agent) modeAllowedTool(name string) bool {
+	if a.PlanMode() {
+		return planAllowedTool(name)
+	}
+	if a.SkillPlanMode() {
+		return skillPlanAllowedTool(name)
+	}
+	return true
+}
+
 // modeToolset is the enforcement boundary for Plan mode. It forwards all
 // mutable tool state to the existing registry while filtering and rejecting
 // dangerous calls independently of model instructions.
@@ -258,30 +376,38 @@ type modeToolset struct {
 
 func (t *modeToolset) Schemas() []llm.Tool {
 	base := t.base.Schemas()
-	if !t.owner.PlanMode() {
+	if !t.owner.PlanMode() && !t.owner.SkillPlanMode() {
 		return base
 	}
 	filtered := make([]llm.Tool, 0, len(base)+2)
 	for _, tool := range base {
-		if planAllowedTool(tool.Name) {
+		if t.owner.modeAllowedTool(tool.Name) {
 			filtered = append(filtered, tool)
 		}
 	}
-	return append(filtered, askQuestionsSchema(), proposePlanSchema())
+	filtered = append(filtered, askQuestionsSchema())
+	if t.owner.PlanMode() {
+		return append(filtered, proposePlanSchema())
+	}
+	return append(filtered, proposeSkillSchema())
 }
 
 func (t *modeToolset) EnabledSchemas() []llm.Tool {
 	base := t.base.EnabledSchemas()
-	if !t.owner.PlanMode() {
+	if !t.owner.PlanMode() && !t.owner.SkillPlanMode() {
 		return base
 	}
 	filtered := make([]llm.Tool, 0, len(base)+2)
 	for _, tool := range base {
-		if planAllowedTool(tool.Name) {
+		if t.owner.modeAllowedTool(tool.Name) {
 			filtered = append(filtered, tool)
 		}
 	}
-	return append(filtered, askQuestionsSchema(), proposePlanSchema())
+	filtered = append(filtered, askQuestionsSchema())
+	if t.owner.PlanMode() {
+		return append(filtered, proposePlanSchema())
+	}
+	return append(filtered, proposeSkillSchema())
 }
 
 func (t *modeToolset) ExecuteDetailed(ctx context.Context, call llm.ToolCall) (llm.ToolResult, error) {
@@ -316,7 +442,55 @@ func (t *modeToolset) ExecuteDetailed(ctx context.Context, call llm.ToolCall) (l
 			return llm.ToolResult{}, fmt.Errorf("tool %q is unavailable in Plan mode; Plan mode is read-only", call.Name)
 		}
 	}
+	if t.owner.SkillPlanMode() {
+		if call.Name == "propose_skill" {
+			var draft SkillDraft
+			if err := json.Unmarshal(call.Arguments, &draft); err != nil {
+				return llm.ToolResult{}, fmt.Errorf("invalid skill draft: %w", err)
+			}
+			draft.Name = strings.TrimSpace(draft.Name)
+			draft.Location = strings.TrimSpace(draft.Location)
+			draft.Content = strings.TrimSpace(draft.Content)
+			if err := validateSkillDraft(draft); err != nil {
+				return llm.ToolResult{}, err
+			}
+			t.owner.saveSkillDraft(draft)
+			return llm.ToolResult{Output: renderSkillDraft(draft) + "\n\nDraft saved for review. Do not create files until the user explicitly approves it with /skillplan create."}, nil
+		}
+		if call.Name == "ask_questions" {
+			return t.owner.askQuestions(ctx, call.Arguments)
+		}
+		if !skillPlanAllowedTool(call.Name) {
+			return llm.ToolResult{}, fmt.Errorf("tool %q is unavailable in Skill Plan mode; Skill Plan mode is read-only", call.Name)
+		}
+	}
 	return t.base.ExecuteDetailed(ctx, call)
+}
+
+func validateSkillDraft(draft SkillDraft) error {
+	if draft.Name == "" || len(draft.Name) > 64 {
+		return fmt.Errorf("skill name must contain 1-64 lowercase letters, digits, hyphens, or underscores")
+	}
+	for _, r := range draft.Name {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return fmt.Errorf("skill name must contain 1-64 lowercase letters, digits, hyphens, or underscores")
+		}
+	}
+	switch draft.Location {
+	case "~/.qcode/skills", ".agents/skills", ".qcode/skills":
+	default:
+		return fmt.Errorf("skill location must be ~/.qcode/skills, .agents/skills, or .qcode/skills")
+	}
+	if draft.Content == "" {
+		return fmt.Errorf("skill content must not be empty")
+	}
+	if !utf8.ValidString(draft.Content) {
+		return fmt.Errorf("skill content must be valid UTF-8")
+	}
+	if len(draft.Content) > 64*1024 {
+		return fmt.Errorf("skill content exceeds qcode's 64 KiB limit")
+	}
+	return nil
 }
 
 func (t *modeToolset) ResetSession() {
@@ -327,12 +501,14 @@ func (t *modeToolset) ResetSession() {
 func (t *modeToolset) ToolNames() []string {
 	names := make([]string, 0)
 	for _, name := range toolNames(t.base) {
-		if !t.owner.PlanMode() || planAllowedTool(name) {
+		if t.owner.modeAllowedTool(name) {
 			names = append(names, name)
 		}
 	}
 	if t.owner.PlanMode() {
 		names = append(names, "ask_questions", "propose_plan")
+	} else if t.owner.SkillPlanMode() {
+		names = append(names, "ask_questions", "propose_skill")
 	}
 	return names
 }
@@ -347,7 +523,7 @@ func toolNames(t Toolset) []string {
 	return result
 }
 func (t *modeToolset) ToggleTool(name string, enabled bool) {
-	if t.owner.PlanMode() && !planAllowedTool(name) {
+	if (t.owner.PlanMode() || t.owner.SkillPlanMode()) && !t.owner.modeAllowedTool(name) {
 		return
 	}
 	if configurable, ok := t.base.(interface{ ToggleTool(string, bool) }); ok {
@@ -366,7 +542,11 @@ func (t *modeToolset) ToggleTool(name string, enabled bool) {
 	}
 }
 func (t *modeToolset) ToolEnabled(name string) bool {
-	if t.owner.PlanMode() && !planAllowedTool(name) {
+	if (t.owner.PlanMode() && (name == "ask_questions" || name == "propose_plan")) ||
+		(t.owner.SkillPlanMode() && (name == "ask_questions" || name == "propose_skill")) {
+		return true
+	}
+	if (t.owner.PlanMode() || t.owner.SkillPlanMode()) && !t.owner.modeAllowedTool(name) {
 		return false
 	}
 	if configurable, ok := t.base.(interface{ ToolEnabled(string) bool }); ok {

@@ -3,6 +3,8 @@
 Skills let you attach focused, reusable instructions to a session. Place a `SKILL.md` in `~/.qcode/skills/<name>/` for your user account, or `.qcode/skills/<name>/` / `.agents/skills/<name>/` for one workspace.
 
 To create or update a skill, see the [skill specification](skill-spec.md).
+For a guided flow that turns a rough intention into a reviewed skill, use
+[`/skillplan`](skillplan.md).
 
 ## Official release skills
 
