@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,6 +30,42 @@ type configurableMaxStepsRunner struct {
 func (*configurableMaxStepsRunner) Run(context.Context, string) error { return nil }
 func (r *configurableMaxStepsRunner) MaxSteps() int                   { return r.maxSteps }
 func (r *configurableMaxStepsRunner) SetMaxSteps(maxSteps int)        { r.maxSteps = maxSteps }
+
+type runtimePreferenceRecorder struct {
+	model       string
+	thinking    string
+	maxSteps    int
+	modelCalls  int
+	stepsCalls  int
+	modelErr    error
+	maxStepsErr error
+}
+
+func (r *runtimePreferenceRecorder) PersistModel(model, thinking string) error {
+	r.modelCalls++
+	r.model, r.thinking = model, thinking
+	return r.modelErr
+}
+
+func (r *runtimePreferenceRecorder) PersistMaxSteps(maxSteps int) error {
+	r.stepsCalls++
+	r.maxSteps = maxSteps
+	return r.maxStepsErr
+}
+
+type configurableModelRunner struct {
+	configurableMaxStepsRunner
+	models []string
+	model  string
+}
+
+func (*configurableModelRunner) Run(context.Context, string) error { return nil }
+func (r *configurableModelRunner) ListModels(context.Context) ([]string, error) {
+	return append([]string(nil), r.models...), nil
+}
+func (r *configurableModelRunner) SetModel(model string) { r.model = model }
+
+type preferenceAgentController struct{ agentController }
 
 func TestMatchingSlashCommands(t *testing.T) {
 	tests := []struct {
@@ -106,6 +143,73 @@ func TestUpdateMaxSteps(t *testing.T) {
 	u.updateMaxSteps([]string{"/maxsteps", "0"})
 	if runner.maxSteps != 64 || !strings.Contains(output.String(), "Usage: /maxsteps <positive integer>") {
 		t.Fatalf("invalid update = %d, output = %q", runner.maxSteps, output.String())
+	}
+}
+
+func TestRuntimePreferencePersistenceFollowsSuccessfulRuntimeChanges(t *testing.T) {
+	var output bytes.Buffer
+	runner := &configurableModelRunner{
+		configurableMaxStepsRunner: configurableMaxStepsRunner{maxSteps: 32},
+		models:                     []string{"new-model"},
+	}
+	recorder := &runtimePreferenceRecorder{}
+	u := &UI{
+		runner:             runner,
+		display:            newHistoryWriter(&output),
+		input:              newInterruptReader(strings.NewReader("")),
+		runtimePreferences: recorder,
+	}
+
+	u.setModelCommand(context.Background(), []string{"/model", "new-model"})
+	if runner.model != "new-model" || recorder.modelCalls != 1 || recorder.model != "new-model" || recorder.thinking != "" {
+		t.Fatalf("model runtime/persistence = (%q, %d, %q, %q)", runner.model, recorder.modelCalls, recorder.model, recorder.thinking)
+	}
+	u.updateMaxSteps([]string{"/maxsteps", "64"})
+	if runner.maxSteps != 64 || recorder.stepsCalls != 1 || recorder.maxSteps != 64 {
+		t.Fatalf("max steps runtime/persistence = (%d, %d, %d)", runner.maxSteps, recorder.stepsCalls, recorder.maxSteps)
+	}
+
+	recorder.modelErr = errors.New("disk full")
+	recorder.maxStepsErr = errors.New("read-only")
+	u.setModelCommand(context.Background(), []string{"/model", "new-model"})
+	u.updateMaxSteps([]string{"/maxsteps", "96"})
+	if runner.model != "new-model" || runner.maxSteps != 96 || !strings.Contains(output.String(), "Warning: unable to persist") {
+		t.Fatalf("runtime changes were not retained after persistence failures: runner=%+v output=%q", runner, output.String())
+	}
+}
+
+func TestInvalidRuntimeCommandsDoNotPersist(t *testing.T) {
+	var output bytes.Buffer
+	runner := &configurableMaxStepsRunner{maxSteps: 32}
+	recorder := &runtimePreferenceRecorder{}
+	u := &UI{runner: runner, display: newHistoryWriter(&output), runtimePreferences: recorder}
+
+	u.updateMaxSteps([]string{"/maxsteps", "0"})
+	u.updateMaxSteps([]string{"/maxsteps", "not-a-number"})
+	if recorder.stepsCalls != 0 || runner.maxSteps != 32 {
+		t.Fatalf("invalid max-steps command persisted or changed runtime: calls=%d max=%d", recorder.stepsCalls, runner.maxSteps)
+	}
+}
+
+func TestRuntimePreferencesAreMainTabOnly(t *testing.T) {
+	recorder := &runtimePreferenceRecorder{}
+	u := &UI{
+		manager:            &preferenceAgentController{},
+		activeAgent:        "agent-1",
+		runtimePreferences: recorder,
+	}
+
+	u.persistModelPreference("child-model", "high")
+	u.persistMaxStepsPreference(64)
+	if recorder.modelCalls != 0 || recorder.stepsCalls != 0 {
+		t.Fatalf("child tab persisted runtime preferences: %+v", recorder)
+	}
+
+	u.activeAgent = "main"
+	u.persistModelPreference("main-model", "low")
+	u.persistMaxStepsPreference(32)
+	if recorder.modelCalls != 1 || recorder.stepsCalls != 1 || recorder.model != "main-model" || recorder.thinking != "low" || recorder.maxSteps != 32 {
+		t.Fatalf("main tab persistence = %+v", recorder)
 	}
 }
 

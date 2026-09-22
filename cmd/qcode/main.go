@@ -254,6 +254,16 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	// Terminal output must go through term.Terminal so asynchronous-looking stream
 	// updates do not corrupt the editable input line.
 	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
+	var runtimePreferences *config.RuntimePreferenceWriter
+	if !opts.demo {
+		var preferenceErr error
+		runtimePreferences, preferenceErr = config.NewRuntimePreferenceWriter()
+		if preferenceErr != nil {
+			fmt.Fprintln(stderr, "WARNING: runtime preferences unavailable:", preferenceErr)
+		} else {
+			ui.SetRuntimePreferenceWriter(runtimePreferences)
+		}
+	}
 	ui.SetSkillCatalogLoader(loadSkills)
 	ui.SetSkillLocations(skillLocations)
 	if opts.demo {
@@ -359,6 +369,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		}
 		if err := ui.EnableSessions(store, func(snap session.Snapshot) (*tui.UI, error) {
 			staged := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
+			staged.SetRuntimePreferenceWriter(runtimePreferences)
 			staged.SetSkillCatalogLoader(loadSkills)
 			staged.SetSkillLocations(skillLocations)
 			restored := control.NewHost(context.Background(), agent.DefaultMaxAgents)

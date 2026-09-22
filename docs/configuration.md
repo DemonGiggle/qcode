@@ -28,6 +28,15 @@ Accepted directories are mounted read-only at their original absolute paths
 Repeatable `--sandbox-command-path` overrides the configured list. Omitting
 the key preserves the existing sandbox behaviour without migration.
 
+In the normal interactive UI, `/model` (including its explicit thinking
+level) and `/maxsteps` update the user-level file synchronously when issued
+from the `main` tab. On Linux this is `~/.local/etc/qcode/config.toml`; other
+platforms use the user configuration path shown below. Existing comments and
+unrelated settings are preserved. Changes made in other agent tabs, demo
+mode, one-shot mode, and piped execution remain session-only. Command-line
+flags, environment variables, and higher-priority configuration files retain
+their usual precedence.
+
 `skills.paths` adds directories to the built-in skill locations. Paths from all
 configuration layers are appended from lowest to highest priority. Blank paths
 are ignored and duplicate trimmed path strings are kept only at their first
