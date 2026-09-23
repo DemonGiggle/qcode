@@ -141,6 +141,90 @@ func TestAgentManagerLifecycleAndReuse(t *testing.T) {
 	}
 }
 
+type pausedCompactProvider struct {
+	started  chan struct{}
+	release  chan struct{}
+	requests chan llm.Request
+}
+
+func (*pausedCompactProvider) Name() string { return "paused-compact" }
+func (p *pausedCompactProvider) Complete(ctx context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	if request.Messages[0].Content == prompt.ConversationCompact {
+		close(p.started)
+		select {
+		case <-p.release:
+			return llm.Response{Message: llm.Message{Role: "assistant", Content: "summary of first prompt"}}, nil
+		case <-ctx.Done():
+			return llm.Response{}, ctx.Err()
+		}
+	}
+	p.requests <- request
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
+}
+
+func TestManagerCompactKeepsOtherAgentAvailableAndSerializesNextPrompt(t *testing.T) {
+	provider := &pausedCompactProvider{started: make(chan struct{}), release: make(chan struct{}), requests: make(chan llm.Request, 3)}
+	manager := NewAgentManager(context.Background(), 2)
+	manager.SetFactory(func(id, name, model string, main bool) (*Agent, error) {
+		return New(provider, model, &managerToolset{}, trace.New(io.Discard, false), io.Discard, 4), nil
+	})
+	if _, err := manager.CreateMain("test"); err != nil {
+		t.Fatal(err)
+	}
+	worker, err := manager.Create("test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Shutdown)
+	if err := manager.Start("main", "first prompt"); err != nil {
+		t.Fatal(err)
+	}
+	waitManagerStatus(t, manager, "main", StatusCompleted)
+	<-provider.requests
+
+	submission, err := manager.SubmitCompact("main")
+	if err != nil || submission.QueuePosition != 0 {
+		t.Fatalf("compact submission = %+v, %v", submission, err)
+	}
+	select {
+	case <-provider.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("compaction did not reach provider")
+	}
+	if err := manager.Start(worker.ID, "other agent prompt"); err != nil {
+		t.Fatal(err)
+	}
+	waitManagerStatus(t, manager, worker.ID, StatusCompleted)
+	<-provider.requests
+	queued, err := manager.Submit("main", "after compact")
+	if err != nil || queued.QueuePosition != 1 {
+		t.Fatalf("prompt behind compaction = %+v, %v", queued, err)
+	}
+	select {
+	case request := <-provider.requests:
+		t.Fatalf("queued prompt ran before compaction finished: %+v", request)
+	default:
+	}
+	close(provider.release)
+	deadline := time.After(2 * time.Second)
+	var next llm.Request
+	select {
+	case next = <-provider.requests:
+	case <-deadline:
+		t.Fatal("queued prompt did not start")
+	}
+	foundSummary := false
+	for _, message := range next.Messages {
+		if strings.Contains(message.Content, "summary of first prompt") {
+			foundSummary = true
+		}
+	}
+	if !foundSummary {
+		t.Fatal("next prompt did not receive compacted conversation")
+	}
+	waitManagerStatus(t, manager, "main", StatusCompleted)
+}
+
 func TestDefaultAgentLimitIsTwentyIncludingMain(t *testing.T) {
 	if DefaultMaxAgents != 20 {
 		t.Fatalf("DefaultMaxAgents = %d, want 20", DefaultMaxAgents)

@@ -63,6 +63,7 @@ type promptRequest struct {
 	id           string
 	targetID     string
 	prompt       string
+	compact      bool
 	done         chan struct{}
 	result       PromptResult
 	err          error
@@ -308,6 +309,13 @@ func (m *AgentManager) Submit(id, task string) (Submission, error) {
 	return submission, err
 }
 
+// SubmitCompact queues manual compaction alongside prompts for the same agent.
+// The UI can keep accepting input and switching tabs while it runs.
+func (m *AgentManager) SubmitCompact(id string) (Submission, error) {
+	_, submission, err := m.submitRequest(id, "/compact", time.Time{}, true)
+	return submission, err
+}
+
 // SubmitAndWait appends a prompt, then waits for that prompt's full result.
 // Cancelling the wait does not remove or cancel the accepted prompt.
 func (m *AgentManager) SubmitAndWait(ctx context.Context, id, task string) (PromptResult, error) {
@@ -345,10 +353,10 @@ func (m *AgentManager) GetResult(requestID string) (PromptResult, error) {
 }
 
 func (m *AgentManager) submit(id, task string) (*promptRequest, Submission, error) {
-	return m.submitRequest(id, task, time.Time{})
+	return m.submitRequest(id, task, time.Time{}, false)
 }
 
-func (m *AgentManager) submitRequest(id, task string, deadline time.Time) (*promptRequest, Submission, error) {
+func (m *AgentManager) submitRequest(id, task string, deadline time.Time, compact bool) (*promptRequest, Submission, error) {
 	if strings.TrimSpace(task) == "" {
 		return nil, Submission{}, fmt.Errorf("task must not be empty")
 	}
@@ -376,7 +384,7 @@ func (m *AgentManager) submitRequest(id, task string, deadline time.Time) (*prom
 	m.nextRequestID++
 	req := &promptRequest{
 		id: fmt.Sprintf("request-%d", m.nextRequestID), targetID: id,
-		prompt: strings.TrimSpace(task), done: make(chan struct{}),
+		prompt: strings.TrimSpace(task), compact: compact, done: make(chan struct{}),
 		journalIndex: len(m.work), deadline: deadline,
 	}
 	m.work = append(m.work, session.WorkRecord{
@@ -418,12 +426,19 @@ func (m *AgentManager) startRequestLocked(id string, s *managedSession, req *pro
 	m.emitLocked(s.summary, 0)
 	go func() {
 		defer m.wg.Done()
-		err := runner.Run(runCtx, req.prompt)
+		var outcome string
+		var err error
+		if req.compact {
+			outcome, err = runner.Compact(runCtx)
+		} else {
+			err = runner.Run(runCtx, req.prompt)
+			outcome = runner.LastResponse()
+		}
 		if runCtx.Err() != nil {
 			err = runCtx.Err()
 		}
 		cancel()
-		m.finish(id, req, err, runner.LastResponse())
+		m.finish(id, req, err, outcome)
 	}()
 }
 

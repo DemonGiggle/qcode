@@ -185,6 +185,7 @@ type agentController interface {
 	Create(string) (session.Summary, error)
 	Start(string, string) error
 	Submit(string, string) (session.Submission, error)
+	SubmitCompact(string) (session.Submission, error)
 	Rename(string, string) error
 	Cancel(string) error
 	Close(string) error
@@ -914,6 +915,21 @@ func (u *UI) startNewSession() {
 }
 
 func (u *UI) compactConversation(ctx context.Context) {
+	if u.manager != nil {
+		submission, err := u.manager.SubmitCompact(u.activeAgent)
+		if err != nil {
+			u.printSystemMessage(yellow + "Conversation compaction failed: " + err.Error() + reset)
+			return
+		}
+		if submission.QueuePosition > 0 {
+			u.printSystemMessage(fmt.Sprintf("%sCompaction queued #%d%s", dim, submission.QueuePosition, reset))
+		} else {
+			u.printSystemMessage(dim + "Compacting conversation..." + reset)
+		}
+		u.updateActiveCancellation()
+		u.drawTaskIndicator()
+		return
+	}
 	runner, ok := u.runner.(compactionRunner)
 	if !ok {
 		u.printSystemMessage(yellow + "Conversation compaction is unavailable." + reset)
