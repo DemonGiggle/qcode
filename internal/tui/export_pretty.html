@@ -65,6 +65,11 @@ main { padding-block: 1.5rem 3rem; }
 .model { overflow-wrap: anywhere; padding: .15rem .5rem; border: 1px solid #354a65; border-radius: 999px; background: #111b2b; }
 .prompt, .response { padding: 1.2rem 1.4rem; min-width: 0; }
 .prompt { background: linear-gradient(110deg, rgba(244, 194, 113, .095), rgba(244, 194, 113, .025) 48%, transparent 100%); border-bottom: 1px solid var(--line); }
+.exchange-content > summary { cursor: pointer; }
+.exchange-content > summary::marker { color: var(--prompt-accent); }
+.expand-hint { color: var(--muted); font-size: .75rem; }
+.exchange-content[open] .expand-hint { display: none; }
+.exchange-content > summary:focus-visible { outline: 2px solid #8bd4ff; outline-offset: -3px; }
 .response { background: linear-gradient(110deg, rgba(121, 222, 193, .085), rgba(121, 222, 193, .02) 48%, transparent 100%); }
 .section-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .25rem 1rem; margin-bottom: .65rem; }
 .section-head h3 { margin: 0; font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; color: var(--prompt-accent); }
@@ -111,6 +116,8 @@ hr { border: 0; border-top: 1px solid #354963; margin-block: 1.5rem; }
   .agent-panel + .agent-panel { break-before: page; }
   .exchange, .exchange-head, .prompt, .response, pre, code, th { background: white; color: black; box-shadow: none; }
   .exchange { border-color: #aaa; break-inside: avoid; }
+  .exchange-content:not([open]) > .response { display: block; }
+  .exchange-content > summary { list-style: none; }
   .activity-events { background: white; color: black; border-color: #bbb; }
   .activity-events h4, .activity-time, .activity-status, .activity-failed, .activity-truncated,
   .meta, .stamp, .model, .agent-title, .exchange-label, .section-head h3, .response .section-head h3,
@@ -154,14 +161,16 @@ hr { border: 0; border-top: 1px solid #354963; margin-block: 1.5rem; }
   {{range $exchange := $agent.Exchanges}}
   <article class="exchange">
     <div class="exchange-head"><span class="exchange-label">Exchange {{printf "%02d" $exchange.Number}}</span>{{if $exchange.Model}}<span class="model">{{$exchange.Model}}</span>{{end}}</div>
-    <div class="prompt">
-      <div class="section-head"><h3>Prompt</h3><span class="stamp">Submitted {{$exchange.Submitted}}</span></div>
-      <div class="prompt-text">{{$exchange.Prompt}}</div>
-    </div>
-    <div class="response">
-      <div class="section-head"><h3>Response</h3><span class="stamp">Completed {{$exchange.Completed}}</span></div>
-      <div class="markdown">{{$exchange.Response}}</div>
-    </div>
+    <details class="exchange-content">
+      <summary class="prompt">
+        <div class="section-head"><h3>Prompt</h3><span class="stamp">Submitted {{$exchange.Submitted}}</span><span class="expand-hint">Click to show response</span></div>
+        <div class="prompt-text">{{$exchange.Prompt}}</div>
+      </summary>
+      <div class="response">
+        <div class="section-head"><h3>Response</h3><span class="stamp">Completed {{$exchange.Completed}}</span></div>
+        <div class="markdown">{{$exchange.Response}}</div>
+      </div>
+    </details>
     {{if $exchange.Activities}}
     <div class="activity-events" hidden>
       <h4>Tool events</h4>

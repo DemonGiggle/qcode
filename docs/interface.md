@@ -66,7 +66,8 @@ Successful interactive runs end with a distinct colored `Completed in ... (MM/DD
 
 Use `/export` or `/export pretty` to save a readable conversation export. Each
 agent has its own tab, with completed prompts and final responses ordered oldest
-first by submission time. Responses render as Markdown, including code blocks
+first by submission time. Each exchange starts as a prompt card; select a card
+to reveal its full response. Responses render as Markdown, including code blocks
 and tables. Closed agents with completed history are included. Consultations,
 unsuccessful requests, and work still in progress are omitted from this view.
 
