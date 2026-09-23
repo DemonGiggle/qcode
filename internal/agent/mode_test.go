@@ -28,6 +28,25 @@ type modePlanProvider struct {
 	tools []llm.Tool
 }
 
+type modeSkillPlanProvider struct {
+	calls int
+	tools []llm.Tool
+}
+
+func (*modeSkillPlanProvider) Name() string { return "mode-skill-plan-test" }
+func (p *modeSkillPlanProvider) Complete(_ context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	p.calls++
+	p.tools = request.Tools
+	if p.calls > 1 {
+		return llm.Response{Message: llm.Message{Role: "assistant", Content: "Review the draft, refine it, or create it."}}, nil
+	}
+	args, _ := json.Marshal(map[string]any{
+		"name": "review-migrations", "location": ".qcode/skills",
+		"content": "---\ndescription: Review database migrations safely.\n---\n\n# Review migrations\n\n## Validation\n\nRun migration tests.",
+	})
+	return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "skill-1", Name: "propose_skill", Arguments: args}}}}, nil
+}
+
 func (*modePlanProvider) Name() string { return "mode-test" }
 func (p *modePlanProvider) Complete(_ context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
 	p.tools = request.Tools
@@ -61,6 +80,69 @@ func TestPlanModeFiltersAndRejectsMutationTools(t *testing.T) {
 	}
 	if tools.called != "" {
 		t.Fatal("rejected tool reached underlying toolset")
+	}
+}
+
+func TestSkillPlanModeFiltersMutationAndSavesDraft(t *testing.T) {
+	provider := &modeSkillPlanProvider{}
+	tools := &modeTestToolset{}
+	a := New(provider, "model", tools, trace.New(io.Discard, false), io.Discard, 3)
+	a.SetSkillPlanMode(true)
+	seen := map[string]bool{}
+	for _, schema := range a.enabledSchemas() {
+		seen[schema.Name] = true
+	}
+	for _, name := range []string{"read", "list_agents", "ask_questions", "propose_skill"} {
+		if !seen[name] {
+			t.Fatalf("Skill Plan mode omitted %q from schemas: %v", name, seen)
+		}
+	}
+	if !a.ToolEnabled("ask_questions") || !a.ToolEnabled("propose_skill") {
+		t.Fatal("Skill Plan mode reported its built-in tools as disabled")
+	}
+	for _, name := range []string{"write", "shell", "create_agent", "propose_plan"} {
+		if seen[name] {
+			t.Fatalf("Skill Plan mode advertised unavailable tool %q", name)
+		}
+	}
+	if _, err := a.executeDetailed(context.Background(), llm.ToolCall{Name: "write"}); err == nil {
+		t.Fatal("write unexpectedly succeeded in Skill Plan mode")
+	}
+	if tools.called != "" {
+		t.Fatal("rejected tool reached underlying toolset")
+	}
+	if err := a.Run(context.Background(), "design a migration review skill"); err != nil {
+		t.Fatal(err)
+	}
+	draft, ok := a.LatestSkillDraft()
+	if !ok || draft.Name != "review-migrations" || draft.Location != ".qcode/skills" || !strings.Contains(draft.Content, "description:") {
+		t.Fatalf("saved draft = %+v, ok=%v", draft, ok)
+	}
+	if !a.SkillPlanMode() || a.PlanMode() {
+		t.Fatalf("mode state: skillplan=%v plan=%v", a.SkillPlanMode(), a.PlanMode())
+	}
+	if text, ok := a.LatestSkillDraftText(); !ok || !strings.Contains(text, ".qcode/skills/review-migrations/SKILL.md") {
+		t.Fatalf("draft text = %q, ok=%v", text, ok)
+	}
+	data := a.checkpoint.Load()
+	if data == nil {
+		t.Fatal("skill draft state was not checkpointed")
+	}
+	restored := New(&modeSkillPlanProvider{}, "model", &modeTestToolset{}, trace.New(io.Discard, false), io.Discard, 3)
+	if err := restored.RestoreState(*data); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, ok := restored.LatestSkillDraftParts(); !restored.SkillPlanMode() || !ok {
+		t.Fatal("restored agent lost Skill Plan state")
+	}
+}
+
+func TestSkillPlanModeRejectsInvalidDraft(t *testing.T) {
+	a := New(&modeSkillPlanProvider{}, "model", &modeTestToolset{}, trace.New(io.Discard, false), io.Discard, 2)
+	a.SetSkillPlanMode(true)
+	args, _ := json.Marshal(map[string]any{"name": "Invalid Name", "location": ".qcode/skills", "content": "instructions"})
+	if _, err := a.executeDetailed(context.Background(), llm.ToolCall{Name: "propose_skill", Arguments: args}); err == nil {
+		t.Fatal("invalid skill draft unexpectedly succeeded")
 	}
 }
 

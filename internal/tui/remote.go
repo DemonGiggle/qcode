@@ -443,6 +443,11 @@ func (u *UI) ResolveRemoteInteraction(actor, id string, value []byte) error {
 		if json.Unmarshal(value, &decision) != nil || decision != "implement" && decision != "stay" {
 			return fmt.Errorf("invalid plan decision")
 		}
+	case session.InteractionSkillPlanDecision:
+		var decision string
+		if json.Unmarshal(value, &decision) != nil || decision != "create" && decision != "stay" {
+			return fmt.Errorf("invalid skill plan decision")
+		}
 	case session.InteractionLearningApproval:
 		var approved bool
 		if json.Unmarshal(value, &approved) != nil {

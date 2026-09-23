@@ -19,6 +19,25 @@ validation has happened. When you have enough information, submit one
 complete implementation plan with the propose_plan tool. The plan must
 include ordered changes and concrete validation steps.`
 
+// SkillPlanModeSuffix explains the skill-authoring contract to the model. As
+// with Plan mode, the toolset independently enforces the no-mutation portion.
+const SkillPlanModeSuffix = `
+
+You are in Skill Plan mode. Help the user turn a rough intention into one
+focused qcode skill. Use ask_questions for focused follow-ups about the
+skill's purpose, when it applies, workflow, inputs and outputs, constraints,
+validation, name, and scope. Ask only questions whose answers materially
+shape the skill, and follow up when an answer leaves an important ambiguity.
+
+When the design is coherent, call propose_skill with a complete SKILL.md for
+the user to review. qcode skills consist of exactly one SKILL.md, use the
+directory name as the skill name, and support only ~/.qcode/skills,
+.agents/skills, and .qcode/skills as creation targets in this mode. Do not
+invent manifests or companion files. Do not change files or run shell
+commands. After saving a draft, qcode asks whether to create it now or stay in
+Skill Plan mode to review or refine it. Never create files yourself; wait for
+the user's explicit approval through that prompt or /skillplan create.`
+
 // ConversationCompact is used to summarize a conversation before replacing
 // older turns. Like the system prompt, it remains deliberately visible here
 // so users can audit and tune every model-facing instruction.
@@ -52,9 +71,18 @@ func SystemWithSkills(skills []SkillSummary) string {
 
 // SystemForMode returns the model-facing system prompt for the selected mode.
 func SystemForMode(skills []SkillSummary, plan bool) string {
+	return SystemForModes(skills, plan, false)
+}
+
+// SystemForModes returns the model-facing prompt for the selected mutually
+// exclusive interactive mode.
+func SystemForModes(skills []SkillSummary, plan, skillPlan bool) string {
 	base := SystemWithSkills(skills)
 	if plan {
 		return base + PlanModeSuffix
+	}
+	if skillPlan {
+		return base + SkillPlanModeSuffix
 	}
 	return base
 }
@@ -72,7 +100,8 @@ const (
 	DirectoryAccessTool = "Ask the user to grant read/write access to an additional directory for this session. Use this before a shell command needs a path outside the approved workspace."
 	SkillTool           = "Load the complete instructions for an available workspace skill. Call this before performing work covered by that skill."
 	ProposePlanTool     = "Save a complete implementation plan for the user to review. This tool is available only in Plan mode and ends the current planning request."
-	AskQuestionsTool    = "Ask the user a small blocking questionnaire about unresolved design decisions. Use this only when the answers materially affect the implementation plan; the tool returns one answer per question and then planning continues."
+	ProposeSkillTool    = "Save a complete qcode SKILL.md draft for the user to review and refine before creation. This tool is available only in Skill Plan mode."
+	AskQuestionsTool    = "Ask the user a small blocking questionnaire about unresolved design decisions. Use this only when the answers materially affect the current plan or skill draft; the tool returns one answer per question and then work continues."
 	ListAgentsTool      = "List the other agent sessions and their current task status. Available only to the main agent."
 	SearchAgentWorkTool = "Search all recorded agent tasks and findings in this session, including earlier work and closed agents. Results are excerpts of reference data. Use an empty query to browse, agent_id to filter, and next_offset for further pages. Available only to the main agent."
 	ConsultAgentsTool   = "Ask several distinct agents focused questions about their previous work. All requests are submitted asynchronously before waiting for their specific replies. The configured agent timeout includes queue time. Returns individual completed, timed_out, failed, or cancelled outcomes; use successful replies and continue despite other failures. Available only to the main agent."
@@ -105,6 +134,9 @@ const (
 	PlanStepsParameter       = "Ordered implementation steps; each should name the affected behavior or files"
 	PlanValidationParameter  = "Concrete tests or checks that will validate the implementation"
 	PlanQuestionsParameter   = "Important unresolved decisions; use an empty array when none remain"
+	SkillDraftNameParameter  = "Valid skill directory name: 1-64 lowercase letters, digits, hyphens, or underscores"
+	SkillLocationParameter   = "Supported skill root where the skill should be created"
+	SkillContentParameter    = "Complete UTF-8 SKILL.md content, including a concise description near the top and all required instructions"
 	QuestionTextParameter    = "A focused design question for the user"
 	QuestionOptionsParameter = "Optional mutually exclusive choices; omit for a free-text answer"
 	AgentIDParameter         = "Exact agent ID from list_agents, work history, or the injected roster"

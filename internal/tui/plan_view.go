@@ -8,17 +8,38 @@ import (
 )
 
 const planViewHint = "Plan view | PgUp/PgDn or Up/Down to scroll | q/Esc/Ctrl+C to close"
+const skillPlanViewHint = "Skill draft | /skillplan create to approve | Up/Down PgUp/PgDn scroll | q close"
 
 type planPager struct {
-	lines []string
-	top   int
+	lines   []string
+	top     int
+	hint    string
+	quote   bool
+	unicode bool
 }
 
 func newPlanPager(plan string, width int) planPager {
 	plan = strings.ReplaceAll(plan, "\r\n", "\n")
 	plan = strings.ReplaceAll(plan, "\r", "\n")
 	wrapped := wrapANSI(plan, max(1, width), "")
-	return planPager{lines: strings.Split(wrapped, "\n")}
+	return planPager{lines: strings.Split(wrapped, "\n"), hint: planViewHint}
+}
+
+func newSkillPlanPager(draft string, width int, unicodeEnabled bool) planPager {
+	draft = strings.ReplaceAll(draft, "\r\n", "\n")
+	draft = strings.ReplaceAll(draft, "\r", "\n")
+	quote := "│ "
+	if !unicodeEnabled {
+		quote = "| "
+	}
+	contentWidth := max(1, width-visibleWidth(quote))
+	var lines []string
+	for _, line := range strings.Split(draft, "\n") {
+		line = sanitizeDiffLine(line, "<ESC>")
+		wrapped := wrapANSI(line, contentWidth, strings.Repeat(" ", visibleWidth(quote)))
+		lines = append(lines, strings.Split(wrapped, "\n")...)
+	}
+	return planPager{lines: lines, hint: skillPlanViewHint, quote: true, unicode: unicodeEnabled}
 }
 
 func (p planPager) maxTop(visible int) int {
@@ -46,6 +67,16 @@ func (p *planPager) end(visible int) {
 func showPlanPager(in io.Reader, out io.Writer, plan string, width, height int, color bool) error {
 	height = max(1, height)
 	pager := newPlanPager(plan, width)
+	return runPlanPager(in, out, pager, width, height, color)
+}
+
+func showSkillPlanPager(in io.Reader, out io.Writer, draft string, width, height int, color, unicodeEnabled bool) error {
+	height = max(1, height)
+	pager := newSkillPlanPager(draft, width, unicodeEnabled)
+	return runPlanPager(in, out, pager, width, height, color)
+}
+
+func runPlanPager(in io.Reader, out io.Writer, pager planPager, width, height int, color bool) error {
 	render := func() {
 		renderPlanPager(out, pager, width, height, color)
 	}
@@ -85,13 +116,17 @@ func renderPlanPager(out io.Writer, pager planPager, width, height int, color bo
 	if width < 1 {
 		width = 1
 	}
-	header := planViewHint
+	header := pager.hint
 	if pager.maxTop(height-1) > 0 {
 		first := pager.top + 1
 		last := min(len(pager.lines), pager.top+max(1, height-1))
-		header = fmt.Sprintf("%s (%d-%d/%d)", header, first, last, len(pager.lines))
+		header = fmt.Sprintf("%s | %d-%d/%d", header, first, last, len(pager.lines))
 	}
-	if color {
+	if color && pager.quote {
+		if title, instructions, found := strings.Cut(header, " | "); found {
+			header = bold + cyan + title + reset + dim + " | " + instructions + reset
+		}
+	} else if color {
 		header = dim + header + reset
 	}
 	var output strings.Builder
@@ -103,6 +138,17 @@ func renderPlanPager(out io.Writer, pager planPager, width, height int, color bo
 			index := pager.top + row - 1
 			if index < len(pager.lines) {
 				line = pager.lines[index]
+			}
+		}
+		if row > 0 && pager.quote {
+			marker := "│ "
+			if !pager.unicode {
+				marker = "| "
+			}
+			if color {
+				line = cyan + marker + reset + line
+			} else {
+				line = marker + line
 			}
 		}
 		fmt.Fprintf(&output, "\x1b[%d;1H\x1b[2K%s\x1b[0m", row+2, truncateDiffLine(line, width, false))
@@ -119,6 +165,14 @@ func (w planViewWriter) Write(data []byte) (int, error) {
 }
 
 func (u *UI) showPlanView(ctx context.Context, plan string) error {
+	return u.showPlanViewWith(ctx, plan, false)
+}
+
+func (u *UI) showSkillPlanView(ctx context.Context, draft string) error {
+	return u.showPlanViewWith(ctx, draft, true)
+}
+
+func (u *UI) showPlanViewWith(ctx context.Context, plan string, skillDraft bool) error {
 	if u.input == nil || u.out == nil || !u.fixedInput {
 		return fmt.Errorf("plan view requires an interactive terminal")
 	}
@@ -140,5 +194,8 @@ func (u *UI) showPlanView(ctx context.Context, plan string) error {
 	width, height := u.width, u.height
 	u.screenMu.Unlock()
 	visible := max(1, height-4)
+	if skillDraft {
+		return showSkillPlanPager(u.input, planViewWriter{ui: u}, plan, width, visible, ColorEnabled(u.out), u.unicode)
+	}
 	return showPlanPager(u.input, planViewWriter{ui: u}, plan, width, visible, ColorEnabled(u.out))
 }

@@ -33,7 +33,7 @@ func TestNormalizeQuestionAnswerCanRequireOption(t *testing.T) {
 
 func TestFormatQuestion(t *testing.T) {
 	got := formatQuestion(question.Question{Text: "Which store?", Options: []string{"SQLite", "Postgres"}, AllowCustom: true}, 0, 2, 80)
-	for _, want := range []string{"Question 1/2", "Which store?", "1) SQLite", "2) Postgres", "type your own answer", "Ctrl+C cancels planning"} {
+	for _, want := range []string{"Question 1/2", "Which store?", "1) SQLite", "2) Postgres", "type your own answer", "Ctrl+C cancels these questions"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("questionnaire %q does not contain %q", got, want)
 		}

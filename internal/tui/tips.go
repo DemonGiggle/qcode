@@ -27,6 +27,7 @@ var tipTexts = []string{
 	"Run `/history` to search completed prompts newest-first; Enter views one response, Esc returns to the live view.",
 	"`write` and `edit` show 10-line diff previews; run `/diff` or `/diff N` to expand one up to 200 lines.",
 	"Run `/plan` for read-only Plan mode, `/plan show` to review, `/plan act` to implement, `/plan off` to leave.",
+	"Run `/skillplan <idea>` for guided skill design; refine the draft, then approve it with `/skillplan create`.",
 	"Run `/clear` to redraw the header and see the active agent's enabled and disabled tools.",
 	"Run `/bash <cmd>` to execute a shell command from the workspace in the active agent's environment.",
 	"Run `/verbose` to toggle timestamped tool traces, including tool arguments, for troubleshooting.",
@@ -75,7 +76,7 @@ var tipTexts = []string{
 
 	// Planning and skills.
 	"Enter `/plan` while idle to investigate safely: Plan mode blocks file changes, shell commands, and delegation.",
-	"Planning questions accept a listed choice or a custom answer; Ctrl+C cancels the planning request.",
+	"Plan and skill-design questions accept a listed choice or a custom answer; Ctrl+C cancels the request.",
 	"Use `/plan show` to scroll through the latest submitted plan, then `/plan act` to start implementation.",
 	"Run `/plan off` to leave planning without executing the plan; `/new` clears the saved plan.",
 	"Create `.qcode/skills/<name>/SKILL.md` for workspace instructions, then run `/skill` to discover and select them.",

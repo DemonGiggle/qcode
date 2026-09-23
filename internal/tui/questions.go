@@ -264,15 +264,18 @@ func (u *UI) runQuestionnaireWithFooter(ctx context.Context, questions []questio
 }
 
 func (u *UI) restorePlanPrompt() {
-	plan := false
-	if controller, ok := u.runner.(planController); ok {
-		plan = controller.PlanMode()
+	label := u.currentInputPrompt()
+	if u.terminal != nil {
+		u.terminal.SetPrompt(label)
 	}
-	u.setInputModePrompt(plan)
+	u.screenMu.Lock()
+	u.inputLabel = label
+	u.paintFixedLocked(0)
+	u.screenMu.Unlock()
 }
 
 func formatQuestion(item question.Question, index, total, width int) string {
-	return formatQuestionWithFooter(item, index, total, width, "Ctrl+C cancels planning.")
+	return formatQuestionWithFooter(item, index, total, width, "Ctrl+C cancels these questions.")
 }
 
 func formatQuestionWithFooter(item question.Question, index, total, width int, footer string) string {

@@ -58,6 +58,7 @@ qcode update --arch arm64
 
 - [Interface](docs/interface.md) - Terminal UI, slash commands, and navigation
 - [Plan mode](docs/plan-mode.md) - Read-only planning and explicit execution handoff
+- [Skill Plan mode](docs/skillplan.md) - Guided, review-first qcode skill creation
 - [Token usage](docs/token-usage.md) - Per-session totals and structured usage events
 - [Providers](docs/providers.md) - Ollama, OpenAI, and OpenCode Go setup
 - [Multi-agent](docs/agents.md) - Concurrent agent tabs and orchestration

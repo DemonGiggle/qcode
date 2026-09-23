@@ -19,7 +19,7 @@ func (u *UI) renderInput(prompt, line string, pos int) {
 	u.tabMu.Lock()
 	pending := u.pendingTab != 0
 	u.tabMu.Unlock()
-	if !pending && (prompt == inputPrompt || prompt == planInputPrompt) {
+	if !pending && (prompt == inputPrompt || prompt == planInputPrompt || prompt == skillPlanInputPrompt) {
 		u.drafts[u.activeAgent] = line
 	}
 	u.paintFixedLocked(0)
@@ -85,10 +85,10 @@ func (u *UI) paintFixedLocked(direction int) {
 	if u.manager != nil {
 		summary, _ = u.manager.Summary(u.activeAgent)
 	}
-	if u.inputLabel == inputPrompt || u.inputLabel == planInputPrompt {
+	if u.inputLabel == inputPrompt || u.inputLabel == planInputPrompt || u.inputLabel == skillPlanInputPrompt {
 		label = queuePrompt(summary.Status)
-		if u.inputLabel == planInputPrompt && summary.Status != session.StatusRunning && summary.Status != session.StatusWaitingForApproval {
-			label = plainHistoryText(planInputPrompt)
+		if u.inputLabel != inputPrompt && summary.Status != session.StatusRunning && summary.Status != session.StatusWaitingForApproval {
+			label = plainHistoryText(u.inputLabel)
 		}
 	}
 	rows, cy, cx := inputRows(label+u.inputText, utf8.RuneCountInString(label)+u.inputPosition, u.width)
@@ -100,7 +100,7 @@ func (u *UI) paintFixedLocked(direction int) {
 	footer := min(2, max(0, u.height-2))
 	promptRow := u.height - footer - len(rows) + 1
 	matches := matchingSlashCommands(u.inputText)
-	if u.inputLabel != inputPrompt && u.inputLabel != planInputPrompt {
+	if u.inputLabel != inputPrompt && u.inputLabel != planInputPrompt && u.inputLabel != skillPlanInputPrompt {
 		matches = nil
 	}
 	// Keep two output rows available: history snapshots end with an unfinished

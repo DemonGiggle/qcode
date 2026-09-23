@@ -365,7 +365,7 @@ func (u *UI) handleAgentEvent(event session.Event) {
 	defer u.requestSessionSave()
 	u.signalUIEvent()
 	if event.Agent.Status == session.StatusCompleted {
-		u.queuePlanDecision(event.Agent.ID)
+		u.queueModeDecision(event.Agent.ID)
 	}
 	u.screenMu.Lock()
 	view := u.views[event.Agent.ID]
