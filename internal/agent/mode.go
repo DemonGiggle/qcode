@@ -82,6 +82,9 @@ func (a *Agent) SetPlanMode(enabled bool) {
 	a.planMode.Store(enabled)
 	if enabled {
 		a.skillPlanMode.Store(false)
+		a.stateMu.Lock()
+		a.skillPlanDecisionPending = false
+		a.stateMu.Unlock()
 	}
 	if !enabled {
 		a.stateMu.Lock()
@@ -108,6 +111,10 @@ func (a *Agent) SetSkillPlanMode(enabled bool) {
 		a.planMode.Store(false)
 		a.stateMu.Lock()
 		a.planDecisionPending = false
+		a.stateMu.Unlock()
+	} else {
+		a.stateMu.Lock()
+		a.skillPlanDecisionPending = false
 		a.stateMu.Unlock()
 	}
 	a.system = prompt.SystemForModes(a.selectedSkills, a.PlanMode(), enabled)
@@ -148,6 +155,7 @@ func (a *Agent) LatestSkillDraftText() (string, bool) {
 func (a *Agent) ClearLatestSkillDraft() {
 	a.stateMu.Lock()
 	a.latestSkillDraft = nil
+	a.skillPlanDecisionPending = false
 	a.stateMu.Unlock()
 	a.publishCheckpoint()
 }
@@ -155,8 +163,21 @@ func (a *Agent) ClearLatestSkillDraft() {
 func (a *Agent) saveSkillDraft(draft SkillDraft) {
 	a.stateMu.Lock()
 	a.latestSkillDraft = &draft
+	a.skillPlanDecisionPending = true
 	a.stateMu.Unlock()
 	a.publishCheckpoint()
+}
+
+// TakeSkillPlanDecision returns the latest draft once when the interactive
+// host should ask whether to create it or remain in Skill Plan mode.
+func (a *Agent) TakeSkillPlanDecision() (string, bool) {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	if !a.skillPlanDecisionPending || a.latestSkillDraft == nil {
+		return "", false
+	}
+	a.skillPlanDecisionPending = false
+	return renderSkillDraft(*a.latestSkillDraft), true
 }
 
 // LatestPlan returns a copy of the executable plan, if one has been saved.
@@ -455,7 +476,7 @@ func (t *modeToolset) ExecuteDetailed(ctx context.Context, call llm.ToolCall) (l
 				return llm.ToolResult{}, err
 			}
 			t.owner.saveSkillDraft(draft)
-			return llm.ToolResult{Output: renderSkillDraft(draft) + "\n\nDraft saved for review. Do not create files until the user explicitly approves it with /skillplan create."}, nil
+			return llm.ToolResult{Output: renderSkillDraft(draft) + "\n\nDraft saved for review. Do not create files until the user explicitly approves it with /skillplan create.", EndTurn: true}, nil
 		}
 		if call.Name == "ask_questions" {
 			return t.owner.askQuestions(ctx, call.Arguments)

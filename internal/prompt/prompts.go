@@ -34,9 +34,9 @@ the user to review. qcode skills consist of exactly one SKILL.md, use the
 directory name as the skill name, and support only ~/.qcode/skills,
 .agents/skills, and .qcode/skills as creation targets in this mode. Do not
 invent manifests or companion files. Do not change files or run shell
-commands. After saving a draft, tell the user they can request refinements,
-use /skillplan show to review it, or use /skillplan create to approve and
-write it.`
+commands. After saving a draft, qcode asks whether to create it now or stay in
+Skill Plan mode to review or refine it. Never create files yourself; wait for
+the user's explicit approval through that prompt or /skillplan create.`
 
 // ConversationCompact is used to summarize a conversation before replacing
 // older turns. Like the system prompt, it remains deliberately visible here

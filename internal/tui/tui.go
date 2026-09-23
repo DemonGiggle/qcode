@@ -238,8 +238,8 @@ type UI struct {
 	approvals            map[string][]*approvalRequest
 	questionMu           sync.Mutex
 	questions            []*questionRequest
-	planDecisionMu       sync.Mutex
-	planDecisions        []*planDecisionRequest
+	modeDecisionMu       sync.Mutex
+	modeDecisions        []*modeDecisionRequest
 	tabMu                sync.Mutex
 	pendingTab           int
 	agentEventsDone      chan struct{}
@@ -589,7 +589,7 @@ func (u *UI) Run(ctx context.Context) error {
 		u.handlePendingTabSwitch()
 		u.handlePendingApproval(ctx)
 		u.handlePendingQuestions(ctx)
-		u.handlePendingPlanDecision(ctx)
+		u.handlePendingModeDecision(ctx)
 		line, err := u.readLine()
 		u.commandMenu.dismiss(u.out)
 		if err != nil {
@@ -1297,7 +1297,7 @@ func (u *UI) handleSkillPlanCommand(ctx context.Context, fields []string) {
 			u.printSystemMessage(yellow + "No complete skill draft is available. Describe the skill and let qcode prepare one first." + reset)
 			return
 		}
-		if err := u.showPlanView(ctx, draft); err != nil && !errors.Is(err, context.Canceled) {
+		if err := u.showSkillPlanView(ctx, draft); err != nil && !errors.Is(err, context.Canceled) {
 			u.printSystemMessage(yellow + "Unable to show skill draft: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 		}
 		return

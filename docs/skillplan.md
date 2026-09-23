@@ -16,9 +16,10 @@ follow-up questions when an answer leaves an important decision unresolved.
 The mode can inspect workspace context but cannot run shell commands or change
 files.
 
-Once the design is coherent, qcode saves a complete `SKILL.md` draft. Continue
-the conversation to request refinements; each complete revision replaces the
-previous draft.
+Once the design is coherent, qcode saves a complete `SKILL.md` draft and asks
+whether to create it or stay in Skill Plan mode. Staying lets you review the
+draft or request refinements; each complete revision replaces the previous
+draft.
 
 Commands:
 
@@ -26,7 +27,9 @@ Commands:
   from another mode.
 - `/skillplan <rough intention>` enters the mode and immediately starts the
   guided conversation.
-- `/skillplan show` opens the latest complete draft in a scrollable view.
+- `/skillplan show` opens the latest complete draft in a scrollable, quoted
+  review view. Use Up/Down or PgUp/PgDn to scroll, `q` or Esc to close, then
+  `/skillplan create` to approve and write the draft.
 - `/skillplan create` explicitly approves and writes the latest draft.
 - `/skillplan off` leaves the mode without creating the draft.
 

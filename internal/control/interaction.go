@@ -26,6 +26,7 @@ const (
 	InteractionDirectoryApproval = session.InteractionDirectoryApproval
 	InteractionQuestions         = session.InteractionQuestions
 	InteractionPlanDecision      = session.InteractionPlanDecision
+	InteractionSkillPlanDecision = session.InteractionSkillPlanDecision
 	InteractionLearningApproval  = session.InteractionLearningApproval
 )
 

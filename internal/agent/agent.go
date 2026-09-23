@@ -31,43 +31,44 @@ const repeatedToolRecoveryTemplate = `Recovery notice: the tool %q has been requ
 const DefaultAutoCompactThreshold = 80
 
 type Agent struct {
-	learningStore        learning.Store
-	learningBudget       int
-	learningContext      string
-	learningSessionID    string
-	provider             llm.Provider
-	model                string
-	thinking             string
-	tools                Toolset
-	trace                *trace.Logger
-	out                  io.Writer
-	maxSteps             atomic.Int64
-	currentStep          atomic.Int64
-	messages             []llm.Message
-	stateMu              sync.RWMutex
-	requestContext       func() string
-	taskContext          string
-	lastResponse         string
-	contextStatus        atomic.Pointer[contextStatus]
-	contextWindow        int
-	contextOverride      int
-	contextUsage         *llm.Usage
-	sessionUsage         llm.SessionUsage
-	contextMessages      int
-	autoCompact          bool
-	autoCompactThreshold int
-	system               string
-	endpoint             string
-	selectedSkills       []prompt.SkillSummary
-	pendingImages        []llm.Image
-	planMode             atomic.Bool
-	skillPlanMode        atomic.Bool
-	questioner           Questioner
-	latestPlan           *Plan
-	latestSkillDraft     *SkillDraft
-	planDecisionPending  bool
-	activityRecorder     func(session.WorkActivity)
-	checkpoint           atomic.Pointer[[]byte]
+	learningStore            learning.Store
+	learningBudget           int
+	learningContext          string
+	learningSessionID        string
+	provider                 llm.Provider
+	model                    string
+	thinking                 string
+	tools                    Toolset
+	trace                    *trace.Logger
+	out                      io.Writer
+	maxSteps                 atomic.Int64
+	currentStep              atomic.Int64
+	messages                 []llm.Message
+	stateMu                  sync.RWMutex
+	requestContext           func() string
+	taskContext              string
+	lastResponse             string
+	contextStatus            atomic.Pointer[contextStatus]
+	contextWindow            int
+	contextOverride          int
+	contextUsage             *llm.Usage
+	sessionUsage             llm.SessionUsage
+	contextMessages          int
+	autoCompact              bool
+	autoCompactThreshold     int
+	system                   string
+	endpoint                 string
+	selectedSkills           []prompt.SkillSummary
+	pendingImages            []llm.Image
+	planMode                 atomic.Bool
+	skillPlanMode            atomic.Bool
+	questioner               Questioner
+	latestPlan               *Plan
+	latestSkillDraft         *SkillDraft
+	planDecisionPending      bool
+	skillPlanDecisionPending bool
+	activityRecorder         func(session.WorkActivity)
+	checkpoint               atomic.Pointer[[]byte]
 }
 
 // Toolset is the complete tool boundary used by the agent loop. Production and

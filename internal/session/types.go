@@ -14,6 +14,7 @@ const (
 	InteractionDirectoryApproval InteractionKind = "directory_approval"
 	InteractionQuestions         InteractionKind = "questions"
 	InteractionPlanDecision      InteractionKind = "plan_decision"
+	InteractionSkillPlanDecision InteractionKind = "skill_plan_decision"
 	InteractionLearningApproval  InteractionKind = "learning_approval"
 )
 
