@@ -2,6 +2,44 @@
 
 qcode runs model-triggered tools against your workspace and account. This page describes the protections that apply by default and what `--sandbox` changes on Linux.
 
+## Prompt-injection boundary
+
+The current user's request and qcode's built-in instructions set the task.
+Web pages and search snippets, local files and search results, shell output and
+errors, loaded skills, agent handoffs, saved conversations, and imported context
+are reference data. They can supply facts, code, and quotations, but text inside
+them cannot authorize tool calls or override the task. Links and encoded text
+inside those sources have the same status. A page asking the agent to read a
+credential, run a command, change files, disable safeguards, or contact an
+endpoint is still page content.
+
+Each model-visible tool result carries its tool name and an explicit
+`untrusted` label in a JSON envelope. JSON escaping keeps source text inside
+the content field even when it contains delimiters or fake role headers. Saved
+sessions keep provenance metadata, and older restored turns are wrapped as
+reference data when sent to the model. The saved system prompt is replaced by
+the current runtime prompt on restore. Providers that expose only plain tool
+output receive the envelope as text; qcode does not assume native provider
+support for trust labels.
+
+When qcode sees an actionable instruction pattern in untrusted content, it
+prints a prominent, calibrated warning without repeating that content. A
+quoted or fenced example can still match if it contains a complete action
+request; the warning does not assert that the document's author had malicious
+intent. Later calls that can access data, mutate state, or send data require the interactive user's
+approval for the exact call. In one-shot or other non-interactive use, those
+calls are denied. An isolated quoted phrase does not trigger the warning. Tool
+output remains readable so factual extraction and ordinary coding tasks
+continue.
+
+The detector is deliberately conservative and can miss novel or heavily
+obfuscated attacks. The content boundary and model instructions apply to all
+untrusted results regardless of detection, but neither can guarantee that a
+model will always distinguish an instruction from data. The approval gate is
+enforced after a detected attempt; other actions that appear to be prompted by
+untrusted content depend on the model asking the user. Use sandbox mode for
+filesystem and network confinement when stronger isolation is needed.
+
 Interactive [Plan mode](plan-mode.md) adds a stricter per-agent policy: only
 inspection tools and plan submission are advertised and every mutation-capable
 tool call is rejected before execution. Plan mode does not run shell commands,
@@ -41,4 +79,4 @@ overlaps are skipped with a warning.
 
 ## Fallback behavior
 
-If bubblewrap is missing or unusable, or if the selected workspace contains the user's home, interactive mode offers to continue without the sandbox or leave; one-shot mode prints a warning and continues unsandboxed. A shell command's complete requested arguments are shown in the timestamped start event before execution.
+If bubblewrap is missing or unusable, or if the selected workspace contains the user's home, interactive mode offers to continue without the sandbox or leave; one-shot mode prints a warning and continues unsandboxed. A shell command's complete requested arguments are normally shown in the timestamped start event before execution. After a prompt-injection warning, activity and trace arguments are redacted; the approval prompt shows the exact proposed call for review.

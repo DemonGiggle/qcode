@@ -153,7 +153,13 @@ func TestMainSearchesOlderWorkThenConsultsBeforeAnswer(t *testing.T) {
 			return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "consult", Name: "consult_agents", Arguments: json.RawMessage(`{"requests":[{"agent_id":"agent-1","prompt":"Explain your authentication findings"}]}`)}}}}, nil
 		}
 		if last.Role == "tool" && last.Name == "consult_agents" {
-			if err := json.Unmarshal([]byte(last.Content), &replies); err != nil {
+			var envelope struct {
+				Content string `json:"content"`
+			}
+			if err := json.Unmarshal([]byte(last.Content), &envelope); err != nil {
+				return llm.Response{}, err
+			}
+			if err := json.Unmarshal([]byte(envelope.Content), &replies); err != nil {
 				return llm.Response{}, err
 			}
 			return llm.Response{Message: llm.Message{Role: "assistant", Content: "Answer incorporating consultation"}}, nil

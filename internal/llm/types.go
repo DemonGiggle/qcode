@@ -21,9 +21,13 @@ type Image struct {
 }
 
 type Message struct {
-	Role     string `json:"role"`
-	Content  string `json:"content,omitempty"`
-	Thinking string `json:"thinking,omitempty"`
+	Role    string `json:"role"`
+	Content string `json:"content,omitempty"`
+	// Origin and Untrusted are local provenance metadata. Providers without a
+	// native trust field receive the same information in the content envelope.
+	Origin    string `json:"origin,omitempty"`
+	Untrusted bool   `json:"untrusted,omitempty"`
+	Thinking  string `json:"thinking,omitempty"`
 	// ReasoningDetails preserves provider-specific structured reasoning when a
 	// model requires it on a later tool-call turn. Thinking remains the
 	// normalized, displayable stream; this field is intentionally opaque.

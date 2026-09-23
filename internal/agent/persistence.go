@@ -182,7 +182,9 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 		}
 		a.messages = append(a.messages, m.Message)
 	}
-	a.endpoint, a.system, a.lastResponse = s.Endpoint, s.System, s.LastResponse
+	a.restored = true
+	a.endpoint, a.lastResponse = s.Endpoint, s.LastResponse
+	a.messages[0].Content = a.system // Never import a system prompt from a saved file.
 	if s.Thinking != "" {
 		if err := a.SetThinking(s.Thinking); err != nil {
 			return fmt.Errorf("incompatible thinking level: %w", err)

@@ -10,6 +10,7 @@ import (
 	"qcode/internal/learning"
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
+	"qcode/internal/trust"
 )
 
 // LearningApprover receives the entire proposed change set, including before
@@ -39,7 +40,7 @@ func (a *Agent) requestMessages(ctx context.Context) []llm.Message {
 			if err != nil {
 				fmt.Fprintln(a.out, "Learning warning:", err)
 			} else if len(items) > 0 {
-				extra = prompt.LearningReference + learning.Context(items)
+				extra = prompt.LearningReference + trust.Wrap("user_approved_learning", learning.Context(items))
 			}
 		}
 	}
@@ -48,6 +49,19 @@ func (a *Agent) requestMessages(ctx context.Context) []llm.Message {
 	}
 	a.learningContext = extra
 	messages := append([]llm.Message(nil), a.messages...)
+	if a.restored {
+		for i := 1; i < len(messages)-1; i++ {
+			if messages[i].Untrusted || messages[i].Content == "" {
+				continue
+			}
+			switch messages[i].Role {
+			case "user", "assistant", "tool":
+				messages[i].Content = trust.Wrap("restored_"+messages[i].Role, messages[i].Content)
+				messages[i].Origin = "restored_" + messages[i].Role
+				messages[i].Untrusted = true
+			}
+		}
+	}
 	a.stateMu.RLock()
 	contextSource := a.requestContext
 	a.stateMu.RUnlock()
@@ -55,8 +69,15 @@ func (a *Agent) requestMessages(ctx context.Context) []llm.Message {
 	if contextSource != nil {
 		dynamic = contextSource()
 	}
+	a.dynamicContext = dynamic
 	if len(messages) > 0 {
-		messages[0].Content += extra + dynamic + a.taskContext
+		messages[0].Content += extra
+		if dynamic != "" {
+			messages[0].Content += "\n\nAdditional context: " + trust.Wrap("request_context", dynamic)
+		}
+		if a.taskContext != "" {
+			messages[0].Content += "\n\nWork history: " + trust.Wrap("work_history", a.taskContext)
+		}
 	}
 	return messages
 }
