@@ -208,7 +208,7 @@ func TestExpiredQueuedConsultationNeverStartsWhenWorkerBecomesFree(t *testing.T)
 	deadline := time.Now().Add(20 * time.Millisecond)
 	// No consultation waiter runs here: expiry must also be enforced when the
 	// manager advances its queue, even if the waiting goroutine is delayed.
-	req, _, err := m.submitRequest(worker.ID, "expired", deadline)
+	req, _, err := m.submitRequest(worker.ID, "expired", deadline, false)
 	if err != nil {
 		t.Fatal(err)
 	}

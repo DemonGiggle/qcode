@@ -75,7 +75,7 @@ func (m *AgentManager) Consult(ctx context.Context, requests []ConsultationReque
 		replies[i].AgentID = request.AgentID
 		var err error
 		if err = waitCtx.Err(); err == nil {
-			pending[i], _, err = m.submitRequest(request.AgentID, request.Prompt, deadline)
+			pending[i], _, err = m.submitRequest(request.AgentID, request.Prompt, deadline, false)
 		}
 		if err != nil {
 			replies[i].Status, replies[i].Error = requestStatus(err), err.Error()

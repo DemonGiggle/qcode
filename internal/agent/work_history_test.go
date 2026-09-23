@@ -188,7 +188,7 @@ func TestResumeInterruptsConsultationsWithoutReplayingThem(t *testing.T) {
 	if err := m.Start(worker.ID, "block"); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := m.submitRequest(worker.ID, "queued question", time.Now().Add(time.Minute))
+	_, _, err := m.submitRequest(worker.ID, "queued question", time.Now().Add(time.Minute), false)
 	if err != nil {
 		t.Fatal(err)
 	}

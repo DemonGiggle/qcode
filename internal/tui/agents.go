@@ -364,7 +364,7 @@ func (u *UI) replayConsultationEvents() {
 func (u *UI) handleAgentEvent(event session.Event) {
 	defer u.requestSessionSave()
 	u.signalUIEvent()
-	if event.Agent.Status == session.StatusCompleted {
+	if event.Agent.Status == session.StatusCompleted && event.Agent.CurrentTask != "/compact" {
 		u.queueModeDecision(event.Agent.ID)
 	}
 	u.screenMu.Lock()
@@ -388,13 +388,19 @@ func (u *UI) handleAgentEvent(event session.Event) {
 	if event.Agent.Status != session.StatusRunning && event.Agent.Status != session.StatusWaitingForApproval {
 		if view != nil {
 			message := string(event.Agent.Status)
-			if event.Agent.Status == session.StatusCompleted {
+			if event.Agent.CurrentTask == "/compact" && event.Agent.Status == session.StatusCompleted {
+				message = event.Agent.LastOutcome
+			} else if event.Agent.Status == session.StatusCompleted {
 				message = formatCompletedMessage(event.Duration, time.Now())
 			} else if event.Agent.Status == session.StatusCancelled {
 				message = "Cancelled"
 			}
 			if event.Agent.Error != "" {
-				message = formatAgentError(sanitizeDiffLine(event.Agent.Error, "<ESC>"))
+				if event.Agent.CurrentTask == "/compact" {
+					message = "Conversation compaction failed: " + sanitizeDiffLine(event.Agent.Error, "<ESC>")
+				} else {
+					message = formatAgentError(sanitizeDiffLine(event.Agent.Error, "<ESC>"))
+				}
 			}
 			fmt.Fprintf(view.display, "\n%s%s%s\n\n", dim, message, reset)
 		}
