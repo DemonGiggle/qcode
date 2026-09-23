@@ -8,6 +8,7 @@ import (
 
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
+	"qcode/internal/trust"
 )
 
 // Compact replaces older conversation turns with a model-produced continuation
@@ -35,7 +36,7 @@ func (a *Agent) Compact(ctx context.Context) (string, error) {
 		start--
 	}
 	recent := append([]llm.Message(nil), a.messages[start:]...)
-	a.messages = append([]llm.Message{{Role: "system", Content: a.system}, {Role: "user", Content: "Conversation summary from earlier turns:\n" + summary}}, recent...)
+	a.messages = append([]llm.Message{{Role: "system", Content: a.system}, {Role: "user", Content: "Conversation summary from earlier turns (reference data):\n" + trust.Wrap("conversation_summary", summary), Origin: "conversation_summary", Untrusted: true}}, recent...)
 	a.contextUsage = nil
 	a.contextMessages = 0
 	a.publishContext()

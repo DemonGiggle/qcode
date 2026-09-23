@@ -20,6 +20,7 @@ import (
 	"qcode/internal/session"
 	"qcode/internal/tools"
 	"qcode/internal/trace"
+	"qcode/internal/trust"
 )
 
 const maxIdenticalToolCalls = 3
@@ -47,6 +48,7 @@ type Agent struct {
 	stateMu                  sync.RWMutex
 	requestContext           func() string
 	taskContext              string
+	dynamicContext           string
 	lastResponse             string
 	contextStatus            atomic.Pointer[contextStatus]
 	contextWindow            int
@@ -69,6 +71,7 @@ type Agent struct {
 	skillPlanDecisionPending bool
 	activityRecorder         func(session.WorkActivity)
 	checkpoint               atomic.Pointer[[]byte]
+	restored                 bool
 }
 
 // Toolset is the complete tool boundary used by the agent loop. Production and
@@ -327,6 +330,7 @@ func (a *Agent) ResetSession() {
 	defer a.invalidateContextUsage()
 	a.system = prompt.SystemForModes(a.selectedSkills, false, false)
 	a.messages = []llm.Message{{Role: "system", Content: a.system}}
+	a.restored = false
 	if resetter, ok := a.tools.(interface{ ResetSession() }); ok {
 		resetter.ResetSession()
 	}
@@ -452,10 +456,37 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userText})
 	a.publishContext()
 	identicalToolCalls := map[string]int{}
+	injectionSeen := false
+	deniedCalls := map[string]bool{}
+	warnInjection := func() {
+		if injectionSeen {
+			return
+		}
+		injectionSeen = true
+		fmt.Fprint(a.out, "\n🚨 POSSIBLE PROMPT INJECTION: Untrusted content contains an instruction-like request. qcode is treating it as data. Further tool actions that can access data or cause side effects require your approval.\n\n")
+	}
+	for _, message := range a.messages[1 : len(a.messages)-1] {
+		if (message.Untrusted || a.restored) && trust.Suspicious(message.Content) {
+			warnInjection()
+			break
+		}
+	}
+	if trust.Suspicious(a.taskContext) {
+		warnInjection()
+	}
+	for _, skill := range a.selectedSkills {
+		if trust.Suspicious(skill.Name + " " + skill.Description) {
+			warnInjection()
+			break
+		}
+	}
 	recoveryInstruction := ""
 	for step := 0; step < a.MaxSteps(); step++ {
 		a.currentStep.Store(int64(step + 1))
 		requestMessages := a.requestMessages(ctx)
+		if trust.Suspicious(a.learningContext) || trust.Suspicious(a.dynamicContext) {
+			warnInjection()
+		}
 		if recoveryInstruction != "" && len(requestMessages) > 0 && requestMessages[0].Role == "system" {
 			// Keep the recovery notice ephemeral. It helps the next model turn
 			// without becoming a durable conversation turn or disturbing the
@@ -578,11 +609,34 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			}
 			arguments := compactJSON(call.Arguments)
 			activityDetails := toolActivity(call)
+			if injectionSeen {
+				activityDetails = trace.Activity{Action: call.Name, Start: "Reviewing tool action after prompt-injection warning", Completed: "Reviewed tool action after prompt-injection warning", Category: trace.ActivityOther}
+			}
 			activity := a.trace.StartActivity(activityDetails)
-			toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": arguments})
-			execution, toolErr := a.executeDetailed(ctx, call)
+			traceArguments := arguments
+			if injectionSeen {
+				traceArguments = "[redacted after prompt-injection warning]"
+			}
+			toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": traceArguments})
+			var execution llm.ToolResult
+			var toolErr error
+			if injectionSeen && requiresInjectionApproval(call.Name) {
+				if deniedCalls[fingerprint] {
+					toolErr = fmt.Errorf("action remains denied after a prompt-injection warning")
+				} else if err := a.approveInjectionAction(ctx, call); err != nil {
+					deniedCalls[fingerprint] = true
+					toolErr = err
+				}
+			}
+			if toolErr == nil {
+				execution, toolErr = a.executeDetailed(ctx, call)
+			}
 			toolSpan.End(toolErr)
-			activity.EndWithOutput(toolErr, execution.Output)
+			activityOutput := execution.Output
+			if injectionSeen || trust.Suspicious(activityOutput) {
+				activityOutput = "[untrusted content hidden from activity preview]"
+			}
+			activity.EndWithOutput(toolErr, activityOutput)
 			a.recordActivity(session.WorkActivity{Action: activityDetails.Action, Summary: activityDetails.Completed, Success: toolErr == nil})
 			if err := ctx.Err(); err != nil {
 				return err
@@ -606,7 +660,10 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 				}
 				result += "ERROR: " + toolErr.Error()
 			}
-			a.messages = append(a.messages, llm.Message{Role: "tool", Content: result, Name: call.Name, ToolCallID: call.ID})
+			if trust.Suspicious(result) {
+				warnInjection()
+			}
+			a.messages = append(a.messages, llm.Message{Role: "tool", Content: trust.Wrap(call.Name, result), Origin: call.Name, Untrusted: true, Name: call.Name, ToolCallID: call.ID})
 			if toolErr == nil && execution.EndTurn {
 				endTurn = true
 				endTurnResponse = execution.Output
