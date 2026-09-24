@@ -39,6 +39,7 @@ type options struct {
 	provider             string
 	model                string
 	thinking             string
+	interactive          bool
 	baseURL              string
 	apiKey               string
 	root                 string
@@ -174,6 +175,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		stdinPiped = stat.Mode()&os.ModeCharDevice == 0
 	}
 	interactive := promptText == "" && !stdinPiped
+	questionsAvailable := interactive && !opts.jsonEvents && term.IsTerminal(int(stdin.Fd())) && term.IsTerminal(int(stdout.Fd()))
 	protectedPaths := append([]string(nil), configPaths...)
 	var sandboxCommandPaths []string
 	if opts.sandbox && !opts.demo {
@@ -339,6 +341,10 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			logger.SetColor(tui.ColorEnabled(stdout))
 			logger.SetWidth(tui.OutputWidth(stdout))
 			runner := agent.NewWithSystem(currentProvider, model, wrappedTools, logger, response, opts.maxSteps, system)
+			runner.SetInteractiveAvailable(questionsAvailable)
+			if saved == nil {
+				runner.SetInteractiveMode(opts.interactive)
+			}
 			if saved == nil && len(autoloadSkills) > 0 {
 				currentSelection.Set(skillNames(autoloadSkills))
 				runner.SetSkills(autoloadSkills)
@@ -427,6 +433,7 @@ func runOneShot(ctx context.Context, promptText string, provider llm.Provider, m
 		logger := newTraceLogger(stderr, jsonEvents)
 		responseWriter := newResponseWriter(stdout)
 		runner := agent.NewWithSystem(provider, model, toolset, logger, responseWriter, maxSteps, system)
+		runner.SetInteractiveAvailable(false)
 		if len(autoloadSkills) > 0 {
 			runner.SetSkills(autoloadSkills)
 		}
@@ -481,6 +488,9 @@ func autoloadSkillData(root string, configuredPaths, autoloadPaths []string) ([]
 }
 
 func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
+	if cfg.Interactive != nil {
+		opts.interactive = *cfg.Interactive
+	}
 	if !setFlags["agent-timeout"] && cfg.AgentTimeout != nil {
 		opts.agentTimeout, _ = time.ParseDuration(*cfg.AgentTimeout) // Validated by config.Load.
 	}

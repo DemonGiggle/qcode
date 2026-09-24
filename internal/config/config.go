@@ -42,6 +42,7 @@ type Config struct {
 	APIKey               string    `toml:"api_key"`
 	Model                string    `toml:"model"`
 	Thinking             string    `toml:"thinking"`
+	Interactive          *bool     `toml:"interactive"`
 	ContextWindow        *int      `toml:"context_window"`
 	AutoCompactThreshold *int      `toml:"auto_compact_threshold"`
 	DisableAutoCompact   *bool     `toml:"disable_auto_compact"`
@@ -189,6 +190,9 @@ func merge(dst *Config, incoming Config) {
 	}
 	if incoming.Thinking != "" {
 		dst.Thinking = incoming.Thinking
+	}
+	if incoming.Interactive != nil {
+		dst.Interactive = incoming.Interactive
 	}
 	if incoming.ContextWindow != nil {
 		dst.ContextWindow = incoming.ContextWindow

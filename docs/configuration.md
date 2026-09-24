@@ -14,6 +14,7 @@ sandbox = true
 sandbox_command_paths = ["~/.local/bin", "~/go/bin"]
 auto_compact_threshold = 80
 disable_auto_compact = false
+interactive = false
 
 [skills]
 paths = ["/opt/qcode/team-skills", ".team/skills"]
@@ -55,6 +56,12 @@ descriptions enter the initial prompt; full `SKILL.md` files are loaded on
 demand. `/skill` can change the selection for the active agent tab. Resumed
 sessions keep their saved skill selection. A missing directory contributes no
 skills; a discovery error produces a startup warning.
+
+`interactive` defaults to `false`. When enabled in a terminal session, normal
+mode may ask up to three distinct, focused questions per submitted prompt.
+`/interactive on|off` changes the active agent's setting for the session;
+restored agents keep their saved setting. One-shot, piped, non-TTY, and
+`--json-events` runs never ask blocking questions.
 
 The qcode repository also contains optional official release skills in
 [`docs/skills/`](skills/). Browse that collection and decide whether any of

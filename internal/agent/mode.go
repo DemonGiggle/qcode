@@ -75,6 +75,40 @@ func renderPlan(p Plan) string {
 // PlanMode reports whether this agent is currently read-only.
 func (a *Agent) PlanMode() bool { return a.planMode.Load() }
 
+// InteractiveMode reports whether normal-mode questions are enabled for this
+// agent. The question tool also requires an interactive host.
+func (a *Agent) InteractiveMode() bool { return a.interactiveMode.Load() }
+
+func (a *Agent) InteractiveAvailable() bool { return a.interactiveAvailable.Load() }
+
+func (a *Agent) SetInteractiveMode(enabled bool) {
+	a.interactiveMode.Store(enabled)
+	a.updateModeSystem()
+}
+
+func (a *Agent) SetInteractiveAvailable(available bool) {
+	a.interactiveAvailable.Store(available)
+	a.nonInteractiveNotice.Store(!available)
+	a.updateModeSystem()
+}
+
+func (a *Agent) modeSystem(skills []prompt.SkillSummary) string {
+	base := prompt.SystemForInteractive(skills, a.PlanMode(), a.SkillPlanMode(), a.InteractiveMode(), a.interactiveAvailable.Load())
+	if !a.PlanMode() && !a.SkillPlanMode() && a.nonInteractiveNotice.Load() {
+		base += prompt.NonInteractiveSuffix
+	}
+	return base
+}
+
+func (a *Agent) updateModeSystem() {
+	a.system = a.modeSystem(a.selectedSkills)
+	if len(a.messages) > 0 && a.messages[0].Role == "system" {
+		a.messages[0].Content = a.system
+	}
+	a.invalidateContextUsage()
+	a.publishCheckpoint()
+}
+
 // SetPlanMode changes the agent's default mode for future requests. The TUI
 // only exposes this while the agent is idle, so an active run cannot change
 // authority midway through a request.
@@ -91,12 +125,7 @@ func (a *Agent) SetPlanMode(enabled bool) {
 		a.planDecisionPending = false
 		a.stateMu.Unlock()
 	}
-	a.system = prompt.SystemForModes(a.selectedSkills, enabled, a.SkillPlanMode())
-	if len(a.messages) > 0 && a.messages[0].Role == "system" {
-		a.messages[0].Content = a.system
-	}
-	a.invalidateContextUsage()
-	a.publishCheckpoint()
+	a.updateModeSystem()
 }
 
 // SkillPlanMode reports whether this agent is designing a qcode skill in the
@@ -117,12 +146,7 @@ func (a *Agent) SetSkillPlanMode(enabled bool) {
 		a.skillPlanDecisionPending = false
 		a.stateMu.Unlock()
 	}
-	a.system = prompt.SystemForModes(a.selectedSkills, a.PlanMode(), enabled)
-	if len(a.messages) > 0 && a.messages[0].Role == "system" {
-		a.messages[0].Content = a.system
-	}
-	a.invalidateContextUsage()
-	a.publishCheckpoint()
+	a.updateModeSystem()
 }
 
 // LatestSkillDraft returns a copy of the most recently submitted draft.
@@ -223,7 +247,11 @@ func (a *Agent) TakePlanDecision() (string, bool) {
 
 func (a *Agent) enabledSchemas() []llm.Tool {
 	if !a.PlanMode() && !a.SkillPlanMode() {
-		return a.tools.EnabledSchemas()
+		base := a.tools.EnabledSchemas()
+		if a.InteractiveMode() && a.interactiveAvailable.Load() && a.questionsAsked < 3 {
+			return append(base, askQuestionsSchema(1))
+		}
+		return base
 	}
 	filtered := make([]llm.Tool, 0)
 	for _, tool := range a.tools.EnabledSchemas() {
@@ -240,6 +268,12 @@ func (a *Agent) enabledSchemas() []llm.Tool {
 
 func (a *Agent) executeDetailed(ctx context.Context, call llm.ToolCall) (llm.ToolResult, error) {
 	if !a.PlanMode() && !a.SkillPlanMode() {
+		if call.Name == "ask_questions" {
+			if !a.InteractiveMode() || !a.interactiveAvailable.Load() {
+				return llm.ToolResult{}, fmt.Errorf("ask_questions is unavailable; enable /interactive in a terminal session")
+			}
+			return a.askQuestions(ctx, call.Arguments)
+		}
 		return a.tools.ExecuteDetailed(ctx, call)
 	}
 	return (&modeToolset{base: a.tools, owner: a}).ExecuteDetailed(ctx, call)
@@ -282,7 +316,13 @@ func proposeSkillSchema() llm.Tool {
 	}}
 }
 
-func askQuestionsSchema() llm.Tool {
+func askQuestionsSchema(limit ...int) llm.Tool {
+	maxItems := 8
+	description := prompt.AskQuestionsTool
+	if len(limit) > 0 {
+		maxItems = limit[0]
+		description = prompt.InteractiveQuestionsTool
+	}
 	question := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -298,10 +338,10 @@ func askQuestionsSchema() llm.Tool {
 		},
 		"required": []string{"question"},
 	}
-	return llm.Tool{Name: "ask_questions", Description: prompt.AskQuestionsTool, Parameters: map[string]any{
+	return llm.Tool{Name: "ask_questions", Description: description, Parameters: map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
-		"properties":           map[string]any{"questions": map[string]any{"type": "array", "minItems": 1, "maxItems": 8, "items": question}},
+		"properties":           map[string]any{"questions": map[string]any{"type": "array", "minItems": 1, "maxItems": maxItems, "items": question}},
 		"required":             []string{"questions"},
 	}}
 }
@@ -318,6 +358,19 @@ func (a *Agent) askQuestions(ctx context.Context, arguments json.RawMessage) (ll
 	}
 	if len(request.Questions) == 0 || len(request.Questions) > 8 {
 		return llm.ToolResult{}, fmt.Errorf("ask_questions requires 1-8 questions")
+	}
+	normal := !a.PlanMode() && !a.SkillPlanMode()
+	if normal {
+		if len(request.Questions) != 1 {
+			return llm.ToolResult{}, fmt.Errorf("interactive mode requires exactly one question")
+		}
+		if a.questionsAsked >= 3 {
+			return llm.ToolResult{}, fmt.Errorf("interactive question limit reached for this request")
+		}
+		key := strings.ToLower(strings.Join(strings.Fields(request.Questions[0].Text), " "))
+		if a.askedQuestions[key] {
+			return llm.ToolResult{}, fmt.Errorf("this question was already asked in this request")
+		}
 	}
 	questions := make([]Question, len(request.Questions))
 	for i, item := range request.Questions {
@@ -349,6 +402,14 @@ func (a *Agent) askQuestions(ctx context.Context, arguments json.RawMessage) (ll
 	}
 	if len(answers) != len(questions) {
 		return llm.ToolResult{}, fmt.Errorf("questionnaire returned %d answers for %d questions", len(answers), len(questions))
+	}
+	if normal {
+		a.questionsAsked++
+		if a.askedQuestions == nil {
+			a.askedQuestions = make(map[string]bool)
+		}
+		a.askedQuestions[strings.ToLower(strings.Join(strings.Fields(questions[0].Text), " "))] = true
+		return llm.ToolResult{Output: "The user answered the question. Continue with the user message that follows.", UserAnswer: fmt.Sprintf("In response to %q: %s", questions[0].Text, answers[0])}, nil
 	}
 	data, err := json.Marshal(struct {
 		Answers []string `json:"answers"`

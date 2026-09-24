@@ -60,6 +60,7 @@ model = ""
 max_steps = 48
 sandbox = true
 agent_timeout = "90s"
+interactive = true
 [learning]
 context_budget = 0
 [web_search]
@@ -80,6 +81,7 @@ max_steps = 16
 sandbox = false
 danger_skip_tls_verify = true
 agent_timeout = "5m"
+interactive = false
 [learning]
 context_budget = 1200
 [web_search]
@@ -102,6 +104,9 @@ autoload_paths = ["low-auto", " /opt/auto-skills ", ""]
 	}
 	if cfg.ContextWindow == nil || *cfg.ContextWindow != 8192 || cfg.AutoCompactThreshold == nil || *cfg.AutoCompactThreshold != 70 || cfg.DisableAutoCompact == nil || *cfg.DisableAutoCompact || cfg.MaxSteps == nil || *cfg.MaxSteps != 48 || cfg.Sandbox == nil || !*cfg.Sandbox || cfg.DangerSkipTLSVerify == nil || !*cfg.DangerSkipTLSVerify || cfg.AgentTimeout == nil || *cfg.AgentTimeout != "90s" {
 		t.Fatalf("scalar settings = %+v", cfg)
+	}
+	if cfg.Interactive == nil || !*cfg.Interactive {
+		t.Fatalf("interactive = %v, want true", cfg.Interactive)
 	}
 	if cfg.Learning.ContextBudget == nil || *cfg.Learning.ContextBudget != 0 || cfg.WebSearch.Backend != "brave" {
 		t.Fatalf("nested settings = %+v", cfg)

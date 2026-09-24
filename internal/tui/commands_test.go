@@ -20,6 +20,32 @@ type resettableRunner struct {
 	reset bool
 }
 
+type interactiveTestRunner struct {
+	enabled bool
+}
+
+func (*interactiveTestRunner) Run(context.Context, string) error { return nil }
+func (r *interactiveTestRunner) InteractiveMode() bool           { return r.enabled }
+func (*interactiveTestRunner) InteractiveAvailable() bool        { return true }
+func (r *interactiveTestRunner) SetInteractiveMode(on bool)      { r.enabled = on }
+
+func TestInteractiveCommandAndStatus(t *testing.T) {
+	var output bytes.Buffer
+	runner := &interactiveTestRunner{}
+	u := &UI{runner: runner, display: newHistoryWriter(&output)}
+	u.handleInteractiveCommand([]string{"/interactive", "on"})
+	if !runner.enabled || u.modeLabel() != "INTERACTIVE" {
+		t.Fatal("interactive toggle did not update active mode")
+	}
+	if got := compactStatusBar([]string{"unknown", "I:0 O:0", "", u.modeLabel()}, false, false, false); !strings.Contains(got, "[MODE INT]") {
+		t.Fatalf("compact status omitted mode: %q", got)
+	}
+	u.handleInteractiveCommand([]string{"/interactive", "off"})
+	if runner.enabled || u.modeLabel() != "" {
+		t.Fatal("interactive mode remained enabled")
+	}
+}
+
 func (*resettableRunner) Run(context.Context, string) error { return nil }
 func (r *resettableRunner) ResetSession()                   { r.reset = true }
 
@@ -73,7 +99,7 @@ func TestMatchingSlashCommands(t *testing.T) {
 		want []string
 	}{
 		{line: "", want: nil},
-		{line: "/", want: []string{"/agent", "/bash", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/history", "/learn", "/maxsteps", "/model", "/new", "/plan", "/resume", "/remote", "/skill", "/skillplan", "/quit", "/tool", "/verbose"}},
+		{line: "/", want: []string{"/agent", "/bash", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/history", "/interactive", "/learn", "/maxsteps", "/model", "/new", "/plan", "/resume", "/remote", "/skill", "/skillplan", "/quit", "/tool", "/verbose"}},
 		{line: "/d", want: []string{"/diff"}},
 		{line: "/h", want: []string{"/help", "/history"}},
 		{line: "/m", want: []string{"/maxsteps", "/model"}},

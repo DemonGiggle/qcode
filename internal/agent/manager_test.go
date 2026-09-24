@@ -595,6 +595,7 @@ func TestMainCreatedAgentInheritsCapabilities(t *testing.T) {
 	manager := newTestManager(t, 2)
 	main, _ := manager.Agent("main")
 	main.SetSkills([]prompt.SkillSummary{{Name: "review", Description: "Review code"}})
+	main.SetInteractiveMode(true)
 	main.SetMaxSteps(7)
 	mainTools := main.tools.(*managedToolset).base.(*managerToolset)
 	mainTools.state = "inherited"
@@ -612,6 +613,9 @@ func TestMainCreatedAgentInheritsCapabilities(t *testing.T) {
 	}
 	if skills := child.SelectedSkills(); len(skills) != 1 || skills[0].Name != "review" {
 		t.Fatalf("child skills = %+v", skills)
+	}
+	if !child.InteractiveMode() {
+		t.Fatal("child did not inherit interactive setting")
 	}
 }
 

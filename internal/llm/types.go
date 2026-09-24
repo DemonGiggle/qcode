@@ -61,7 +61,10 @@ type Response struct {
 
 // ToolResult is the normalized output returned by a tool implementation.
 type ToolResult struct {
-	Output       string
+	Output string
+	// UserAnswer is direct input collected by an interactive tool. The agent
+	// records it as a user message after satisfying the tool-call protocol.
+	UserAnswer   string
 	Diff         string
 	Images       []Image
 	ChangedFiles []string

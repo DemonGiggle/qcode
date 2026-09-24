@@ -33,6 +33,126 @@ type modeSkillPlanProvider struct {
 	tools []llm.Tool
 }
 
+type interactiveQuestionProvider struct {
+	calls    int
+	messages []llm.Message
+}
+
+type batchQuestionProvider struct {
+	calls    int
+	messages []llm.Message
+}
+
+func (*batchQuestionProvider) Name() string { return "batch-question-test" }
+func (p *batchQuestionProvider) Complete(_ context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	p.calls++
+	p.messages = request.Messages
+	if p.calls == 1 {
+		return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "ask-1", Name: "ask_questions", Arguments: json.RawMessage(`{"questions":[{"question":"Which flow?"}]}`)},
+			{ID: "read-1", Name: "read", Arguments: json.RawMessage(`{"path":"unrelated.go"}`)},
+		}}}, nil
+	}
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
+}
+
+func (*interactiveQuestionProvider) Name() string { return "interactive-question-test" }
+func (p *interactiveQuestionProvider) Complete(_ context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	p.calls++
+	p.messages = request.Messages
+	if p.calls == 1 {
+		args := json.RawMessage(`{"questions":[{"question":"Which flow?","options":["Login","OAuth"]}]}`)
+		return llm.Response{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "ask-1", Name: "ask_questions", Arguments: args}}}}, nil
+	}
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "Continue with OAuth"}}, nil
+}
+
+func TestInteractiveQuestionsGateBudgetAndUserAnswer(t *testing.T) {
+	provider := &interactiveQuestionProvider{}
+	a := New(provider, "model", &modeTestToolset{}, trace.New(io.Discard, false), io.Discard, 5)
+	call := llm.ToolCall{Name: "ask_questions", Arguments: json.RawMessage(`{"questions":[{"question":"Which flow?"}]}`)}
+	if _, err := a.executeDetailed(context.Background(), call); err == nil {
+		t.Fatal("question bypassed disabled toggle")
+	}
+	a.SetInteractiveAvailable(true)
+	a.SetInteractiveMode(true)
+	if !a.ToolEnabled("ask_questions") || !hasTool(a.enabledSchemas(), "ask_questions") {
+		t.Fatal("enabled interactive question tool is hidden")
+	}
+	a.SetQuestioner(func(_ context.Context, questions []Question) ([]string, error) {
+		return []string{"OAuth"}, nil
+	})
+	if err := a.Run(context.Background(), "fix auth"); err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 2 || len(provider.messages) < 4 || provider.messages[len(provider.messages)-1].Role != "user" || !strings.Contains(provider.messages[len(provider.messages)-1].Content, "OAuth") {
+		t.Fatalf("answer did not enter user context: calls=%d messages=%+v", provider.calls, provider.messages)
+	}
+	if _, err := a.executeDetailed(context.Background(), call); err == nil || !strings.Contains(err.Error(), "already asked") {
+		t.Fatalf("duplicate question error = %v", err)
+	}
+	for _, text := range []string{"Which service?", "Which file?"} {
+		args, _ := json.Marshal(map[string]any{"questions": []map[string]any{{"question": text}}})
+		if _, err := a.executeDetailed(context.Background(), llm.ToolCall{Name: "ask_questions", Arguments: args}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if hasTool(a.enabledSchemas(), "ask_questions") {
+		t.Fatal("question tool remained visible after budget exhausted")
+	}
+	if _, err := a.executeDetailed(context.Background(), llm.ToolCall{Name: "ask_questions", Arguments: json.RawMessage(`{"questions":[{"question":"One more?"}]}`)}); err == nil || !strings.Contains(err.Error(), "limit") {
+		t.Fatalf("budget boundary error = %v", err)
+	}
+	a.SetInteractiveMode(false)
+	if hasTool(a.enabledSchemas(), "ask_questions") {
+		t.Fatal("disabled question tool remained visible")
+	}
+}
+
+func TestInteractiveQuestionsUnavailableWithoutTerminal(t *testing.T) {
+	a := New(&modePlanProvider{}, "model", &modeTestToolset{}, trace.New(io.Discard, false), io.Discard, 2)
+	a.SetInteractiveAvailable(false)
+	a.SetInteractiveMode(true)
+	if hasTool(a.enabledSchemas(), "ask_questions") || !strings.Contains(a.system, "Interactive questions are unavailable") {
+		t.Fatal("non-interactive agent offered questions")
+	}
+	if _, err := a.executeDetailed(context.Background(), llm.ToolCall{Name: "ask_questions", Arguments: json.RawMessage(`{"questions":[{"question":"Where?"}]}`)}); err == nil {
+		t.Fatal("non-interactive question call was accepted")
+	}
+	a.SetPlanMode(true)
+	if !hasTool(a.enabledSchemas(), "ask_questions") {
+		t.Fatal("Plan mode lost its existing question tool")
+	}
+}
+
+func TestInteractiveAnswerFollowsAllToolResults(t *testing.T) {
+	provider := &batchQuestionProvider{}
+	tools := &modeTestToolset{}
+	a := New(provider, "model", tools, trace.New(io.Discard, false), io.Discard, 3)
+	a.SetInteractiveAvailable(true)
+	a.SetInteractiveMode(true)
+	a.SetQuestioner(func(context.Context, []Question) ([]string, error) { return []string{"OAuth"}, nil })
+	if err := a.Run(context.Background(), "investigate auth"); err != nil {
+		t.Fatal(err)
+	}
+	if tools.called != "" {
+		t.Fatal("workspace tool ran before the user answer was processed")
+	}
+	messages := provider.messages
+	if len(messages) < 5 || messages[len(messages)-3].Role != "tool" || messages[len(messages)-2].Role != "tool" || messages[len(messages)-1].Role != "user" {
+		t.Fatalf("assistant tool-call pairing was broken: %+v", messages)
+	}
+}
+
+func hasTool(schemas []llm.Tool, name string) bool {
+	for _, schema := range schemas {
+		if schema.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func (*modeSkillPlanProvider) Name() string { return "mode-skill-plan-test" }
 func (p *modeSkillPlanProvider) Complete(_ context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
 	p.calls++

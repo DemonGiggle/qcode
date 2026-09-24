@@ -678,8 +678,9 @@ func (u *UI) handlePendingTabSwitch() {
 	u.switchRelative(direction)
 	u.screenMu.Lock()
 	draft := u.drafts[u.activeAgent]
+	activeID := u.activeAgent
 	u.screenMu.Unlock()
-	if draft != "" {
+	if draft != "" && !u.hasPendingQuestion(activeID) {
 		u.input.inject([]byte(draft))
 	}
 }
