@@ -125,6 +125,35 @@ func TestInteractiveQuestionsUnavailableWithoutTerminal(t *testing.T) {
 	}
 }
 
+func TestInteractiveQuestionsAcceptOptionObjects(t *testing.T) {
+	a := New(&modePlanProvider{}, "model", &modeTestToolset{}, trace.New(io.Discard, false), io.Discard, 2)
+	a.SetInteractiveAvailable(true)
+	a.SetInteractiveMode(true)
+	a.SetQuestioner(func(_ context.Context, questions []Question) ([]string, error) {
+		if len(questions) != 1 || len(questions[0].Options) != 2 ||
+			questions[0].Options[0] != "Colored lines are missed" || questions[0].Options[1] != "Cursor codes appear" ||
+			questions[0].OptionDescriptions[0] != "The gag count stays zero" {
+			t.Fatalf("options were not normalized to labels: %+v", questions)
+		}
+		return []string{questions[0].Options[0]}, nil
+	})
+	call := llm.ToolCall{Name: "ask_questions", Arguments: json.RawMessage(`{"questions":[{"question":"What fails?","options":[{"label":"Colored lines are missed","description":"The gag count stays zero"},"Cursor codes appear"]}]}`)}
+	result, err := a.executeDetailed(context.Background(), call)
+	if err != nil || !strings.Contains(result.UserAnswer, "Colored lines are missed") {
+		t.Fatalf("object options were rejected: result=%+v err=%v", result, err)
+	}
+}
+
+func TestInteractiveQuestionsRejectOptionWithoutLabel(t *testing.T) {
+	a := New(&modePlanProvider{}, "model", &modeTestToolset{}, trace.New(io.Discard, false), io.Discard, 2)
+	a.SetInteractiveAvailable(true)
+	a.SetInteractiveMode(true)
+	call := llm.ToolCall{Name: "ask_questions", Arguments: json.RawMessage(`{"questions":[{"question":"What fails?","options":[{"description":"No label"},"Other"]}]}`)}
+	if _, err := a.executeDetailed(context.Background(), call); err == nil || !strings.Contains(err.Error(), "empty option") {
+		t.Fatalf("missing option label error = %v", err)
+	}
+}
+
 func TestInteractiveAnswerFollowsAllToolResults(t *testing.T) {
 	provider := &batchQuestionProvider{}
 	tools := &modeTestToolset{}

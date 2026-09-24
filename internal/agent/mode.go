@@ -349,8 +349,8 @@ func askQuestionsSchema(limit ...int) llm.Tool {
 func (a *Agent) askQuestions(ctx context.Context, arguments json.RawMessage) (llm.ToolResult, error) {
 	var request struct {
 		Questions []struct {
-			Text    string   `json:"question"`
-			Options []string `json:"options,omitempty"`
+			Text    string            `json:"question"`
+			Options []json.RawMessage `json:"options,omitempty"`
 		} `json:"questions"`
 	}
 	if err := json.Unmarshal(arguments, &request); err != nil {
@@ -378,12 +378,16 @@ func (a *Agent) askQuestions(ctx context.Context, arguments json.RawMessage) (ll
 		if questions[i].Text == "" {
 			return llm.ToolResult{}, fmt.Errorf("question %d must not be empty", i+1)
 		}
-		for _, option := range item.Options {
-			option = strings.TrimSpace(option)
+		for _, rawOption := range item.Options {
+			option, description, err := parseQuestionOption(rawOption)
+			if err != nil {
+				return llm.ToolResult{}, fmt.Errorf("question %d: %w", i+1, err)
+			}
 			if option == "" {
 				return llm.ToolResult{}, fmt.Errorf("question %d has an empty option", i+1)
 			}
 			questions[i].Options = append(questions[i].Options, option)
+			questions[i].OptionDescriptions = append(questions[i].OptionDescriptions, description)
 		}
 		if len(questions[i].Options) == 1 || len(questions[i].Options) > 6 {
 			return llm.ToolResult{}, fmt.Errorf("question %d must have either no options or 2-6 options", i+1)
@@ -418,6 +422,23 @@ func (a *Agent) askQuestions(ctx context.Context, arguments json.RawMessage) (ll
 		return llm.ToolResult{}, err
 	}
 	return llm.ToolResult{Output: string(data)}, nil
+}
+
+// Some models return choice objects even when the schema requests strings.
+// The label remains the answer; the description is shown beside it.
+func parseQuestionOption(raw json.RawMessage) (string, string, error) {
+	var label string
+	if err := json.Unmarshal(raw, &label); err == nil {
+		return strings.TrimSpace(label), "", nil
+	}
+	var option struct {
+		Label       string `json:"label"`
+		Description string `json:"description,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &option); err != nil {
+		return "", "", fmt.Errorf("option must be a string or an object with a label: %w", err)
+	}
+	return strings.TrimSpace(option.Label), strings.TrimSpace(option.Description), nil
 }
 
 func planAllowedTool(name string) bool {

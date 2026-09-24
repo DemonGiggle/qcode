@@ -98,3 +98,14 @@ func TestFormatQuestion(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatQuestionWithOptionDescription(t *testing.T) {
+	item := question.Question{Text: "What fails?", Options: []string{"Colored lines are missed", "Cursor codes appear"}, OptionDescriptions: []string{"The gag count stays zero", ""}, AllowCustom: true}
+	got := formatQuestion(item, 0, 1, 80)
+	if !strings.Contains(got, "Colored lines are missed — The gag count stays zero") {
+		t.Fatalf("option description missing: %q", got)
+	}
+	if answer, valid := normalizeQuestionAnswer("1", item.Options); !valid || answer != "Colored lines are missed" {
+		t.Fatalf("selected answer = %q, %v", answer, valid)
+	}
+}
