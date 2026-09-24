@@ -105,6 +105,32 @@ func TestDiscoverIncludesCustomSkillsAndKeepsMissingLocations(t *testing.T) {
 	}
 }
 
+func TestSkillsInPathsUsesWinningDefinitionAndResolvedRoots(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	writeSkill(t, root, ".qcode/skills/review/SKILL.md", "# Built-in review")
+	writeSkill(t, root, "shared/review/SKILL.md", "# Shared review")
+	writeSkill(t, root, "shared/check/SKILL.md", "# Shared check")
+	writeSkill(t, root, "override/review/SKILL.md", "# Override review")
+	writeSkill(t, home, "personal/format/SKILL.md", "# Personal format")
+	alias := filepath.Join(root, "shared-link")
+	if err := os.Symlink(filepath.Join(root, "shared"), alias); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := Discover(root, "shared-link", "override", "~/personal", "missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := catalog.SkillsInPaths("shared", "~/personal", "missing", " ")
+	if len(selected) != 2 || selected[0].Name != "check" || selected[1].Name != "format" {
+		t.Fatalf("selected = %#v, want check and format", selected)
+	}
+	if got := catalog.SkillsInPaths("override"); len(got) != 1 || got[0].Name != "review" {
+		t.Fatalf("override selection = %#v", got)
+	}
+}
+
 func TestDiscoverReadsOnlySkillDescriptionPrefix(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()

@@ -66,3 +66,4 @@ context_budget = 1200
 # the selected workspace; a directory contains <name>/SKILL.md.
 # [skills]
 # paths = ["~/.config/my-skills", ".team/skills"]
+# autoload_paths = [".team/always-on-skills"]

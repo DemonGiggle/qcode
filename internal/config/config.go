@@ -28,7 +28,8 @@ type Learning struct {
 // Skills configures additional directories containing skill folders. Each
 // directory should contain <name>/SKILL.md entries.
 type Skills struct {
-	Paths []string `toml:"paths"`
+	Paths         []string `toml:"paths"`
+	AutoloadPaths []string `toml:"autoload_paths"`
 }
 
 // Config contains settings that may be supplied by a qcode config file.
@@ -213,11 +214,16 @@ func merge(dst *Config, incoming Config) {
 	if incoming.DangerSkipTLSVerify != nil {
 		dst.DangerSkipTLSVerify = incoming.DangerSkipTLSVerify
 	}
-	seen := make(map[string]struct{}, len(dst.Skills.Paths))
-	for _, path := range dst.Skills.Paths {
+	dst.Skills.Paths = appendUniquePaths(dst.Skills.Paths, incoming.Skills.Paths)
+	dst.Skills.AutoloadPaths = appendUniquePaths(dst.Skills.AutoloadPaths, incoming.Skills.AutoloadPaths)
+}
+
+func appendUniquePaths(existing, incoming []string) []string {
+	seen := make(map[string]struct{}, len(existing))
+	for _, path := range existing {
 		seen[path] = struct{}{}
 	}
-	for _, path := range incoming.Skills.Paths {
+	for _, path := range incoming {
 		path = strings.TrimSpace(path)
 		if path == "" {
 			continue
@@ -226,6 +232,7 @@ func merge(dst *Config, incoming Config) {
 			continue
 		}
 		seen[path] = struct{}{}
-		dst.Skills.Paths = append(dst.Skills.Paths, path)
+		existing = append(existing, path)
 	}
+	return existing
 }
