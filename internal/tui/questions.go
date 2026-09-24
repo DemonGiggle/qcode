@@ -147,7 +147,7 @@ func (u *UI) AgentQuestioner(id string) question.Questioner {
 func cloneQuestions(questions []question.Question) []question.Question {
 	cloned := make([]question.Question, len(questions))
 	for i, item := range questions {
-		cloned[i] = question.Question{Text: item.Text, Options: append([]string(nil), item.Options...), AllowCustom: item.AllowCustom}
+		cloned[i] = question.Question{Text: item.Text, Options: append([]string(nil), item.Options...), OptionDescriptions: append([]string(nil), item.OptionDescriptions...), AllowCustom: item.AllowCustom}
 	}
 	return cloned
 }
@@ -346,6 +346,11 @@ func formatQuestionWithFooter(item question.Question, index, total, width int, f
 	fmt.Fprintf(&output, "%s\n", wrapANSI(text, width, "   "))
 	for optionIndex, option := range item.Options {
 		option = sanitizeDiffLine(strings.TrimSpace(option), "<ESC>")
+		if optionIndex < len(item.OptionDescriptions) {
+			if description := sanitizeDiffLine(strings.TrimSpace(item.OptionDescriptions[optionIndex]), "<ESC>"); description != "" {
+				option += " — " + description
+			}
+		}
 		fmt.Fprintf(&output, "   %d) %s\n", optionIndex+1, wrapANSI(option, width, "      "))
 	}
 	if len(item.Options) == 0 || item.AllowCustom {
