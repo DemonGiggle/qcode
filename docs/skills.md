@@ -31,6 +31,15 @@ Additional skill directories can be configured with `skills.paths` in
 `config.toml`. They are searched after the built-in locations, in the order
 listed, so a custom skill with the same name overrides an earlier one. Relative
 paths are based at the selected workspace and `~` expands to the user's home.
+Use `skills.autoload_paths` to discover and enable every skill in a directory
+when a new run starts. It does not need to appear in `skills.paths` too.
+Autoload directories are searched after `skills.paths` and win on duplicate
+skill names. For example:
+
+```toml
+[skills]
+autoload_paths = [".team/skills", "~/.config/my-skills"]
+```
 
 A skill is a directory whose name matches `[a-z0-9-_]{1,64}` containing a regular `SKILL.md` file. The file must be within its skill root and ≤ 64 KiB. qcode reads a simple `description:` line from an initial front-matter block, or the first non-empty heading/line, for a one-line summary truncated to 160 bytes. See the [skill specification](skill-spec.md) for the authoring format.
 
@@ -38,7 +47,12 @@ A skill is a directory whose name matches `[a-z0-9-_]{1,64}` containing a regula
 
 Use `/skill` to choose skills from a checkbox list showing each name and short description. The command first shows every built-in and configured location it checks. Only selected skills are shared with the model or available to its `skill` tool.
 
-Skill discovery runs only when `/skill` is used. It reads a small prefix of each `SKILL.md` to obtain its description. Skill bodies never enter the prompt unless the model calls the `skill` tool—this keeps context small. The system prompt includes a compact catalog of selected skill names and descriptions; full instructions are loaded on demand.
+Skill discovery runs when `/skill` is used, and at startup when
+`skills.autoload_paths` is set. It reads a small prefix of each `SKILL.md` to
+obtain its description. Skill bodies never enter the prompt unless the model
+calls the `skill` tool—this keeps context small. The system prompt includes a
+compact catalog of selected skill names and descriptions; full instructions
+are loaded on demand.
 
 Workspace-local `.qcode/skills` takes precedence over `.agents/skills`, which takes precedence over user-level skills. Like `/model` and `/tool`, `/skill` affects only the active agent tab.
 

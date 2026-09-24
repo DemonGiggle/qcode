@@ -95,6 +95,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	opts := options{learningBudget: learning.DefaultBudget, autoCompactThreshold: agent.DefaultAutoCompactThreshold}
 	var configPaths []string
 	var configuredSkillPaths []string
+	var configuredAutoloadPaths []string
 	var sandboxCommandPathFlags sandboxCommandPathsFlag
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -146,6 +147,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			fmt.Fprintln(stderr, "WARNING:", diagnostic, "Skipping file.")
 		}
 		configuredSkillPaths = append([]string(nil), cfg.Skills.Paths...)
+		configuredAutoloadPaths = append([]string(nil), cfg.Skills.AutoloadPaths...)
 		setFlags := make(map[string]bool)
 		flags.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
 		if setFlags["sandbox-command-path"] {
@@ -201,11 +203,22 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			fmt.Fprintln(stderr, "WARNING:", sandboxNotice, "Continuing without sandbox.")
 		}
 	}
-	skillLocations := skills.Locations(root, configuredSkillPaths...)
+	allSkillPaths := append(append([]string(nil), configuredSkillPaths...), configuredAutoloadPaths...)
+	skillLocations := skills.Locations(root, allSkillPaths...)
 	loadSkills := func() ([]prompt.SkillSummary, error) {
-		return skillCatalogData(root, configuredSkillPaths...)
+		return skillCatalogData(root, allSkillPaths...)
 	}
-	skillSelection := skills.NewLazySelection(root, configuredSkillPaths...)
+	var autoloadSkills []prompt.SkillSummary
+	if len(configuredAutoloadPaths) > 0 {
+		loaded, discoverErr := autoloadSkillData(root, configuredSkillPaths, configuredAutoloadPaths)
+		if discoverErr != nil {
+			fmt.Fprintln(stderr, "WARNING: cannot autoload skills:", discoverErr)
+		} else {
+			autoloadSkills = loaded
+		}
+	}
+	skillSelection := skills.NewLazySelection(root, allSkillPaths...)
+	skillSelection.Set(skillNames(autoloadSkills))
 	registry, err := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, SandboxCommandPaths: sandboxCommandPaths, Skills: skillSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
 	if err != nil {
 		return err
@@ -248,7 +261,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if promptText != "" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
-		return runOneShot(ctx, promptText, provider, opts.model, opts.thinking, toolset, stderr, stdout, opts.jsonEvents, opts.maxSteps, system, learningStore, opts.learningBudget)
+		return runOneShot(ctx, promptText, provider, opts.model, opts.thinking, toolset, stderr, stdout, opts.jsonEvents, opts.maxSteps, system, learningStore, opts.learningBudget, autoloadSkills)
 	}
 
 	// Terminal output must go through term.Terminal so asynchronous-looking stream
@@ -291,7 +304,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			currentSelection := mainSelection
 			currentEndpoint := providerConfig.BaseURL
 			if !isMain || saved != nil {
-				currentSelection = skills.NewLazySelection(root, configuredSkillPaths...)
+				currentSelection = skills.NewLazySelection(root, allSkillPaths...)
 				createdRegistry, createErr := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, SandboxCommandPaths: sandboxCommandPaths, Skills: currentSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
 				if createErr != nil {
 					return nil, createErr
@@ -326,6 +339,10 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			logger.SetColor(tui.ColorEnabled(stdout))
 			logger.SetWidth(tui.OutputWidth(stdout))
 			runner := agent.NewWithSystem(currentProvider, model, wrappedTools, logger, response, opts.maxSteps, system)
+			if saved == nil && len(autoloadSkills) > 0 {
+				currentSelection.Set(skillNames(autoloadSkills))
+				runner.SetSkills(autoloadSkills)
+			}
 			runner.SetVerbose(ui.VerboseEnabled())
 			runner.SetQuestioner(ui.AgentQuestioner(id))
 			runner.SetTaskIndicator(false)
@@ -403,13 +420,16 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	return ui.Run(context.Background())
 }
 
-func runOneShot(ctx context.Context, promptText string, provider llm.Provider, model, thinking string, toolset agent.Toolset, stderr, stdout *os.File, jsonEvents bool, maxSteps int, system string, learningStore learning.Store, learningBudget int) error {
+func runOneShot(ctx context.Context, promptText string, provider llm.Provider, model, thinking string, toolset agent.Toolset, stderr, stdout *os.File, jsonEvents bool, maxSteps int, system string, learningStore learning.Store, learningBudget int, autoloadSkills []prompt.SkillSummary) error {
 	host := control.NewHost(ctx, 1)
 	defer host.Shutdown()
 	host.SetFactory(func(id, name, model string, main bool) (*agent.Agent, error) {
 		logger := newTraceLogger(stderr, jsonEvents)
 		responseWriter := newResponseWriter(stdout)
 		runner := agent.NewWithSystem(provider, model, toolset, logger, responseWriter, maxSteps, system)
+		if len(autoloadSkills) > 0 {
+			runner.SetSkills(autoloadSkills)
+		}
 		if err := runner.SetThinking(thinking); err != nil {
 			return nil, err
 		}
@@ -424,12 +444,23 @@ func runOneShot(ctx context.Context, promptText string, provider llm.Provider, m
 }
 
 func skillSummaries(catalog *skills.Catalog) []prompt.SkillSummary {
-	available := catalog.Skills()
+	return summariesForSkills(catalog.Skills())
+}
+
+func summariesForSkills(available []skills.Skill) []prompt.SkillSummary {
 	summaries := make([]prompt.SkillSummary, len(available))
 	for i, skill := range available {
 		summaries[i] = prompt.SkillSummary{Name: skill.Name, Description: skill.Description}
 	}
 	return summaries
+}
+
+func skillNames(summaries []prompt.SkillSummary) []string {
+	names := make([]string, len(summaries))
+	for i, skill := range summaries {
+		names[i] = skill.Name
+	}
+	return names
 }
 
 func skillCatalogData(root string, customPaths ...string) ([]prompt.SkillSummary, error) {
@@ -438,6 +469,15 @@ func skillCatalogData(root string, customPaths ...string) ([]prompt.SkillSummary
 		return nil, err
 	}
 	return skillSummaries(catalog), nil
+}
+
+func autoloadSkillData(root string, configuredPaths, autoloadPaths []string) ([]prompt.SkillSummary, error) {
+	allPaths := append(append([]string(nil), configuredPaths...), autoloadPaths...)
+	catalog, err := skills.Discover(root, allPaths...)
+	if err != nil {
+		return nil, err
+	}
+	return summariesForSkills(catalog.SkillsInPaths(autoloadPaths...)), nil
 }
 
 func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {

@@ -1,12 +1,86 @@
 package main
 
 import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"qcode/internal/agent"
 	"qcode/internal/config"
+	"qcode/internal/llm"
+	"qcode/internal/prompt"
+	"qcode/internal/skills"
+	"qcode/internal/tools"
 )
+
+type autoloadProvider struct{ request llm.Request }
+
+func (*autoloadProvider) Name() string { return "autoload-test" }
+func (p *autoloadProvider) Complete(_ context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	p.request = request
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
+}
+
+func TestAutoloadSkillDataAndOneShotPrompt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	for path, content := range map[string]string{
+		"manual/manual/SKILL.md":    "# Manual only\nNever autoload this.",
+		"manual/optional/SKILL.md":  "# Optional\nSelect this manually.",
+		"automatic/review/SKILL.md": "---\ndescription: Review code\n---\nSecret body instructions",
+		"automatic/manual/SKILL.md": "# Automatic override\nBody instructions",
+	} {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	paths := []string{"manual"}
+	auto := []string{"automatic", "missing"}
+	summaries, err := autoloadSkillData(root, paths, auto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 2 || summaries[0].Name != "manual" || summaries[0].Description != "Automatic override" || summaries[1].Name != "review" {
+		t.Fatalf("autoload summaries = %#v", summaries)
+	}
+	selection := skills.NewLazySelection(root, append(paths, auto...)...)
+	selection.Set(skillNames(summaries))
+	if _, err := selection.Load("optional"); err == nil {
+		t.Fatal("non-autoloaded skill was enabled")
+	}
+	if body, err := selection.Load("review"); err != nil || !strings.Contains(body, "Secret body instructions") {
+		t.Fatalf("autoloaded skill = %q, %v", body, err)
+	}
+	registry, err := tools.NewWithOptions(root, tools.Options{Skills: selection})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := os.CreateTemp(t.TempDir(), "stdout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdout.Close()
+	stderr, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stderr.Close()
+	provider := &autoloadProvider{}
+	if err := runOneShot(context.Background(), "hello", provider, "test-model", "", registry, stderr, stdout, false, 3, prompt.System, nil, 0, summaries); err != nil {
+		t.Fatal(err)
+	}
+	system := provider.request.Messages[0].Content
+	if !strings.Contains(system, "Review code") || !strings.Contains(system, "Automatic override") || strings.Contains(system, "Secret body instructions") {
+		t.Fatalf("unexpected initial skill context: %s", system)
+	}
+}
 
 func TestAgentTimeoutConfigPrecedence(t *testing.T) {
 	opts := options{agentTimeout: agent.DefaultConsultationTimeout}

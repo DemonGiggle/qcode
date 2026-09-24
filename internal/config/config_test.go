@@ -66,6 +66,7 @@ context_budget = 0
 backend = "brave"
 [skills]
 paths = [" high ", "low", ""]
+autoload_paths = [" high-auto ", "low-auto", ""]
 `)
 	low := writeConfig(t, dir, "low.toml", `provider = "ollama"
 model = "qwen"
@@ -85,6 +86,7 @@ context_budget = 1200
 backend = "duckduckgo"
 [skills]
 paths = ["low", " /opt/skills ", ""]
+autoload_paths = ["low-auto", " /opt/auto-skills ", ""]
 `)
 
 	// Candidate paths are ordered highest to lowest priority.
@@ -106,6 +108,9 @@ paths = ["low", " /opt/skills ", ""]
 	}
 	if got, want := strings.Join(cfg.Skills.Paths, ","), "low,/opt/skills,high"; got != want {
 		t.Fatalf("skill paths = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(cfg.Skills.AutoloadPaths, ","), "low-auto,/opt/auto-skills,high-auto"; got != want {
+		t.Fatalf("autoload paths = %q, want %q", got, want)
 	}
 }
 

@@ -17,6 +17,7 @@ disable_auto_compact = false
 
 [skills]
 paths = ["/opt/qcode/team-skills", ".team/skills"]
+autoload_paths = [".team/always-on-skills"]
 ```
 
 `sandbox_command_paths` is a persistent trusted-code allowlist for sandbox
@@ -44,6 +45,16 @@ occurrence, so their ordering is stable. Absolute paths are used as written;
 relative paths are resolved from the selected workspace, and `~` expands to the
 current user's home directory. A missing directory is kept in the `/skill` hint
 and contributes no skills.
+
+`skills.autoload_paths` also adds directories to discovery and enables every
+valid skill in them at the start of a new interactive or one-shot run. These
+directories are searched after `skills.paths`, so later definitions win on name
+collisions. The setting is additive across configuration layers, with the same
+path expansion and deduplication rules as `skills.paths`. Only skill names and
+descriptions enter the initial prompt; full `SKILL.md` files are loaded on
+demand. `/skill` can change the selection for the active agent tab. Resumed
+sessions keep their saved skill selection. A missing directory contributes no
+skills; a discovery error produces a startup warning.
 
 The qcode repository also contains optional official release skills in
 [`docs/skills/`](skills/). Browse that collection and decide whether any of

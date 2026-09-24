@@ -232,20 +232,7 @@ func Discover(root string, customPaths ...string) (*Catalog, error) {
 		if configured == "" {
 			continue
 		}
-		base := configured
-		if base == "~" || strings.HasPrefix(base, "~/") || strings.HasPrefix(base, "~"+string(filepath.Separator)) {
-			if home, homeErr := os.UserHomeDir(); homeErr == nil {
-				if base == "~" {
-					base = home
-				} else {
-					base = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(base, "~/"), "~"+string(filepath.Separator)))
-				}
-			}
-		}
-		if !filepath.IsAbs(base) {
-			base = filepath.Join(abs, base)
-		}
-		sources = append(sources, struct{ base, label string }{filepath.Clean(base), configured})
+		sources = append(sources, struct{ base, label string }{resolvePath(abs, configured), configured})
 	}
 	byName := make(map[string]Skill)
 	locations := Locations(abs, customPaths...)
@@ -314,12 +301,54 @@ func within(root, path string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
+func resolvePath(workspace, configured string) string {
+	base := strings.TrimSpace(configured)
+	if base == "~" || strings.HasPrefix(base, "~/") || strings.HasPrefix(base, "~"+string(filepath.Separator)) {
+		if home, err := os.UserHomeDir(); err == nil {
+			if base == "~" {
+				base = home
+			} else {
+				base = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(base, "~/"), "~"+string(filepath.Separator)))
+			}
+		}
+	}
+	if !filepath.IsAbs(base) {
+		base = filepath.Join(workspace, base)
+	}
+	base = filepath.Clean(base)
+	if resolved, err := filepath.EvalSymlinks(base); err == nil {
+		return resolved
+	}
+	return base
+}
+
 // Skills returns a defensive copy suitable for rendering in a prompt.
 func (c *Catalog) Skills() []Skill {
 	if c == nil {
 		return nil
 	}
 	return append([]Skill(nil), c.skills...)
+}
+
+// SkillsInPaths returns discovered skills whose winning definition comes from
+// one of the configured directories. The result follows catalog name order.
+func (c *Catalog) SkillsInPaths(paths ...string) []Skill {
+	if c == nil || len(paths) == 0 {
+		return nil
+	}
+	roots := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		if strings.TrimSpace(path) != "" {
+			roots[resolvePath(c.root, path)] = true
+		}
+	}
+	var selected []Skill
+	for _, skill := range c.skills {
+		if roots[skill.root] {
+			selected = append(selected, skill)
+		}
+	}
+	return selected
 }
 
 // Locations returns the configured and built-in skill directories in the
