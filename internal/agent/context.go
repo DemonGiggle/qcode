@@ -51,6 +51,18 @@ func (a *Agent) shouldAutoCompact() bool {
 	return known && 100-remaining >= a.autoCompactThreshold
 }
 
+func (a *Agent) autoCompactIfNeeded(ctx context.Context) {
+	if !a.shouldAutoCompact() {
+		return
+	}
+	fmt.Fprintln(a.out, "Compacting conversation to make room for the next request...")
+	if _, err := a.Compact(ctx); err != nil {
+		fmt.Fprintln(a.out, "Conversation compaction failed:", err)
+	} else {
+		fmt.Fprintln(a.out, "Conversation compacted.")
+	}
+}
+
 type contextStatus struct {
 	remaining        int
 	known, estimated bool

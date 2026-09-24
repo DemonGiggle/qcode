@@ -464,14 +464,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 	}()
 	task := a.trace.BeginTask()
 	defer task.End()
-	if a.shouldAutoCompact() {
-		fmt.Fprintln(a.out, "Compacting conversation to make room for the next request...")
-		if _, err := a.Compact(ctx); err != nil {
-			fmt.Fprintln(a.out, "Conversation compaction failed:", err)
-		} else {
-			fmt.Fprintln(a.out, "Conversation compacted.")
-		}
-	}
+	a.autoCompactIfNeeded(ctx)
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userText})
 	a.publishContext()
 	identicalToolCalls := map[string]int{}
@@ -502,6 +495,11 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 	recoveryInstruction := ""
 	for step := 0; step < a.MaxSteps(); step++ {
 		a.currentStep.Store(int64(step + 1))
+		if step > 0 {
+			// Usage and tool results from the previous model turn can push the
+			// conversation over the threshold while Run is still active.
+			a.autoCompactIfNeeded(ctx)
+		}
 		requestMessages := a.requestMessages(ctx)
 		if a.InteractiveMode() && a.interactiveAvailable.Load() && !a.PlanMode() && !a.SkillPlanMode() && len(requestMessages) > 0 {
 			requestMessages[0].Content += fmt.Sprintf("\n\nInteractive questions remaining for this request: %d.", max(0, 3-a.questionsAsked))
@@ -608,6 +606,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			a.stateMu.Lock()
 			a.lastResponse = response.Message.Content
 			a.stateMu.Unlock()
+			a.autoCompactIfNeeded(ctx)
 			return nil
 		}
 		a.pendingImages = nil
@@ -708,6 +707,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 				Images:  a.pendingImages,
 			})
 			a.pendingImages = nil
+			a.publishContext()
 		}
 		if userAnswer != "" {
 			a.messages = append(a.messages, llm.Message{Role: "user", Content: userAnswer})
@@ -717,6 +717,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			a.stateMu.Lock()
 			a.lastResponse = strings.TrimSpace(endTurnResponse)
 			a.stateMu.Unlock()
+			a.autoCompactIfNeeded(ctx)
 			return nil
 		}
 	}

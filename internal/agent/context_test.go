@@ -17,6 +17,31 @@ type compactingProvider struct {
 	requests []llm.Request
 }
 
+type interTurnCompactingProvider struct {
+	requests   []llm.Request
+	modelCalls int
+}
+
+func (*interTurnCompactingProvider) Name() string { return "inter-turn-compacting" }
+func (p *interTurnCompactingProvider) Complete(_ context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	p.requests = append(p.requests, request)
+	if request.Messages[0].Content == prompt.ConversationCompact {
+		return llm.Response{Message: llm.Message{Role: "assistant", Content: "Summary of prior work."}}, nil
+	}
+	p.modelCalls++
+	if p.modelCalls == 1 {
+		return llm.Response{
+			Message: llm.Message{
+				Role:      "assistant",
+				Thinking:  strings.Repeat("reasoning ", 200),
+				ToolCalls: []llm.ToolCall{{ID: "call_skill", Name: "skill"}},
+			},
+			Usage: &llm.Usage{InputTokens: 200, OutputTokens: 600},
+		}, nil
+	}
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}, Usage: &llm.Usage{InputTokens: 800}}, nil
+}
+
 func (*compactingProvider) Name() string { return "compacting" }
 func (p *compactingProvider) Complete(_ context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
 	p.requests = append(p.requests, request)
@@ -142,8 +167,11 @@ func TestAutoCompactOnlyRunsForKnownCapacity(t *testing.T) {
 	if err := a.Run(context.Background(), "next"); err != nil {
 		t.Fatal(err)
 	}
-	if len(p.requests) != 2 || p.requests[0].Messages[0].Content != prompt.ConversationCompact {
+	if len(p.requests) != 3 || p.requests[0].Messages[0].Content != prompt.ConversationCompact {
 		t.Fatalf("requests = %+v", p.requests)
+	}
+	if p.requests[2].Messages[0].Content != prompt.ConversationCompact {
+		t.Fatal("final response crossing the threshold was not compacted")
 	}
 	p = &compactingProvider{}
 	a = New(p, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 1)
@@ -153,6 +181,35 @@ func TestAutoCompactOnlyRunsForKnownCapacity(t *testing.T) {
 	}
 	if len(p.requests) != 1 {
 		t.Fatalf("unknown capacity compacted: %d requests", len(p.requests))
+	}
+}
+
+func TestAutoCompactRunsBetweenModelTurns(t *testing.T) {
+	p := &interTurnCompactingProvider{}
+	a := NewWithSystem(p, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 2, "system")
+	a.SetContextWindow(1000)
+	if err := a.Run(context.Background(), "next"); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.requests) != 4 {
+		t.Fatalf("requests = %d, want initial completion, in-run compaction, next completion, and final compaction", len(p.requests))
+	}
+	if p.requests[1].Messages[0].Content != prompt.ConversationCompact {
+		t.Fatalf("second provider request was not compaction: %q", p.requests[1].Messages[0].Content)
+	}
+	if p.requests[2].Messages[0].Content == prompt.ConversationCompact {
+		t.Fatal("next model turn was not sent after compaction")
+	}
+	if p.requests[3].Messages[0].Content != prompt.ConversationCompact {
+		t.Fatal("final response crossing the threshold was not compacted")
+	}
+	hasSummary, hasToolResult := false, false
+	for _, message := range p.requests[2].Messages {
+		hasSummary = hasSummary || strings.Contains(message.Content, "Summary of prior work.")
+		hasToolResult = hasToolResult || message.Role == "tool" && strings.Contains(message.Content, "skill instructions")
+	}
+	if !hasSummary || !hasToolResult {
+		t.Fatalf("next model turn lost compacted context: summary=%v tool_result=%v", hasSummary, hasToolResult)
 	}
 }
 
