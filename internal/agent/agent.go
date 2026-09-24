@@ -64,6 +64,11 @@ type Agent struct {
 	pendingImages            []llm.Image
 	planMode                 atomic.Bool
 	skillPlanMode            atomic.Bool
+	interactiveMode          atomic.Bool
+	interactiveAvailable     atomic.Bool
+	nonInteractiveNotice     atomic.Bool
+	questionsAsked           int
+	askedQuestions           map[string]bool
 	questioner               Questioner
 	latestPlan               *Plan
 	latestSkillDraft         *SkillDraft
@@ -280,7 +285,7 @@ func thinkingLevelAllowed(capability llm.ThinkingCapability, level string) bool 
 func (a *Agent) SetSkills(skills []prompt.SkillSummary) {
 	a.selectedSkills = append([]prompt.SkillSummary(nil), skills...)
 	defer a.invalidateContextUsage()
-	a.system = prompt.SystemForModes(skills, a.PlanMode(), a.SkillPlanMode())
+	a.system = a.modeSystem(skills)
 	if len(a.messages) > 0 && a.messages[0].Role == "system" {
 		a.messages[0].Content = a.system
 	}
@@ -307,6 +312,7 @@ func (a *Agent) InheritCapabilitiesFrom(source *Agent) error {
 		}
 	}
 	a.SetSkills(source.SelectedSkills())
+	a.SetInteractiveMode(source.InteractiveMode())
 	a.SetMaxSteps(source.MaxSteps())
 	return nil
 }
@@ -323,12 +329,14 @@ func (a *Agent) ResetSession() {
 	a.learningSessionID = ""
 	a.planMode.Store(false)
 	a.skillPlanMode.Store(false)
+	a.questionsAsked = 0
+	a.askedQuestions = nil
 	a.stateMu.Lock()
 	a.latestPlan = nil
 	a.latestSkillDraft = nil
 	a.stateMu.Unlock()
 	defer a.invalidateContextUsage()
-	a.system = prompt.SystemForModes(a.selectedSkills, false, false)
+	a.system = a.modeSystem(a.selectedSkills)
 	a.messages = []llm.Message{{Role: "system", Content: a.system}}
 	a.restored = false
 	if resetter, ok := a.tools.(interface{ ResetSession() }); ok {
@@ -351,15 +359,18 @@ func (a *Agent) ToolNames() []string {
 		}
 		return append(names, "propose_skill")
 	}
+	var names []string
 	if configurable, ok := a.tools.(interface{ ToolNames() []string }); ok {
-		return configurable.ToolNames()
+		names = configurable.ToolNames()
+	} else if registry, ok := a.tools.(*tools.Registry); ok {
+		names = registry.ToolNames()
+	} else {
+		for _, tool := range a.tools.Schemas() {
+			names = append(names, tool.Name)
+		}
 	}
-	if registry, ok := a.tools.(*tools.Registry); ok {
-		return registry.ToolNames()
-	}
-	names := make([]string, 0)
-	for _, tool := range a.tools.Schemas() {
-		names = append(names, tool.Name)
+	if a.InteractiveMode() && a.interactiveAvailable.Load() {
+		names = append(names, "ask_questions")
 	}
 	sort.Strings(names)
 	return names
@@ -367,6 +378,9 @@ func (a *Agent) ToolNames() []string {
 
 // ToggleTool enables or disables a tool by name.
 func (a *Agent) ToggleTool(name string, enabled bool) {
+	if name == "ask_questions" {
+		return
+	}
 	if (a.PlanMode() || a.SkillPlanMode()) && !a.modeAllowedTool(name) {
 		return
 	}
@@ -392,6 +406,9 @@ func (a *Agent) ToolEnabled(name string) bool {
 	}
 	if (a.PlanMode() || a.SkillPlanMode()) && !a.modeAllowedTool(name) {
 		return false
+	}
+	if name == "ask_questions" {
+		return a.InteractiveMode() && a.interactiveAvailable.Load()
 	}
 	if configurable, ok := a.tools.(interface{ ToolEnabled(string) bool }); ok {
 		return configurable.ToolEnabled(name)
@@ -435,6 +452,8 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 	}
 	defer func() { a.taskContext = "" }()
 	a.currentStep.Store(0)
+	a.questionsAsked = 0
+	a.askedQuestions = make(map[string]bool)
 	a.repairInterruptedCalls()
 	a.stateMu.Lock()
 	a.lastResponse = ""
@@ -484,6 +503,9 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 	for step := 0; step < a.MaxSteps(); step++ {
 		a.currentStep.Store(int64(step + 1))
 		requestMessages := a.requestMessages(ctx)
+		if a.InteractiveMode() && a.interactiveAvailable.Load() && !a.PlanMode() && !a.SkillPlanMode() && len(requestMessages) > 0 {
+			requestMessages[0].Content += fmt.Sprintf("\n\nInteractive questions remaining for this request: %d.", max(0, 3-a.questionsAsked))
+		}
 		if trust.Suspicious(a.learningContext) || trust.Suspicious(a.dynamicContext) {
 			warnInjection()
 		}
@@ -591,6 +613,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		a.pendingImages = nil
 		endTurn := false
 		endTurnResponse := ""
+		userAnswer := ""
 		for index, call := range response.Message.ToolCalls {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -620,7 +643,9 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": traceArguments})
 			var execution llm.ToolResult
 			var toolErr error
-			if injectionSeen && requiresInjectionApproval(call.Name) {
+			if userAnswer != "" {
+				toolErr = fmt.Errorf("tool deferred until after the user answer is processed")
+			} else if injectionSeen && requiresInjectionApproval(call.Name) {
 				if deniedCalls[fingerprint] {
 					toolErr = fmt.Errorf("action remains denied after a prompt-injection warning")
 				} else if err := a.approveInjectionAction(ctx, call); err != nil {
@@ -664,6 +689,9 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 				warnInjection()
 			}
 			a.messages = append(a.messages, llm.Message{Role: "tool", Content: trust.Wrap(call.Name, result), Origin: call.Name, Untrusted: true, Name: call.Name, ToolCallID: call.ID})
+			if toolErr == nil && execution.UserAnswer != "" {
+				userAnswer = execution.UserAnswer
+			}
 			if toolErr == nil && execution.EndTurn {
 				endTurn = true
 				endTurnResponse = execution.Output
@@ -680,6 +708,10 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 				Images:  a.pendingImages,
 			})
 			a.pendingImages = nil
+		}
+		if userAnswer != "" {
+			a.messages = append(a.messages, llm.Message{Role: "user", Content: userAnswer})
+			a.publishContext()
 		}
 		if endTurn {
 			a.stateMu.Lock()

@@ -137,6 +137,12 @@ type planController interface {
 	ClearLatestPlan()
 }
 
+type interactiveController interface {
+	InteractiveMode() bool
+	InteractiveAvailable() bool
+	SetInteractiveMode(bool)
+}
+
 type skillPlanController interface {
 	SkillPlanMode() bool
 	SetSkillPlanMode(bool)
@@ -589,7 +595,9 @@ func (u *UI) Run(ctx context.Context) error {
 		u.reportSave(u.saveSession(false))
 		u.handlePendingTabSwitch()
 		u.handlePendingApproval(ctx)
-		u.handlePendingQuestions(ctx)
+		if u.handlePendingQuestions(ctx) {
+			continue
+		}
 		u.handlePendingModeDecision(ctx)
 		line, err := u.readLine()
 		u.commandMenu.dismiss(u.out)
@@ -693,6 +701,10 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		if len(fields) > 0 && fields[0] == "/plan" {
 			u.handlePlanCommand(ctx, fields)
+			continue
+		}
+		if len(fields) > 0 && fields[0] == "/interactive" {
+			u.handleInteractiveCommand(fields)
 			continue
 		}
 		if len(fields) > 0 && fields[0] == "/skillplan" {
@@ -1301,6 +1313,39 @@ func (u *UI) handlePlanCommand(ctx context.Context, fields []string) {
 	}
 }
 
+func (u *UI) handleInteractiveCommand(fields []string) {
+	controller, ok := u.runner.(interactiveController)
+	if !ok {
+		u.printSystemMessage(yellow + "Interactive questions are unavailable." + reset)
+		return
+	}
+	if len(fields) == 1 {
+		state := "off"
+		if controller.InteractiveMode() {
+			state = "on"
+			if !controller.InteractiveAvailable() {
+				state += " (unavailable in this run)"
+			}
+		}
+		u.printSystemMessage("Interactive questions: " + state)
+		return
+	}
+	if len(fields) != 2 || fields[1] != "on" && fields[1] != "off" {
+		u.printSystemMessage(yellow + "Usage: /interactive [on|off]" + reset)
+		return
+	}
+	if !u.activeAgentConfigurable() {
+		return
+	}
+	controller.SetInteractiveMode(fields[1] == "on")
+	u.drawStatusBar()
+	message := "Interactive questions " + fields[1] + "."
+	if fields[1] == "on" && !controller.InteractiveAvailable() {
+		message += " Questions are unavailable in this run."
+	}
+	u.printSystemMessage(green + message + reset)
+}
+
 func (u *UI) handleSkillPlanCommand(ctx context.Context, fields []string) {
 	controller, ok := u.runner.(skillPlanController)
 	if !ok {
@@ -1657,16 +1702,16 @@ func statusBarWithRemoteColors(provider, model, root string, width int, unicodeE
 
 	if !color {
 		if width > 0 && visibleWidth(bar) > width {
-			if dynamic := compactStatusBar(contextLabel, false, unicodeEnabled, remote); dynamic != "" && visibleWidth(dynamic) <= width {
-				return dynamic
+			if dynamic := compactStatusBar(contextLabel, false, unicodeEnabled, remote); dynamic != "" {
+				return truncateDiffLine(dynamic, width, unicodeEnabled)
 			}
 		}
 		return truncateDiffLine(bar, width, unicodeEnabled)
 	}
 
 	if width > 0 && visibleWidth(bar) > width {
-		if dynamic := compactStatusBar(contextLabel, true, unicodeEnabled, remote); dynamic != "" && visibleWidth(dynamic) <= width {
-			return dynamic + reset
+		if dynamic := compactStatusBar(contextLabel, true, unicodeEnabled, remote); dynamic != "" {
+			return truncateDiffLine(dynamic, width, unicodeEnabled) + reset
 		}
 		bar = truncateDiffLine(bar, width, unicodeEnabled)
 	}
@@ -1782,6 +1827,14 @@ func compactStatusBar(labels []string, color, unicodeEnabled, remote bool) strin
 	if remote {
 		segments = append(segments, remoteStatusBadge(color))
 	}
+	mode := ""
+	if len(labels) > 3 && labels[3] != "" {
+		mode = labels[3]
+		if mode == "INTERACTIVE" {
+			mode = "INT"
+		}
+		segments = append(segments, statusSegment("MODE", mode, yellow))
+	}
 	if len(labels) > 0 {
 		segments = append(segments, statusSegment("CTX", labels[0], green))
 	}
@@ -1796,6 +1849,9 @@ func compactStatusBar(labels []string, color, unicodeEnabled, remote bool) strin
 		parts := []string{}
 		if remote {
 			parts = append(parts, remoteStatusBadge(false))
+		}
+		if mode != "" {
+			parts = append(parts, "[MODE "+mode+"]")
 		}
 		if len(labels) > 0 {
 			parts = append(parts, "[CTX "+labels[0]+"]")
@@ -1928,6 +1984,9 @@ func (u *UI) modeLabel() string {
 	}
 	if controller, ok := u.runner.(planController); ok && controller.PlanMode() {
 		return "PLAN"
+	}
+	if controller, ok := u.runner.(interactiveController); ok && controller.InteractiveMode() && controller.InteractiveAvailable() {
+		return "INTERACTIVE"
 	}
 	return ""
 }

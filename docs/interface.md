@@ -2,7 +2,7 @@
 
 The terminal UI is a full-viewport, keyboard-driven interface with editable input, per-agent history, full word wrapping, streamed responses, and ANSI-colored Markdown, including aligned GFM tables. Fixed tabs sit at the top and a status bar at the bottom. The normal terminal buffer and scrollback are retained.
 
-The prompt is pinned above the task indicator and status bar from launch. It displays `>` for an idle agent, `(Plan)>` in Plan mode, and `(Queue)>` while the current tab's agent is working. The status bar includes `STEP current/max` for the active agent's model-turn progress and `MODE PLAN` when planning is active. Each tab keeps its own draft and prompt state. Long drafts wrap upward within the input area.
+The prompt is pinned above the task indicator and status bar from launch. It displays `>` for an idle agent, `(Plan)>` in Plan mode, and `(Queue)>` while the current tab's agent is working. The status bar includes `STEP current/max` for the active agent's model-turn progress and `MODE PLAN` when planning is active, or `MODE INTERACTIVE` when normal-mode questions are enabled. Each tab keeps its own draft and prompt state. Long drafts wrap upward within the input area.
 
 Typing `/` opens up to five matching command suggestions directly above the prompt. Type more characters to filter them or press Tab to complete the first match. Suggestions stay in their own area while output streams, and disappear when the draft no longer matches a command; they are not saved in conversation history.
 
@@ -28,6 +28,7 @@ Interactive command selectors use the same navigation rule: `Esc` goes back to t
 - `/history` opens a searchable, newest-first list of completed prompts for the active agent. Select a prompt to read only that prompt and its final response; leaving the browser restores the conversation view without changing its reading position.
 - `/tool` enables or disables the web tools independently; see [Web tools](web-tools.md).
 - `/plan` enters read-only planning mode; `/plan show` opens the latest plan in a scrollable view; `/plan off` leaves it; `/plan act` implements the latest submitted plan. See [Plan mode](plan-mode.md).
+- `/interactive on|off` controls normal-mode questions for the active agent; `/interactive` reports the setting. See [Interactive questions](interactive-mode.md).
 - `/skillplan [rough intention]` starts guided, review-first skill creation; use `/skillplan show`, `/skillplan create`, or `/skillplan off` to manage the draft. See [Skill Plan mode](skillplan.md).
 
 ## Saved sessions

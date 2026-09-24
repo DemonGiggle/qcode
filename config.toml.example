@@ -50,6 +50,10 @@ max_steps = 32
 # auto_compact_threshold = 80
 # disable_auto_compact = true
 
+# Allow the agent to ask up to three focused questions per prompt in an
+# interactive terminal. One-shot and JSON event runs never block for answers.
+# interactive = true
+
 # Web tools start disabled; enable them with /tool in each interactive session.
 # Backend configuration does not enable web tools.
 # Web search backend, read at startup. Currently only duckduckgo is supported.

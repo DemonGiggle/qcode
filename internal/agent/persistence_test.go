@@ -22,6 +22,8 @@ func (p *resumeProvider) Complete(_ context.Context, r llm.Request, _ llm.Stream
 func TestAgentRestorePreservesImagesContextAndContinuation(t *testing.T) {
 	provider := &resumeProvider{}
 	a := New(provider, "saved-model", &managerToolset{}, trace.New(io.Discard, false), io.Discard, 9)
+	a.SetInteractiveAvailable(true)
+	a.SetInteractiveMode(true)
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: "inspect", Images: []llm.Image{{MediaType: "image/png", Data: []byte{1, 2, 3}}}}, llm.Message{Role: "assistant", Content: "answer", Thinking: "reasoning"})
 	a.contextWindow = 10000
 	a.contextUsage = &llm.Usage{InputTokens: 300, OutputTokens: 50}
@@ -31,11 +33,15 @@ func TestAgentRestorePreservesImagesContextAndContinuation(t *testing.T) {
 	a.publishContext()
 	data := *a.checkpoint.Load()
 	b := New(provider, "saved-model", &managerToolset{}, trace.New(io.Discard, false), io.Discard, 1)
+	b.SetInteractiveAvailable(true)
 	if err := b.RestoreState(data); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(a.messages, b.messages) || a.SessionUsage() != b.SessionUsage() {
 		t.Fatal("conversation or usage changed")
+	}
+	if !b.InteractiveMode() {
+		t.Fatal("interactive mode was not restored")
 	}
 	if b.MaxSteps() != 12 {
 		t.Fatalf("max steps = %d, want 12", b.MaxSteps())

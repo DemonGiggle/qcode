@@ -70,7 +70,7 @@ func toolActivity(call llm.ToolCall) trace.Activity {
 	case "skill":
 		return activity("skill", "Loading skill "+target(name, "skill"), "Loaded skill "+target(name, "skill"), trace.ActivityAgent)
 	case "ask_questions":
-		return activity("ask_questions", "Asking design questions", "Collected design answers", trace.ActivityAgent)
+		return activity("ask_questions", "Asking the user", "Received user answers", trace.ActivityAgent)
 	case "propose_skill":
 		return activity("propose_skill", "Preparing skill draft", "Saved skill draft for review", trace.ActivityAgent)
 	case "request_directory_access":

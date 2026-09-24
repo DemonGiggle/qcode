@@ -16,18 +16,22 @@ import (
 type questionRequest struct {
 	agentID   string
 	questions []question.Question
+	answers   []string
+	next      int
+	draft     string
 	ctx       context.Context
 	result    chan questionResult
 }
+
+var errQuestionDeferred = errors.New("question deferred for tab switch")
 
 type questionResult struct {
 	answers []string
 	err     error
 }
 
-// AgentQuestioner returns the UI bridge used by an agent's Plan-mode
-// ask_questions tool. Questions from inactive agents wait until that tab is
-// selected, just like directory approvals.
+// AgentQuestioner returns the UI bridge for agent questions. Questions from
+// inactive agents wait until that tab is selected.
 func (u *UI) AgentQuestioner(id string) question.Questioner {
 	if u.sessionHost != nil {
 		return u.sessionHost.AgentQuestioner(id)
@@ -45,6 +49,7 @@ func (u *UI) AgentQuestioner(id string) question.Questioner {
 		u.screenMu.Lock()
 		active := u.activeAgent == id
 		manager := u.manager
+		request.draft = u.drafts[id]
 		u.screenMu.Unlock()
 		u.questionMu.Lock()
 		u.questions = append(u.questions, request)
@@ -61,7 +66,9 @@ func (u *UI) AgentQuestioner(id string) question.Questioner {
 		case result := <-request.result:
 			return result.answers, result.err
 		case <-ctx.Done():
-			u.removeQuestionRequest(request)
+			if u.removeQuestionRequest(request) {
+				u.restoreQuestionDraft(request)
+			}
 			if manager != nil {
 				manager.SetWaitingForApproval(id, false)
 			}
@@ -145,7 +152,7 @@ func cloneQuestions(questions []question.Question) []question.Question {
 	return cloned
 }
 
-func (u *UI) removeQuestionRequest(target *questionRequest) {
+func (u *UI) removeQuestionRequest(target *questionRequest) bool {
 	u.questionMu.Lock()
 	defer u.questionMu.Unlock()
 	for i, request := range u.questions {
@@ -153,13 +160,38 @@ func (u *UI) removeQuestionRequest(target *questionRequest) {
 			continue
 		}
 		u.questions = append(u.questions[:i], u.questions[i+1:]...)
+		return true
+	}
+	return false
+}
+
+func (u *UI) restoreQuestionDraft(request *questionRequest) {
+	if request.draft == "" {
 		return
 	}
+	u.screenMu.Lock()
+	u.drafts[request.agentID] = request.draft
+	active := u.activeAgent == request.agentID
+	u.screenMu.Unlock()
+	if active && u.input != nil {
+		u.input.inject([]byte(request.draft))
+	}
+}
+
+func (u *UI) hasPendingQuestion(id string) bool {
+	u.questionMu.Lock()
+	defer u.questionMu.Unlock()
+	for _, request := range u.questions {
+		if request.agentID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // handlePendingQuestions is called only by the UI goroutine, so all terminal
 // reads remain serialized with the line editor.
-func (u *UI) handlePendingQuestions(ctx context.Context) {
+func (u *UI) handlePendingQuestions(ctx context.Context) bool {
 	u.screenMu.Lock()
 	activeID := u.activeAgent
 	manager := u.manager
@@ -175,8 +207,11 @@ func (u *UI) handlePendingQuestions(ctx context.Context) {
 	}
 	u.questionMu.Unlock()
 	if request == nil {
-		return
+		return false
 	}
+	u.screenMu.Lock()
+	u.drafts[activeID] = request.draft
+	u.screenMu.Unlock()
 
 	var answers []string
 	var err error
@@ -185,9 +220,17 @@ func (u *UI) handlePendingQuestions(ctx context.Context) {
 	} else if ctx.Err() != nil {
 		err = ctx.Err()
 	} else {
-		answers, err = u.runQuestionnaire(request.ctx, request.questions)
+		answers, request.next, err = u.runQuestionnaireProgress(request.ctx, request.questions, request.next, request.answers, "Ctrl+C cancels this request.", true)
+	}
+	if errors.Is(err, errQuestionDeferred) {
+		request.answers = answers
+		u.questionMu.Lock()
+		u.questions = append([]*questionRequest{request}, u.questions...)
+		u.questionMu.Unlock()
+		return true
 	}
 	request.result <- questionResult{answers: answers, err: err}
+	u.restoreQuestionDraft(request)
 	if manager != nil {
 		if errors.Is(err, context.Canceled) && request.ctx.Err() == nil {
 			_ = manager.Cancel(activeID)
@@ -195,6 +238,7 @@ func (u *UI) handlePendingQuestions(ctx context.Context) {
 		manager.SetWaitingForApproval(activeID, false)
 	}
 	u.updateActiveCancellation()
+	return false
 }
 
 func (u *UI) runQuestionnaire(ctx context.Context, questions []question.Question) ([]string, error) {
@@ -202,8 +246,13 @@ func (u *UI) runQuestionnaire(ctx context.Context, questions []question.Question
 }
 
 func (u *UI) runQuestionnaireWithFooter(ctx context.Context, questions []question.Question, footer string) ([]string, error) {
+	answers, _, err := u.runQuestionnaireProgress(ctx, questions, 0, nil, footer, false)
+	return answers, err
+}
+
+func (u *UI) runQuestionnaireProgress(ctx context.Context, questions []question.Question, start int, previous []string, footer string, allowTabSwitch bool) ([]string, int, error) {
 	if len(questions) == 0 {
-		return nil, fmt.Errorf("questionnaire has no questions")
+		return nil, start, fmt.Errorf("questionnaire has no questions")
 	}
 	questionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -216,6 +265,11 @@ func (u *UI) runQuestionnaireWithFooter(ctx context.Context, questions []questio
 		go func() {
 			select {
 			case <-questionCtx.Done():
+				select {
+				case <-watchDone:
+					return
+				default:
+				}
 				wakeInput()
 			case <-watchDone:
 			}
@@ -229,22 +283,29 @@ func (u *UI) runQuestionnaireWithFooter(ctx context.Context, questions []questio
 	}
 	defer u.restorePlanPrompt()
 
-	answers := make([]string, 0, len(questions))
-	for i, question := range questions {
+	answers := append([]string(nil), previous...)
+	for i := start; i < len(questions); i++ {
+		question := questions[i]
 		u.printSystemMessage(formatQuestionWithFooter(question, i, len(questions), u.width, footer))
 		for {
 			if err := questionCtx.Err(); err != nil {
-				return nil, err
+				return nil, i, err
 			}
 			prompt := fmt.Sprintf("Answer %d/%d> ", i+1, len(questions))
 			u.terminal.SetPrompt(prompt)
 			u.renderInput(prompt, "", 0)
 			answer, err := u.readLine()
 			if err != nil {
-				return nil, err
+				return nil, i, err
 			}
 			if err := questionCtx.Err(); err != nil {
-				return nil, err
+				return nil, i, err
+			}
+			u.tabMu.Lock()
+			switching := u.pendingTab != 0
+			u.tabMu.Unlock()
+			if switching && allowTabSwitch {
+				return answers, i, errQuestionDeferred
 			}
 			answer = strings.TrimSpace(answer)
 			if answer == "" {
@@ -260,7 +321,7 @@ func (u *UI) runQuestionnaireWithFooter(ctx context.Context, questions []questio
 			break
 		}
 	}
-	return answers, nil
+	return answers, len(questions), nil
 }
 
 func (u *UI) restorePlanPrompt() {

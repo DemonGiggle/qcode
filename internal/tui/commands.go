@@ -80,6 +80,11 @@ var slashCommands = []slashCommand{
 		examples: []string{"/history"},
 	},
 	{
+		name: "/interactive", usage: "/interactive [on|off]", description: "Toggle questions during normal agent work",
+		arguments: []helpArgument{{name: "on|off", description: "Enable or disable questions for this agent; omit to show the current setting."}},
+		examples:  []string{"/interactive", "/interactive on", "/interactive off"},
+	},
+	{
 		name: "/learn", usage: "/learn [list|forget <id>|compact]", description: "Save, list, remove, or combine reusable instructions",
 		arguments: []helpArgument{
 			{name: "list", description: "Show saved learning and its IDs."},
