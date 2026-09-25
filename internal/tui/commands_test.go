@@ -388,10 +388,23 @@ func TestStatusBarShowsStepProgress(t *testing.T) {
 }
 
 func TestNarrowStatusBarKeepsStepProgress(t *testing.T) {
-	// STEP outranks TOK: when only one fits, TOK drops first.
+	// When one line overflows, segments wrap to a second left-aligned line
+	// instead of dropping: high priority first, overflow second.
 	got := statusBar("ollama", "qwen", "/w", 60, true, false, "73% left", "I:1 O:2", "2/32")
-	if !strings.Contains(got, "[STEP 2/32]") || strings.Contains(got, "[TOK ") || visibleWidth(got) > 60 {
-		t.Fatalf("narrow status bar = %q, width = %d", got, visibleWidth(got))
+	lines := strings.Split(got, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("narrow status bar = %q, want two lines", got)
+	}
+	for _, line := range lines {
+		if visibleWidth(line) > 60 {
+			t.Fatalf("narrow status line = %q, width = %d", line, visibleWidth(line))
+		}
+		if strings.HasPrefix(line, " ") {
+			t.Fatalf("narrow status line not left-aligned: %q", line)
+		}
+	}
+	if !strings.Contains(lines[0], "[STEP 2/32]") || !strings.Contains(lines[1], "[TOK I:1 O:2]") {
+		t.Fatalf("priority order wrong: %q", got)
 	}
 	// Extremely narrow with a long model name keeps the higher-priority
 	// provider/model unit (truncated) and drops the lowest-priority totals.

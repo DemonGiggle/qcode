@@ -92,12 +92,16 @@ func (u *UI) paintFixedLocked(direction int) {
 		}
 	}
 	rows, cy, cx := inputRows(label+u.inputText, utf8.RuneCountInString(label)+u.inputPosition, u.width)
+	statusN := statusBarLineCount(u.statusBar())
+	if u.height < 5 {
+		statusN = 1
+	}
 	// Keep a cursor-centered window for drafts taller than the terminal.
-	inputHeight := min(len(rows), max(1, u.height-5))
+	inputHeight := min(len(rows), max(1, u.height-4-statusN))
 	start := max(0, cy-inputHeight+1)
 	rows = rows[start:min(len(rows), start+inputHeight)]
 	cy -= start
-	footer := min(2, max(0, u.height-2))
+	footer := min(1+statusN, max(0, u.height-2))
 	promptRow := u.height - footer - len(rows) + 1
 	matches := matchingSlashCommands(u.inputText)
 	if u.inputLabel != inputPrompt && u.inputLabel != planInputPrompt && u.inputLabel != skillPlanInputPrompt {
@@ -141,15 +145,26 @@ func (u *UI) paintFixedLocked(direction int) {
 	for i, row := range rows {
 		screenRows[promptRow+i] = row
 	}
-	if footer == 2 {
+	taskRow := u.height - statusN
+	if footer == 1+statusN {
 		message := taskIndicatorMessage(summary.Status, summary.QueueDepth, u.unicode, time.Now())
 		if u.activeViewportLocked().browsing {
 			message = "History paused | PgUp/PgDn | PgDn to bottom resumes"
 		}
-		screenRows[u.height-1] = truncateDiffLine(message, u.width, u.unicode)
+		screenRows[taskRow] = truncateDiffLine(message, u.width, u.unicode)
 	}
 	if footer > 0 {
-		screenRows[u.height] = u.statusBar()
+		bar := u.statusBar()
+		lines := strings.Split(bar, "\n")
+		if u.height < 5 && len(lines) > 1 {
+			lines = lines[:1]
+		}
+		// Both status lines start at column 1 so the second aligns under
+		// the first.
+		start := u.height - len(lines) + 1
+		for i, line := range lines {
+			screenRows[start+i] = line
+		}
 	}
 	u.writeFixedScreenLocked(screenRows, promptRow+cy, cx+1)
 }

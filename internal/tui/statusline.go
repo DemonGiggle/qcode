@@ -277,108 +277,22 @@ func renderFilteredStatusBar(provider, model, ws string, unicodeEnabled, color, 
 
 // renderStatusBarWithPriority fits enabled segments to width using the
 // approved priority: remote > mode > model > think > ws > ctx > step > tok.
-// Display order follows the same priority. The
-// workspace path is shortened before any segment drops, and whole-bar
-// truncation with an ellipsis is the final fallback.
+// Display order follows the same priority. When enabled segments cannot fit
+// on one line they wrap to a second left-aligned line; only when two lines
+// still overflow are low-priority segments dropped, with ellipsis truncation
+// as the final fallback.
 func renderStatusBarWithPriority(provider, model, root string, width int, unicodeEnabled, color, remote bool, hidden map[string]bool, modelColor, workspaceColor string, labels []string) string {
 	if hidden == nil {
 		hidden = map[string]bool{}
 	}
-	dropped := map[string]bool{}
-	shortMode := false
 
-	render := func(ws string) string {
-		return renderFilteredStatusBar(provider, model, ws, unicodeEnabled, color, remote, modelColor, workspaceColor, labels, hidden, dropped, shortMode)
-	}
-
-	// Cap long workspace paths even on wide terminals, matching the historic
-	// maxWorkspaceStatusWidth behavior.
-	shortened := func(available int) string {
-		if available > maxWorkspaceStatusWidth {
-			available = maxWorkspaceStatusWidth
-		}
-		return shortenWorkspacePath(root, available, unicodeEnabled)
-	}
-
-	fitWorkspace := func() string {
-		if width <= 0 || hidden[statusSegmentWS] || dropped[statusSegmentWS] {
-			return render(root)
-		}
-		base := render("")
-		available := width - visibleWidth(base)
-		if available > maxWorkspaceStatusWidth {
-			available = maxWorkspaceStatusWidth
-		}
-		if available > 0 && visibleWidth(root) > available {
-			return render(shortened(available))
-		}
-		return render(root)
-	}
-
-	finished := func(bar string) bool {
-		return width <= 0 || visibleWidth(bar) <= width
-	}
-
-	bar := fitWorkspace()
-	if finished(bar) {
-		if color {
-			return bar + reset
-		}
-		return bar
-	}
-
-	// Squeeze INTERACTIVE to INT before dropping whole segments.
-	hasInteractive := len(labels) > 3 && labels[3] == "INTERACTIVE" && !hidden[statusSegmentMode] && !dropped[statusSegmentMode]
-	if hasInteractive {
-		shortMode = true
-		bar = fitWorkspace()
-		if finished(bar) {
-			if color {
-				return bar + reset
-			}
-			return bar
-		}
-	}
-
-	for _, id := range statusDropOrder {
-		if hidden[id] || dropped[id] {
-			continue
-		}
-		// Skip empty optional segments; dropping them changes nothing.
-		switch id {
-		case statusSegmentRemote:
-			if !remote {
+	enabled := func(dropped map[string]bool) []string {
+		out := []string{}
+		for _, id := range statusDisplayOrder {
+			if hidden[id] || dropped[id] {
 				continue
 			}
-		case statusSegmentStep:
-			if len(labels) <= 2 || labels[2] == "" {
-				continue
-			}
-		case statusSegmentMode:
-			if len(labels) <= 3 || labels[3] == "" {
-				continue
-			}
-		case statusSegmentThink:
-			if len(labels) <= 4 || labels[4] == "" {
-				continue
-			}
-		case statusSegmentCtx:
-			if len(labels) == 0 {
-				continue
-			}
-		case statusSegmentTok:
-			if len(labels) <= 1 {
-				continue
-			}
-		}
-		// Keep at least one segment so the bar never renders empty when the
-		// width allows a single ellipsis.
-		remaining := 0
-		for _, candidate := range statusDisplayOrder {
-			if hidden[candidate] || dropped[candidate] || candidate == id {
-				continue
-			}
-			switch candidate {
+			switch id {
 			case statusSegmentRemote:
 				if !remote {
 					continue
@@ -404,25 +318,203 @@ func renderStatusBarWithPriority(provider, model, root string, width int, unicod
 					continue
 				}
 			}
-			remaining++
+			out = append(out, id)
 		}
-		if remaining == 0 {
-			break
-		}
-		dropped[id] = true
-		bar = fitWorkspace()
-		if finished(bar) {
-			if color {
-				return bar + reset
-			}
-			return bar
-		}
+		return out
 	}
 
-	if !color {
-		return truncateDiffLine(bar, width, unicodeEnabled)
+	containsWS := func(set []string) bool {
+		for _, id := range set {
+			if id == statusSegmentWS {
+				return true
+			}
+		}
+		return false
 	}
-	return truncateDiffLine(bar, width, unicodeEnabled) + reset
+
+	// renderSet renders exactly the toggles in set (in display order) as one
+	// line. Toggles outside set are treated as dropped for this line only.
+	renderSet := func(set []string, wsPath string, shortMode bool, dropped map[string]bool) string {
+		extra := map[string]bool{}
+		for k, v := range dropped {
+			extra[k] = v
+		}
+		inSet := map[string]bool{}
+		for _, id := range set {
+			inSet[id] = true
+		}
+		for _, id := range statusDisplayOrder {
+			if !inSet[id] {
+				extra[id] = true
+			}
+		}
+		combined := map[string]bool{}
+		for k, v := range hidden {
+			if v {
+				combined[k] = true
+			}
+		}
+		for k, v := range extra {
+			if v {
+				combined[k] = true
+			}
+		}
+		// renderFilteredStatusBar treats combined as hidden; dropped is empty
+		// here because it is already folded in.
+		return renderFilteredStatusBar(provider, model, wsPath, unicodeEnabled, color, remote, modelColor, workspaceColor, labels, combined, map[string]bool{}, shortMode)
+	}
+
+	// fitWS shortens the workspace path so the given single-line set fits
+	// when possible, keeping the useful tail visible.
+	fitWS := func(set []string, shortMode bool, dropped map[string]bool) string {
+		if width <= 0 || !containsWS(set) {
+			return root
+		}
+		base := renderSet(set, "", shortMode, dropped)
+		available := width - visibleWidth(base)
+		if available > maxWorkspaceStatusWidth {
+			available = maxWorkspaceStatusWidth
+		}
+		if available > 0 && visibleWidth(root) > available {
+			if available > maxWorkspaceStatusWidth {
+				available = maxWorkspaceStatusWidth
+			}
+			return shortenWorkspacePath(root, available, unicodeEnabled)
+		}
+		return root
+	}
+
+	fits := func(line string) bool {
+		return width <= 0 || visibleWidth(line) <= width
+	}
+	finishSingle := func(line string) string {
+		if color {
+			return line + reset
+		}
+		return line
+	}
+	finishDouble := func(first, second string) string {
+		if color {
+			return first + reset + "\n" + second + reset
+		}
+		return first + "\n" + second
+	}
+
+	dropped := map[string]bool{}
+	shortMode := false
+	hasInteractive := func() bool {
+		return len(labels) > 3 && labels[3] == "INTERACTIVE" && !hidden[statusSegmentMode] && !dropped[statusSegmentMode]
+	}
+
+	for {
+		set := enabled(dropped)
+		if len(set) == 0 {
+			return finishSingle("")
+		}
+		// Single line attempt.
+		wsPath := fitWS(set, shortMode, dropped)
+		if single := renderSet(set, wsPath, shortMode, dropped); fits(single) {
+			return finishSingle(single)
+		}
+		// Two-line attempt: keep high-priority toggles on the first
+		// left-aligned line, overflow on the second left-aligned line.
+		// Prefer the fullest fitting first line.
+		found := false
+		var first, second string
+		for k := len(set) - 1; k >= 1; k-- {
+			line1, line2 := set[:k], set[k:]
+			ws1, ws2 := root, root
+			if containsWS(line1) {
+				// Fit WS against its own line so the other line is not
+				// needlessly squeezed.
+				base := renderSet(line1, "", shortMode, dropped)
+				available := width - visibleWidth(base)
+				if available > maxWorkspaceStatusWidth {
+					available = maxWorkspaceStatusWidth
+				}
+				if available > 0 && visibleWidth(root) > available {
+					ws1 = shortenWorkspacePath(root, available, unicodeEnabled)
+				}
+			}
+			if containsWS(line2) {
+				base := renderSet(line2, "", shortMode, dropped)
+				available := width - visibleWidth(base)
+				if available > maxWorkspaceStatusWidth {
+					available = maxWorkspaceStatusWidth
+				}
+				if available > 0 && visibleWidth(root) > available {
+					ws2 = shortenWorkspacePath(root, available, unicodeEnabled)
+				}
+			}
+			_ = ws2
+			// WS appears on exactly one line; use the shortened path for
+			// that line and root (unused) for the other.
+			r1 := renderSet(line1, ws1, shortMode, dropped)
+			r2 := renderSet(line2, ws2, shortMode, dropped)
+			if fits(r1) && fits(r2) {
+				first, second, found = r1, r2, true
+				break
+			}
+		}
+		if found {
+			return finishDouble(first, second)
+		}
+		// Squeeze INTERACTIVE to INT before dropping whole segments.
+		if !shortMode && hasInteractive() {
+			shortMode = true
+			continue
+		}
+		// Drop the lowest-priority remaining toggle and retry. Two lines
+		// are preferred over dropping, so this only runs when even two
+		// lines overflow.
+		next := ""
+		for _, id := range statusDropOrder {
+			if hidden[id] || dropped[id] {
+				continue
+			}
+			for _, candidate := range set {
+				if candidate == id {
+					next = id
+					break
+				}
+			}
+			if next != "" {
+				break
+			}
+		}
+		if next == "" {
+			break
+		}
+		// Keep at least one toggle so the bar never renders empty when the
+		// width allows a single ellipsis.
+		if len(set) <= 1 {
+			break
+		}
+		dropped[next] = true
+	}
+
+	// Final fallback: even two lines overflow. Truncate each line so both
+	// stay within width with aligned left edges.
+	set := enabled(dropped)
+	if len(set) == 0 {
+		return finishSingle("")
+	}
+	if len(set) == 1 {
+		wsPath := fitWS(set, shortMode, dropped)
+		bar := renderSet(set, wsPath, shortMode, dropped)
+		if !color {
+			return truncateDiffLine(bar, width, unicodeEnabled)
+		}
+		return truncateDiffLine(bar, width, unicodeEnabled) + reset
+	}
+	mid := (len(set) + 1) / 2
+	line1, line2 := set[:mid], set[mid:]
+	r1 := renderSet(line1, fitWS(line1, shortMode, dropped), shortMode, dropped)
+	r2 := renderSet(line2, fitWS(line2, shortMode, dropped), shortMode, dropped)
+	if !color {
+		return truncateDiffLine(r1, width, unicodeEnabled) + "\n" + truncateDiffLine(r2, width, unicodeEnabled)
+	}
+	return truncateDiffLine(r1, width, unicodeEnabled) + reset + "\n" + truncateDiffLine(r2, width, unicodeEnabled) + reset
 }
 
 func statusBarWithStatuslineHidden(provider, model, root string, width int, unicodeEnabled, color, remote bool, hidden []string, modelColor, workspaceColor string, contextLabel ...string) string {

@@ -711,7 +711,8 @@ func (u *UI) repaintActiveLocked(direction int) {
 	snapshot := u.display.Snapshot()
 	rows := historyRows(snapshot, u.width)
 	v := u.activeViewportLocked()
-	page := v.page(rows, max(1, u.height-4), direction)
+	statusN := u.statusLinesLocked()
+	page := v.page(rows, max(1, u.height-3-statusN), direction)
 	u.taskIndicatorText = ""
 	var output strings.Builder
 	output.WriteString("\x1b[0m\x1b[2;1H\x1b[J")
@@ -722,7 +723,7 @@ func (u *UI) repaintActiveLocked(direction int) {
 		output.WriteString(row.text)
 	}
 	if v.browsing {
-		if len(page) < u.height-3 {
+		if len(page) < u.height-2-statusN {
 			output.WriteByte('\n')
 		}
 	} else {
@@ -757,7 +758,7 @@ func (u *UI) drawNavigationLocked() {
 		return
 	}
 	message := truncateDiffLine("History paused | PgUp/PgDn | PgDn to bottom resumes", u.width, u.unicode)
-	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s%s%s\x1b[u", u.height-1, dim, message, reset)
+	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s%s%s\x1b[u", u.statusTaskRowLocked(), dim, message, reset)
 }
 
 func (u *UI) drawTabBar() {

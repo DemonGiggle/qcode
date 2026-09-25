@@ -128,6 +128,7 @@ form {
   font-size: .76rem;
   line-height: 1.35;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 .status .online { color: var(--green); }
 /* Mirrors the TUI task indicator: a dim spinner with the queued count. */

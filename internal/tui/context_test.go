@@ -31,10 +31,23 @@ func TestStartupToolSummary(t *testing.T) {
 func TestContextStatusRemainsVisibleOnNarrowTerminals(t *testing.T) {
 	for _, color := range []bool{false, true} {
 		for _, unicode := range []bool{false, true} {
-			// CTX outranks TOK/STEP: token totals drop first.
+			// Narrow widths wrap to two left-aligned lines instead of
+			// dropping CTX.
 			bar := statusBar("ollama", "qwen", "/w", 50, unicode, color, "73% left", "I:1 O:2", "2/32")
-			if !strings.Contains(bar, "73% left") || strings.Contains(bar, "I:1 O:2") || visibleWidth(bar) > 50 {
-				t.Fatalf("bar=%q width=%d", bar, visibleWidth(bar))
+			lines := strings.Split(bar, "\n")
+			if len(lines) != 2 {
+				t.Fatalf("bar=%q want two lines", bar)
+			}
+			for _, line := range lines {
+				if visibleWidth(line) > 50 {
+					t.Fatalf("bar=%q width=%d", bar, visibleWidth(line))
+				}
+				if strings.HasPrefix(line, " ") {
+					t.Fatalf("bar line not left-aligned: %q", line)
+				}
+			}
+			if !strings.Contains(bar, "73% left") {
+				t.Fatalf("bar=%q missing ctx", bar)
 			}
 		}
 	}

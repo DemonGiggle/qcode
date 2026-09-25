@@ -6,6 +6,27 @@ import (
 	"testing"
 )
 
+func TestStatuslineTwoLineAlignment(t *testing.T) {
+	// Overflow wraps to a second left-aligned line: high priority first,
+	// remainder second, each fitting its own width.
+	got := statusBar("ollama", "qwen", "/w", 40, true, false, "73% left", "I:1 O:2", "2/32")
+	lines := strings.Split(got, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want two lines, got %q", got)
+	}
+	for _, line := range lines {
+		if visibleWidth(line) > 40 {
+			t.Fatalf("line width = %d: %q", visibleWidth(line), line)
+		}
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "  ") {
+			t.Fatalf("line not left-aligned: %q", line)
+		}
+	}
+	if !strings.Contains(lines[0], "ollama") || !strings.Contains(lines[1], "[TOK I:1 O:2]") {
+		t.Fatalf("priority split wrong: %q", got)
+	}
+}
+
 func TestStatuslineHiddenFiltering(t *testing.T) {
 	full := statusBarWithStatuslineHidden("ollama", "qwen", "~/code", 120, true, false, false, nil, magenta, blue, "73% left", "I:1 O:2", "2/32", "PLAN", "high")
 	for _, want := range []string{"ollama", "[MODEL qwen]", "[CTX 73% left]", "[WS ~/code]", "[TOK I:1 O:2]", "[STEP 2/32]", "[MODE PLAN]", "[THINK high]"} {
@@ -28,12 +49,22 @@ func TestStatuslineHiddenFiltering(t *testing.T) {
 }
 
 func TestStatuslinePriorityDropsTokBeforeStep(t *testing.T) {
-	got := statusBarWithStatuslineHidden("ollama", "qwen", "/w", 60, true, false, false, nil, magenta, blue, "73% left", "I:1 O:2", "2/32")
+	// Even two lines can overflow: TOK (lowest) drops before STEP.
+	got := statusBarWithStatuslineHidden("ollama", "qwen", "/w", 30, true, false, false, nil, magenta, blue, "73% left", "I:1 O:2", "2/32")
+	lines := strings.Split(got, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("priority order wrong, want two lines: %q", got)
+	}
+	for _, line := range lines {
+		if visibleWidth(line) > 30 {
+			t.Fatalf("width = %d: %q", visibleWidth(line), got)
+		}
+		if strings.HasPrefix(line, " ") {
+			t.Fatalf("line not left-aligned: %q", line)
+		}
+	}
 	if !strings.Contains(got, "[STEP 2/32]") || strings.Contains(got, "[TOK ") {
 		t.Fatalf("priority order wrong: %q", got)
-	}
-	if visibleWidth(got) > 60 {
-		t.Fatalf("width = %d: %q", visibleWidth(got), got)
 	}
 }
 
@@ -42,16 +73,21 @@ func TestStatuslineShortensInteractiveBeforeDropping(t *testing.T) {
 	if !strings.Contains(wide, "[MODE INTERACTIVE]") {
 		t.Fatalf("wide bar should keep full label: %q", wide)
 	}
-	// At a width where workspace shortening alone cannot close the gap, the
-	// fitter squeezes MODE before dropping whole segments.
-	fullWidth := visibleWidth(wide)
-	narrowWidth := fullWidth - 8
-	if narrowWidth <= 0 {
-		t.Skip("bar too short to test shortening")
-	}
+	// At 36 columns even two lines overflow with the full label, so the
+	// fitter squeezes INTERACTIVE to INT (dropping TOK if needed).
+	const narrowWidth = 36
 	got := statusBarWithStatuslineHidden("ollama", "qwen", "~/code", narrowWidth, true, false, false, nil, magenta, blue, "73% left", "I:1 O:2", "", "INTERACTIVE")
-	if !strings.Contains(got, "[MODE INT]") || visibleWidth(got) > narrowWidth {
-		t.Fatalf("mode not shortened: %q width=%d want<=%d", got, visibleWidth(got), narrowWidth)
+	lines := strings.Split(got, "\n")
+	for _, line := range lines {
+		if visibleWidth(line) > narrowWidth {
+			t.Fatalf("mode not shortened: %q width=%d want<=%d", got, visibleWidth(line), narrowWidth)
+		}
+		if strings.HasPrefix(line, " ") {
+			t.Fatalf("line not left-aligned: %q", line)
+		}
+	}
+	if !strings.Contains(got, "[MODE INT]") || strings.Contains(got, "INTERACTIVE") {
+		t.Fatalf("mode not shortened: %q", got)
 	}
 }
 
@@ -107,5 +143,35 @@ func TestStatuslinePreferenceMainTabOnly(t *testing.T) {
 	u.applyStatuslineHidden([]string{"tok"})
 	if recorder.statusCalls != 1 || len(recorder.hidden) != 1 || recorder.hidden[0] != "tok" {
 		t.Fatalf("main tab persistence = %+v", recorder)
+	}
+}
+
+func TestFixedLayoutReservesTwoRowsForWrappedStatus(t *testing.T) {
+	u, _ := layoutFixture(t)
+	u.provider, u.model, u.root = "ollama", "qwen", "/w"
+	u.width, u.height = 40, 24
+	u.renderInput(inputPrompt, "", 0)
+	first, second := u.inputScreenRows[u.height-1], u.inputScreenRows[u.height]
+	if first == "" || second == "" {
+		t.Fatalf("want two status rows, got %q and %q", first, second)
+	}
+	for _, line := range []string{first, second} {
+		if visibleWidth(line) > u.width {
+			t.Fatalf("status row width = %d: %q", visibleWidth(line), line)
+		}
+		if strings.HasPrefix(line, " ") {
+			t.Fatalf("status row not left-aligned: %q", line)
+		}
+	}
+	if !strings.Contains(first, "ollama") || !strings.Contains(second, "[TOK ") {
+		t.Fatalf("priority split wrong: %q | %q", first, second)
+	}
+	// Single-line widths keep a single status row.
+	wide, _ := layoutFixture(t)
+	wide.provider, wide.model, wide.root = "ollama", "qwen", "/w"
+	wide.width, wide.height = 120, 24
+	wide.renderInput(inputPrompt, "", 0)
+	if wide.inputScreenRows[wide.height] == "" {
+		t.Fatal("want a status row")
 	}
 }

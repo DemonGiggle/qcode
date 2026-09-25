@@ -56,7 +56,11 @@ func (u *UI) resize() {
 		return
 	}
 	u.statusActive = true
-	fmt.Fprintf(u.out, "\x1b[2;%dr\x1b[2;1H", height-2)
+	bottom := u.height - 1 - u.statusLinesLocked()
+	if bottom < 2 {
+		bottom = 2
+	}
+	fmt.Fprintf(u.out, "\x1b[2;%dr\x1b[2;1H", bottom)
 	u.drawTabBarLocked()
 	u.drawStatusBarLocked()
 	u.screenMu.Unlock()

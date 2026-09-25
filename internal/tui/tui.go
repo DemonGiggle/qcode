@@ -1622,9 +1622,9 @@ func (u *UI) resetStatusLayout() {
 	if !u.statusActive {
 		return
 	}
-	// Reserve the first row for tabs, the last row for status, and leave the
-	// row above status blank. Conversation output scrolls between them.
-	fmt.Fprintf(u.out, "\x1b[2;%dr\x1b[2;1H", u.height-2)
+	// Reserve the first row for tabs and the last statusLineCount rows for
+	// status. The task indicator sits directly above status.
+	fmt.Fprintf(u.out, "\x1b[2;%dr\x1b[2;1H", u.statusScrollBottom())
 	u.drawTabBar()
 	u.drawStatusBar()
 }
@@ -1650,11 +1650,90 @@ func (u *UI) renderStatusBarLocked(force bool) {
 		return
 	}
 	bar := u.statusBar()
+	if u.height < 5 {
+		// Tiny terminals keep a single status line to preserve a valid
+		// scroll region; the overflow line is dropped.
+		bar = strings.Split(bar, "\n")[0]
+	}
 	if !force && bar == u.statusBarText {
 		return
 	}
+	oldCount := statusBarLineCount(u.statusBarText)
+	newCount := statusBarLineCount(bar)
+	if u.statusBarText != "" && newCount != oldCount {
+		// The footer grew or shrank: move the scroll region so history
+		// never scrolls under the status lines.
+		bottom := u.height - 1 - newCount
+		if bottom < 2 {
+			bottom = 2
+		}
+		fmt.Fprintf(u.out, "\x1b[2;%dr\x1b[2;1H", bottom)
+	}
 	u.statusBarText = bar
-	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", u.height, bar)
+	lines := strings.Split(bar, "\n")
+	start := u.height - len(lines) + 1
+	fmt.Fprint(u.out, "\x1b[s")
+	for i, line := range lines {
+		fmt.Fprintf(u.out, "\x1b[%d;1H\x1b[2K%s", start+i, line)
+	}
+	// Clear a freed row when shrinking from two lines to one so the old
+	// second line does not linger above the new single line.
+	if oldCount > len(lines) {
+		for row := start - (oldCount - len(lines)); row < start; row++ {
+			fmt.Fprintf(u.out, "\x1b[%d;1H\x1b[2K", row)
+		}
+	}
+	fmt.Fprint(u.out, "\x1b[u")
+}
+
+// statusBarLineCount returns 1 or 2 for a rendered status bar.
+func statusBarLineCount(bar string) int {
+	if bar == "" {
+		return 1
+	}
+	n := strings.Count(bar, "\n") + 1
+	if n < 1 {
+		return 1
+	}
+	if n > 2 {
+		return 2
+	}
+	return n
+}
+
+// statusLinesLocked reports how many footer rows status occupies. Heights
+// below 5 force a single line to preserve a valid scroll region.
+func (u *UI) statusLinesLocked() int {
+	if u.height < 5 {
+		return 1
+	}
+	return statusBarLineCount(u.statusBar())
+}
+
+// statusScrollBottomLocked returns the bottom row of the scrolling region.
+func (u *UI) statusScrollBottomLocked() int {
+	bottom := u.height - 1 - u.statusLinesLocked()
+	if bottom < 2 {
+		bottom = 2
+	}
+	return bottom
+}
+
+// statusTaskRowLocked returns the row directly above status for the task
+// indicator and navigation messages.
+func (u *UI) statusTaskRowLocked() int {
+	return u.height - u.statusLinesLocked()
+}
+
+// statusScrollBottom is the locking version for callers without screenMu.
+func (u *UI) statusScrollBottom() int {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	bottom := u.height - 1 - u.statusLinesLocked()
+	if bottom < 2 {
+		bottom = 2
+	}
+	return bottom
 }
 
 func (u *UI) statusBar() string {
@@ -1672,7 +1751,11 @@ func (u *UI) teardownStatusBar() {
 	u.statusActive = false
 	// Restore full-screen scrolling and clear the reserved footer rows before
 	// returning control to the invoking shell.
-	fmt.Fprintf(u.out, "\x1b[r\x1b[%d;1H\x1b[J", u.height-1)
+	start := u.height - statusBarLineCount(u.statusBarText)
+	if start < 1 {
+		start = 1
+	}
+	fmt.Fprintf(u.out, "\x1b[r\x1b[%d;1H\x1b[J", start)
 }
 
 func statusBar(provider, model, root string, width int, unicodeEnabled, color bool, contextLabel ...string) string {
