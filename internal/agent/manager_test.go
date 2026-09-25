@@ -414,6 +414,52 @@ func TestAgentPromptQueueIsFIFO(t *testing.T) {
 	}
 }
 
+func TestQueuedPromptsAreIndependentFIFOAndDrain(t *testing.T) {
+	provider := &queueProvider{started: make(chan string, 4), release: make(chan struct{}, 4)}
+	manager := newQueueTestManager(t, 1, provider)
+	defer func() {
+		for i := 0; i < 4; i++ {
+			provider.release <- struct{}{}
+		}
+	}()
+	first, err := manager.Submit("main", "active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.Submit("main", "  queued one\nline two  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := manager.Submit("main", "queued two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := manager.QueuedPrompts("main")
+	if len(items) != 2 || items[0].RequestID != second.RequestID || items[0].Prompt != "queued one\nline two" || items[1].RequestID != third.RequestID {
+		t.Fatalf("queued prompts = %+v", items)
+	}
+	items[0].Prompt = "modified snapshot"
+	if current := manager.QueuedPrompts("main"); current[0].Prompt != "queued one\nline two" {
+		t.Fatalf("snapshot mutated queue: %+v", current)
+	}
+	provider.release <- struct{}{}
+	if _, err := waitPromptResult(t, manager, first.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	items = manager.QueuedPrompts("main")
+	if len(items) != 1 || items[0].RequestID != third.RequestID {
+		t.Fatalf("queue after first completion = %+v", items)
+	}
+	provider.release <- struct{}{}
+	if _, err := waitPromptResult(t, manager, second.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	provider.release <- struct{}{}
+	if _, err := waitPromptResult(t, manager, third.RequestID); err != nil || len(manager.QueuedPrompts("main")) != 0 {
+		t.Fatalf("queue did not drain: err=%v", err)
+	}
+}
+
 func TestAgentPromptQueueContinuesAfterCancellation(t *testing.T) {
 	manager := newTestManager(t, 1)
 	first, err := manager.Submit("main", "block")

@@ -19,6 +19,7 @@ const (
 	rxvtCtrlPageDown     = "\x1b[6^"
 	altPreviousTab       = "\x1b,"
 	altNextTab           = "\x1b."
+	altQueuePanel        = "\x1bq"
 )
 
 type tabKeySequence struct {
@@ -49,6 +50,7 @@ type interruptReader struct {
 	cancel   context.CancelFunc
 	page     func(int)
 	tab      func(int)
+	queue    func()
 	err      error
 	pending  []byte
 	raw      bool
@@ -77,6 +79,12 @@ func (r *interruptReader) setPageHandler(page func(int)) {
 func (r *interruptReader) setTabHandler(tab func(int)) {
 	r.mu.Lock()
 	r.tab = tab
+	r.mu.Unlock()
+}
+
+func (r *interruptReader) setQueueHandler(toggle func()) {
+	r.mu.Lock()
+	r.queue = toggle
 	r.mu.Unlock()
 }
 
@@ -264,12 +272,20 @@ func (r *interruptReader) route(input []byte) {
 	cancel := r.cancel
 	page := r.page
 	tab := r.tab
+	queue := r.queue
 	pending := append([]byte(nil), r.pending...)
 	r.pending = nil
 	r.mu.Unlock()
 
 	input = append(pending, input...)
 	for len(input) > 0 {
+		if len(input) >= len(altQueuePanel) && string(input[:len(altQueuePanel)]) == altQueuePanel {
+			if queue != nil {
+				queue()
+			}
+			input = input[len(altQueuePanel):]
+			continue
+		}
 		if direction, length, ok := matchTabKeySequence(input); ok {
 			if tab != nil {
 				tab(direction)
@@ -327,6 +343,9 @@ func matchTabKeySequence(input []byte) (direction, length int, ok bool) {
 
 func isKnownSequencePrefix(input []byte) bool {
 	prefix := string(input)
+	if len(prefix) < len(altQueuePanel) && altQueuePanel[:len(prefix)] == prefix {
+		return true
+	}
 	for _, sequence := range []string{pageUpSequence, pageDownSequence} {
 		if len(prefix) < len(sequence) && sequence[:len(prefix)] == prefix {
 			return true

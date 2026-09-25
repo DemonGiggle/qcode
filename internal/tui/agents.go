@@ -258,6 +258,7 @@ type agentView struct {
 	display  *agentDisplay
 	response *MarkdownWriter
 	viewport viewport
+	queue    queuePanel
 	unseen   bool
 	onSkills func([]string)
 }
@@ -364,6 +365,7 @@ func (u *UI) replayConsultationEvents() {
 func (u *UI) handleAgentEvent(event session.Event) {
 	defer u.requestSessionSave()
 	u.signalUIEvent()
+	u.signalPresentation()
 	if event.Agent.Status == session.StatusCompleted && event.Agent.CurrentTask != "/compact" {
 		u.queueModeDecision(event.Agent.ID)
 	}

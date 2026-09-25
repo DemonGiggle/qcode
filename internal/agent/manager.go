@@ -309,6 +309,21 @@ func (m *AgentManager) Submit(id, task string) (Submission, error) {
 	return submission, err
 }
 
+// QueuedPrompts returns an independent FIFO snapshot of an agent's pending work.
+func (m *AgentManager) QueuedPrompts(id string) []session.QueuedPrompt {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	s := m.sessions[id]
+	if s == nil {
+		return nil
+	}
+	items := make([]session.QueuedPrompt, len(s.queue))
+	for i, req := range s.queue {
+		items[i] = session.QueuedPrompt{RequestID: req.id, Prompt: req.prompt}
+	}
+	return items
+}
+
 // SubmitCompact queues manual compaction alongside prompts for the same agent.
 // The UI can keep accepting input and switching tabs while it runs.
 func (m *AgentManager) SubmitCompact(id string) (Submission, error) {

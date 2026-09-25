@@ -68,6 +68,12 @@ type Submission struct {
 	QueuePosition int    `json:"queue_position"`
 }
 
+// QueuedPrompt is a pending request in an agent's FIFO queue.
+type QueuedPrompt struct {
+	RequestID string `json:"request_id"`
+	Prompt    string `json:"prompt"`
+}
+
 // PromptResult is the complete, untruncated result of one submitted prompt.
 type PromptResult struct {
 	RequestID string `json:"request_id"`

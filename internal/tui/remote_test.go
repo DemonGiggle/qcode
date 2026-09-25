@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,6 +131,25 @@ func TestRemoteCatalogIncludesSelectorStateAndResumableSessions(t *testing.T) {
 	}
 	if len(catalog.Sessions) != 1 || catalog.Sessions[0].ID != resumable.ID || catalog.Sessions[0].Preview != "Review the release" {
 		t.Fatalf("sessions = %#v, want only resumable saved session", catalog.Sessions)
+	}
+}
+
+func TestRemotePresentationIncludesQueuedPromptsPerAgent(t *testing.T) {
+	u, _ := layoutFixture(t)
+	manager := u.manager.(*layoutManager)
+	manager.queued = map[string][]session.QueuedPrompt{
+		"main":    {{RequestID: "request-2", Prompt: "first\nsecond line"}},
+		"agent-1": {{RequestID: "request-3", Prompt: "other tab"}},
+	}
+	u.views["main"] = &agentView{id: "main", display: u.display.(*agentDisplay)}
+	u.views["agent-1"] = &agentView{id: "agent-1", display: &agentDisplay{ui: u, id: "agent-1", history: newHistoryWriter(io.Discard)}}
+	presentation := u.RemotePresentation()
+	if len(presentation.Views) != 2 || presentation.Views[0].ID != "agent-1" || presentation.Views[0].QueuedPrompts[0].Prompt != "other tab" || presentation.Views[1].QueuedPrompts[0].Prompt != "first\nsecond line" {
+		t.Fatalf("remote queue snapshot = %+v", presentation.Views)
+	}
+	encoded, err := json.Marshal(presentation)
+	if err != nil || !strings.Contains(string(encoded), `"queued_prompts"`) {
+		t.Fatalf("remote queue JSON = %s, %v", encoded, err)
 	}
 }
 
