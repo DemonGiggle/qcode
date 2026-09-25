@@ -1006,12 +1006,8 @@ func (u *UI) runActiveTask(ctx context.Context, line string) error {
 	if u.manager == nil {
 		return u.runner.Run(ctx, line)
 	}
-	submission, err := u.manager.Submit(u.activeAgent, line)
-	if err != nil {
+	if _, err := u.manager.Submit(u.activeAgent, line); err != nil {
 		return err
-	}
-	if submission.QueuePosition > 0 {
-		u.printSystemMessage(fmt.Sprintf("%sQueued #%d%s", dim, submission.QueuePosition, reset))
 	}
 	u.updateActiveCancellation()
 	u.drawTaskIndicator()

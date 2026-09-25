@@ -942,9 +942,7 @@ func (u *UI) compactConversation(ctx context.Context) {
 			u.printSystemMessage(yellow + "Conversation compaction failed: " + err.Error() + reset)
 			return
 		}
-		if submission.QueuePosition > 0 {
-			u.printSystemMessage(fmt.Sprintf("%sCompaction queued #%d%s", dim, submission.QueuePosition, reset))
-		} else {
+		if submission.QueuePosition == 0 {
 			u.printSystemMessage(dim + "Compacting conversation..." + reset)
 		}
 		u.updateActiveCancellation()

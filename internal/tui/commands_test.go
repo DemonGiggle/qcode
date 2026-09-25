@@ -623,7 +623,7 @@ func (*queuedSubmissionManager) Summary(string) (session.Summary, error) {
 	return session.Summary{ID: "main", Status: session.StatusRunning, QueueDepth: 2}, nil
 }
 
-func TestRunActiveTaskShowsQueuedPosition(t *testing.T) {
+func TestRunActiveTaskDoesNotPrintQueuedPosition(t *testing.T) {
 	manager := &queuedSubmissionManager{}
 	history := newHistoryWriter(io.Discard)
 	u := &UI{
@@ -633,7 +633,7 @@ func TestRunActiveTaskShowsQueuedPosition(t *testing.T) {
 	if err := u.runActiveTask(context.Background(), "second prompt"); err != nil {
 		t.Fatal(err)
 	}
-	if manager.prompt != "second prompt" || !strings.Contains(strings.Join(history.Lines(), "\n"), "Queued #2") {
+	if manager.prompt != "second prompt" || strings.Contains(strings.Join(history.Lines(), "\n"), "Queued #") {
 		t.Fatalf("prompt = %q, history = %q", manager.prompt, history.Lines())
 	}
 }
