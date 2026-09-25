@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -21,6 +23,7 @@ func (u *UI) showRemoteLogin(login RemoteLogin) {
 	if u.remoteLoginTimer != nil {
 		u.remoteLoginTimer.Stop()
 	}
+	u.removeRemoteQRFileLocked()
 	u.remoteLogin, u.remoteQR = &login, rows
 	if login.OpenAccess {
 		if u.fixedInput {
@@ -36,6 +39,7 @@ func (u *UI) showRemoteLogin(login RemoteLogin) {
 		}
 		// Drop the raw token as soon as its display expires.
 		u.remoteLogin.URL, u.remoteQR = "", nil
+		u.removeRemoteQRFileLocked()
 		if u.fixedInput {
 			u.paintFixedLocked(0)
 		} else if u.out != nil {
@@ -61,12 +65,54 @@ func (u *UI) clearRemoteLogin() {
 		u.remoteLoginTimer.Stop()
 		u.remoteLoginTimer = nil
 	}
+	u.removeRemoteQRFileLocked()
 	if u.remoteLogin == nil {
 		return
 	}
 	u.remoteLogin, u.remoteQR = nil, nil
 	if u.fixedInput {
 		u.paintFixedLocked(0)
+	}
+}
+
+// saveRemoteQR stores only the current login's QR in a private temporary file.
+// The file is removed with the login rather than remaining as a stale token.
+func (u *UI) saveRemoteQR() (string, error) {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	if u.remoteLogin == nil || u.remoteLogin.URL == "" || (!u.remoteLogin.OpenAccess && !time.Now().Before(u.remoteLogin.ExpiresAt)) {
+		return "", errors.New("login link expired; run /remote for a new link")
+	}
+	if u.remoteQRFile != "" {
+		return u.remoteQRFile, nil
+	}
+	image, err := qrcode.Encode(u.remoteLogin.URL, qrcode.Medium, 512)
+	if err != nil {
+		return "", fmt.Errorf("generate QR PNG: %w", err)
+	}
+	file, err := os.CreateTemp("", "qcode-remote-*.png")
+	if err != nil {
+		return "", fmt.Errorf("create QR PNG: %w", err)
+	}
+	path := file.Name()
+	if _, err = file.Write(image); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", fmt.Errorf("write QR PNG: %w", err)
+	}
+	if err = file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("close QR PNG: %w", err)
+	}
+	u.remoteQRFile = path
+	return path, nil
+}
+
+// Caller holds screenMu.
+func (u *UI) removeRemoteQRFileLocked() {
+	if u.remoteQRFile != "" {
+		_ = os.Remove(u.remoteQRFile)
+		u.remoteQRFile = ""
 	}
 }
 
@@ -87,10 +133,10 @@ func (u *UI) remoteLoginRows(width, height int) []string {
 		if len(u.remoteQR) > 0 && visibleWidth(u.remoteQR[0]) <= width && len(rows)+len(u.remoteQR) <= height {
 			rows = append(rows, u.remoteQR...)
 		} else {
-			rows = append(rows, "Enlarge the terminal to show the QR code.")
+			rows = append(rows, "Enlarge the terminal or select Save QR as PNG.")
 		}
 		if len(rows) > height {
-			return []string{truncateDiffLine("Enlarge the terminal to show the open remote link and QR code.", width, false)}
+			return []string{truncateDiffLine("Enlarge the terminal or select Save QR as PNG.", width, false)}
 		}
 		for i := range rows {
 			rows[i] = truncateDiffLine(rows[i], width, true)
@@ -112,10 +158,10 @@ func (u *UI) remoteLoginRows(width, height int) []string {
 	if len(u.remoteQR) > 0 && visibleWidth(u.remoteQR[0]) <= width && len(rows)+len(u.remoteQR) <= height {
 		rows = append(rows, u.remoteQR...)
 	} else {
-		rows = append(rows, "Enlarge the terminal to show the QR code.")
+		rows = append(rows, "Enlarge the terminal or select Save QR as PNG.")
 	}
 	if len(rows) > height {
-		return []string{truncateDiffLine("Enlarge the terminal to show the login link and QR code.", width, false)}
+		return []string{truncateDiffLine("Enlarge the terminal or select Save QR as PNG.", width, false)}
 	}
 	for i := range rows {
 		rows[i] = truncateDiffLine(rows[i], width, true)

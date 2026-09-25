@@ -107,9 +107,14 @@ leaves existing browser sessions connected.
 
 The login link and QR appear in a local panel, outside the shared transcript,
 saved sessions, exports, and logs. The panel is dismissed by the next command.
-If it remains open, it displays an expiry notice after three minutes. Resize
-the terminal if the QR does not fit; qcode never crops or wraps a QR code.
-The clickable heading targets the complete link even when the visible URL wraps.
+If it remains open, it displays an expiry notice after three minutes. If the QR
+does not fit, select **Save QR as PNG** on the `/remote` screen. qcode writes a
+private PNG to a temporary file and shows its path in the terminal. The file is
+removed when the link expires, is replaced, the login panel is dismissed, or
+remote control closes. In WSL,
+use `wslpath -w <path>` to get a path that Windows can open. qcode never crops
+or wraps a QR code. The clickable heading targets the complete link even when
+the visible URL wraps.
 
 The link carries a random token in its URL fragment. The browser removes the
 fragment and exchanges the token for a random session key via `POST api/v1/login`.

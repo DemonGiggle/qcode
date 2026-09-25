@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -195,15 +196,37 @@ func (s *fakeRemoteService) Status() RemoteStatus {
 func TestRemoteActiveScreenShowsConnectionsAndSecondaryClose(t *testing.T) {
 	var output bytes.Buffer
 	status := RemoteStatus{Running: true, Mode: RemoteModePureWeb, URL: "http://192.168.1.10:1234", Connections: 2}
-	rows := renderRemoteActiveMenu(&output, status, remoteKeepOpen, []string{"Remote login (click or scan; single use)"}, "", 120, false)
+	rows := renderRemoteActiveMenu(&output, status, remoteKeepOpen, []string{"Remote login (click or scan; single use)"}, "", "", 120, false)
 	if rows == 0 || !strings.Contains(output.String(), "Connections: 2 active browser sessions") {
 		t.Fatalf("remote screen = %q", output.String())
 	}
-	if !strings.Contains(output.String(), "> Keep connection open") || !strings.Contains(output.String(), "  Close Connection") {
+	if !strings.Contains(output.String(), "> Keep connection open") || !strings.Contains(output.String(), "  Save QR as PNG") || !strings.Contains(output.String(), "  Close Connection") {
 		t.Fatalf("remote close action is not secondary: %q", output.String())
 	}
 	if !strings.Contains(output.String(), "unencrypted") {
 		t.Fatalf("Pure Web warning missing: %q", output.String())
+	}
+}
+
+func TestRemoteActiveScreenSavesQRFromMenu(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	input := newInterruptReader(strings.NewReader(arrowDownSequence + "\r\x1b"))
+	input.setRaw(true)
+	input.start()
+	var screen bytes.Buffer
+	terminal := lineedit.NewTerminal(readWriter{Reader: input, Writer: &screen}, inputPrompt)
+	u := &UI{input: input, terminal: terminal, width: 80, height: 24}
+	u.showRemoteLogin(RemoteLogin{URL: "https://host/#login=secret", ExpiresAt: time.Now().Add(time.Minute)})
+	defer u.clearRemoteLogin()
+	if err := u.showRemoteActive(RemoteStatus{Running: true, Mode: RemoteModeTailscale, URL: "https://host/"}); err != nil {
+		t.Fatal(err)
+	}
+	shown := strings.ReplaceAll(screen.String(), "\r\n", "")
+	if u.remoteQRFile == "" || !strings.Contains(shown, "QR PNG:") || !strings.Contains(shown, filepath.Base(u.remoteQRFile)) {
+		t.Fatalf("save action did not show QR PNG path: %q", screen.String())
+	}
+	if _, err := os.Stat(u.remoteQRFile); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -247,7 +270,7 @@ func TestRemoteActiveScreenKeepsWrappedLoginURLClickable(t *testing.T) {
 		loginURL[:60],
 		loginURL[60:],
 	}
-	renderRemoteActiveMenu(&output, status, remoteKeepOpen, loginRows, loginURL, 80, false)
+	renderRemoteActiveMenu(&output, status, remoteKeepOpen, loginRows, loginURL, "", 80, false)
 	linkStart := "\x1b]8;;" + loginURL + "\x1b\\"
 	if got := strings.Count(output.String(), linkStart); got != 3 {
 		t.Fatalf("complete login target appears %d times, want heading and 2 URL rows in %q", got, output.String())

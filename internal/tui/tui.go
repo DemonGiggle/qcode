@@ -267,6 +267,7 @@ type UI struct {
 	remoteService        RemoteService
 	remoteLogin          *RemoteLogin
 	remoteQR             []string
+	remoteQRFile         string
 	remoteLoginTimer     *time.Timer
 	remoteMenuMu         sync.Mutex
 	remoteMenuActive     bool

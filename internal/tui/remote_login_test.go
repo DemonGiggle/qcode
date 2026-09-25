@@ -92,6 +92,73 @@ func TestRemoteLoginExpiryTimerDoesNotClearReplacement(t *testing.T) {
 	}
 }
 
+func TestSaveRemoteQRCreatesPrivatePNGAndRemovesItWithLogin(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	u := New(nil, nil, nil, "test", "model", ".")
+	u.showRemoteLogin(RemoteLogin{URL: "https://host/#login=secret", ExpiresAt: time.Now().Add(time.Minute)})
+	path, err := u.saveRemoteQR()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("QR PNG permissions = %o, want 600", info.Mode().Perm())
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := png.DecodeConfig(file)
+	file.Close()
+	if err != nil || config.Width != 512 || config.Height != 512 {
+		t.Fatalf("QR PNG = %dx%d, error = %v", config.Width, config.Height, err)
+	}
+	again, err := u.saveRemoteQR()
+	if err != nil || again != path {
+		t.Fatalf("repeated save = %q, %v", again, err)
+	}
+	u.showRemoteLogin(RemoteLogin{URL: "https://host/#login=replacement", ExpiresAt: time.Now().Add(time.Minute)})
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("replaced login left QR PNG: %v", err)
+	}
+	newPath, err := u.saveRemoteQR()
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.clearRemoteLogin()
+	if _, err := os.Stat(newPath); !os.IsNotExist(err) {
+		t.Fatalf("cleared login left QR PNG: %v", err)
+	}
+}
+
+func TestSavedRemoteQRIsRemovedAtExpiry(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	u := New(nil, nil, nil, "test", "model", ".")
+	u.showRemoteLogin(RemoteLogin{URL: "https://host/#login=secret", ExpiresAt: time.Now().Add(250 * time.Millisecond)})
+	defer u.clearRemoteLogin()
+	path, err := u.saveRemoteQR()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(2 * time.Second)
+	for {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("expired login left QR PNG")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if _, err := u.saveRemoteQR(); err == nil {
+		t.Fatal("expired login was saved again")
+	}
+}
+
 func TestOpenRemoteLinkHasNoExpiry(t *testing.T) {
 	login := RemoteLogin{URL: "http://192.168.1.10:1234", OpenAccess: true}
 	qr, err := qrcode.New(login.URL, qrcode.Medium)

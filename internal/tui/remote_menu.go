@@ -11,6 +11,7 @@ type remoteMenuChoice int
 
 const (
 	remoteKeepOpen remoteMenuChoice = iota
+	remoteSaveQR
 	remoteCloseConnection
 )
 
@@ -139,11 +140,11 @@ func renderRemoteNetworkMenu(out interface{ Write([]byte) (int, error) }, networ
 
 func (u *UI) showRemoteActive(status RemoteStatus) error {
 	selected := remoteKeepOpen
-	staticRows := 6 // title, address, connections, spacer, and two actions
+	notice := ""
+	staticRows := 7 // title, address, connections, spacer, and three actions
 	if status.Mode != RemoteModeTailscale {
 		staticRows++
 	}
-	loginHeight := max(1, u.height-3-staticRows)
 	u.armRemoteMenu()
 	u.beginRawSelector()
 	defer func() {
@@ -152,6 +153,10 @@ func (u *UI) showRemoteActive(status RemoteStatus) error {
 		u.endRawSelector()
 	}()
 	for {
+		loginHeight := max(1, u.height-3-staticRows)
+		if notice != "" {
+			loginHeight = max(1, loginHeight-len(strings.Split(wrapANSI(notice, u.width, ""), "\n")))
+		}
 		u.screenMu.Lock()
 		loginRows := u.remoteLoginRows(u.width, loginHeight)
 		loginURL := ""
@@ -159,7 +164,7 @@ func (u *UI) showRemoteActive(status RemoteStatus) error {
 			loginURL = u.remoteLogin.URL
 		}
 		u.screenMu.Unlock()
-		rows := renderRemoteActiveMenu(u.terminal, status, selected, loginRows, loginURL, u.width, ColorEnabled(u.out))
+		rows := renderRemoteActiveMenu(u.terminal, status, selected, loginRows, loginURL, notice, u.width, ColorEnabled(u.out))
 		key, err := readSelectorKey(u.input)
 		if err != nil {
 			clearSelector(u.terminal, rows)
@@ -173,12 +178,25 @@ func (u *UI) showRemoteActive(status RemoteStatus) error {
 			clearSelector(u.terminal, rows)
 			return nil
 		case arrowUpSequence, arrowDownSequence:
-			selected = 1 - selected
+			if key == arrowUpSequence {
+				selected = (selected - 1 + 3) % 3
+			} else {
+				selected = (selected + 1) % 3
+			}
 			clearSelector(u.terminal, rows)
 		case "\r", "\n":
 			clearSelector(u.terminal, rows)
 			if selected == remoteKeepOpen {
 				return nil
+			}
+			if selected == remoteSaveQR {
+				path, err := u.saveRemoteQR()
+				if err != nil {
+					notice = "Unable to save QR: " + err.Error()
+				} else {
+					notice = "QR PNG: " + path
+				}
+				continue
 			}
 			confirmation, err := u.confirmRemoteClose(status)
 			if err != nil {
@@ -230,7 +248,7 @@ func (u *UI) dismissRemoteMenuForInput() {
 	}
 }
 
-func renderRemoteActiveMenu(out interface{ Write([]byte) (int, error) }, status RemoteStatus, selected remoteMenuChoice, loginRows []string, loginURL string, width int, color bool) int {
+func renderRemoteActiveMenu(out interface{ Write([]byte) (int, error) }, status RemoteStatus, selected remoteMenuChoice, loginRows []string, loginURL, notice string, width int, color bool) int {
 	mode := "Pure Web · trusted LAN HTTP"
 	if status.Mode == RemoteModePureWebOpen {
 		mode = "Pure Web (NO AUTH) · anyone with the URL can control qcode"
@@ -251,8 +269,11 @@ func renderRemoteActiveMenu(out interface{ Write([]byte) (int, error) }, status 
 	loginStart := len(rows)
 	rows = append(rows, loginRows...)
 	loginEnd := len(rows)
-	rows = append(rows, "", "  Keep connection open", "  Close Connection")
-	actionStart := len(rows) - 2
+	if notice != "" {
+		rows = append(rows, strings.Split(wrapANSI(notice, width, ""), "\n")...)
+	}
+	rows = append(rows, "", "  Keep connection open", "  Save QR as PNG", "  Close Connection")
+	actionStart := len(rows) - 3
 	for index := range rows {
 		row := rows[index]
 		if index == actionStart+int(selected) {
