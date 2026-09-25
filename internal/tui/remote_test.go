@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -22,6 +23,17 @@ type fakeRemoteService struct {
 	url     string
 	stopped bool
 	issues  int
+}
+
+type recordingRemoteService struct {
+	fakeRemoteService
+	mode    RemoteMode
+	address string
+}
+
+func (s *recordingRemoteService) Start(_ context.Context, mode RemoteMode, address string) (RemoteStatus, error) {
+	s.mode, s.address = mode, address
+	return RemoteStatus{}, errors.New("recorded start")
 }
 
 type remoteCatalogRunner struct {
@@ -248,6 +260,38 @@ func TestRemoteModeMenuDefaultsToPureWeb(t *testing.T) {
 	got := output.String()
 	if !strings.Contains(got, "> Pure Web") || !strings.Contains(got, "Pure Web (No auth, danger!)") || !strings.Contains(got, "  Tailscale") {
 		t.Fatalf("remote mode menu = %q", got)
+	}
+}
+
+func TestRemoteCommandStartsSelectedMode(t *testing.T) {
+	for _, test := range []struct {
+		name, keys, address string
+		mode                RemoteMode
+	}{
+		{name: "pure web", keys: "\r", mode: RemoteModePureWeb, address: "192.168.1.10"},
+		{name: "pure web open", keys: arrowDownSequence + "\r", mode: RemoteModePureWebOpen, address: "192.168.1.10"},
+		{name: "tailscale", keys: arrowDownSequence + arrowDownSequence + "\r", mode: RemoteModeTailscale},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := newInterruptReader(strings.NewReader(test.keys))
+			input.setRaw(true)
+			input.start()
+			var screen, messages bytes.Buffer
+			terminal := lineedit.NewTerminal(readWriter{Reader: input, Writer: &screen}, inputPrompt)
+			out, err := os.CreateTemp(t.TempDir(), "remote-command")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer out.Close()
+			service := &recordingRemoteService{}
+			u := &UI{input: input, terminal: terminal, out: out, display: newHistoryWriter(&messages), remoteService: service, width: 80}
+
+			u.handleRemoteCommand(context.Background(), []string{"/remote"})
+
+			if service.mode != test.mode || service.address != test.address {
+				t.Fatalf("Start(mode, address) = (%q, %q), want (%q, %q)", service.mode, service.address, test.mode, test.address)
+			}
+		})
 	}
 }
 

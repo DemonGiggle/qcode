@@ -141,7 +141,7 @@ func (u *UI) handleRemoteCommand(ctx context.Context, fields []string) {
 		var err error
 		for {
 			var accepted bool
-			mode, accepted, err := u.selectRemoteMode(mode)
+			mode, accepted, err = u.selectRemoteMode(mode)
 			if err != nil {
 				u.printSystemMessage(yellow + "Unable to choose remote mode: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 				return
