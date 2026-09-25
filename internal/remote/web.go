@@ -161,7 +161,7 @@ form {
   border-radius: .4rem;
   background: var(--field);
 }
-.queue-panel[hidden], .queue-list[hidden], .queue-preview[hidden] { display: none; }
+.queue-panel[hidden] { display: none; }
 .queue-toggle {
   display: block;
   width: 100%;
@@ -173,18 +173,15 @@ form {
   font-size: .8rem;
   text-align: left;
 }
-.queue-preview {
-  padding: 0 .6rem .4rem;
-  color: var(--muted);
-  font-size: .8rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .queue-list {
+  min-height: 2.5rem;
+  max-height: min(8rem, 20dvh);
+  overflow: hidden;
+  padding: .1rem .6rem .5rem;
+}
+.queue-panel.expanded .queue-list {
   max-height: min(24rem, 40dvh);
   overflow: auto;
-  padding: .1rem .6rem .5rem;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
@@ -301,10 +298,10 @@ button:disabled { opacity: .5; cursor: default; }
 </style></head><body>
 <header class="top"><span class="brand" aria-label="qcode remote">qcode</span><nav id="tabs" aria-label="Agents"></nav></header>
 <main id="scroll"><pre id="transcript" class="transcript empty">Sign in using the link or QR code displayed by /remote.</pre></main>
-<footer class="bottom"><div id="interaction" class="interaction"></div><div id="command" class="command-panel"></div><div id="waiting" class="waiting" hidden></div><div id="status" class="status" role="status" aria-live="polite">Connecting to qcode…</div><section id="queue-panel" class="queue-panel" aria-label="Queued prompts" hidden><button id="queue-toggle" class="queue-toggle" type="button" aria-expanded="false" aria-controls="queue-list"></button><div id="queue-preview" class="queue-preview"></div><div id="queue-list" class="queue-list" role="list" aria-label="Queued prompts in execution order" tabindex="0" hidden></div></section><form id="form"><label class="sr-only" for="input">Message or slash command</label><input id="input" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Send a prompt or slash command"><button id="send" type="submit">Send</button></form></footer>
+<footer class="bottom"><div id="interaction" class="interaction"></div><div id="command" class="command-panel"></div><div id="waiting" class="waiting" hidden></div><div id="status" class="status" role="status" aria-live="polite">Connecting to qcode…</div><section id="queue-panel" class="queue-panel" aria-label="Queued prompts" hidden><button id="queue-toggle" class="queue-toggle" type="button" aria-expanded="false" aria-controls="queue-list"></button><div id="queue-list" class="queue-list" role="list" aria-label="Queued prompts in execution order" tabindex="-1"></div></section><form id="form"><label class="sr-only" for="input">Message or slash command</label><input id="input" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Send a prompt or slash command"><button id="send" type="submit">Send</button></form></footer>
 <script>
 (()=>{
-const tabs=document.querySelector('#tabs'),out=document.querySelector('#transcript'),status=document.querySelector('#status'),interaction=document.querySelector('#interaction'),command=document.querySelector('#command'),form=document.querySelector('#form'),input=document.querySelector('#input'),send=document.querySelector('#send'),scroll=document.querySelector('#scroll'),waiting=document.querySelector('#waiting'),queuePanel=document.querySelector('#queue-panel'),queueToggle=document.querySelector('#queue-toggle'),queuePreview=document.querySelector('#queue-preview'),queueList=document.querySelector('#queue-list');
+const tabs=document.querySelector('#tabs'),out=document.querySelector('#transcript'),status=document.querySelector('#status'),interaction=document.querySelector('#interaction'),command=document.querySelector('#command'),form=document.querySelector('#form'),input=document.querySelector('#input'),send=document.querySelector('#send'),scroll=document.querySelector('#scroll'),waiting=document.querySelector('#waiting'),queuePanel=document.querySelector('#queue-panel'),queueToggle=document.querySelector('#queue-toggle'),queueList=document.querySelector('#queue-list');
 let snapshot=null,active='',timer=0,closed=false;const cleared={},queueExpanded={},queueScroll={};
 let sessionKey='',eventController=null;
 const authRequired={{.AuthRequired}};
@@ -433,7 +430,7 @@ let waitingRunning=false,waitingQueued=0,waitingFrame=0;
 waitingText.className='waiting-text';waitingText.setAttribute('aria-hidden','true');waitingCancel.type='button';waitingCancel.className='waiting-cancel';waitingCancel.textContent='Cancel';waitingCancel.onclick=()=>{if(active)submitLine('/agent cancel '+active)};
 function drawWaiting(){if(!waitingRunning){if(!waiting.hidden){waiting.hidden=true;waiting.replaceChildren()}return}waiting.hidden=false;const text='Waiting ('+spinnerFrames[waitingFrame%spinnerFrames.length]+')'+(waitingQueued?' · '+waitingQueued+' queued':'');if(waitingText.textContent!==text)waitingText.textContent=text;if(waiting.firstChild!==waitingText)waiting.replaceChildren(waitingText,waitingCancel)}
 setInterval(()=>{if(!waitingRunning)return;waitingFrame++;drawWaiting()},100);
-function renderQueue(view){if(queuePanel.dataset.agent)queueScroll[queuePanel.dataset.agent]=queueList.scrollTop;const items=view&&view.queued_prompts||[];queuePanel.dataset.agent=active;if(!items.length){queueExpanded[active]=false;queuePanel.hidden=true;queueList.replaceChildren();return}queuePanel.hidden=false;const expanded=!!queueExpanded[active];queueToggle.setAttribute('aria-expanded',String(expanded));queueToggle.textContent='Queued '+items.length+' · Alt+Q '+(expanded?'close · PgUp/PgDn scroll':'open');queuePreview.hidden=expanded;queuePreview.textContent='Next: '+String(items[0].prompt||'').replace(/\s+/g,' ').trim();queueList.hidden=!expanded;if(!expanded){queueList.replaceChildren();return}queueList.replaceChildren(...items.map((item,index)=>{const row=document.createElement('div');row.className='queue-item';row.setAttribute('role','listitem');row.textContent=(index+1)+'. '+String(item.prompt||'');return row}));queueList.scrollTop=queueScroll[active]||0}
+function renderQueue(view){if(queuePanel.dataset.agent&&queuePanel.classList.contains('expanded'))queueScroll[queuePanel.dataset.agent]=queueList.scrollTop;const items=view&&view.queued_prompts||[];queuePanel.dataset.agent=active;if(!items.length){queueExpanded[active]=false;queueScroll[active]=0;queuePanel.hidden=true;queuePanel.classList.remove('expanded');queueList.replaceChildren();return}queuePanel.hidden=false;const expanded=!!queueExpanded[active];queuePanel.classList.toggle('expanded',expanded);queueToggle.setAttribute('aria-expanded',String(expanded));queueToggle.textContent='Queued '+items.length+' · Alt+Q '+(expanded?'close · PgUp/PgDn scroll':'expand');queueList.tabIndex=expanded?0:-1;queueList.replaceChildren(...items.map((item,index)=>{const row=document.createElement('div');row.className='queue-item';row.setAttribute('role','listitem');row.textContent=(index+1)+'. '+String(item.prompt||'');return row}));queueList.scrollTop=expanded?queueScroll[active]||0:0}
 function toggleQueue(){if(queuePanel.hidden)return;queueExpanded[active]=!queueExpanded[active];renderQueue((snapshot.presentation.views||[]).find(v=>v.id===active));if(queueExpanded[active])queueList.focus();else input.focus()}
 queueToggle.onclick=toggleQueue;
 queueList.onkeydown=e=>{if(e.key==='PageUp'||e.key==='PageDown'){e.preventDefault();queueList.scrollTop+=(e.key==='PageDown'?1:-1)*queueList.clientHeight}};

@@ -93,20 +93,25 @@ func (u *UI) paintFixedLocked(direction int) {
 	}
 	rows, cy, cx := inputRows(label+u.inputText, utf8.RuneCountInString(label)+u.inputPosition, u.width)
 	queued := u.queuedPromptsLocked()
+	var queueRows []queuedDisplayRow
+	if len(queued) > 0 {
+		queueRows = queueDisplayRows(queued, u.width)
+	}
 	statusN := statusBarLineCount(u.statusBar())
 	if u.height < 5 {
 		statusN = 1
 	}
+	footer := min(1+statusN, max(0, u.height-2))
 	// Keep a cursor-centered window for drafts taller than the terminal.
 	inputLimit := u.height - 4 - statusN
 	if len(queued) > 0 {
-		inputLimit-- // Keep the compact queue row visible beside a tall draft.
+		reserve := min(4, 1+len(queueRows), max(1, u.height-footer-4))
+		inputLimit = min(inputLimit, u.height-footer-3-reserve)
 	}
 	inputHeight := min(len(rows), max(1, inputLimit))
 	start := max(0, cy-inputHeight+1)
 	rows = rows[start:min(len(rows), start+inputHeight)]
 	cy -= start
-	footer := min(1+statusN, max(0, u.height-2))
 	promptRow := u.height - footer - len(rows) + 1
 	queue := u.activeQueueLocked()
 	if len(queued) == 0 {
@@ -125,15 +130,12 @@ func (u *UI) paintFixedLocked(direction int) {
 	extras := max(0, promptRow-4) // Preserve two conversation rows when possible.
 	queueHeight := 0
 	if len(queued) > 0 && extras > 0 {
-		queueHeight = 1
+		queueHeight = min(4, 1+len(queueRows), extras)
 	}
 	count := min(len(matches), extras-queueHeight)
-	var queueRows []queuedDisplayRow
 	if queue.expanded && queueHeight > 0 {
-		queueRows = queueDisplayRows(queued, u.width)
-		if room := extras - count; room >= 2 {
-			queueHeight = min(1+len(queueRows), max(2, room/2))
-		}
+		room := extras - count
+		queueHeight = min(1+len(queueRows), room, max(queueHeight, 2*room/3))
 	}
 	outputHeight := max(0, promptRow-count-queueHeight-2)
 	screenRows := make([]string, u.height+1)
@@ -169,12 +171,12 @@ func (u *UI) paintFixedLocked(direction int) {
 	}
 	if queueHeight > 0 {
 		queueStart := promptRow - queueHeight
-		header := fmt.Sprintf("Queued %d | Alt+Q open: %s", len(queued), queuePreview(queued[0].Prompt))
+		header := fmt.Sprintf("Queued %d | Alt+Q expand", len(queued))
 		if queue.expanded {
 			header = fmt.Sprintf("Queued %d | Alt+Q close | PgUp/PgDn scroll", len(queued))
 		}
 		if u.width < 30 {
-			header = fmt.Sprintf("Q%d Alt+Q: %s", len(queued), queuePreview(queued[0].Prompt))
+			header = fmt.Sprintf("Q%d Alt+Q", len(queued))
 			if queue.expanded {
 				header = fmt.Sprintf("Q%d Alt+Q PgUp/Dn", len(queued))
 			}
@@ -184,7 +186,11 @@ func (u *UI) paintFixedLocked(direction int) {
 		}
 		screenRows[queueStart] = truncateDiffLine(header, u.width, u.unicode)
 		if queueHeight > 1 {
-			for i, item := range queue.page(queueRows, queueHeight-1, direction) {
+			visible := queueRows[:min(len(queueRows), queueHeight-1)]
+			if queue.expanded {
+				visible = queue.page(queueRows, queueHeight-1, direction)
+			}
+			for i, item := range visible {
 				screenRows[queueStart+1+i] = item.text
 			}
 		}

@@ -8,7 +8,7 @@ The tab bar shows the available switch shortcuts when the row has room: Ctrl+Pag
 
 ## Prompt queues
 
-Each agent has an independent FIFO prompt queue. Submitting another prompt while an agent is running adds it to that agent's queue instead of returning a busy error. The tab and task indicator show the pending count, and the transcript marks a newly accepted pending prompt as `Queued #N`. A reserved area above the input shows the next queued prompt; Alt+Q expands the full queue, and Page Up/Page Down scroll it until Alt+Q closes it. The browser remote control shows the same queue with a clickable expansion control. Input remains editable while work runs, so prompts can be added without waiting or blocking tab navigation and directory approvals.
+Each agent has an independent FIFO prompt queue. Submitting another prompt while an agent is running adds it to that agent's queue instead of returning a busy error. The tab and task indicator show the pending count, and the transcript marks a newly accepted pending prompt as `Queued #N`. A reserved multi-row area above the input shows queued prompt text in FIFO order; Alt+Q expands it for Page Up/Page Down scrolling or folds it back to the smaller queue area. The browser remote control shows the same queue with a clickable expansion control. Input remains editable while work runs, so prompts can be added without waiting or blocking tab navigation and directory approvals.
 
 Only one prompt runs in an agent at a time. The next prompt starts automatically after the current one completes, fails, or is cancelled. Queues are not global, so a slow sub-agent does not delay prompts sent to `main` or another agent.
 

@@ -52,10 +52,6 @@ func (u *UI) toggleQueuePanel() {
 	u.repaintActiveLocked(0)
 }
 
-func queuePreview(prompt string) string {
-	return strings.Join(strings.Fields(sanitizeDiffLine(strings.ReplaceAll(prompt, "\n", " "), "<ESC>")), " ")
-}
-
 func queueDisplayRows(items []session.QueuedPrompt, width int) []queuedDisplayRow {
 	var rows []queuedDisplayRow
 	for i, item := range items {

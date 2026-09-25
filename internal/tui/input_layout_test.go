@@ -164,13 +164,13 @@ func TestQueuedPanelStaysVisibleAndPagesIndependently(t *testing.T) {
 	}}
 	u.width, u.height = 32, 17
 	u.renderInput(inputPrompt, "draft", 5)
-	if got := frame(); !strings.Contains(got, "Queued 3 | Alt+Q open") || !strings.Contains(got, "first") || !strings.Contains(got, "(Queue)> draft") {
-		t.Fatalf("compact panel = %q", got)
+	if got := frame(); !strings.Contains(got, "Queued 3 | Alt+Q expand") || !strings.Contains(got, "1. first queued") || !strings.Contains(got, "2. second queued") || !strings.Contains(got, "(Queue)> draft") {
+		t.Fatalf("reserved queue area = %q", got)
 	}
 	for i := 0; i < 30; i++ {
 		u.display.AddLine("streamed output")
 	}
-	if !strings.Contains(frame(), "Queued 3 | Alt+Q open") {
+	if !strings.Contains(frame(), "Queued 3 | Alt+Q expand") || !strings.Contains(frame(), "1. first queued") {
 		t.Fatal("streamed output displaced queue panel")
 	}
 	u.showPage(1)
@@ -184,6 +184,9 @@ func TestQueuedPanelStaysVisibleAndPagesIndependently(t *testing.T) {
 		t.Fatalf("queue paging changed history: queue=%+v history=%+v", u.activeQueueLocked(), u.activeViewportLocked())
 	}
 	u.toggleQueuePanel()
+	if !strings.Contains(frame(), "1. first queued") || !strings.Contains(frame(), "2. second queued") {
+		t.Fatal("folded queue area lost queued message text")
+	}
 	u.showPage(1)
 	if !u.activeViewportLocked().browsing {
 		t.Fatal("Page Up did not return to transcript after collapsing queue")
@@ -217,7 +220,7 @@ func TestQueuedPanelStateIsPerTabAndEscapesPromptControls(t *testing.T) {
 	u.activeAgent = "agent-1"
 	u.display = u.views["agent-1"].display
 	u.renderInput(inputPrompt, "other", 5)
-	if !strings.Contains(frame(), "Alt+Q open") || strings.Contains(frame(), "Alt+Q close") {
+	if !strings.Contains(frame(), "Alt+Q expand") || strings.Contains(frame(), "Alt+Q close") || !strings.Contains(frame(), "other tab") {
 		t.Fatal("expanded state leaked into other tab")
 	}
 	u.activeAgent = "main"
