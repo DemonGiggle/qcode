@@ -54,6 +54,13 @@ max_steps = 32
 # interactive terminal. One-shot and JSON event runs never block for answers.
 # interactive = true
 
+# Status bar segments to hide. Valid names: remote, mode, model, think, ws,
+# ctx, step, tok (model controls the combined provider prefix and MODEL unit).
+# Narrow terminals additionally drop low-priority segments first in the order
+# tok, step, ctx, ws, think, model, mode, remote. Use /statusline to toggle
+# without editing this file; /statusline on main persists here.
+# statusline_hidden = ["tok"]
+
 # Web tools start disabled; enable them with /tool in each interactive session.
 # Backend configuration does not enable web tools.
 # Web search backend, read at startup. Currently only duckduckgo is supported.

@@ -148,6 +148,15 @@ var slashCommands = []slashCommand{
 		examples: []string{"/quit"},
 	},
 	{
+		name: "/statusline", usage: "/statusline [<name> on|off] [hide|show a,b] [show|reset]", description: "Choose status bar segments",
+		arguments: []helpArgument{
+			{name: "name on|off", description: "Show or hide one segment: remote, mode, model, think, ws, ctx, step, tok."},
+			{name: "hide|show a,b", description: "Hide or show several comma-separated segments."},
+			{name: "show|reset", description: "List the current choice or show every segment again."},
+		},
+		examples: []string{"/statusline", "/statusline tok off", "/statusline show"},
+	},
+	{
 		name: "/tool", usage: "/tool [<name> <on|off>]", description: "Enable or disable tools",
 		arguments: []helpArgument{
 			{name: "name", description: "Tool to change; omit both arguments to open the tool picker."},

@@ -119,6 +119,71 @@ func (w *RuntimePreferenceWriter) PersistMaxSteps(maxSteps int) error {
 	return w.persist(map[string]*string{"max_steps": &value})
 }
 
+// statuslineHiddenOrder is the canonical order used when persisting the
+// statusline_hidden denylist. It follows status bar priority from highest to
+// lowest so the stored list stays deterministic.
+var statuslineHiddenOrder = []string{"remote", "mode", "model", "think", "ws", "ctx", "step", "tok"}
+
+// PersistStatuslineHidden records which status bar segments stay hidden in the
+// user config. An empty list removes the override so later startups show every
+// segment again.
+func (w *RuntimePreferenceWriter) PersistStatuslineHidden(hidden []string) error {
+	if w == nil {
+		return errors.New("runtime preference writer is nil")
+	}
+	normalized, err := normalizeStatuslineHidden(hidden)
+	if err != nil {
+		return err
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(normalized) == 0 {
+		return w.persist(map[string]*string{"statusline_hidden": nil})
+	}
+	value := encodeStatuslineHidden(normalized)
+	return w.persist(map[string]*string{"statusline_hidden": &value})
+}
+
+func normalizeStatuslineHidden(hidden []string) ([]string, error) {
+	seen := make(map[string]bool, len(hidden))
+	for _, segment := range hidden {
+		clean := strings.ToLower(strings.TrimSpace(segment))
+		if clean == "" {
+			continue
+		}
+		if !utf8.ValidString(clean) {
+			return nil, errors.New("statusline segment contains invalid UTF-8")
+		}
+		known := false
+		for _, candidate := range statuslineHiddenOrder {
+			if clean == candidate {
+				known = true
+				break
+			}
+		}
+		if !known {
+			return nil, fmt.Errorf("unknown statusline segment %q", segment)
+		}
+		seen[clean] = true
+	}
+	normalized := make([]string, 0, len(seen))
+	for _, candidate := range statuslineHiddenOrder {
+		if seen[candidate] {
+			normalized = append(normalized, candidate)
+		}
+	}
+	return normalized, nil
+}
+
+func encodeStatuslineHidden(hidden []string) string {
+	parts := make([]string, 0, len(hidden))
+	for _, segment := range hidden {
+		parts = append(parts, tomlString(segment))
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
 func stringPointer(value string) *string { return &value }
 
 func optionalTOMLString(value string) *string {
@@ -283,7 +348,7 @@ func runtimeConfigEntries(data []byte) (map[string]runtimeConfigEntry, int, erro
 				continue
 			}
 			name := string(key.Data)
-			if name != "model" && name != "thinking" && name != "max_steps" {
+			if name != "model" && name != "thinking" && name != "max_steps" && name != "statusline_hidden" {
 				continue
 			}
 			value := expression.Value()
@@ -303,7 +368,7 @@ func runtimeConfigEntries(data []byte) (map[string]runtimeConfigEntry, int, erro
 
 func renderRuntimeKeys(changes map[string]*string, newline string) []byte {
 	var output bytes.Buffer
-	for _, key := range []string{"model", "thinking", "max_steps"} {
+	for _, key := range []string{"model", "thinking", "max_steps", "statusline_hidden"} {
 		value, ok := changes[key]
 		if !ok || value == nil {
 			continue

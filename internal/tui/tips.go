@@ -54,6 +54,7 @@ var tipTexts = []string{
 	"The `/model` picker offers supported thinking levels after model selection; Esc returns to the model list.",
 	"In normal interactive mode, `/model` and `/maxsteps` on main save user defaults; changes in other tabs stay local.",
 	"Run `/maxsteps` to see the model-turn limit, or `/maxsteps 64` to allow more turns per request.",
+	"Run `/statusline` to choose status bar segments; narrow terminals keep remote, mode, and model first.",
 	"`CONTEXT` shows remaining model capacity; a `~` marks estimated usage and `unknown` means the limit is unavailable.",
 	"Use `--context-window 32768` for an unknown context limit; it sets accounting capacity, not the provider's actual limit.",
 	"Changing models clears a custom context-window override; check the CONTEXT display after switching.",

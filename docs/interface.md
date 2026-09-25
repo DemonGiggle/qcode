@@ -24,6 +24,7 @@ Interactive command selectors use the same navigation rule: `Esc` goes back to t
 - `/clear` redraws the interactive banner, which lists enabled and disabled tools for the active agent.
 - `/verbose` adds detailed timestamped telemetry, including raw tool arguments, without disabling concise activity events.
 - `/maxsteps` shows the current per-request model-turn limit; `/maxsteps N` updates it for the active agent.
+- `/statusline` opens a toggle list for status bar segments (remote, mode, model, think, ws, ctx, step, tok); Space toggles, Enter applies. `/statusline <name> on|off`, `/statusline hide|show a,b`, `/statusline show`, and `/statusline reset` work without the picker. Narrow terminals keep high-priority segments first (remote > mode > model > think > ws > ctx > step > tok) after shortening the workspace path. Changes on main persist to `statusline_hidden` in config.toml.
 - `/diff` and `/diff N` expand the latest write/edit diff preview (see below).
 - `/history` opens a searchable, newest-first list of completed prompts for the active agent. Select a prompt to read only that prompt and its final response; leaving the browser restores the conversation view without changing its reading position.
 - `/tool` enables or disables the web tools independently; see [Web tools](web-tools.md).

@@ -31,10 +31,17 @@ func TestStartupToolSummary(t *testing.T) {
 func TestContextStatusRemainsVisibleOnNarrowTerminals(t *testing.T) {
 	for _, color := range []bool{false, true} {
 		for _, unicode := range []bool{false, true} {
-			bar := statusBar("opencode-go", "a-very-long-model", "/workspace", 32, unicode, color, "73% left")
-			if !strings.Contains(bar, "73% left") || visibleWidth(bar) > 32 {
+			// CTX outranks TOK/STEP: token totals drop first.
+			bar := statusBar("ollama", "qwen", "/w", 50, unicode, color, "73% left", "I:1 O:2", "2/32")
+			if !strings.Contains(bar, "73% left") || strings.Contains(bar, "I:1 O:2") || visibleWidth(bar) > 50 {
 				t.Fatalf("bar=%q width=%d", bar, visibleWidth(bar))
 			}
 		}
+	}
+	// Extremely narrow with a long model name keeps the higher-priority
+	// provider/model unit over CTX.
+	narrow := statusBar("opencode-go", "a-very-long-model", "/workspace", 32, true, false, "73% left")
+	if !strings.Contains(narrow, "opencode-go") || visibleWidth(narrow) > 32 {
+		t.Fatalf("bar=%q width=%d", narrow, visibleWidth(narrow))
 	}
 }

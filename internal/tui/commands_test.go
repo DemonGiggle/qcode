@@ -61,10 +61,13 @@ type runtimePreferenceRecorder struct {
 	model       string
 	thinking    string
 	maxSteps    int
+	hidden      []string
 	modelCalls  int
 	stepsCalls  int
+	statusCalls int
 	modelErr    error
 	maxStepsErr error
+	statusErr   error
 }
 
 func (r *runtimePreferenceRecorder) PersistModel(model, thinking string) error {
@@ -77,6 +80,12 @@ func (r *runtimePreferenceRecorder) PersistMaxSteps(maxSteps int) error {
 	r.stepsCalls++
 	r.maxSteps = maxSteps
 	return r.maxStepsErr
+}
+
+func (r *runtimePreferenceRecorder) PersistStatuslineHidden(hidden []string) error {
+	r.statusCalls++
+	r.hidden = append([]string(nil), hidden...)
+	return r.statusErr
 }
 
 type configurableModelRunner struct {
@@ -99,15 +108,16 @@ func TestMatchingSlashCommands(t *testing.T) {
 		want []string
 	}{
 		{line: "", want: nil},
-		{line: "/", want: []string{"/agent", "/bash", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/history", "/interactive", "/learn", "/maxsteps", "/model", "/new", "/plan", "/resume", "/remote", "/skill", "/skillplan", "/quit", "/tool", "/verbose"}},
+		{line: "/", want: []string{"/agent", "/bash", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/history", "/interactive", "/learn", "/maxsteps", "/model", "/new", "/plan", "/resume", "/remote", "/skill", "/skillplan", "/quit", "/statusline", "/tool", "/verbose"}},
 		{line: "/d", want: []string{"/diff"}},
 		{line: "/h", want: []string{"/help", "/history"}},
 		{line: "/m", want: []string{"/maxsteps", "/model"}},
 		{line: "/max", want: []string{"/maxsteps"}},
 		{line: "/n", want: []string{"/new"}},
-		{line: "/s", want: []string{"/skill", "/skillplan"}},
+		{line: "/s", want: []string{"/skill", "/skillplan", "/statusline"}},
 		{line: "/ski", want: []string{"/skill", "/skillplan"}},
 		{line: "/skillp", want: []string{"/skillplan"}},
+		{line: "/st", want: []string{"/statusline"}},
 		{line: "/qu", want: []string{"/quit"}},
 		{line: "/v", want: []string{"/verbose"}},
 		{line: "/unknown", want: nil},
@@ -363,7 +373,7 @@ func TestStatusBarPlainFallback(t *testing.T) {
 
 func TestStatusBarSegmentOrder(t *testing.T) {
 	got := statusBar("ollama", "qwen", "~/code", 120, true, false, "73% left", "I:1.2K O:340")
-	want := "ollama [MODEL qwen] [CTX 73% left] [WS ~/code] [TOK I:1.2K O:340]"
+	want := "ollama [MODEL qwen] [WS ~/code] [CTX 73% left] [TOK I:1.2K O:340]"
 	if got != want {
 		t.Fatalf("status bar = %q, want %q", got, want)
 	}
@@ -371,16 +381,23 @@ func TestStatusBarSegmentOrder(t *testing.T) {
 
 func TestStatusBarShowsStepProgress(t *testing.T) {
 	got := statusBar("ollama", "qwen", "~/code", 120, true, false, "73% left", "I:1.2K O:340", "2/32")
-	want := "ollama [MODEL qwen] [CTX 73% left] [WS ~/code] [TOK I:1.2K O:340] [STEP 2/32]"
+	want := "ollama [MODEL qwen] [WS ~/code] [CTX 73% left] [STEP 2/32] [TOK I:1.2K O:340]"
 	if got != want {
 		t.Fatalf("status bar = %q, want %q", got, want)
 	}
 }
 
 func TestNarrowStatusBarKeepsStepProgress(t *testing.T) {
-	got := statusBar("openai", "a-very-long-model-name", "/workspace", 32, true, false, "73% left", "I:1.2K O:340", "2/32")
-	if !strings.Contains(got, "[STEP 2/32]") || visibleWidth(got) > 32 {
+	// STEP outranks TOK: when only one fits, TOK drops first.
+	got := statusBar("ollama", "qwen", "/w", 60, true, false, "73% left", "I:1 O:2", "2/32")
+	if !strings.Contains(got, "[STEP 2/32]") || strings.Contains(got, "[TOK ") || visibleWidth(got) > 60 {
 		t.Fatalf("narrow status bar = %q, width = %d", got, visibleWidth(got))
+	}
+	// Extremely narrow with a long model name keeps the higher-priority
+	// provider/model unit (truncated) and drops the lowest-priority totals.
+	narrow := statusBar("openai", "a-very-long-model-name", "/workspace", 32, true, false, "73% left", "I:1.2K O:340", "2/32")
+	if !strings.Contains(narrow, "openai") || strings.Contains(narrow, "[TOK ") || visibleWidth(narrow) > 32 {
+		t.Fatalf("narrow status bar = %q, width = %d", narrow, visibleWidth(narrow))
 	}
 }
 
@@ -432,9 +449,9 @@ func TestStatusBarShowsRemoteBadgeAtBeginning(t *testing.T) {
 }
 
 func TestStatusBarFitsTerminalWidth(t *testing.T) {
-	got := statusBar("openai", "a-very-long-model-name", "~/a/very/long/workspace/path", 32, true, true)
-	if visibleWidth(got) > 32 {
-		t.Fatalf("status bar width = %d, want at most 32: %q", visibleWidth(got), got)
+	got := statusBar("openai", "a-very-long-model-name", "~/a/very/long/workspace/path", 24, true, true)
+	if visibleWidth(got) > 24 {
+		t.Fatalf("status bar width = %d, want at most 24: %q", visibleWidth(got), got)
 	}
 	if !strings.Contains(got, "…") {
 		t.Fatalf("truncated status bar has no ellipsis: %q", got)
@@ -446,8 +463,8 @@ func TestStatusBarShortensWorkspacePathBeforeTruncatingBar(t *testing.T) {
 	if visibleWidth(got) > 72 {
 		t.Fatalf("status bar width = %d, want at most 72: %q", visibleWidth(got), got)
 	}
-	if !strings.Contains(got, "[WS ~/…/qcode]") {
-		t.Fatalf("status bar = %q, want an elided workspace path", got)
+	if !strings.Contains(got, "[WS ") || !strings.Contains(got, "…/") || !strings.Contains(got, "qcode]") {
+		t.Fatalf("status bar = %q, want an elided workspace path ending in qcode", got)
 	}
 	if !strings.Contains(got, "[TOK I:1.2K O:340]") {
 		t.Fatalf("status bar = %q, workspace shortening displaced token totals", got)

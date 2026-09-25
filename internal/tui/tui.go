@@ -128,6 +128,7 @@ type maxStepsReader interface {
 type RuntimePreferenceWriter interface {
 	PersistModel(model, thinking string) error
 	PersistMaxSteps(maxSteps int) error
+	PersistStatuslineHidden(hidden []string) error
 }
 
 type planController interface {
@@ -262,6 +263,7 @@ type UI struct {
 	runtimePreferences   RuntimePreferenceWriter
 	persistence          *sessionPersistence
 	sessionHost          *UI
+	statuslineHidden     []string
 	remoteService        RemoteService
 	remoteLogin          *RemoteLogin
 	remoteQR             []string
@@ -709,6 +711,10 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		if len(fields) > 0 && fields[0] == "/skillplan" {
 			u.handleSkillPlanCommand(ctx, fields)
+			continue
+		}
+		if len(fields) > 0 && fields[0] == "/statusline" {
+			u.handleStatuslineCommand(fields)
 			continue
 		}
 		switch line {
@@ -1656,7 +1662,7 @@ func (u *UI) statusBar() string {
 	if u.remoteService != nil {
 		remote = u.remoteService.Status().Running
 	}
-	return statusBarWithRemote(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), remote, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+	return statusBarWithStatuslineHidden(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), remote, u.statuslineHidden, magenta, blue, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
 }
 
 func (u *UI) teardownStatusBar() {
@@ -1678,68 +1684,35 @@ func statusBarWithRemote(provider, model, root string, width int, unicodeEnabled
 }
 
 func statusBarWithRemoteColors(provider, model, root string, width int, unicodeEnabled, color, remote bool, modelColor, workspaceColor string, contextLabel ...string) string {
-	provider = sanitizeDiffLine(provider, "<ESC>")
-	model = sanitizeDiffLine(model, "<ESC>")
-	root = sanitizeDiffLine(root, "<ESC>")
-
-	render := func(workspace string) string {
-		return buildStatusBar(provider, model, workspace, unicodeEnabled, color, remote, modelColor, workspaceColor, contextLabel...)
-	}
-
-	bar := render(root)
-	if width > 0 {
-		// Reserve the space occupied by every other segment, then elide only
-		// the workspace path. This keeps the useful project name visible while
-		// avoiding the less helpful behavior of truncating the whole bar.
-		workspaceWidth := width - visibleWidth(render(""))
-		if workspaceWidth > maxWorkspaceStatusWidth {
-			workspaceWidth = maxWorkspaceStatusWidth
-		}
-		if workspaceWidth > 0 && visibleWidth(root) > workspaceWidth {
-			bar = render(shortenWorkspacePath(root, workspaceWidth, unicodeEnabled))
-		}
-	}
-
-	if !color {
-		if width > 0 && visibleWidth(bar) > width {
-			if dynamic := compactStatusBar(contextLabel, false, unicodeEnabled, remote); dynamic != "" {
-				return truncateDiffLine(dynamic, width, unicodeEnabled)
-			}
-		}
-		return truncateDiffLine(bar, width, unicodeEnabled)
-	}
-
-	if width > 0 && visibleWidth(bar) > width {
-		if dynamic := compactStatusBar(contextLabel, true, unicodeEnabled, remote); dynamic != "" {
-			return truncateDiffLine(dynamic, width, unicodeEnabled) + reset
-		}
-		bar = truncateDiffLine(bar, width, unicodeEnabled)
-	}
-	return bar + reset
+	return statusBarWithStatuslineHidden(provider, model, root, width, unicodeEnabled, color, remote, nil, modelColor, workspaceColor, contextLabel...)
 }
 
 func buildStatusBar(provider, model, root string, unicodeEnabled, color, remote bool, modelColor, workspaceColor string, contextLabel ...string) string {
+	// Legacy full-bar builder retained for reference. Production rendering
+	// uses renderFilteredStatusBar via renderStatusBarWithPriority so hidden
+	// segments and narrow-width priority dropping apply. Order follows
+	// priority: remote > mode > model > think > ws > ctx > step > tok.
 	if !color {
 		parts := []string{}
 		if remote {
 			parts = append(parts, remoteStatusBadge(false))
 		}
+		if len(contextLabel) > 3 && contextLabel[3] != "" {
+			parts = append(parts, "[MODE "+contextLabel[3]+"]")
+		}
 		parts = append(parts, provider, "[MODEL "+model+"]")
-		if len(contextLabel) > 0 {
-			parts = append(parts, "[CTX "+contextLabel[0]+"]")
+		if len(contextLabel) > 4 && contextLabel[4] != "" {
+			parts = append(parts, "[THINK "+contextLabel[4]+"]")
 		}
 		parts = append(parts, "[WS "+root+"]")
-		if len(contextLabel) > 1 {
-			parts = append(parts, "[TOK "+contextLabel[1]+"]")
+		if len(contextLabel) > 0 {
+			parts = append(parts, "[CTX "+contextLabel[0]+"]")
 		}
 		if len(contextLabel) > 2 && contextLabel[2] != "" {
 			parts = append(parts, "[STEP "+contextLabel[2]+"]")
 		}
-		if len(contextLabel) > 3 && contextLabel[3] != "" {
-			parts = append(parts, "[MODE "+contextLabel[3]+"]")
-		}
-		if len(contextLabel) > 4 && contextLabel[4] != "" {
-			parts = append(parts, "[THINK "+contextLabel[4]+"]")
+		if len(contextLabel) > 1 {
+			parts = append(parts, "[TOK "+contextLabel[1]+"]")
 		}
 		return strings.Join(parts, " ")
 	}
@@ -1748,22 +1721,22 @@ func buildStatusBar(provider, model, root string, unicodeEnabled, color, remote 
 	if remote {
 		segments = append(segments, remoteStatusBadge(true))
 	}
+	if len(contextLabel) > 3 && contextLabel[3] != "" {
+		segments = append(segments, statusSegment("MODE", contextLabel[3], yellow))
+	}
 	segments = append(segments, statusValue(provider, cyan), statusSegment("MODEL", model, modelColor))
-	if len(contextLabel) > 0 {
-		segments = append(segments, statusSegment("CTX", contextLabel[0], green))
+	if len(contextLabel) > 4 && contextLabel[4] != "" {
+		segments = append(segments, statusSegment("THINK", contextLabel[4], magenta))
 	}
 	segments = append(segments, statusSegment("WS", root, workspaceColor))
-	if len(contextLabel) > 1 {
-		segments = append(segments, statusSegment("TOK", contextLabel[1], cyan))
+	if len(contextLabel) > 0 {
+		segments = append(segments, statusSegment("CTX", contextLabel[0], green))
 	}
 	if len(contextLabel) > 2 && contextLabel[2] != "" {
 		segments = append(segments, statusSegment("STEP", contextLabel[2], yellow))
 	}
-	if len(contextLabel) > 3 && contextLabel[3] != "" {
-		segments = append(segments, statusSegment("MODE", contextLabel[3], yellow))
-	}
-	if len(contextLabel) > 4 && contextLabel[4] != "" {
-		segments = append(segments, statusSegment("THINK", contextLabel[4], magenta))
+	if len(contextLabel) > 1 {
+		segments = append(segments, statusSegment("TOK", contextLabel[1], cyan))
 	}
 	separator := dim + "  │  " + reset
 	if !unicodeEnabled {

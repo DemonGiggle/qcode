@@ -51,6 +51,7 @@ type Config struct {
 	Sandbox              *bool     `toml:"sandbox"`
 	SandboxCommandPaths  []string  `toml:"sandbox_command_paths"`
 	DangerSkipTLSVerify  *bool     `toml:"danger_skip_tls_verify"`
+	StatuslineHidden   []string  `toml:"statusline_hidden"`
 }
 
 // Load returns the configuration assembled from every existing configuration
@@ -160,7 +161,25 @@ func validate(path string, cfg Config) error {
 			return fmt.Errorf("parse config %s: agent_timeout must be a positive duration, such as \"5m\"", path)
 		}
 	}
+	if cfg.StatuslineHidden != nil {
+		for _, segment := range cfg.StatuslineHidden {
+			if !validStatuslineSegment(segment) {
+				return fmt.Errorf("parse config %s: statusline_hidden contains unknown segment %q (want one of remote, mode, model, think, ws, ctx, step, tok)", path, segment)
+			}
+		}
+	}
 	return nil
+}
+
+// validStatuslineSegment reports whether a statusline_hidden entry names a
+// known status bar segment. Matching is case-insensitive; surrounding spaces
+// are ignored so TOML lists stay forgiving.
+func validStatuslineSegment(segment string) bool {
+	switch strings.ToLower(strings.TrimSpace(segment)) {
+	case "remote", "mode", "model", "think", "ws", "ctx", "step", "tok":
+		return true
+	}
+	return false
 }
 
 // merge overlays values supplied by incoming onto dst. Empty string fields are
@@ -217,6 +236,9 @@ func merge(dst *Config, incoming Config) {
 	}
 	if incoming.DangerSkipTLSVerify != nil {
 		dst.DangerSkipTLSVerify = incoming.DangerSkipTLSVerify
+	}
+	if incoming.StatuslineHidden != nil {
+		dst.StatuslineHidden = append([]string(nil), incoming.StatuslineHidden...)
 	}
 	dst.Skills.Paths = appendUniquePaths(dst.Skills.Paths, incoming.Skills.Paths)
 	dst.Skills.AutoloadPaths = appendUniquePaths(dst.Skills.AutoloadPaths, incoming.Skills.AutoloadPaths)

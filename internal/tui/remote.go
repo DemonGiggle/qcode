@@ -348,7 +348,10 @@ func (u *UI) remoteStatusBar() string {
 	if u.remoteService != nil {
 		remote = u.remoteService.Status().Running
 	}
-	return statusBarWithRemoteColors(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, true, remote, webStatusModelColor, webStatusWorkspaceColor, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+	u.screenMu.Lock()
+	hidden := append([]string(nil), u.statuslineHidden...)
+	u.screenMu.Unlock()
+	return statusBarWithStatuslineHidden(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, true, remote, hidden, webStatusModelColor, webStatusWorkspaceColor, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
 }
 
 func (u *UI) SubscribePresentation(ctx context.Context) <-chan struct{} {
