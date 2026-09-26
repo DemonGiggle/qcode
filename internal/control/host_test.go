@@ -18,6 +18,22 @@ func (*hostProvider) Complete(context.Context, llm.Request, llm.StreamCallback) 
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
 }
 
+type hostBlockingProvider struct {
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (p *hostBlockingProvider) Name() string { return "host-blocking-test" }
+func (p *hostBlockingProvider) Complete(ctx context.Context, _ llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	p.started <- struct{}{}
+	select {
+	case <-p.release:
+		return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
+	case <-ctx.Done():
+		return llm.Response{}, ctx.Err()
+	}
+}
+
 type hostTools struct{}
 
 func (*hostTools) Schemas() []llm.Tool        { return nil }
@@ -65,6 +81,39 @@ func TestHostSharesRuntimeWithIndependentSubscribers(t *testing.T) {
 	records := host.WorkRecords()
 	if len(records) != 1 || records[0].AgentID != "main" || records[0].Prompt != "work" || records[0].Response != "done" {
 		t.Fatalf("work records = %+v", records)
+	}
+}
+
+func TestHostExposesQueuedPromptsToPresentation(t *testing.T) {
+	host := NewHost(context.Background(), 1)
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	defer func() {
+		close(release)
+		host.Shutdown()
+	}()
+	host.SetFactory(func(id, name, model string, main bool) (*agent.Agent, error) {
+		tools := host.WrapToolset(id, &hostTools{}, main)
+		provider := &hostBlockingProvider{started: started, release: release}
+		return agent.New(provider, model, tools, trace.New(io.Discard, false), io.Discard, 2), nil
+	})
+	if _, err := host.CreateMain("test-model"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.Submit("main", "active prompt"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("active prompt did not start")
+	}
+	if _, err := host.Submit("main", "queued prompt"); err != nil {
+		t.Fatal(err)
+	}
+	queued := host.QueuedPrompts("main")
+	if len(queued) != 1 || queued[0].Prompt != "queued prompt" {
+		t.Fatalf("queued prompts = %+v", queued)
 	}
 }
 

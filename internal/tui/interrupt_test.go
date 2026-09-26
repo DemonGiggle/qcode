@@ -98,6 +98,28 @@ func TestInterruptReaderRoutesPageKeys(t *testing.T) {
 	}
 }
 
+func TestInterruptReaderTogglesQueuePanelWithoutEatingTyping(t *testing.T) {
+	reader := newInterruptReader(nil)
+	called := 0
+	reader.setQueueHandler(func() { called++ })
+	for _, key := range []byte(altQueuePanel + "draft") {
+		reader.route([]byte{key})
+	}
+	if called != 1 {
+		t.Fatalf("queue toggled %d times", called)
+	}
+	buffer := make([]byte, len("draft"))
+	if _, err := io.ReadFull(reader, buffer); err != nil || string(buffer) != "draft" {
+		t.Fatalf("editor input = %q, %v", buffer, err)
+	}
+	reader.setRaw(true)
+	reader.route([]byte(altQueuePanel))
+	buffer = make([]byte, len(altQueuePanel))
+	if _, err := io.ReadFull(reader, buffer); err != nil || string(buffer) != altQueuePanel || called != 1 {
+		t.Fatalf("raw input = %q, toggles = %d, err = %v", buffer, called, err)
+	}
+}
+
 func TestInterruptReaderRoutesTabKeysAndTypingDuringTask(t *testing.T) {
 	reader := newInterruptReader(nil)
 	var directions []int

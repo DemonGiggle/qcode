@@ -92,31 +92,58 @@ func (u *UI) paintFixedLocked(direction int) {
 		}
 	}
 	rows, cy, cx := inputRows(label+u.inputText, utf8.RuneCountInString(label)+u.inputPosition, u.width)
+	queued := u.queuedPromptsLocked()
+	var queueRows []queuedDisplayRow
+	if len(queued) > 0 {
+		queueRows = queueDisplayRows(queued, u.width)
+	}
 	statusN := statusBarLineCount(u.statusBar())
 	if u.height < 5 {
 		statusN = 1
 	}
+	footer := min(1+statusN, max(0, u.height-2))
 	// Keep a cursor-centered window for drafts taller than the terminal.
-	inputHeight := min(len(rows), max(1, u.height-4-statusN))
+	inputLimit := u.height - 4 - statusN
+	if len(queued) > 0 {
+		reserve := min(4, 1+len(queueRows), max(1, u.height-footer-4))
+		inputLimit = min(inputLimit, u.height-footer-3-reserve)
+	}
+	inputHeight := min(len(rows), max(1, inputLimit))
 	start := max(0, cy-inputHeight+1)
 	rows = rows[start:min(len(rows), start+inputHeight)]
 	cy -= start
-	footer := min(1+statusN, max(0, u.height-2))
 	promptRow := u.height - footer - len(rows) + 1
+	queue := u.activeQueueLocked()
+	if len(queued) == 0 {
+		queue.expanded, queue.anchorID, queue.anchorRow = false, "", 0
+	}
+	historyDirection := direction
+	if queue.expanded && len(queued) > 0 {
+		historyDirection = 0
+	}
 	matches := matchingSlashCommands(u.inputText)
 	if u.inputLabel != inputPrompt && u.inputLabel != planInputPrompt && u.inputLabel != skillPlanInputPrompt {
 		matches = nil
 	}
 	// Keep two output rows available: history snapshots end with an unfinished
 	// line, so a single row can otherwise show only that empty tail.
-	count := min(len(matches), max(0, promptRow-4))
-	outputHeight := max(0, promptRow-count-2)
+	extras := max(0, promptRow-4) // Preserve two conversation rows when possible.
+	queueHeight := 0
+	if len(queued) > 0 && extras > 0 {
+		queueHeight = min(4, 1+len(queueRows), extras)
+	}
+	count := min(len(matches), extras-queueHeight)
+	if queue.expanded && queueHeight > 0 {
+		room := extras - count
+		queueHeight = min(1+len(queueRows), room, max(queueHeight, 2*room/3))
+	}
+	outputHeight := max(0, promptRow-count-queueHeight-2)
 	screenRows := make([]string, u.height+1)
 	if u.manager != nil && u.height > 3 {
 		screenRows[1] = tabBar(u.manager.List(), u.activeAgent, u.views, u.width, u.unicode, ColorEnabled(u.out))
 	}
 	if outputHeight > 0 && u.display != nil {
-		page := u.activeViewportLocked().page(historyRows(u.display.Snapshot(), u.width), outputHeight, direction)
+		page := u.activeViewportLocked().page(historyRows(u.display.Snapshot(), u.width), outputHeight, historyDirection)
 		for i, row := range page {
 			screenRows[i+2] = row.text
 		}
@@ -140,7 +167,33 @@ func (u *UI) paintFixedLocked(direction int) {
 		if i == count-1 && len(matches) > count {
 			text += " (type to filter)"
 		}
-		screenRows[promptRow-count+i] = truncateDiffLine(text, u.width, u.unicode)
+		screenRows[promptRow-queueHeight-count+i] = truncateDiffLine(text, u.width, u.unicode)
+	}
+	if queueHeight > 0 {
+		queueStart := promptRow - queueHeight
+		header := fmt.Sprintf("Queued %d | Alt+Q expand", len(queued))
+		if queue.expanded {
+			header = fmt.Sprintf("Queued %d | Alt+Q close | PgUp/PgDn scroll", len(queued))
+		}
+		if u.width < 30 {
+			header = fmt.Sprintf("Q%d Alt+Q", len(queued))
+			if queue.expanded {
+				header = fmt.Sprintf("Q%d Alt+Q PgUp/Dn", len(queued))
+			}
+		}
+		if ColorEnabled(u.out) {
+			header = dim + header + reset
+		}
+		screenRows[queueStart] = truncateDiffLine(header, u.width, u.unicode)
+		if queueHeight > 1 {
+			visible := queueRows[:min(len(queueRows), queueHeight-1)]
+			if queue.expanded {
+				visible = queue.page(queueRows, queueHeight-1, direction)
+			}
+			for i, item := range visible {
+				screenRows[queueStart+1+i] = item.text
+			}
+		}
 	}
 	for i, row := range rows {
 		screenRows[promptRow+i] = row

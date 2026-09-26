@@ -227,6 +227,7 @@ type UI struct {
 	height               int
 	unicode              bool
 	viewport             viewport
+	queue                queuePanel
 	statusActive         bool
 	statusBarText        string
 	planViewActive       bool
@@ -351,6 +352,7 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	display.ui = u
 	t.AutoCompleteCallback = u.completeSlashCommand
 	input.setPageHandler(u.showPage)
+	input.setQueueHandler(u.toggleQueuePanel)
 	input.setTabHandler(u.requestTabSwitch)
 	u.SetRunner(runner)
 	return u
@@ -940,9 +942,7 @@ func (u *UI) compactConversation(ctx context.Context) {
 			u.printSystemMessage(yellow + "Conversation compaction failed: " + err.Error() + reset)
 			return
 		}
-		if submission.QueuePosition > 0 {
-			u.printSystemMessage(fmt.Sprintf("%sCompaction queued #%d%s", dim, submission.QueuePosition, reset))
-		} else {
+		if submission.QueuePosition == 0 {
 			u.printSystemMessage(dim + "Compacting conversation..." + reset)
 		}
 		u.updateActiveCancellation()
@@ -1995,6 +1995,10 @@ func (u *UI) showPage(direction int) {
 	u.commandMenu.reset()
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
+	if u.fixedInput && u.activeQueueLocked().expanded && len(u.queuedPromptsLocked()) > 0 {
+		u.paintFixedLocked(direction)
+		return
+	}
 	u.repaintActiveLocked(direction)
 }
 

@@ -312,6 +312,20 @@ func TestRemotePageShowsWaitingIndicator(t *testing.T) {
 	}
 }
 
+func TestRemotePageHasAccessibleQueuedPromptPanel(t *testing.T) {
+	for _, fragment := range []string{
+		`id="queue-panel"`, `id="queue-toggle"`, `aria-expanded="false"`,
+		`id="queue-list"`, `role="list"`, `tabindex="-1"`,
+		`view.queued_prompts`, `row.textContent=(index+1)+'. '+String(item.prompt||'')`,
+		`queuePanel.classList.toggle('expanded',expanded)`,
+		`queueList.scrollTop+=`, `e.altKey&&e.key.toLowerCase()==='q'`,
+	} {
+		if !strings.Contains(indexHTML, fragment) {
+			t.Fatalf("remote page is missing queue panel behavior %q", fragment)
+		}
+	}
+}
+
 func TestEventsReportConnectionLifecycle(t *testing.T) {
 	presentation := &testPresentation{connections: make(chan string, 2)}
 	manager := authorizedTestManager(presentation)

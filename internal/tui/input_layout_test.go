@@ -12,10 +12,14 @@ import (
 type layoutManager struct {
 	agentController
 	states map[string]session.Status
+	queued map[string][]session.QueuedPrompt
 }
 
 func (m *layoutManager) Summary(id string) (session.Summary, error) {
-	return session.Summary{ID: id, Name: id, Status: m.states[id]}, nil
+	return session.Summary{ID: id, Name: id, Status: m.states[id], QueueDepth: len(m.queued[id])}, nil
+}
+func (m *layoutManager) QueuedPrompts(id string) []session.QueuedPrompt {
+	return append([]session.QueuedPrompt(nil), m.queued[id]...)
 }
 func (m *layoutManager) List() []session.Summary {
 	a, _ := m.Summary("main")
@@ -147,5 +151,82 @@ func TestFixedInputUpdatesOnlyChangedRows(t *testing.T) {
 	}
 	if strings.Contains(update, "\x1b[2;1H") {
 		t.Fatalf("changed input repainted history: %q", update)
+	}
+}
+
+func TestQueuedPanelStaysVisibleAndPagesIndependently(t *testing.T) {
+	u, frame := layoutFixture(t)
+	manager := u.manager.(*layoutManager)
+	manager.queued = map[string][]session.QueuedPrompt{"main": {
+		{RequestID: "request-2", Prompt: "first queued prompt with several words and 你好"},
+		{RequestID: "request-3", Prompt: "second queued prompt\nwith another line"},
+		{RequestID: "request-4", Prompt: "third queued prompt " + strings.Repeat("long ", 20)},
+	}}
+	u.width, u.height = 32, 17
+	u.renderInput(inputPrompt, "draft", 5)
+	if got := frame(); !strings.Contains(got, "Queued 3 | Alt+Q expand") || !strings.Contains(got, "1. first queued") || !strings.Contains(got, "2. second queued") || !strings.Contains(got, "(Queue)> draft") {
+		t.Fatalf("reserved queue area = %q", got)
+	}
+	for i := 0; i < 30; i++ {
+		u.display.AddLine("streamed output")
+	}
+	if !strings.Contains(frame(), "Queued 3 | Alt+Q expand") || !strings.Contains(frame(), "1. first queued") {
+		t.Fatal("streamed output displaced queue panel")
+	}
+	u.showPage(1)
+	historyAnchor := u.activeViewportLocked().anchor
+	u.toggleQueuePanel()
+	if got := frame(); !strings.Contains(got, "Alt+Q close") || !strings.Contains(got, "1. first queued") {
+		t.Fatalf("expanded panel = %q", got)
+	}
+	u.showPage(-1)
+	if !u.activeQueueLocked().expanded || u.activeQueueLocked().anchorID == "request-2" || !u.activeViewportLocked().browsing || u.activeViewportLocked().anchor != historyAnchor {
+		t.Fatalf("queue paging changed history: queue=%+v history=%+v", u.activeQueueLocked(), u.activeViewportLocked())
+	}
+	u.toggleQueuePanel()
+	if !strings.Contains(frame(), "1. first queued") || !strings.Contains(frame(), "2. second queued") {
+		t.Fatal("folded queue area lost queued message text")
+	}
+	u.showPage(1)
+	if !u.activeViewportLocked().browsing {
+		t.Fatal("Page Up did not return to transcript after collapsing queue")
+	}
+	u.width, u.height = 12, 8
+	u.renderInput(inputPrompt, strings.Repeat("x", 200), 200)
+	if !strings.Contains(frame(), "Q3 Alt+Q") {
+		t.Fatal("tall draft or small width hid the queue shortcut")
+	}
+	manager.queued["main"] = nil
+	u.renderInput(inputPrompt, "draft", 5)
+	if strings.Contains(frame(), "Queued 3") || u.activeQueueLocked().expanded {
+		t.Fatal("drained queue retained panel state")
+	}
+}
+
+func TestQueuedPanelStateIsPerTabAndEscapesPromptControls(t *testing.T) {
+	u, frame := layoutFixture(t)
+	manager := u.manager.(*layoutManager)
+	manager.queued = map[string][]session.QueuedPrompt{
+		"main":    {{RequestID: "request-2", Prompt: "safe\x1b[2J text"}},
+		"agent-1": {{RequestID: "request-3", Prompt: "other tab"}},
+	}
+	u.views["main"] = &agentView{id: "main", display: u.display.(*agentDisplay)}
+	u.views["agent-1"] = &agentView{id: "agent-1", display: &agentDisplay{ui: u, id: "agent-1", history: newHistoryWriter(io.Discard)}}
+	u.renderInput(inputPrompt, "draft", 5)
+	u.toggleQueuePanel()
+	if strings.Contains(frame(), "\x1b[2J") || !strings.Contains(frame(), "<ESC>[2J") {
+		t.Fatalf("unsafe prompt text rendered: %q", frame())
+	}
+	u.activeAgent = "agent-1"
+	u.display = u.views["agent-1"].display
+	u.renderInput(inputPrompt, "other", 5)
+	if !strings.Contains(frame(), "Alt+Q expand") || strings.Contains(frame(), "Alt+Q close") || !strings.Contains(frame(), "other tab") {
+		t.Fatal("expanded state leaked into other tab")
+	}
+	u.activeAgent = "main"
+	u.display = u.views["main"].display
+	u.renderInput(inputPrompt, "draft", 5)
+	if !strings.Contains(frame(), "Alt+Q close") {
+		t.Fatal("main tab lost expanded state")
 	}
 }

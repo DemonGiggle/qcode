@@ -22,12 +22,13 @@ const (
 
 // RemoteAgentView is a transport-safe snapshot of one agent tab.
 type RemoteAgentView struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Provider string   `json:"provider,omitempty"`
-	Model    string   `json:"model,omitempty"`
-	Status   string   `json:"status"`
-	Lines    []string `json:"lines"`
+	ID            string                 `json:"id"`
+	Name          string                 `json:"name"`
+	Provider      string                 `json:"provider,omitempty"`
+	Model         string                 `json:"model,omitempty"`
+	Status        string                 `json:"status"`
+	Lines         []string               `json:"lines"`
+	QueuedPrompts []session.QueuedPrompt `json:"queued_prompts,omitempty"`
 }
 
 type RemotePresentation struct {
@@ -236,9 +237,13 @@ func (u *UI) RemotePresentation() RemotePresentation {
 		for _, line := range snapshot.lines {
 			lines = append(lines, line.text)
 		}
+		var queued []session.QueuedPrompt
+		if source, ok := u.manager.(queuedPromptReader); ok {
+			queued = source.QueuedPrompts(view.id)
+		}
 		result.Views = append(result.Views, RemoteAgentView{
 			ID: view.id, Name: name, Provider: view.provider, Model: view.model,
-			Status: string(summary.Status), Lines: lines,
+			Status: string(summary.Status), Lines: lines, QueuedPrompts: queued,
 		})
 	}
 	return result

@@ -23,7 +23,7 @@ var tipTexts = []string{
 	"Switch agent tabs with Ctrl+PgUp/PgDn or Alt+,/. — each tab keeps its own draft, history, model, and tool settings.",
 	"Press PgUp/PgDn to scroll history while running; scrolling pauses live output, PgDn to the bottom resumes it.",
 	"Press Ctrl+C to cancel the running prompt, a picker, or a `/bash` command without exiting qcode.",
-	"Keep typing while the agent works — extra prompts queue as `Queued #N` and run in FIFO order.",
+	"Keep typing while the agent works — queued prompts stay visible above the prompt; press Alt+Q to expand them.",
 	"Run `/history` to search completed prompts newest-first; Enter views one response, Esc returns to the live view.",
 	"`write` and `edit` show 10-line diff previews; run `/diff` or `/diff N` to expand one up to 200 lines.",
 	"Run `/plan` for read-only Plan mode, `/plan show` to review, `/plan act` to implement, `/plan off` to leave.",

@@ -124,6 +124,9 @@ func (h *Host) Start(id, task string) error { return h.manager.Start(id, task) }
 func (h *Host) Submit(id, task string) (session.Submission, error) {
 	return h.manager.Submit(id, task)
 }
+func (h *Host) QueuedPrompts(id string) []session.QueuedPrompt {
+	return h.manager.QueuedPrompts(id)
+}
 func (h *Host) SubmitCompact(id string) (session.Submission, error) {
 	return h.manager.SubmitCompact(id)
 }
