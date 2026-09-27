@@ -57,7 +57,10 @@ binds an HTTP server to a random port on all interfaces and puts the host's
 primary LAN IPv4 address in the terminal-only QR link. It is unencrypted and
 must be used only on a trusted LAN. Tailscale starts a loopback server and its
 foreground `tailscale serve` proxy on a unique HTTPS path; browsers must belong
-to the same tailnet.
+to the same tailnet. It tries HTTPS port 443 first. If another foreground Serve
+session already owns that port, it tries 8443 and then ports 10000-10031. The
+selected port appears in the browser URL and QR link. Tailnet access rules must
+allow connections to that port.
 
 If more than one active LAN IPv4 interface is available, qcode asks which one
 to expose and shows each interface name, address, and CIDR subnet. With only

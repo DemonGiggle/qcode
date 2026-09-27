@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -449,10 +451,63 @@ func TestRemotePageURLs(t *testing.T) {
 }
 
 func TestRemoteURLHasNoTrailingSlash(t *testing.T) {
-	got := remoteURL("host.tailnet.ts.net.", "/qcode/ab")
+	got := remoteURL("host.tailnet.ts.net.", "/qcode/ab", 443)
 	want := "https://host.tailnet.ts.net/qcode/ab"
 	if got != want {
 		t.Fatalf("remoteURL = %q, want %q", got, want)
+	}
+	got = remoteURL("host.tailnet.ts.net.", "/qcode/ab", 8443)
+	want = "https://host.tailnet.ts.net:8443/qcode/ab"
+	if got != want {
+		t.Fatalf("remoteURL = %q, want %q", got, want)
+	}
+}
+
+func TestTailscaleFallsBackWhenHTTPSPortIsOccupied(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a Unix shell to stand in for tailscale")
+	}
+	dir := t.TempDir()
+	fakeTailscale := `#!/bin/sh
+if [ "$1" = "status" ]; then
+  printf '%s\n' '{"BackendState":"Running","Self":{"DNSName":"host.tailnet.ts.net.","TailscaleIPs":["100.1.2.3"]}}'
+  exit 0
+fi
+if [ "$1" = "serve" ] && [ "$2" = "--https=443" ]; then
+  if [ ! -e "$QCODE_FAKE_MARKER" ]; then
+    : > "$QCODE_FAKE_MARKER"
+    printf '%s\n' 'Another client is changing the serve config; please try again.'
+    exit 1
+  fi
+  printf '%s\n' 'sending serve config: updating config: listener already exists for port 443'
+  exit 1
+fi
+if [ "$1" = "serve" ] && [ "$2" = "--https=8443" ]; then
+  printf '%s\n' 'Available within your tailnet:'
+  exec sleep 30
+fi
+exit 1
+`
+	if err := os.WriteFile(filepath.Join(dir, "tailscale"), []byte(fakeTailscale), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("QCODE_FAKE_MARKER", filepath.Join(dir, "first-attempt"))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	manager := New(&testPresentation{})
+	t.Cleanup(func() { _ = manager.Stop() })
+	status, err := manager.Start(context.Background(), tui.RemoteModeTailscale, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Running || !strings.HasPrefix(status.URL, "https://host.tailnet.ts.net:8443/qcode/") {
+		t.Fatalf("fallback remote status = %+v", status)
+	}
+	login, err := manager.IssueLogin(context.Background())
+	if err != nil || !strings.HasPrefix(login.URL, status.URL+"#login=") {
+		t.Fatalf("fallback login = %+v, error = %v", login, err)
+	}
+	if !strings.Contains(manager.ServeCommand(), "--https=8443") {
+		t.Fatalf("Serve command = %q", manager.ServeCommand())
 	}
 }
 

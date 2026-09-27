@@ -154,46 +154,39 @@ func (m *Manager) startTailscale(ctx context.Context, listener net.Listener) (tu
 	server := &http.Server{Handler: m.routesWithAuth(auth, prefix), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() { _ = server.Serve(listener) }()
 	target := "http://" + listener.Addr().String()
-	cmd := exec.CommandContext(ctx, "tailscale", "serve", "--https=443", "--set-path="+prefix, target)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = server.Close()
-		_ = listener.Close()
-		return tui.RemoteStatus{}, err
-	}
-	cmd.Stderr = cmd.Stdout
-	if err := cmd.Start(); err != nil {
-		_ = server.Close()
-		_ = listener.Close()
-		return tui.RemoteStatus{}, fmt.Errorf("start tailscale serve: %w", annotateTailscaleError(err))
-	}
-	ready := make(chan error, 1)
-	go watchServeOutput(stdout, ready)
-	select {
-	case err := <-ready:
-		if err != nil {
-			_ = cmd.Process.Kill()
-			_, _ = io.Copy(io.Discard, stdout)
-			_ = cmd.Wait()
+	var cmd *exec.Cmd
+	var port int
+	for attempt := range 34 {
+		port = tailscaleHTTPSPort(attempt)
+		for retry := range 3 {
+			cmd, err = startTailscaleServe(ctx, port, prefix, target)
+			if !tailscaleConfigChanged(err) || retry == 2 {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				_ = server.Close()
+				_ = listener.Close()
+				return tui.RemoteStatus{}, ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+		if err == nil {
+			break
+		}
+		if !tailscalePortOccupied(err, port) {
 			_ = server.Close()
 			_ = listener.Close()
 			return tui.RemoteStatus{}, annotateTailscaleError(err)
 		}
-	case <-time.After(15 * time.Second):
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+	}
+	if err != nil {
 		_ = server.Close()
 		_ = listener.Close()
-		return tui.RemoteStatus{}, errors.New("tailscale serve did not become ready; run `tailscale serve` once to complete HTTPS setup")
-	case <-ctx.Done():
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		_ = server.Close()
-		_ = listener.Close()
-		return tui.RemoteStatus{}, ctx.Err()
+		return tui.RemoteStatus{}, errors.New("no available Tailscale HTTPS port for remote control (tried 443, 8443, and 10000-10031)")
 	}
 
-	url := remoteURL(dnsName, prefix)
+	url := remoteURL(dnsName, prefix, port)
 	m.mu.Lock()
 	if m.server != nil {
 		status := m.statusLocked()
@@ -230,6 +223,57 @@ func (m *Manager) startTailscale(ctx context.Context, listener net.Listener) (tu
 		m.mu.Unlock()
 	}()
 	return status, nil
+}
+
+func tailscaleHTTPSPort(attempt int) int {
+	switch attempt {
+	case 0:
+		return 443
+	case 1:
+		return 8443
+	default:
+		return 10000 + attempt - 2
+	}
+}
+
+func tailscalePortOccupied(err error, port int) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), fmt.Sprintf("listener already exists for port %d", port))
+}
+
+func tailscaleConfigChanged(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "another client is changing the serve config")
+}
+
+func startTailscaleServe(ctx context.Context, port int, prefix, target string) (*exec.Cmd, error) {
+	cmd := exec.CommandContext(ctx, "tailscale", "serve", fmt.Sprintf("--https=%d", port), "--set-path="+prefix, target)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start tailscale serve: %w", err)
+	}
+	ready := make(chan error, 1)
+	go watchServeOutput(stdout, ready)
+	select {
+	case err := <-ready:
+		if err != nil {
+			_ = cmd.Process.Kill()
+			_, _ = io.Copy(io.Discard, stdout)
+			_ = cmd.Wait()
+			return nil, err
+		}
+	case <-time.After(15 * time.Second):
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, errors.New("tailscale serve did not become ready; run `tailscale serve` once to complete HTTPS setup")
+	case <-ctx.Done():
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, ctx.Err()
+	}
+	return cmd, nil
 }
 
 func selectedLANIPv4(selected string) (string, error) {
@@ -275,8 +319,12 @@ func lanNetworks() ([]tui.RemoteNetwork, error) {
 
 // remoteURL is the browser-facing address for the Serve mount. The web page
 // sets its own base URL so relative API paths work without a trailing slash.
-func remoteURL(dnsName, prefix string) string {
-	return "https://" + strings.TrimSuffix(dnsName, ".") + prefix
+func remoteURL(dnsName, prefix string, port int) string {
+	host := strings.TrimSuffix(dnsName, ".")
+	if port != 443 {
+		host = net.JoinHostPort(host, fmt.Sprintf("%d", port))
+	}
+	return "https://" + host + prefix
 }
 
 func watchServeOutput(reader io.Reader, ready chan<- error) {
