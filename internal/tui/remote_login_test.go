@@ -92,7 +92,7 @@ func TestRemoteLoginExpiryTimerDoesNotClearReplacement(t *testing.T) {
 	}
 }
 
-func TestSaveRemoteQRCreatesPrivatePNGAndRemovesItWithLogin(t *testing.T) {
+func TestSaveRemoteQRCreatesPrivatePNGAndKeepsItWithLogin(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	u := New(nil, nil, nil, "test", "model", ".")
 	u.showRemoteLogin(RemoteLogin{URL: "https://host/#login=secret", ExpiresAt: time.Now().Add(time.Minute)})
@@ -121,20 +121,23 @@ func TestSaveRemoteQRCreatesPrivatePNGAndRemovesItWithLogin(t *testing.T) {
 		t.Fatalf("repeated save = %q, %v", again, err)
 	}
 	u.showRemoteLogin(RemoteLogin{URL: "https://host/#login=replacement", ExpiresAt: time.Now().Add(time.Minute)})
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("replaced login left QR PNG: %v", err)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("replaced login removed kept QR PNG: %v", err)
 	}
 	newPath, err := u.saveRemoteQR()
 	if err != nil {
 		t.Fatal(err)
 	}
 	u.clearRemoteLogin()
-	if _, err := os.Stat(newPath); !os.IsNotExist(err) {
-		t.Fatalf("cleared login left QR PNG: %v", err)
+	if _, err := os.Stat(newPath); err != nil {
+		t.Fatalf("cleared login removed kept QR PNG: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("cleared login removed kept QR PNG: %v", err)
 	}
 }
 
-func TestSavedRemoteQRIsRemovedAtExpiry(t *testing.T) {
+func TestSavedRemoteQRIsKeptAtExpiry(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	u := New(nil, nil, nil, "test", "model", ".")
 	u.showRemoteLogin(RemoteLogin{URL: "https://host/#login=secret", ExpiresAt: time.Now().Add(250 * time.Millisecond)})
@@ -145,14 +148,17 @@ func TestSavedRemoteQRIsRemovedAtExpiry(t *testing.T) {
 	}
 	deadline := time.After(2 * time.Second)
 	for {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
+		if _, err := u.saveRemoteQR(); err != nil {
 			break
 		}
 		select {
 		case <-deadline:
-			t.Fatal("expired login left QR PNG")
+			t.Fatal("login did not expire")
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expired login removed kept QR PNG: %v", err)
 	}
 	if _, err := u.saveRemoteQR(); err == nil {
 		t.Fatal("expired login was saved again")

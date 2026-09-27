@@ -23,7 +23,7 @@ func (u *UI) showRemoteLogin(login RemoteLogin) {
 	if u.remoteLoginTimer != nil {
 		u.remoteLoginTimer.Stop()
 	}
-	u.removeRemoteQRFileLocked()
+	u.detachRemoteQRFileLocked()
 	u.remoteLogin, u.remoteQR = &login, rows
 	if login.OpenAccess {
 		if u.fixedInput {
@@ -37,9 +37,10 @@ func (u *UI) showRemoteLogin(login RemoteLogin) {
 		if u.remoteLogin != &login {
 			return
 		}
-		// Drop the raw token as soon as its display expires.
+		// Drop the raw token as soon as its display expires. The saved PNG,
+		// if any, is kept on disk.
 		u.remoteLogin.URL, u.remoteQR = "", nil
-		u.removeRemoteQRFileLocked()
+		u.detachRemoteQRFileLocked()
 		if u.fixedInput {
 			u.paintFixedLocked(0)
 		} else if u.out != nil {
@@ -65,7 +66,7 @@ func (u *UI) clearRemoteLogin() {
 		u.remoteLoginTimer.Stop()
 		u.remoteLoginTimer = nil
 	}
-	u.removeRemoteQRFileLocked()
+	u.detachRemoteQRFileLocked()
 	if u.remoteLogin == nil {
 		return
 	}
@@ -76,7 +77,8 @@ func (u *UI) clearRemoteLogin() {
 }
 
 // saveRemoteQR stores only the current login's QR in a private temporary file.
-// The file is removed with the login rather than remaining as a stale token.
+// The file is kept on disk so a saved copy remains after the login expires,
+// is replaced, or the panel is dismissed.
 func (u *UI) saveRemoteQR() (string, error) {
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
@@ -108,12 +110,10 @@ func (u *UI) saveRemoteQR() (string, error) {
 	return path, nil
 }
 
-// Caller holds screenMu.
-func (u *UI) removeRemoteQRFileLocked() {
-	if u.remoteQRFile != "" {
-		_ = os.Remove(u.remoteQRFile)
-		u.remoteQRFile = ""
-	}
+// Caller holds screenMu. Detaching forgets the saved path without deleting
+// the file so the user's saved QR PNG remains on disk.
+func (u *UI) detachRemoteQRFileLocked() {
+	u.remoteQRFile = ""
 }
 
 // Caller holds screenMu. The QR is either displayed intact or omitted.
