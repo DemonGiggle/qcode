@@ -16,6 +16,7 @@ they run each command, not how qcode is implemented.
 from __future__ import annotations
 
 import datetime
+import subprocess
 from pathlib import Path
 import random
 
@@ -30,7 +31,23 @@ ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets"
 PDF_PATH = ROOT / "qcode-user-manual.pdf"
 
-VERSION = "1.0"
+
+def manual_version() -> str:
+    """Match scripts/version.sh: exact tag or dev."""
+    try:
+        tag = subprocess.check_output(
+            ["git", "describe", "--tags", "--exact-match", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            cwd=ROOT.parent.parent,
+        ).decode().strip()
+        if tag:
+            return tag
+    except Exception:
+        pass
+    return "dev"
+
+
+VERSION = manual_version()
 DATE = datetime.date.today().strftime("%B %d, %Y")
 
 # ---------------------------------------------------------------------------
@@ -161,8 +178,8 @@ def make_screenshots() -> dict[str, Path]:
             ("Queued #1: run the tests after the fix", YELLOW, PANEL, False),
             ("Working (*)  ·  1 queued  ·  input stays editable", CYAN, None, False),
             ("> add retry logic to the login flow", WHITE, None, True),
-            ("remote off | MODE normal | MODEL qwen2.5-coder:7b | WS ~/demo", DIM, STATUS_BG, False),
-            ("CTX 12% | STEP 3/32 | TOK I:1.2K O:340", DIM, STATUS_BG, False),
+            ("ollama [MODEL qwen2.5-coder:7b] [WS ~/demo] [CTX 12% left]", DIM, STATUS_BG, False),
+            ("[STEP 3/32] [TOK I:1.2K O:340]", DIM, STATUS_BG, False),
         ],
     )
 
@@ -174,14 +191,14 @@ def make_screenshots() -> dict[str, Path]:
             ("> refactor the login handler", DIM, None, False),
             ("Completed in 00:42 (09/27 10:15)", GREEN, None, False),
             ("", FG, None, False),
-            ("> /model  switch model (with search)", CYAN, SELECT_BG, True),
-            ("  /plan    plan first, then build", FG, None, False),
-            ("  /remote  control from a browser", FG, None, False),
-            ("  /resume  reopen a saved session", FG, None, False),
-            ("  /export  save transcript as HTML", FG, None, False),
+            ("> /model  Choose a model and optional thinking level", CYAN, SELECT_BG, True),
+            ("  /plan    Plan, review, or implement changes", FG, None, False),
+            ("  /remote  Control qcode from a web browser", FG, None, False),
+            ("  /resume  Continue a saved session", FG, None, False),
+            ("  /export  Export conversations or full transcript as HTML", FG, None, False),
             ("", FG, None, False),
             ("> /mo", WHITE, None, True),
-            ("Type / to see suggestions. Tab completes. Esc closes.", DIM, None, False),
+            ("Up to 5 matches. Tab completes first. Esc closes.", DIM, None, False),
         ],
     )
 
@@ -190,7 +207,7 @@ def make_screenshots() -> dict[str, Path]:
         out["model"],
         "qcode — /model picker",
         [
-            ("Models | Type to filter | Up/Down, Enter to select", CYAN, None, True),
+            ("Select model (4/4) | Up/Down, PgUp/PgDn | Search: ", CYAN, None, True),
             ("", FG, None, False),
             ("> qwen2.5-coder:7b", WHITE, SELECT_BG, True),
             ("  qwen3:8b", FG, None, False),
@@ -213,7 +230,7 @@ def make_screenshots() -> dict[str, Path]:
             ("  agent-1  gpt-5             working", FG, None, False),
             ("  agent-2  kimi-k3           1 queued", YELLOW, None, False),
             ("", FG, None, False),
-            ("/agent new | /agent switch <id> | /agent rename | /agent close", DIM, None, False),
+            ("/agent [new|list|switch|rename|cancel|close] (see /help)", DIM, None, False),
             ("Each tab keeps its own history, draft, queue, and model.", DIM, None, False),
         ],
     )
@@ -241,9 +258,9 @@ def make_screenshots() -> dict[str, Path]:
         remote_path,
         "qcode — /remote (browser control)",
         [
-            ("Remote control active | Pure Web - trusted LAN HTTP", CYAN, None, True),
+            ("Remote control active | Pure Web · trusted LAN HTTP", CYAN, None, True),
             ("Address: http://192.168.1.10:42351", FG, None, False),
-            ("Connections: 1 active browser session", FG, None, False),
+            ("Connections: 2 active browser sessions", FG, None, False),
             ("Remote login (scan or open link; single use, 3 minutes)", YELLOW, None, False),
             ("", FG, None, False),
             ("", FG, None, False),
@@ -278,16 +295,17 @@ def make_screenshots() -> dict[str, Path]:
         out["diff"],
         "qcode — diff preview and export",
         [
-            ("Writing internal/app.py (+12 -3)", CYAN, None, True),
+            ("Writing internal/app.py (+12 -3) · diff 1", CYAN, None, True),
             ("  @@ login handler @@", MAGENTA, None, False),
             ("    context = load_session()", FG, None, False),
             ("-   login_once(context)", RED, None, False),
             ("+   login_with_retry(context, attempts=3)", GREEN, None, False),
             ("", FG, None, False),
-            ("/diff  expand  |  /diff 3  show third hunk (up to 200 lines)", DIM, None, False),
+            ("/diff expands latest; /diff 3 expands saved diff 3 (to 200)", DIM, None, False),
             ("", FG, None, False),
             ("> /export pretty", WHITE, None, True),
-            ("Exported session to qcode-session-pretty-2026-09-27.html", GREEN, None, False),
+            ("Exported session to qcode-session-pretty-20260927-101500-", GREEN, None, False),
+            ("000000001.html (custom paths are not accepted)", GREEN, None, False),
         ],
     )
 
@@ -304,7 +322,7 @@ def make_screenshots() -> dict[str, Path]:
             ("  Type a custom answer instead", FG, None, False),
             ("", FG, None, False),
             ("Up/Down moves, Enter answers, Ctrl+C skips. 1 of 3 max.", DIM, None, False),
-            ("MODE INTERACTIVE in status bar | draft is kept while you answer", CYAN, None, False),
+            ("[MODE INTERACTIVE] in status bar | draft kept while answering", CYAN, None, False),
         ],
     )
 
@@ -509,7 +527,8 @@ def build_pdf(images: dict[str, Path]):
         0,
         5.5,
         "In this manual: install once, tour the screen, ask and queue work,\n"
-        "switch models, use agents, plan, skills, sessions, browser control, and settings.",
+        "clarifying questions, switch models, use agents, plan, skills, memory,\n"
+        "web tools, sessions, browser control, and settings.",
         align="C",
         new_x=XPos.LMARGIN, new_y=YPos.NEXT,
     )
@@ -527,8 +546,8 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             "Words in `code style` are things you type, for example `/model` or `qcode --demo`.",
-            "Figures are example screens. Your colors and sizes may differ slightly.",
-            "The prompt line shows `>` when idle, `(Plan)>` in Plan mode, and `(Queue)>` while busy.",
+            "Figures are illustrative example screens. Your colors and sizes may differ slightly.",
+            "The prompt line shows `>` when idle, `(Plan)>` in Plan mode, `(Skill plan)>` in Skill Plan mode, and `(Queue)>` while busy.",
             "Esc goes back one level. Ctrl+C cancels without applying changes.",
         ],
     )
@@ -547,7 +566,7 @@ def build_pdf(images: dict[str, Path]):
     )
     tip(pdf, "If you only want to learn the keys and screens, start with --demo. It runs a scripted tour with fake tools and queued prompts.")
     h2(pdf, "Update")
-    body(pdf, "Update the installed program from inside qcode when a new release is available.")
+    body(pdf, "Use the shell command below to install the latest release. It is a qcode CLI command, not a slash command.")
     code(pdf, "qcode update\nqcode update --arch arm64")
 
     # 2 Tour
@@ -562,18 +581,18 @@ def build_pdf(images: dict[str, Path]):
     bullets(
         pdf,
         [
-            "Tabs: `main` is always there. Extra agents appear as new tabs (up to 20).",
+            "Tabs: `main` is always there. Extra agents appear as new tabs (up to 20 total).",
             "Transcript: streamed answers with Markdown, tables, and tool activity like `Reading ...` or `Writing ...`.",
             "Queue area: appears only while busy. It lists waiting prompts in order.",
-            "Prompt: `>` idle, `(Plan)>` planning, `(Queue)>` working. You can keep typing while work runs.",
-            "Status bar: remote, mode, model, folder, context %, step, and tokens. Hide parts with `/statusline`.",
+            "Prompt: `>` idle, `(Plan)>` planning, `(Skill plan)>` skill design, `(Queue)>` working. You can keep typing while work runs.",
+            "Status bar: provider plus [MODEL name], [WS folder], [CTX % left], [STEP n/max], [TOK I/O], plus [THINK level] when set, [MODE PLAN] / [MODE INTERACTIVE] only when active, and [REMOTE] only while browser control runs. No MODE badge appears for normal work. Hide parts with `/statusline`.",
         ],
     )
     h2(pdf, "Keys you will use daily")
     bullets(
         pdf,
         [
-            "Type `/` to see matching commands. Type more to filter, Tab to complete, Esc to close.",
+            "Type `/` to see up to five matching commands. Type more to filter, Tab to complete the first match, Esc to close.",
             "Left/Right, Home/End move in the line. Ctrl+Left/Right jumps by word. Ctrl+W deletes a word. Ctrl+A/E jump to ends.",
             "PageUp/PageDown scrolls history, even while the agent works. Scrolling pauses the live view; PageDown to the bottom resumes it.",
             "Alt+Q expands a long queue so you can scroll it; Alt+Q again folds it back.",
@@ -609,57 +628,58 @@ def build_pdf(images: dict[str, Path]):
         "`/interactive off`, or check the setting with `/interactive`. It is off by default. "
         "Add `interactive = true` to config.toml to enable it for new terminal sessions.",
     )
-    figure(pdf, images["interactive"], "Figure 2b: A clarifying question. Pick a suggestion or type your own. At most 3 questions per prompt.")
+    figure(pdf, images["interactive"], "Figure 3: A clarifying question. Pick a suggestion or type your own. At most 3 questions per prompt.")
     bullets(
         pdf,
         [
             "One question at a time, with suggested choices or your own custom answer. At most 3 distinct questions per submitted prompt.",
             "Your answer becomes context for that agent only. It is not auto-saved; use `/learn` to keep it.",
-            "The status bar shows MODE INTERACTIVE while enabled. Your half-typed draft is saved and restored around the question.",
+            "The status bar shows [MODE INTERACTIVE] while enabled ([MODE INT] when narrow). Your half-typed draft is saved and restored around the question.",
             "Questions for other tabs wait on those tabs. Ctrl+C skips the question. The browser remote can also answer.",
-            "One-shot prompts, piped input, and non-terminal runs never wait; qcode just proceeds with available context.",
+            "One-shot prompts, piped input, non-terminal runs, and --json-events never wait; qcode just proceeds with available context.",
         ],
     )
     tip(pdf, "Turn it on when tasks are ambiguous (which database, which scope). Leave it off for strict hands-off runs.")
 
     # 4 Commands
     h1(pdf, "4. Slash commands at a glance")
-    body(pdf, "Type `/help` to list commands or `/help <name>` for one command. The leading `/` is optional in the name.")
-    figure(pdf, images["slash"], "Figure 2: Type / to filter commands. Tab completes the first match.")
+    body(pdf, "Type `/help` to list commands or `/help <name>` for one command. The leading `/` is optional in the name. Agent, skill, learning, plan, remote, model, tool, and interactive commands are covered in their chapters below.")
+    figure(pdf, images["slash"], "Figure 2: Type / to filter up to five commands. Tab completes the first match.")
     cmd_table(
         pdf,
         [
             ("/help", "List commands or explain one command."),
-            ("/new", "Clear conversation and token totals for this tab."),
-            ("/resume", "Reopen a saved session for this folder."),
-            ("/clear", "Redraw the welcome banner and tool summary."),
-            ("/history", "Search completed prompts and re-read one answer."),
-            ("/diff [N]", "Expand the latest file-change preview."),
-            ("/verbose", "Show detailed telemetry for this session."),
-            ("/maxsteps [N]", "Show or change the per-request step limit."),
+            ("/bash <cmd>", "Run a shell command in the workspace."),
+            ("/new", "Start a fresh conversation for the active agent."),
+            ("/resume", "Continue a saved session (picker or session-id)."),
+            ("/clear", "Clear the visible conversation and redraw the header."),
+            ("/history", "Browse completed prompts and responses."),
+            ("/diff [N]", "View more lines of saved diff N; omit N for latest."),
+            ("/verbose", "Show or hide detailed action traces."),
+            ("/maxsteps [N]", "Show or change the model-turn limit."),
             ("/statusline", "Show, hide, or reset status bar parts."),
-            ("/compact", "Shorten conversation context manually."),
-            ("/export", "Save transcript as readable or full HTML."),
-            ("/quit, /exit", "Leave qcode."),
+            ("/compact", "Summarize old context to make room."),
+            ("/export", "Export conversations or full transcript as HTML."),
+            ("/quit, /exit", "Save the session and exit qcode."),
         ],
     )
     h2(pdf, "Diff previews")
-    body(pdf, "When qcode writes or edits a file you see a short numbered preview with added and removed lines. Use `/diff` to expand it up to a safe limit. The model still receives plain text.")
-    figure(pdf, images["diff"], "Figure 3: Numbered change preview plus /export pretty saving a readable HTML copy.")
+    body(pdf, "When qcode writes or edits a file you see a short numbered 10-line preview with added and removed lines. Use `/diff` to expand the latest saved diff or `/diff N` to expand saved diff N, up to the 200-line safety limit. The model still receives plain text.")
+    figure(pdf, images["diff"], "Figure 4: Numbered change preview plus /export pretty saving a readable HTML copy.")
     h2(pdf, "Exports")
     bullets(
         pdf,
         [
             "`/export` or `/export pretty`: one tab per agent, prompt cards that reveal answers. Best for sharing and reading.",
             "`/export raw`: full styled transcript including tool activity, thinking, errors, and diffs.",
-            "Files are saved as `qcode-session-<mode>-<timestamp>.html`. A checkbox reveals detailed tool events.",
+            "Files are saved as `qcode-session-<mode>-<timestamp>.html` with subsecond precision. Custom output paths are not accepted.",
         ],
     )
 
     # 5 Models
     h1(pdf, "5. Choosing models and providers")
-    body(pdf, "Use `/model` to switch the assistant for the current tab. The list shows model names from your current provider only, with no provider suffix. Type to search, move with Up/Down, Enter to pick. Some models ask a second question for thinking level.")
-    figure(pdf, images["model"], "Figure 4: /model picker. Model names only; the list comes from the current provider. An optional thinking level follows (off/low/medium/high/max). Choices depend on the model.")
+    body(pdf, "Use `/model` to switch the assistant for the current tab. The list shows model names from your current provider only, with no provider suffix. Type to search, move with Up/Down and PgUp/PgDn, Enter to pick. You can also run `/model <id> [thinking]` directly. Some models ask a second question for thinking level; Esc returns to the model list and Ctrl+C cancels.")
+    figure(pdf, images["model"], "Figure 5: /model picker. Model names only; the list comes from the current provider. An optional thinking level follows (off/low/medium/high/max). Choices depend on the model.")
     h2(pdf, "Providers you can use")
     bullets(
         pdf,
@@ -671,7 +691,7 @@ def build_pdf(images: dict[str, Path]):
         ],
     )
     code(pdf, "qcode --provider ollama --model qwen3:8b --thinking high \"reply with OK\"\nqcode --provider opencode-go --model deepseek-v4-flash --thinking high \"reply with OK\"")
-    tip(pdf, "On `main`, /model and /maxsteps remember your choice. Other tabs, demo, and one-shot runs keep changes for that session only.")
+    tip(pdf, "On `main`, /model and /maxsteps remember your choice. Other tabs, demo, one-shot, and piped runs keep changes for that session only.")
     h2(pdf, "One-shot and demo")
     code(pdf, "qcode \"explain this repository\"\nqcode --json-events \"run the tests\" 2>events.jsonl\nqcode --demo \"show me how qcode works\"")
     body(pdf, "Pass a prompt to run once without the interactive screen. Assistant text goes to stdout and short progress events go to stderr. Demo mode needs no model and touches no files.")
@@ -679,16 +699,17 @@ def build_pdf(images: dict[str, Path]):
     # 6 Agents
     h1(pdf, "6. Working with multiple agents")
     body(pdf, "Use extra agents to do independent jobs at the same time, for example one writing code while another reads tests. Each tab keeps its own history, draft, queue, model, and tool choices.")
-    figure(pdf, images["agents"], "Figure 5: /agent list. Enter switches to the highlighted agent.")
+    figure(pdf, images["agents"], "Figure 6: /agent list. Enter switches to the highlighted agent.")
     cmd_table(
         pdf,
         [
-            ("/agent", "Create an agent."),
+            ("/agent", "Create an agent (same as /agent new)."),
+            ("/agent new [name]", "Create an agent, optionally named."),
             ("/agent list", "Pick and switch with Up/Down + Enter."),
             ("/agent switch <id>", "Jump directly to one agent."),
-            ("/agent rename", "Give the current tab a clearer name."),
-            ("/agent cancel", "Stop that agent's running work."),
-            ("/agent close", "Remove that agent tab."),
+            ("/agent rename <id> <name>", "Give an agent a new display name."),
+            ("/agent cancel <id>", "Stop that agent's current work."),
+            ("/agent close <id>", "Close that agent tab (--yes skips confirm)."),
         ],
     )
     bullets(
@@ -703,7 +724,7 @@ def build_pdf(images: dict[str, Path]):
     # 7 Plan
     h1(pdf, "7. Planning before coding")
     body(pdf, "Plan mode investigates without changing files. Enter it while idle, let qcode study the code, answer any design questions, review the submitted plan, then build it.")
-    figure(pdf, images["plan"], "Figure 6: Plan mode. The prompt shows (Plan) and the status bar shows PLAN until you act or leave.")
+    figure(pdf, images["plan"], "Figure 7: Plan mode. The prompt shows (Plan) and the status bar shows [MODE PLAN] until you act or leave.")
     numbered(
         pdf,
         [
@@ -718,23 +739,24 @@ def build_pdf(images: dict[str, Path]):
     # 8 Skills
     h1(pdf, "8. Skills and SkillPlan")
     h2(pdf, "Using skills")
-    body(pdf, "Skills are reusable instruction bundles, for example a team review checklist. Turn them on per tab with `/skill`. Only selected skills are shared with the assistant.")
+    body(pdf, "Skills are reusable instruction bundles, for example a team review checklist. Turn them on per tab with `/skill`. Only selected skills are shared with the assistant. You can also run `/skill name1,name2` directly, or `/skill none` to clear them.")
     bullets(
         pdf,
         [
-            "Type `/skill` to see names plus one-line summaries. Space selects, Enter applies.",
+            "Type `/skill` to see names plus one-line summaries. Type to filter, Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, Esc to leave, Ctrl+C to cancel.",
             "Your account, workspace, and configured folders can each provide skills.",
             "New files appear in `/skill` without restarting.",
             "A ready-made collection ships with qcode under docs/skills. Enable only what helps.",
         ],
     )
     h2(pdf, "Creating a skill safely")
-    body(pdf, "Use `/skillplan` to turn a rough idea into a reviewed skill. It asks about purpose, workflow, inputs, outputs, and limits, then saves a draft for approval.")
+    body(pdf, "Use `/skillplan` alone or with a rough idea to turn it into a reviewed skill. It asks when the skill applies, its workflow, inputs and outputs, constraints, validation, name, and scope, with follow-ups when an answer leaves a decision open.")
     code(pdf, "/skillplan review database migrations before deployment")
     bullets(
         pdf,
         [
             "`/skillplan show` reviews the draft. `/skillplan create` writes it. `/skillplan off` leaves without writing.",
+            "Names allow 1-64 lowercase letters, digits, hyphens, or underscores; files must fit 64 KiB. qcode never overwrites an existing SKILL.md.",
             "After creation, run `/skill` to enable the new skill.",
             "SkillPlan can read context but cannot run shell commands or change files until you approve creation.",
         ],
@@ -742,7 +764,7 @@ def build_pdf(images: dict[str, Path]):
 
     # 9 Learn
     h1(pdf, "9. Remembering preferences with /learn")
-    body(pdf, "Use `/learn` after a good answer to save a durable preference or reusable procedure. qcode shows a preview and asks for approval. Nothing is saved until you answer `y` or `yes`.")
+    body(pdf, "Use `/learn` after a good answer to save a durable preference or reusable procedure. qcode shows a preview and asks `Apply these global learning changes? [y/N]`. Nothing is saved unless you answer `y` or `yes`; Enter, `n`, or Ctrl+C cancels.")
     cmd_table(
         pdf,
         [
@@ -763,7 +785,7 @@ def build_pdf(images: dict[str, Path]):
 
     # 10 Web
     h1(pdf, "10. Web fetch and search")
-    body(pdf, "Web tools read public pages and search results as text. They start OFF. Turn them on for the current session with `/tool`.")
+    body(pdf, "Web tools read public pages and search results as text. They start OFF. Turn them on for the current session with `/tool`. The backend setting alone does not enable them.")
     bullets(
         pdf,
         [
@@ -779,26 +801,26 @@ def build_pdf(images: dict[str, Path]):
     bullets(
         pdf,
         [
-            "Sessions autosave while you work and on clean exit. Each launch starts its own session.",
+            "Sessions autosave about every two seconds, after agent work and commands, and on clean exit or session switch. Each launch starts its own session.",
             "Type `/resume` to reopen a session for this folder. Entries show a preview and age, newest first. Finish or cancel running work before switching.",
             "Empty and demo/one-shot runs are not saved. `/new` resets only the current tab inside its session.",
             "After a crash, qcode reopens the last good checkpoint and marks unfinished work interrupted. It never reruns tools by itself.",
-            "Sessions live outside your project (for example ~/.local/state/qcode/sessions on Linux). They keep private file permissions.",
+            "Sessions live outside your project: ~/.local/state/qcode/sessions on Linux (or $XDG_STATE_HOME), ~/Library/Application Support on macOS, %AppData% on Windows. They keep private file permissions.",
         ],
     )
 
     # 12 Remote
     h1(pdf, "12. Controlling qcode from a browser")
-    body(pdf, "Type `/remote` to drive the same session from a phone or another browser. Pick Pure Web for a trusted local network or Tailscale for your tailnet. Avoid the `No auth` option unless you truly want an open short-lived demo.")
-    figure(pdf, images["remote"], "Figure 7: /remote screen. Scan the code or open the link, then Accept. Save QR as PNG if the code is too tall for your window.")
+    body(pdf, "Type `/remote` to drive the same session from a phone or another browser. Pick Pure Web for a trusted local network or Tailscale for your tailnet (browsers must belong to the same tailnet). Avoid the `No auth` option unless you truly want an open short-lived demo.")
+    figure(pdf, images["remote"], "Figure 8: /remote screen. Scan the code or open the link, then Accept. Save QR as PNG if the code is too tall for your window.")
     numbered(
         pdf,
         [
             "Type `/remote` and choose how to connect. For multiple networks, pick the interface to share.",
-            "Scan the QR or open the shown link on the other device. Each link is single-use and lasts 3 minutes.",
-            "If the code does not fit, choose `Save QR as PNG` and open the shown file path. The file is kept on disk.",
+            "Scan the QR or open the shown link on the other device. Each link is single-use and lasts 3 minutes; issuing a new link invalidates a previous unredeemed one, while existing browsers stay connected.",
+            "If the code does not fit, choose `Save QR as PNG` and open the shown file path (in WSL, convert it with `wslpath -w <path>`). The file is kept on disk.",
             "Choose Accept to keep the connection open. Run `/remote` again for one more device; existing browsers stay connected.",
-            "To stop all browsers, choose Close Connection and confirm, or quit qcode.",
+            "To stop all browsers, choose Close Connection and confirm, or quit qcode. Used and expired links tell you to run `/remote` again.",
         ],
     )
     bullets(
@@ -821,8 +843,8 @@ def build_pdf(images: dict[str, Path]):
     bullets(
         pdf,
         [
-            "Copy `config.toml.example` to your user config location. Missing files are ignored.",
-            "Command flags beat environment variables. Both beat config files. Config files beat built-ins.",
+            "Copy `config.toml.example` to your user config location; missing files are ignored. Priority, highest first: file beside the program, user config (~/.local/etc/qcode on Linux, ~/Library/Application Support on macOS, %AppData% on Windows), system config (/usr/local/etc/qcode), then etc/ beside the program.",
+            "Command flags beat environment variables. Both beat config files. Config files beat built-ins. `--api-key` beats config and environment keys.",
             "Prefer environment variables for keys: QCODE_API_KEY or OPENAI_API_KEY. Keep key files private (mode 0600).",
             "Common knobs: thinking level, agent_timeout like \"5m\", interactive true/false, statusline_hidden, web_search backend, learning budget, skills paths.",
             "Restart after changing the web backend. `/model` and `/maxsteps` on `main` save automatically.",
@@ -835,7 +857,7 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             ("No colors?", "Run with NO_COLOR=1. For ASCII borders use QCODE_ASCII=1."),
-            ("Narrow window?", "Status bar drops low-priority parts first, then wraps. Hide more with /statusline."),
+            ("Narrow window?", "The path shortens first; the bar wraps to a second left-aligned line. Low-priority parts drop only if two lines still overflow. Hide more with /statusline."),
             ("Slow session?", "Try /compact, then /new for a fresh tab context."),
             ("Need detail?", "Try /verbose. For step limits use /maxsteps N."),
             ("Lost output?", "Scroll with PageUp/PageDown. /history finds old answers. /export saves HTML."),
@@ -850,22 +872,26 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             ("/help", "Help for all or one command."),
+            ("/bash <cmd>", "Run a shell command."),
             ("/model", "Switch model by name only (+ thinking)."),
-            ("/agent ...", "Create, list, switch, close tabs."),
+            ("/agent ...", "Create, list, switch, rename, cancel, close."),
             ("/plan ...", "Plan, show, act, off."),
             ("/skill", "Enable instruction bundles."),
-            ("/skillplan ...", "Draft and create a skill."),
+            ("/skillplan ...", "Draft, show, create, or leave skill design."),
             ("/interactive", "Let normal work ask up to 3 questions per prompt."),
-            ("/learn ...", "Save/list/forget preferences."),
+            ("/learn ...", "Save/list/forget/compact preferences."),
             ("/tool", "Toggle web fetch/search."),
             ("/resume, /new", "Reopen session / reset tab."),
             ("/history", "Find and re-read answers."),
-            ("/diff", "Expand file-change preview."),
+            ("/diff", "Expand saved diffs."),
+            ("/compact", "Summarize old context."),
+            ("/verbose", "Show/hide detailed traces."),
             ("/export", "Save pretty or raw HTML."),
             ("/remote", "Browser control via QR link."),
             ("/statusline", "Choose status bar parts."),
             ("/maxsteps", "Show/set step limit."),
-            ("/clear, /quit", "Redraw banner / leave."),
+            ("/clear", "Clear view and redraw header."),
+            ("/quit, /exit", "Save session and exit."),
         ],
     )
     body(pdf, "One-shot recipes:")
