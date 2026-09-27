@@ -52,6 +52,7 @@ var tipTexts = []string{
 
 	// Models, context, and usage.
 	"The `/model` picker offers supported thinking levels after model selection; Esc returns to the model list.",
+	"Thinking choices are cached from Models.dev; run `qcode --provider openai --update-model-meta` to refresh them.",
 	"In normal interactive mode, `/model` and `/maxsteps` on main save user defaults; changes in other tabs stay local.",
 	"Run `/maxsteps` to see the model-turn limit, or `/maxsteps 64` to allow more turns per request.",
 	"Run `/statusline` to choose status bar segments; narrow terminals keep remote, mode, and model first.",
@@ -78,6 +79,7 @@ var tipTexts = []string{
 	// Planning and skills.
 	"Enter `/plan` while idle to investigate safely: Plan mode blocks file changes, shell commands, and delegation.",
 	"Plan and skill-design questions accept a listed choice or a custom answer; Ctrl+C cancels the request.",
+	"Run `/interactive on` to let normal work ask up to three clarifying questions per prompt; `/interactive` shows the setting.",
 	"Use `/plan show` to scroll through the latest submitted plan, then `/plan act` to start implementation.",
 	"Run `/plan off` to leave planning without executing the plan; `/new` clears the saved plan.",
 	"Create `.qcode/skills/<name>/SKILL.md` for workspace instructions, then run `/skill` to discover and select them.",
@@ -85,6 +87,7 @@ var tipTexts = []string{
 	"Use lowercase letters, digits, hyphens, or underscores in skill names; keep each SKILL.md within 64 KiB.",
 	"Start SKILL.md with a short heading or a front-matter `description:` line so the picker explains its purpose.",
 	"Add `paths = [\".team/skills\"]` under `[skills]` in config.toml to discover extra skill directories.",
+	"Add `autoload_paths = [\".team/skills\"]` under `[skills]` in config.toml to enable team skills at startup.",
 	"For duplicate skill names, `.qcode/skills` overrides `.agents/skills` and user skills; configured paths take priority.",
 	"Run `/skill name1,name2` to select skills directly, or `/skill none` to clear the active agent's selection.",
 	"Run `/skill` again after adding a skill; discovery refreshes without restarting qcode.",
@@ -115,7 +118,7 @@ var tipTexts = []string{
 	"Run `/remote` to control the same agents and queues from a browser, including a phone.",
 	"Choose Pure Web only on a trusted LAN; choose Tailscale for HTTPS access from browsers on your tailnet.",
 	"Remote login links are single-use and expire after three minutes; run `/remote` again for another browser.",
-	"If a remote QR code does not fit, enlarge the terminal or use its clickable login heading.",
+	"If a remote QR code does not fit, choose Save QR as PNG on the `/remote` screen or use its clickable login heading.",
 	"Use `/remote` in the terminal and confirm Close Connection to revoke all browser access.",
 	"Reloading the same browser tab keeps remote access; a fresh browser session needs a new login link.",
 
