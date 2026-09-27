@@ -57,6 +57,7 @@ qcode update --arch arm64
 
 ## 📖 Documentation
 
+- [User Manual (PDF)](docs/manual/qcode-user-manual.pdf) - How to use qcode, with example screens for common commands
 - [Interface](docs/interface.md) - Terminal UI, slash commands, and navigation
 - [Plan mode](docs/plan-mode.md) - Read-only planning and explicit execution handoff
 - [Interactive questions](docs/interactive-mode.md) - Per-agent question toggle and terminal workflow
