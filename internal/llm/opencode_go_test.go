@@ -130,9 +130,10 @@ func TestOpenCodeGoReplaysReasoningContentOnToolContinuation(t *testing.T) {
 	})
 	provider, err := newOpenCodeGo(Config{
 		HTTP: client,
-		OpenCodeGoModelMeta: &OpenCodeGoModelMeta{
-			Version: OpenCodeGoModelMetaVersion,
-			Models:  map[string]OpenCodeGoModelOptions{"deepseek-v4-flash": {Effort: []string{"low", "high"}}},
+		ModelMeta: &ProviderModelMeta{
+			Version:  ProviderModelMetaVersion,
+			Provider: "opencode-go",
+			Models:   map[string]ProviderModelOptions{"deepseek-v4-flash": {Effort: []string{"low", "high"}}},
 		},
 	})
 	if err != nil {

@@ -112,6 +112,28 @@ var openCodeGoThinkingCatalog = map[string]ThinkingCapability{
 }
 
 func (p *openAIProvider) ThinkingCapability(model string) ThinkingCapability {
+	if p.name == "openai" {
+		if p.baseURL != openAIBaseURL || p.modelMeta == nil || p.modelMeta.Provider != "openai" {
+			return ThinkingCapability{RequestFormat: ThinkingRequestNone, ReplayFormat: ThinkingReplayNone}
+		}
+		options := p.modelMeta.Models[model]
+		if len(options.Effort) == 0 {
+			return ThinkingCapability{RequestFormat: ThinkingRequestNone, ReplayFormat: ThinkingReplayNone}
+		}
+		levels := append([]string(nil), options.Effort...)
+		capability := ThinkingCapability{
+			Supported:     true,
+			Adjustable:    len(levels) > 1,
+			AlwaysOn:      len(levels) == 1,
+			Levels:        levels,
+			RequestFormat: ThinkingRequestReasoningEffort,
+			ReplayFormat:  ThinkingReplayNone,
+		}
+		if capability.AlwaysOn {
+			capability.Default = levels[0]
+		}
+		return capability
+	}
 	if p.name != "opencode-go" || p.baseURL != openCodeGoBaseURL {
 		return ThinkingCapability{RequestFormat: ThinkingRequestNone, ReplayFormat: ThinkingReplayNone}
 	}
@@ -119,14 +141,14 @@ func (p *openAIProvider) ThinkingCapability(model string) ThinkingCapability {
 	if !ok {
 		return ThinkingCapability{RequestFormat: ThinkingRequestNone, ReplayFormat: ThinkingReplayNone}
 	}
-	if p.modelMeta != nil {
+	if p.modelMeta != nil && p.modelMeta.Provider == "opencode-go" {
 		capability = syncedOpenCodeGoCapability(capability, p.modelMeta.Models[model])
 	}
 	capability.Levels = append([]string(nil), capability.Levels...)
 	return capability
 }
 
-func syncedOpenCodeGoCapability(adapter ThinkingCapability, options OpenCodeGoModelOptions) ThinkingCapability {
+func syncedOpenCodeGoCapability(adapter ThinkingCapability, options ProviderModelOptions) ThinkingCapability {
 	choices := []string(nil)
 	if adapter.RequestFormat == ThinkingRequestObject {
 		if options.Toggle {

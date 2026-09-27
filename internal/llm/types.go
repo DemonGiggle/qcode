@@ -130,10 +130,9 @@ type Config struct {
 	APIKey             string
 	HTTP               HTTPDoer
 	InsecureSkipVerify bool
-	// OpenCodeGoModelMeta, when non-nil, replaces the built-in selector choices
-	// for matching OpenCode Go models. Its request and replay formats continue to
-	// come from qcode's local adapters.
-	OpenCodeGoModelMeta *OpenCodeGoModelMeta
+	// ModelMeta supplies exact-model reasoning choices from Models.dev. Request
+	// and replay formats remain in qcode's provider adapters.
+	ModelMeta *ProviderModelMeta
 }
 
 type HTTPDoer interface {

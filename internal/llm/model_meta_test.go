@@ -23,12 +23,12 @@ const modelsDevFixture = `{
   }}
 }`
 
-func TestParseOpenCodeGoModelMeta(t *testing.T) {
-	meta, err := ParseOpenCodeGoModelMeta([]byte(modelsDevFixture))
+func TestParseProviderModelMeta(t *testing.T) {
+	meta, err := ParseProviderModelMeta([]byte(modelsDevFixture), "opencode-go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.Version != OpenCodeGoModelMetaVersion || meta.Source != modelsDevCatalogURL {
+	if meta.Version != ProviderModelMetaVersion || meta.Source != modelsDevCatalogURL {
 		t.Fatalf("metadata header = %+v", meta)
 	}
 	if got, want := meta.Models["gpt-5.6-luna"].Effort, []string{"low", "high", "max"}; !reflect.DeepEqual(got, want) {
@@ -45,7 +45,7 @@ func TestParseOpenCodeGoModelMeta(t *testing.T) {
 	}
 }
 
-func TestLoadOpenCodeGoModelMetaFetchesOnlyOnCacheMiss(t *testing.T) {
+func TestLoadProviderModelMetaFetchesOnlyOnCacheMiss(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache", "metadata.json")
 	calls := 0
 	client := metadataDoer(func(request *http.Request) (*http.Response, error) {
@@ -55,7 +55,7 @@ func TestLoadOpenCodeGoModelMetaFetchesOnlyOnCacheMiss(t *testing.T) {
 		}
 		return metadataResponse(http.StatusOK, modelsDevFixture), nil
 	})
-	first, err := LoadOpenCodeGoModelMeta(context.Background(), cachePath, client)
+	first, err := LoadProviderModelMeta(context.Background(), cachePath, "opencode-go", client)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestLoadOpenCodeGoModelMetaFetchesOnlyOnCacheMiss(t *testing.T) {
 		t.Fatalf("cache stat = %v, err = %v; want mode 0600", info, err)
 	}
 
-	second, err := LoadOpenCodeGoModelMeta(context.Background(), cachePath, metadataDoer(func(*http.Request) (*http.Response, error) {
+	second, err := LoadProviderModelMeta(context.Background(), cachePath, "opencode-go", metadataDoer(func(*http.Request) (*http.Response, error) {
 		t.Fatal("valid cache triggered a fetch")
 		return nil, nil
 	}))
@@ -78,9 +78,9 @@ func TestLoadOpenCodeGoModelMetaFetchesOnlyOnCacheMiss(t *testing.T) {
 	}
 }
 
-func TestLoadOpenCodeGoModelMetaContinuesWithoutChoicesOnFirstFetchFailure(t *testing.T) {
+func TestLoadProviderModelMetaContinuesWithoutChoicesOnFirstFetchFailure(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "missing", "metadata.json")
-	meta, err := LoadOpenCodeGoModelMeta(context.Background(), cachePath, metadataDoer(func(*http.Request) (*http.Response, error) {
+	meta, err := LoadProviderModelMeta(context.Background(), cachePath, "opencode-go", metadataDoer(func(*http.Request) (*http.Response, error) {
 		return nil, io.ErrUnexpectedEOF
 	}))
 	if err == nil {
@@ -94,13 +94,13 @@ func TestLoadOpenCodeGoModelMetaContinuesWithoutChoicesOnFirstFetchFailure(t *te
 	}
 }
 
-func TestRefreshOpenCodeGoModelMetaPreservesGoodCacheOnFailure(t *testing.T) {
+func TestRefreshProviderModelMetaPreservesGoodCacheOnFailure(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "metadata.json")
-	good, err := ParseOpenCodeGoModelMeta([]byte(modelsDevFixture))
+	good, err := ParseProviderModelMeta([]byte(modelsDevFixture), "opencode-go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeOpenCodeGoModelMeta(cachePath, good); err != nil {
+	if err := writeProviderModelMeta(cachePath, good); err != nil {
 		t.Fatal(err)
 	}
 	original, err := os.ReadFile(cachePath)
@@ -117,7 +117,7 @@ func TestRefreshOpenCodeGoModelMetaPreservesGoodCacheOnFailure(t *testing.T) {
 		{"http error", http.StatusServiceUnavailable, `unavailable`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, refreshErr := RefreshOpenCodeGoModelMeta(context.Background(), cachePath, metadataDoer(func(*http.Request) (*http.Response, error) {
+			_, refreshErr := RefreshProviderModelMeta(context.Background(), cachePath, "opencode-go", metadataDoer(func(*http.Request) (*http.Response, error) {
 				return metadataResponse(tc.status, tc.body), nil
 			}))
 			if refreshErr == nil {
@@ -135,7 +135,7 @@ func TestRefreshOpenCodeGoModelMetaPreservesGoodCacheOnFailure(t *testing.T) {
 }
 
 func TestOpenCodeGoSyncedOptionsRequireLocalAdapterAndKeepEncoding(t *testing.T) {
-	meta, err := ParseOpenCodeGoModelMeta([]byte(modelsDevFixture))
+	meta, err := ParseProviderModelMeta([]byte(modelsDevFixture), "opencode-go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestOpenCodeGoSyncedOptionsRequireLocalAdapterAndKeepEncoding(t *testing.T)
 		}
 		return metadataResponse(http.StatusOK, stream), nil
 	})
-	provider, err := newOpenCodeGo(Config{OpenCodeGoModelMeta: meta, HTTP: client})
+	provider, err := newOpenCodeGo(Config{ModelMeta: meta, HTTP: client})
 	if err != nil {
 		t.Fatal(err)
 	}

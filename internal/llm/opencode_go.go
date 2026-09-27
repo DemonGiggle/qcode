@@ -49,7 +49,7 @@ func newOpenCodeGo(config Config) (Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	provider.(*openAIProvider).modelMeta = config.OpenCodeGoModelMeta
+	provider.(*openAIProvider).modelMeta = config.ModelMeta
 	return provider, nil
 }
 

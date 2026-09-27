@@ -13,54 +13,60 @@ import (
 	"time"
 )
 
-// OpenCodeGoModelMetaVersion identifies the JSON cache schema.
 const (
-	OpenCodeGoModelMetaVersion = 1
-	modelsDevCatalogURL        = "https://models.dev/api.json"
-	maxModelsDevCatalogSize    = 16 << 20
-	maxModelMetaCacheSize      = 4 << 20
+	ProviderModelMetaVersion = 1
+	modelsDevCatalogURL      = "https://models.dev/api.json"
+	maxModelsDevCatalogSize  = 16 << 20
+	maxModelMetaCacheSize    = 4 << 20
 )
 
-// OpenCodeGoModelOptions contains the selector controls Models.dev describes
+// ProviderModelOptions contains the selector controls Models.dev describes
 // for one model. Only effort and toggle controls are currently understood.
-type OpenCodeGoModelOptions struct {
+type ProviderModelOptions struct {
 	Effort []string `json:"effort,omitempty"`
 	Toggle bool     `json:"toggle,omitempty"`
 }
 
-// OpenCodeGoModelMeta is a versioned snapshot of Models.dev's OpenCode Go
-// reasoning options. Request formats are intentionally not stored here: qcode
-// must have a local adapter before any of these choices can be used.
-type OpenCodeGoModelMeta struct {
-	Version   int                               `json:"version"`
-	Source    string                            `json:"source"`
-	FetchedAt string                            `json:"fetched_at,omitempty"`
-	Models    map[string]OpenCodeGoModelOptions `json:"models"`
+// ProviderModelMeta is a versioned snapshot of one Models.dev provider's
+// reasoning options. Request formats stay local to qcode's provider adapters.
+type ProviderModelMeta struct {
+	Version   int                             `json:"version"`
+	Provider  string                          `json:"provider"`
+	Source    string                          `json:"source"`
+	FetchedAt string                          `json:"fetched_at,omitempty"`
+	Models    map[string]ProviderModelOptions `json:"models"`
 }
 
-// EmptyOpenCodeGoModelMeta returns an explicit empty snapshot. Passing it to
-// the provider suppresses built-in choices while retaining local wire adapters.
-func EmptyOpenCodeGoModelMeta() *OpenCodeGoModelMeta {
-	return &OpenCodeGoModelMeta{
-		Version: OpenCodeGoModelMetaVersion,
-		Source:  modelsDevCatalogURL,
-		Models:  make(map[string]OpenCodeGoModelOptions),
+// EmptyProviderModelMeta returns an explicit empty snapshot. Passing it to a
+// provider suppresses built-in choices while retaining local wire adapters.
+func EmptyProviderModelMeta(provider string) *ProviderModelMeta {
+	return &ProviderModelMeta{
+		Version:  ProviderModelMetaVersion,
+		Provider: provider,
+		Source:   modelsDevCatalogURL,
+		Models:   make(map[string]ProviderModelOptions),
 	}
 }
 
-// OpenCodeGoModelMetaCachePath returns the per-user versioned metadata cache
-// location under the operating system's cache directory.
-func OpenCodeGoModelMetaCachePath() (string, error) {
+// ProviderModelMetaCachePath returns the per-user versioned metadata cache
+// location for a Models.dev provider.
+func ProviderModelMetaCachePath(provider string) (string, error) {
+	if !supportedModelMetaProvider(provider) {
+		return "", fmt.Errorf("unsupported Models.dev provider %q", provider)
+	}
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve user cache directory: %w", err)
 	}
-	return filepath.Join(dir, "qcode", "opencode-go-model-meta-v1.json"), nil
+	return filepath.Join(dir, "qcode", provider+"-model-meta-v1.json"), nil
 }
 
-// ParseOpenCodeGoModelMeta extracts supported effort and toggle choices from
-// the Models.dev provider catalog. Unsupported option types are ignored.
-func ParseOpenCodeGoModelMeta(data []byte) (*OpenCodeGoModelMeta, error) {
+// ParseProviderModelMeta extracts supported effort and toggle choices from
+// one provider in the Models.dev catalog. Unsupported option types are ignored.
+func ParseProviderModelMeta(data []byte, providerID string) (*ProviderModelMeta, error) {
+	if !supportedModelMetaProvider(providerID) {
+		return nil, fmt.Errorf("unsupported Models.dev provider %q", providerID)
+	}
 	var providers map[string]json.RawMessage
 	if err := json.Unmarshal(data, &providers); err != nil {
 		return nil, fmt.Errorf("decode Models.dev catalog: %w", err)
@@ -68,27 +74,27 @@ func ParseOpenCodeGoModelMeta(data []byte) (*OpenCodeGoModelMeta, error) {
 	if providers == nil {
 		return nil, errors.New("decode Models.dev catalog: expected provider object")
 	}
-	providerData, ok := providers["opencode-go"]
+	providerData, ok := providers[providerID]
 	if !ok {
-		return nil, errors.New("Models.dev catalog has no opencode-go provider")
+		return nil, fmt.Errorf("Models.dev catalog has no %s provider", providerID)
 	}
 	var provider struct {
 		Models map[string]json.RawMessage `json:"models"`
 	}
 	if err := json.Unmarshal(providerData, &provider); err != nil {
-		return nil, fmt.Errorf("decode Models.dev opencode-go provider: %w", err)
+		return nil, fmt.Errorf("decode Models.dev %s provider: %w", providerID, err)
 	}
 	if provider.Models == nil {
-		return nil, errors.New("Models.dev opencode-go provider has no models object")
+		return nil, fmt.Errorf("Models.dev %s provider has no models object", providerID)
 	}
 	if len(provider.Models) == 0 {
-		return nil, errors.New("Models.dev opencode-go provider has an empty models object")
+		return nil, fmt.Errorf("Models.dev %s provider has an empty models object", providerID)
 	}
 
-	meta := EmptyOpenCodeGoModelMeta()
+	meta := EmptyProviderModelMeta(providerID)
 	for modelID, data := range provider.Models {
 		if strings.TrimSpace(modelID) == "" {
-			return nil, errors.New("Models.dev opencode-go provider contains an empty model ID")
+			return nil, fmt.Errorf("Models.dev %s provider contains an empty model ID", providerID)
 		}
 		var modelObject map[string]json.RawMessage
 		if err := json.Unmarshal(data, &modelObject); err != nil || modelObject == nil {
@@ -100,7 +106,7 @@ func ParseOpenCodeGoModelMeta(data []byte) (*OpenCodeGoModelMeta, error) {
 		if err := json.Unmarshal(data, &model); err != nil {
 			return nil, fmt.Errorf("decode Models.dev model %q: %w", modelID, err)
 		}
-		options := OpenCodeGoModelOptions{}
+		options := ProviderModelOptions{}
 		for _, raw := range model.ReasoningOptions {
 			var option struct {
 				Type   string          `json:"type"`
@@ -130,56 +136,65 @@ func ParseOpenCodeGoModelMeta(data []byte) (*OpenCodeGoModelMeta, error) {
 	return meta, nil
 }
 
-// LoadOpenCodeGoModelMeta reuses a valid cache without network access. If there
+// LoadProviderModelMeta reuses a valid cache without network access. If there
 // is no valid cache, it fetches and stores a new snapshot. On failure, an empty
 // snapshot and the error are returned so callers can continue without choices.
-func LoadOpenCodeGoModelMeta(ctx context.Context, cachePath string, client HTTPDoer) (*OpenCodeGoModelMeta, error) {
+func LoadProviderModelMeta(ctx context.Context, cachePath, provider string, client HTTPDoer) (*ProviderModelMeta, error) {
+	if !supportedModelMetaProvider(provider) {
+		return EmptyProviderModelMeta(provider), fmt.Errorf("unsupported Models.dev provider %q", provider)
+	}
 	if cachePath == "" {
 		var err error
-		cachePath, err = OpenCodeGoModelMetaCachePath()
+		cachePath, err = ProviderModelMetaCachePath(provider)
 		if err != nil {
-			return EmptyOpenCodeGoModelMeta(), err
+			return EmptyProviderModelMeta(provider), err
 		}
 	}
-	if cached, err := readOpenCodeGoModelMeta(cachePath); err == nil {
+	if cached, err := readProviderModelMeta(cachePath, provider); err == nil {
 		return cached, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		// Invalid or unreadable cache data is treated as a cache miss. A failed
 		// fetch will leave the original file in place for diagnosis/recovery.
 	}
-	meta, err := FetchOpenCodeGoModelMeta(ctx, client)
+	meta, err := FetchProviderModelMeta(ctx, provider, client)
 	if err != nil {
-		return EmptyOpenCodeGoModelMeta(), err
+		return EmptyProviderModelMeta(provider), err
 	}
-	if err := writeOpenCodeGoModelMeta(cachePath, meta); err != nil {
-		return meta, fmt.Errorf("write OpenCode Go model metadata cache: %w", err)
+	if err := writeProviderModelMeta(cachePath, meta); err != nil {
+		return meta, fmt.Errorf("write %s model metadata cache: %w", provider, err)
 	}
 	return meta, nil
 }
 
-// RefreshOpenCodeGoModelMeta always fetches and validates a new snapshot before
+// RefreshProviderModelMeta always fetches and validates a new snapshot before
 // atomically replacing the existing cache. A failed refresh preserves the last
 // good cache.
-func RefreshOpenCodeGoModelMeta(ctx context.Context, cachePath string, client HTTPDoer) (*OpenCodeGoModelMeta, error) {
+func RefreshProviderModelMeta(ctx context.Context, cachePath, provider string, client HTTPDoer) (*ProviderModelMeta, error) {
+	if !supportedModelMetaProvider(provider) {
+		return nil, fmt.Errorf("unsupported Models.dev provider %q", provider)
+	}
 	if cachePath == "" {
 		var err error
-		cachePath, err = OpenCodeGoModelMetaCachePath()
+		cachePath, err = ProviderModelMetaCachePath(provider)
 		if err != nil {
 			return nil, err
 		}
 	}
-	meta, err := FetchOpenCodeGoModelMeta(ctx, client)
+	meta, err := FetchProviderModelMeta(ctx, provider, client)
 	if err != nil {
 		return nil, err
 	}
-	if err := writeOpenCodeGoModelMeta(cachePath, meta); err != nil {
-		return nil, fmt.Errorf("write OpenCode Go model metadata cache: %w", err)
+	if err := writeProviderModelMeta(cachePath, meta); err != nil {
+		return nil, fmt.Errorf("write %s model metadata cache: %w", provider, err)
 	}
 	return meta, nil
 }
 
-// FetchOpenCodeGoModelMeta retrieves and parses the public Models.dev catalog.
-func FetchOpenCodeGoModelMeta(ctx context.Context, client HTTPDoer) (*OpenCodeGoModelMeta, error) {
+// FetchProviderModelMeta retrieves and parses the public Models.dev catalog.
+func FetchProviderModelMeta(ctx context.Context, provider string, client HTTPDoer) (*ProviderModelMeta, error) {
+	if !supportedModelMetaProvider(provider) {
+		return nil, fmt.Errorf("unsupported Models.dev provider %q", provider)
+	}
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -203,7 +218,7 @@ func FetchOpenCodeGoModelMeta(ctx context.Context, client HTTPDoer) (*OpenCodeGo
 	if len(data) > maxModelsDevCatalogSize {
 		return nil, fmt.Errorf("Models.dev catalog exceeds %d bytes", maxModelsDevCatalogSize)
 	}
-	meta, err := ParseOpenCodeGoModelMeta(data)
+	meta, err := ParseProviderModelMeta(data, provider)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +226,7 @@ func FetchOpenCodeGoModelMeta(ctx context.Context, client HTTPDoer) (*OpenCodeGo
 	return meta, nil
 }
 
-func readOpenCodeGoModelMeta(path string) (*OpenCodeGoModelMeta, error) {
+func readProviderModelMeta(path, expectedProvider string) (*ProviderModelMeta, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -222,20 +237,23 @@ func readOpenCodeGoModelMeta(path string) (*OpenCodeGoModelMeta, error) {
 		return nil, err
 	}
 	if len(data) > maxModelMetaCacheSize {
-		return nil, fmt.Errorf("OpenCode Go model metadata cache exceeds %d bytes", maxModelMetaCacheSize)
+		return nil, fmt.Errorf("model metadata cache exceeds %d bytes", maxModelMetaCacheSize)
 	}
-	var meta OpenCodeGoModelMeta
+	var meta ProviderModelMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
-		return nil, fmt.Errorf("decode OpenCode Go model metadata cache: %w", err)
+		return nil, fmt.Errorf("decode model metadata cache: %w", err)
 	}
-	if err := validateOpenCodeGoModelMeta(&meta); err != nil {
+	if meta.Provider != expectedProvider {
+		return nil, fmt.Errorf("model metadata cache is for provider %q, want %q", meta.Provider, expectedProvider)
+	}
+	if err := validateProviderModelMeta(&meta); err != nil {
 		return nil, err
 	}
 	return &meta, nil
 }
 
-func writeOpenCodeGoModelMeta(path string, meta *OpenCodeGoModelMeta) error {
-	if err := validateOpenCodeGoModelMeta(meta); err != nil {
+func writeProviderModelMeta(path string, meta *ProviderModelMeta) error {
+	if err := validateProviderModelMeta(meta); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(meta, "", "  ")
@@ -247,7 +265,7 @@ func writeOpenCodeGoModelMeta(path string, meta *OpenCodeGoModelMeta) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	temp, err := os.CreateTemp(dir, ".opencode-go-model-meta-*")
+	temp, err := os.CreateTemp(dir, ".model-meta-*")
 	if err != nil {
 		return err
 	}
@@ -271,27 +289,34 @@ func writeOpenCodeGoModelMeta(path string, meta *OpenCodeGoModelMeta) error {
 	return os.Rename(tempPath, path)
 }
 
-func validateOpenCodeGoModelMeta(meta *OpenCodeGoModelMeta) error {
-	if meta == nil || meta.Version != OpenCodeGoModelMetaVersion {
-		return fmt.Errorf("unsupported OpenCode Go model metadata cache version")
+func validateProviderModelMeta(meta *ProviderModelMeta) error {
+	if meta == nil || meta.Version != ProviderModelMetaVersion {
+		return fmt.Errorf("unsupported model metadata cache version")
+	}
+	if !supportedModelMetaProvider(meta.Provider) {
+		return fmt.Errorf("model metadata cache has an unsupported provider %q", meta.Provider)
 	}
 	if meta.Models == nil {
-		return errors.New("OpenCode Go model metadata cache has no models object")
+		return errors.New("model metadata cache has no models object")
 	}
 	for modelID, options := range meta.Models {
 		if strings.TrimSpace(modelID) == "" {
-			return errors.New("OpenCode Go model metadata cache contains an empty model ID")
+			return errors.New("model metadata cache contains an empty model ID")
 		}
 		seen := make(map[string]bool, len(options.Effort))
 		for _, value := range options.Effort {
 			choice, ok := normalizeThinkingChoice(value)
 			if !ok || choice != value || seen[value] {
-				return fmt.Errorf("OpenCode Go model metadata cache has an invalid effort choice for %q", modelID)
+				return fmt.Errorf("model metadata cache has an invalid effort choice for %q", modelID)
 			}
 			seen[value] = true
 		}
 	}
 	return nil
+}
+
+func supportedModelMetaProvider(provider string) bool {
+	return provider == "openai" || provider == "opencode-go"
 }
 
 func normalizeThinkingChoice(value string) (string, bool) {

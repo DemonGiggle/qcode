@@ -14,6 +14,8 @@ import (
 	"strings"
 )
 
+const openAIBaseURL = "https://api.openai.com/v1"
+
 type openAIProvider struct {
 	baseURL   string
 	apiKey    string
@@ -21,7 +23,7 @@ type openAIProvider struct {
 	name      string
 	userAgent string
 	sessionID string
-	modelMeta *OpenCodeGoModelMeta
+	modelMeta *ProviderModelMeta
 }
 
 // SessionIdentity preserves the non-secret routing identity used by OpenCode Go.
@@ -43,7 +45,19 @@ func init() {
 }
 
 func newOpenAI(config Config) (Provider, error) {
-	return newOpenAICompatible(config, "https://api.openai.com/v1", "openai", "", "")
+	provider, err := newOpenAICompatible(config, openAIBaseURL, "openai", "", "")
+	if err != nil {
+		return nil, err
+	}
+	provider.(*openAIProvider).modelMeta = config.ModelMeta
+	return provider, nil
+}
+
+// IsOfficialOpenAIEndpoint reports whether baseURL selects OpenAI's default
+// endpoint. An empty URL means the built-in endpoint will be used.
+func IsOfficialOpenAIEndpoint(baseURL string) bool {
+	baseURL = strings.TrimRight(baseURL, "/")
+	return baseURL == "" || baseURL == openAIBaseURL
 }
 
 func newOpenAICompatible(config Config, defaultBaseURL, name, userAgent, sessionID string) (Provider, error) {
@@ -156,7 +170,10 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 	for _, tool := range input.Tools {
 		tools = append(tools, openAITool{Type: "function", Function: tool})
 	}
-	body := map[string]any{"stream_options": map[string]any{"include_usage": true}, "model": input.Model, "messages": messages, "stream": true, "temperature": input.Temperature}
+	body := map[string]any{"stream_options": map[string]any{"include_usage": true}, "model": input.Model, "messages": messages, "stream": true}
+	if p.name != "openai" || !capability.Supported {
+		body["temperature"] = input.Temperature
+	}
 	if len(tools) > 0 {
 		body["tools"] = tools
 	}

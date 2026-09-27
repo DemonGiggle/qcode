@@ -33,6 +33,23 @@ export OPENAI_API_KEY=...
 qcode --provider openai --model gpt-5
 ```
 
+### Thinking levels
+
+For the official OpenAI endpoint, qcode reads the exact model's reasoning
+effort choices from the public [Models.dev catalog](https://models.dev/api.json)
+and sends a selected value through Chat Completions' `reasoning_effort` field.
+On first use, qcode caches this metadata at
+`qcode/openai-model-meta-v1.json` in the user's cache directory. Refresh it with:
+
+```sh
+qcode --provider openai --update-model-meta
+```
+
+Only exact model IDs with catalog effort options get thinking support; models
+with multiple choices show the thinking selector. Custom OpenAI-compatible
+base URLs do not load this metadata and retain their existing behavior. Ollama
+continues to discover installed-model thinking support from its local API.
+
 ## OpenCode Go
 
 ```sh
@@ -61,6 +78,9 @@ checking for updates. Refresh it explicitly with:
 ```sh
 qcode --provider opencode-go --update-model-meta
 ```
+
+`--update-model-meta` also refreshes the OpenAI catalog when used with
+`--provider openai`.
 
 A failed first fetch leaves qcode running without selectable thinking choices;
 a failed refresh keeps the last valid cache. Custom `--base-url` endpoints do
