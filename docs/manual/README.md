@@ -5,8 +5,8 @@ implementation and architecture details and shows how to use each feature.
 
 - **PDF:** [`qcode-user-manual.pdf`](qcode-user-manual.pdf)
 - **Screenshots:** [`assets/`](assets/) — illustrative terminal screens
-  rendered for print clarity (TUI layout, `/help`, `/model`, agents,
-  Plan mode, `/remote` QR, diff/export).
+  rendered for print clarity (TUI layout, `/help`, `/model` names only,
+  agents, Plan mode, `/remote` QR, diff/export, `/interactive` question).
 
 ## Regenerate
 

@@ -192,13 +192,13 @@ def make_screenshots() -> dict[str, Path]:
         [
             ("Models | Type to filter | Up/Down, Enter to select", CYAN, None, True),
             ("", FG, None, False),
-            ("> qwen2.5-coder:7b  installed (Ollama)", WHITE, SELECT_BG, True),
-            ("  gpt-5  OpenAI", FG, None, False),
-            ("  kimi-k3  OpenCode Go", FG, None, False),
-            ("  qwen3:8b  installed (Ollama)", FG, None, False),
+            ("> qwen2.5-coder:7b", WHITE, SELECT_BG, True),
+            ("  qwen3:8b", FG, None, False),
+            ("  gemma3", FG, None, False),
+            ("  gpt-oss:20b", FG, None, False),
             ("", FG, None, False),
+            ("List shows the current provider's model names only.", DIM, None, False),
             ("Thinking: off / low / medium / high / max (model decides list)", DIM, None, False),
-            ("/model on main saves your choice. Other tabs stay session-only.", DIM, None, False),
         ],
     )
 
@@ -288,6 +288,23 @@ def make_screenshots() -> dict[str, Path]:
             ("", FG, None, False),
             ("> /export pretty", WHITE, None, True),
             ("Exported session to qcode-session-pretty-2026-09-27.html", GREEN, None, False),
+        ],
+    )
+
+    out["interactive"] = ASSETS / "08-interactive-questions.png"
+    draw_terminal(
+        out["interactive"],
+        "qcode — clarifying question",
+        [
+            ("> migrate the database", DIM, None, False),
+            ("Which database should I use for this task?", YELLOW, None, True),
+            ("", FG, None, False),
+            ("> SQLite  (local file, zero setup)", WHITE, SELECT_BG, True),
+            ("  Postgres (shared, needs connection)", FG, None, False),
+            ("  Type a custom answer instead", FG, None, False),
+            ("", FG, None, False),
+            ("Up/Down moves, Enter answers, Ctrl+C skips. 1 of 3 max.", DIM, None, False),
+            ("MODE INTERACTIVE in status bar | draft is kept while you answer", CYAN, None, False),
         ],
     )
 
@@ -584,6 +601,26 @@ def build_pdf(images: dict[str, Path]):
         ],
     )
     tip(pdf, "Example flow: ask `explain this repository`, then while it works queue `run the tests after the fix`. Both complete in order without you waiting.")
+    h2(pdf, "When qcode asks you back (/interactive)")
+    body(
+        pdf,
+        "Normal work can pause to ask one focused question when an ambiguity would otherwise "
+        "need several broad searches. Turn this on per agent with `/interactive on`, off with "
+        "`/interactive off`, or check the setting with `/interactive`. It is off by default. "
+        "Add `interactive = true` to config.toml to enable it for new terminal sessions.",
+    )
+    figure(pdf, images["interactive"], "Figure 2b: A clarifying question. Pick a suggestion or type your own. At most 3 questions per prompt.")
+    bullets(
+        pdf,
+        [
+            "One question at a time, with suggested choices or your own custom answer. At most 3 distinct questions per submitted prompt.",
+            "Your answer becomes context for that agent only. It is not auto-saved; use `/learn` to keep it.",
+            "The status bar shows MODE INTERACTIVE while enabled. Your half-typed draft is saved and restored around the question.",
+            "Questions for other tabs wait on those tabs. Ctrl+C skips the question. The browser remote can also answer.",
+            "One-shot prompts, piped input, and non-terminal runs never wait; qcode just proceeds with available context.",
+        ],
+    )
+    tip(pdf, "Turn it on when tasks are ambiguous (which database, which scope). Leave it off for strict hands-off runs.")
 
     # 4 Commands
     h1(pdf, "4. Slash commands at a glance")
@@ -621,8 +658,8 @@ def build_pdf(images: dict[str, Path]):
 
     # 5 Models
     h1(pdf, "5. Choosing models and providers")
-    body(pdf, "Use `/model` to switch the assistant for the current tab. Type to search a large catalog, move with Up/Down, Enter to pick. Some models ask a second question for thinking level.")
-    figure(pdf, images["model"], "Figure 4: /model picker with search, then an optional thinking level (off/low/medium/high/max). Choices depend on the model.")
+    body(pdf, "Use `/model` to switch the assistant for the current tab. The list shows model names from your current provider only, with no provider suffix. Type to search, move with Up/Down, Enter to pick. Some models ask a second question for thinking level.")
+    figure(pdf, images["model"], "Figure 4: /model picker. Model names only; the list comes from the current provider. An optional thinking level follows (off/low/medium/high/max). Choices depend on the model.")
     h2(pdf, "Providers you can use")
     bullets(
         pdf,
@@ -813,12 +850,12 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             ("/help", "Help for all or one command."),
-            ("/model", "Switch model (+ thinking)."),
+            ("/model", "Switch model by name only (+ thinking)."),
             ("/agent ...", "Create, list, switch, close tabs."),
             ("/plan ...", "Plan, show, act, off."),
             ("/skill", "Enable instruction bundles."),
             ("/skillplan ...", "Draft and create a skill."),
-            ("/interactive", "Ask clarifying questions on/off."),
+            ("/interactive", "Let normal work ask up to 3 questions per prompt."),
             ("/learn ...", "Save/list/forget preferences."),
             ("/tool", "Toggle web fetch/search."),
             ("/resume, /new", "Reopen session / reset tab."),
