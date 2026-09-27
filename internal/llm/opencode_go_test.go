@@ -95,6 +95,17 @@ func TestOpenCodeGoReplaysReasoningContentOnToolContinuation(t *testing.T) {
 	requests := 0
 	client := doerFunc(func(request *http.Request) (*http.Response, error) {
 		requests++
+		if requests == 1 {
+			var body map[string]json.RawMessage
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			var effort string
+			_ = json.Unmarshal(body["reasoning_effort"], &effort)
+			if effort != "high" {
+				t.Errorf("reasoning_effort = %q, want high", effort)
+			}
+		}
 		if requests == 2 {
 			var body struct {
 				Messages []struct {
@@ -117,7 +128,13 @@ func TestOpenCodeGoReplaysReasoningContentOnToolContinuation(t *testing.T) {
 		stream := "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"check first\"}}]}\n\ndata: [DONE]\n\n"
 		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(stream))}, nil
 	})
-	provider, err := newOpenCodeGo(Config{HTTP: client})
+	provider, err := newOpenCodeGo(Config{
+		HTTP: client,
+		OpenCodeGoModelMeta: &OpenCodeGoModelMeta{
+			Version: OpenCodeGoModelMetaVersion,
+			Models:  map[string]OpenCodeGoModelOptions{"deepseek-v4-flash": {Effort: []string{"low", "high"}}},
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

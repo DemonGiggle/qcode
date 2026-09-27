@@ -45,9 +45,29 @@ The OpenCode Go API base URL defaults to `https://opencode.ai/zen/go/v1` and can
 ### Thinking levels
 
 OpenCode Go models do not share one universal thinking parameter. qcode keeps an
-exact model capability catalog and exposes only that model's valid choices in
-the interactive `/model` picker. For automation, pass an explicit level with
-`--thinking` (or `QCODE_THINKING` / `thinking` in `config.toml`):
+exact model adapter catalog and exposes only that model's valid choices in the
+interactive `/model` picker. The selectable choices come from the `opencode-go`
+provider's `reasoning_options` in the public [Models.dev catalog](https://models.dev/api.json):
+effort options supply effort levels, and toggle options supply `off` / `on`.
+qcode applies those choices only to model IDs for which it already has a local
+thinking adapter. The adapter's request and reasoning-replay formats remain in
+qcode, so upstream metadata does not add new wire protocols.
+
+On first use of the official OpenCode Go endpoint, qcode fetches and caches this
+metadata under the user's cache directory at
+`qcode/opencode-go-model-meta-v1.json`. Later starts reuse the cache without
+checking for updates. Refresh it explicitly with:
+
+```sh
+qcode --provider opencode-go --update-model-meta
+```
+
+A failed first fetch leaves qcode running without selectable thinking choices;
+a failed refresh keeps the last valid cache. Custom `--base-url` endpoints do
+not load this Models.dev metadata and keep their existing behavior.
+
+For automation, pass an explicit level with `--thinking` (or `QCODE_THINKING` /
+`thinking` in `config.toml`):
 
 ```sh
 qcode --provider opencode-go --model deepseek-v4-flash --thinking high "reply with OK"

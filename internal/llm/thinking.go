@@ -16,9 +16,9 @@ const (
 // reasoning object: {"reasoning": {"effort": "<level>"}}.
 const ThinkingRequestResponsesReasoning = "responses_reasoning"
 
-// openCodeGoThinkingCatalog is deliberately exact-match only. OpenCode Go
-// model names can look alike while accepting different request fields; an
-// unknown model must therefore receive no optional thinking fields.
+// openCodeGoThinkingCatalog records qcode's exact-match OpenCode Go adapters
+// and conservative built-in choices. Official CLI runs can replace the choices
+// from Models.dev, while request and replay formats stay local.
 var openCodeGoThinkingCatalog = map[string]ThinkingCapability{
 	// OpenCode Go currently exposes deepseek-flash as an alias of V4.1 Flash.
 	// V4.1 accepts these named aliases (as well as a numeric 1–100 budget,
@@ -119,8 +119,58 @@ func (p *openAIProvider) ThinkingCapability(model string) ThinkingCapability {
 	if !ok {
 		return ThinkingCapability{RequestFormat: ThinkingRequestNone, ReplayFormat: ThinkingReplayNone}
 	}
+	if p.modelMeta != nil {
+		capability = syncedOpenCodeGoCapability(capability, p.modelMeta.Models[model])
+	}
 	capability.Levels = append([]string(nil), capability.Levels...)
 	return capability
+}
+
+func syncedOpenCodeGoCapability(adapter ThinkingCapability, options OpenCodeGoModelOptions) ThinkingCapability {
+	choices := []string(nil)
+	if adapter.RequestFormat == ThinkingRequestObject {
+		if options.Toggle {
+			choices = []string{"off", "on"}
+		}
+	} else {
+		choices = append([]string(nil), options.Effort...)
+	}
+	if len(choices) == 0 {
+		adapter.Levels = nil
+		adapter.Default = ""
+		adapter.Adjustable = false
+		if adapter.AlwaysOn {
+			// The model remains a fixed reasoning model, but no selector value is
+			// inferred when Models.dev lists no caller-controlled option.
+			adapter.Supported = true
+		} else {
+			adapter.Supported = false
+			adapter.AlwaysOn = false
+		}
+		return adapter
+	}
+	adapter.Levels = choices
+	adapter.Supported = true
+	adapter.AlwaysOn = len(choices) == 1
+	adapter.Adjustable = len(choices) > 1
+	if containsChoice(choices, adapter.Default) {
+		return adapter
+	}
+	if adapter.AlwaysOn {
+		adapter.Default = choices[0]
+	} else {
+		adapter.Default = ""
+	}
+	return adapter
+}
+
+func containsChoice(choices []string, choice string) bool {
+	for _, candidate := range choices {
+		if candidate == choice {
+			return true
+		}
+	}
+	return false
 }
 
 func validThinkingLevel(capability ThinkingCapability, level string) bool {

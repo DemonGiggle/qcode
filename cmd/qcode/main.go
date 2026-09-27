@@ -50,6 +50,7 @@ type options struct {
 	agentTimeout         time.Duration
 	jsonEvents           bool
 	listProviders        bool
+	updateModelMeta      bool
 	showVersion          bool
 	demo                 bool
 	sandbox              bool
@@ -113,6 +114,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	flags.DurationVar(&opts.agentTimeout, "agent-timeout", agent.DefaultConsultationTimeout, "time allowed for agent consultations, including queue time")
 	flags.BoolVar(&opts.jsonEvents, "json-events", false, "emit action events as JSON Lines")
 	flags.BoolVar(&opts.listProviders, "list-providers", false, "list built-in providers")
+	flags.BoolVar(&opts.updateModelMeta, "update-model-meta", false, "refresh OpenCode Go thinking choices from Models.dev and exit")
 	flags.BoolVar(&opts.showVersion, "version", false, "print version")
 	flags.BoolVar(&opts.demo, "demo", false, "run without an LLM or real tool execution")
 	flags.BoolVar(&opts.sandbox, "sandbox", false, "isolate tools with bubblewrap (Linux only)")
@@ -159,6 +161,23 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		applyConfig(&opts, cfg, setFlags)
 	} else if len(sandboxCommandPathFlags) > 0 {
 		opts.sandboxCommandPaths = append([]string(nil), sandboxCommandPathFlags...)
+	}
+	if opts.updateModelMeta {
+		if opts.provider != "opencode-go" {
+			return errors.New("--update-model-meta requires --provider opencode-go")
+		}
+		cachePath, err := llm.OpenCodeGoModelMetaCachePath()
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		meta, err := llm.RefreshOpenCodeGoModelMeta(ctx, cachePath, nil)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Updated OpenCode Go thinking metadata (%d models).\n", len(meta.Models))
+		return nil
 	}
 	if !opts.demo && opts.model == "" {
 		return errors.New("model must not be empty")
@@ -228,6 +247,24 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		return err
 	}
 	providerConfig := llm.Config{BaseURL: opts.baseURL, APIKey: opts.apiKey, InsecureSkipVerify: opts.dangerSkipTLSVerify}
+	if !opts.demo && opts.provider == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(opts.baseURL) {
+		cachePath, cachePathErr := llm.OpenCodeGoModelMetaCachePath()
+		meta := llm.EmptyOpenCodeGoModelMeta()
+		metaErr := cachePathErr
+		if metaErr == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			meta, metaErr = llm.LoadOpenCodeGoModelMeta(ctx, cachePath, nil)
+			cancel()
+		}
+		providerConfig.OpenCodeGoModelMeta = meta
+		if metaErr != nil {
+			fmt.Fprintln(stderr, "WARNING: OpenCode Go thinking metadata unavailable:", metaErr)
+			if len(meta.Models) == 0 && opts.thinking != "" {
+				fmt.Fprintln(stderr, "WARNING: ignoring configured thinking level because no choices are available")
+				opts.thinking = ""
+			}
+		}
+	}
 	var provider llm.Provider
 	var toolset agent.Toolset = registry
 	if opts.demo {
