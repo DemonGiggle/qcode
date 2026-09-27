@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 )
 
 const openCodeGoBaseURL = "https://opencode.ai/zen/go/v1"
@@ -44,7 +45,19 @@ func newOpenCodeGo(config Config) (Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create OpenCode Go session ID: %w", err)
 	}
-	return newOpenAICompatible(config, openCodeGoBaseURL, "opencode-go", "qcode", sessionID)
+	provider, err := newOpenAICompatible(config, openCodeGoBaseURL, "opencode-go", "qcode", sessionID)
+	if err != nil {
+		return nil, err
+	}
+	provider.(*openAIProvider).modelMeta = config.OpenCodeGoModelMeta
+	return provider, nil
+}
+
+// IsOfficialOpenCodeGoEndpoint reports whether baseURL selects OpenCode Go's
+// built-in endpoint. An empty URL means the built-in endpoint will be used.
+func IsOfficialOpenCodeGoEndpoint(baseURL string) bool {
+	baseURL = strings.TrimRight(baseURL, "/")
+	return baseURL == "" || baseURL == openCodeGoBaseURL
 }
 
 func (p *openAIProvider) ValidateModel(model string) error {

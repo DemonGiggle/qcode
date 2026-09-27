@@ -21,6 +21,7 @@ type openAIProvider struct {
 	name      string
 	userAgent string
 	sessionID string
+	modelMeta *OpenCodeGoModelMeta
 }
 
 // SessionIdentity preserves the non-secret routing identity used by OpenCode Go.
