@@ -10,16 +10,22 @@ const remoteMenuWake = "\x00"
 type remoteMenuChoice int
 
 const (
-	remoteKeepOpen remoteMenuChoice = iota
+	remoteAccept remoteMenuChoice = iota
 	remoteSaveQR
 	remoteCloseConnection
+)
+
+type remoteCloseChoice int
+
+const (
+	remoteBack remoteCloseChoice = iota
+	remoteConfirmClose
 )
 
 type remoteCloseResult int
 
 const (
-	remoteCloseKeepOpen remoteCloseResult = iota
-	remoteCloseConfirmed
+	remoteCloseConfirmed remoteCloseResult = iota
 	remoteCloseBack
 	remoteCloseCancelled
 )
@@ -139,12 +145,14 @@ func renderRemoteNetworkMenu(out interface{ Write([]byte) (int, error) }, networ
 }
 
 func (u *UI) showRemoteActive(status RemoteStatus) error {
-	selected := remoteKeepOpen
+	selected := remoteAccept
 	notice := ""
 	staticRows := 7 // title, address, connections, spacer, and three actions
 	if status.Mode != RemoteModeTailscale {
 		staticRows++
 	}
+	// Keep this page modal while agent output streams in the background. The
+	// raw selector prevents fixed-layout redraws from replacing the QR page.
 	u.armRemoteMenu()
 	u.beginRawSelector()
 	defer func() {
@@ -186,7 +194,8 @@ func (u *UI) showRemoteActive(status RemoteStatus) error {
 			clearSelector(u.terminal, rows)
 		case "\r", "\n":
 			clearSelector(u.terminal, rows)
-			if selected == remoteKeepOpen {
+			if selected == remoteAccept {
+				u.clearRemoteLogin()
 				return nil
 			}
 			if selected == remoteSaveQR {
@@ -205,7 +214,7 @@ func (u *UI) showRemoteActive(status RemoteStatus) error {
 			switch confirmation {
 			case remoteCloseBack:
 				continue
-			case remoteCloseKeepOpen, remoteCloseCancelled:
+			case remoteCloseCancelled:
 				return nil
 			}
 			u.clearRemoteLogin()
@@ -272,7 +281,7 @@ func renderRemoteActiveMenu(out interface{ Write([]byte) (int, error) }, status 
 	if notice != "" {
 		rows = append(rows, strings.Split(wrapANSI(notice, width, ""), "\n")...)
 	}
-	rows = append(rows, "", "  Keep connection open", "  Save QR as PNG", "  Close Connection")
+	rows = append(rows, "", "  Accept", "  Save QR as PNG", "  Close Connection")
 	actionStart := len(rows) - 3
 	for index := range rows {
 		row := rows[index]
@@ -295,11 +304,11 @@ func renderRemoteActiveMenu(out interface{ Write([]byte) (int, error) }, status 
 }
 
 func (u *UI) confirmRemoteClose(status RemoteStatus) (remoteCloseResult, error) {
-	selected := remoteKeepOpen
+	selected := remoteBack
 	for {
 		rows := []string{
 			fmt.Sprintf("Close remote connection? This disconnects %d browser sessions.", status.Connections),
-			"  Keep connection open",
+			"  Back",
 			"  Close Connection",
 		}
 		for index, row := range rows {
@@ -326,10 +335,10 @@ func (u *UI) confirmRemoteClose(status RemoteStatus) (remoteCloseResult, error) 
 		case arrowUpSequence, arrowDownSequence:
 			selected = 1 - selected
 		case "\r", "\n":
-			if selected == remoteCloseConnection {
+			if selected == remoteConfirmClose {
 				return remoteCloseConfirmed, nil
 			}
-			return remoteCloseKeepOpen, nil
+			return remoteCloseBack, nil
 		}
 	}
 }

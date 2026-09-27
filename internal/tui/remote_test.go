@@ -213,14 +213,14 @@ func (s *fakeRemoteService) LoginState() string { return "available" }
 func (s *fakeRemoteService) Status() RemoteStatus {
 	return RemoteStatus{Running: s.running, Mode: RemoteModeTailscale, URL: s.url, Connections: 2}
 }
-func TestRemoteActiveScreenShowsConnectionsAndSecondaryClose(t *testing.T) {
+func TestRemoteActiveScreenShowsConnectionsAndAcceptAction(t *testing.T) {
 	var output bytes.Buffer
 	status := RemoteStatus{Running: true, Mode: RemoteModePureWeb, URL: "http://192.168.1.10:1234", Connections: 2}
-	rows := renderRemoteActiveMenu(&output, status, remoteKeepOpen, []string{"Remote login (click or scan; single use)"}, "", "", 120, false)
+	rows := renderRemoteActiveMenu(&output, status, remoteAccept, []string{"Remote login (click or scan; single use)"}, "", "", 120, false)
 	if rows == 0 || !strings.Contains(output.String(), "Connections: 2 active browser sessions") {
 		t.Fatalf("remote screen = %q", output.String())
 	}
-	if !strings.Contains(output.String(), "> Keep connection open") || !strings.Contains(output.String(), "  Save QR as PNG") || !strings.Contains(output.String(), "  Close Connection") {
+	if !strings.Contains(output.String(), "> Accept") || !strings.Contains(output.String(), "  Save QR as PNG") || !strings.Contains(output.String(), "  Close Connection") {
 		t.Fatalf("remote close action is not secondary: %q", output.String())
 	}
 	if !strings.Contains(output.String(), "unencrypted") {
@@ -290,7 +290,7 @@ func TestRemoteActiveScreenKeepsWrappedLoginURLClickable(t *testing.T) {
 		loginURL[:60],
 		loginURL[60:],
 	}
-	renderRemoteActiveMenu(&output, status, remoteKeepOpen, loginRows, loginURL, "", 80, false)
+	renderRemoteActiveMenu(&output, status, remoteAccept, loginRows, loginURL, "", 80, false)
 	linkStart := "\x1b]8;;" + loginURL + "\x1b\\"
 	if got := strings.Count(output.String(), linkStart); got != 3 {
 		t.Fatalf("complete login target appears %d times, want heading and 2 URL rows in %q", got, output.String())
