@@ -4,7 +4,7 @@ GO ?= go
 AGG ?= agg
 BUILD_FLAGS := -trimpath -ldflags=-s\ -w\ -X\ main.version=$(VERSION)
 
-.PHONY: build test eval release clean demo-gif
+.PHONY: build test eval release clean demo-gif manual
 
 build:
 	mkdir -p bin
@@ -24,6 +24,9 @@ demo-gif:
 
 release:
 	VERSION=$(VERSION) ./scripts/build-all.sh
+
+manual:
+	python3 docs/manual/generate_manual.py
 
 clean:
 	rm -rf bin dist
