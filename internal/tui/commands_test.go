@@ -338,8 +338,8 @@ func TestStartNewSessionResetsRunner(t *testing.T) {
 }
 
 func TestHeaderLogoUsesASCIIBannerWithNarrowFallback(t *testing.T) {
-	wide := strings.Join(headerLogo(42), "\n")
-	if len(headerLogo(42)) != 7 || !strings.Contains(wide, "#") {
+	wide := strings.Join(headerLogo(42, false), "\n")
+	if len(headerLogo(42, false)) != 7 || !strings.Contains(wide, "#") {
 		t.Fatalf("wide logo = %q", wide)
 	}
 	for _, character := range wide {
@@ -347,8 +347,40 @@ func TestHeaderLogoUsesASCIIBannerWithNarrowFallback(t *testing.T) {
 			t.Fatalf("banner contains non-ASCII character %q", character)
 		}
 	}
-	if got := headerLogo(41); len(got) != 1 || got[0] != "qcode" {
+	if got := headerLogo(41, false); len(got) != 1 || got[0] != "qcode" {
 		t.Fatalf("narrow logo = %v", got)
+	}
+}
+
+func TestHeaderLogoUsesFancyBannerWhenUnicodeEnabled(t *testing.T) {
+	wide := strings.Join(headerLogo(80, true), "\n")
+	lines := headerLogo(80, true)
+	if len(lines) != len(qcodeBannerFancy) {
+		t.Fatalf("fancy logo lines = %d, want %d", len(lines), len(qcodeBannerFancy))
+	}
+	if strings.Contains(wide, "#") {
+		t.Fatalf("fancy logo should not use ASCII #: %q", wide)
+	}
+	hasNonASCII := false
+	for _, character := range wide {
+		if character > 0x7f {
+			hasNonASCII = true
+			break
+		}
+	}
+	if !hasNonASCII {
+		t.Fatalf("fancy logo should contain Unicode glyphs: %q", wide)
+	}
+	for _, line := range lines {
+		if visibleWidth(line) > 80 {
+			t.Fatalf("fancy line exceeds width: %q", line)
+		}
+	}
+	if got := headerLogo(49, true); len(got) != 1 || got[0] != "qcode" {
+		t.Fatalf("narrow fancy logo = %v, want fallback", got)
+	}
+	if got := headerLogo(50, true); len(got) != len(qcodeBannerFancy) {
+		t.Fatalf("width 50 should fit fancy logo, got %v", got)
 	}
 }
 

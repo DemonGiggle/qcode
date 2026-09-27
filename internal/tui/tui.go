@@ -54,6 +54,20 @@ var qcodeBanner = []string{
 	` ######   #####    #####   ######  #######`,
 }
 
+// qcodeBannerFancy is the Unicode banner used when Unicode is enabled
+// (QCODE_ASCII=0 or a UTF-8 locale). It uses rounded box-drawing glyphs
+// in an ANSI-shadow style plus a gradient-friendly rule so the header
+// feels more designed than the plain ASCII fallback above.
+var qcodeBannerFancy = []string{
+	` ██████╗   ██████╗   ██████╗   ██████╗   ███████╗ `,
+	`██╔═══██╗  ██╔════╝  ██╔═══██╗  ██╔══██╗  ██╔════╝`,
+	`██║   ██║  ██║       ██║   ██║  ██║  ██║  █████╗  `,
+	`██║▄▄ ██║  ██║       ██║   ██║  ██║  ██║  ██╔══╝  `,
+	`╚██████╔╝  ╚██████╗  ╚██████╔╝  ██████╔╝  ███████╗`,
+	` ╚══▀▀═╝    ╚═════╝   ╚═════╝   ╚═════╝   ╚══════╝`,
+	`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+}
+
 // bannerColor stores the randomly chosen color palette for the banner gradient
 var bannerColor = pickBannerColor()
 
@@ -1584,7 +1598,7 @@ func (u *UI) printCommandHelp(arguments []string) {
 func (u *UI) printHeader() {
 	fmt.Fprint(u.display, "\r\n")
 	colorEnabled := ColorEnabled(u.out)
-	for _, line := range headerLogo(u.width) {
+	for _, line := range headerLogo(u.width, u.unicode) {
 		if colorEnabled {
 			fmt.Fprintf(u.display, "%s%s%s\r\n", bold, gradientLine(line), reset)
 		} else {
@@ -1938,13 +1952,17 @@ func statusValue(value, color string) string {
 	return color + bold + value + reset
 }
 
-func headerLogo(width int) []string {
-	for _, line := range qcodeBanner {
+func headerLogo(width int, unicodeEnabled bool) []string {
+	banner := qcodeBanner
+	if unicodeEnabled {
+		banner = qcodeBannerFancy
+	}
+	for _, line := range banner {
 		if width > 0 && visibleWidth(line) > width {
 			return []string{"qcode"}
 		}
 	}
-	return qcodeBanner
+	return banner
 }
 
 // gradientLine applies a mono gradient using shades from the banner color palette
