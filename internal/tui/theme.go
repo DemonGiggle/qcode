@@ -18,10 +18,7 @@ func (u *UI) chooseTheme() {
 	u.printSystemMessage(dim + "Preview with Up/Down. Enter applies and saves; Esc or Ctrl+C cancels." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
-	visibleRows := u.height - 8
-	if u.width < 74 {
-		visibleRows = u.height - 14
-	}
+	visibleRows := u.height - 12
 	visible := min(len(qtheme.All()), max(3, visibleRows))
 	selected, accepted, err := selectTheme(u.input, u.terminal, qtheme.All(), u.currentTheme().ID, visible, u.width, u.height, ColorEnabled(u.out))
 	u.input.setRaw(false)
@@ -110,51 +107,20 @@ func renderThemePicker(out io.Writer, options []qtheme.Palette, selected, start,
 	heading := fmt.Sprintf("Terminal theme  %d/%d | live preview", selected+1, len(options))
 	if width < 42 {
 		heading = fmt.Sprintf("Theme %d/%d | Enter apply; Esc/Ctrl+C cancel", selected+1, len(options))
-		lines := []string{truncateDiffLine(heading, width, false)}
-		lines = append(lines, renderThemePickerBody(options, selected, start, visible, width, height, color)...)
-		for _, line := range lines {
-			fmt.Fprintln(out, line)
-		}
-		return len(lines)
 	}
 	lines := []string{selectorHeader(heading, width)}
 	end := min(len(options), start+visible)
-	if width >= 74 {
-		listWidth := min(31, max(24, width/3))
-		previewWidth := max(1, width-listWidth-3)
-		preview := renderThemePreview(options[selected], previewWidth, color)
-		rows := max(visible, len(preview))
-		for row := 0; row < rows; row++ {
-			left := strings.Repeat(" ", listWidth)
-			if row < visible && start+row < len(options) {
-				left = renderThemeOption(options[start+row], start+row == selected, listWidth, color)
-			}
-			right := ""
-			if row < len(preview) {
-				right = preview[row]
-			}
-			lines = append(lines, left+"   "+right)
-		}
-	} else {
-		for index := start; index < end; index++ {
-			lines = append(lines, renderThemeOption(options[index], index == selected, width, color))
-		}
-		lines = append(lines, renderThemePreview(options[selected], width, color)...)
+	if width < 42 {
+		lines[0] = truncateDiffLine(heading, width, false)
 	}
-	for _, line := range lines {
-		fmt.Fprintln(out, line)
-	}
-	return len(lines)
-}
-
-func renderThemePickerBody(options []qtheme.Palette, selected, start, visible, width, height int, color bool) []string {
-	end := min(len(options), start+visible)
-	lines := make([]string, 0, visible+7)
 	for index := start; index < end; index++ {
 		lines = append(lines, renderThemeOption(options[index], index == selected, width, color))
 	}
 	lines = append(lines, renderThemePreview(options[selected], width, color)...)
-	return lines
+	for _, line := range lines {
+		fmt.Fprintln(out, line)
+	}
+	return len(lines)
 }
 
 func renderThemeOption(option qtheme.Palette, selected bool, width int, color bool) string {
@@ -175,13 +141,22 @@ func renderThemeOption(option qtheme.Palette, selected bool, width int, color bo
 		if contrastRatio(option.Text, option.Accent) > contrastRatio(option.Background, option.Accent) {
 			foreground = option.Text
 		}
-		label = rgbSGR(48, option.Accent) + rgbSGR(38, foreground) + label + reset
+		label = rgbSGR(48, option.Accent) + rgbSGR(38, foreground) + label + strings.Repeat(" ", max(0, width-visibleWidth(label))) + reset
+		return label
 	} else if selected {
 		label = cyan + bold + label + reset
 	} else {
-		label = rgbSGR(38, option.Text) + label + reset
+		if option.ID == "default" {
+			label = cyan + label + reset
+		} else {
+			label = rgbSGR(38, option.Accent) + label + reset
+		}
 	}
-	return truncateDiffLine(label, width, false)
+	label = truncateDiffLine(label, width, false)
+	if option.ID != "default" {
+		return qtheme.PaintRow(label, width, option)
+	}
+	return label
 }
 
 func renderThemePreview(palette qtheme.Palette, width int, color bool) []string {

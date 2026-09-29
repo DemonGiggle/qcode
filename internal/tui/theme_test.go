@@ -49,6 +49,32 @@ func TestThemePickerNarrowLayoutFitsTerminalWidth(t *testing.T) {
 	}
 }
 
+func TestThemePickerPlacesPreviewBelowOptionsAndColorsOptions(t *testing.T) {
+	var output bytes.Buffer
+	options := qtheme.All()
+	rows := renderThemePicker(&output, options, 0, 0, len(options), 90, 24, true)
+	lines := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
+	if len(lines) != rows {
+		t.Fatalf("rendered %d rows, want %d", len(lines), rows)
+	}
+	lastOption := -1
+	preview := -1
+	for index, line := range lines {
+		if strings.Contains(line, "Nord Light · Light") {
+			lastOption = index
+		}
+		if strings.Contains(line, "# Markdown preview") {
+			preview = index
+		}
+	}
+	if lastOption < 0 || preview < 0 || preview <= lastOption {
+		t.Fatalf("preview must follow all theme options (last option row %d, preview row %d): %q", lastOption, preview, lines)
+	}
+	if !strings.Contains(lines[2], "\x1b[48;2;30;30;46m") {
+		t.Fatalf("unselected Catppuccin Mocha option is missing its palette background: %q", lines[2])
+	}
+}
+
 func TestThemeRecolorsRetainedHistoryForEveryAgentView(t *testing.T) {
 	write := func(text string) *historyWriter {
 		history := newHistoryWriter(io.Discard)
