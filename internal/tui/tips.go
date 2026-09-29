@@ -21,7 +21,7 @@ var tipTexts = []string{
 	"Run `/skill` to pick reusable instruction bundles; only selected skills reach the model and its `skill` tool.",
 	"Run `/agent new review` to create a named agent; qcode supports up to 20 tabs, including main.",
 	"Switch agent tabs with Ctrl+PgUp/PgDn or Alt+,/. — each tab keeps its own draft, history, model, and tool settings.",
-	"Press PgUp/PgDn to scroll history while running; scrolling pauses live output, PgDn to the bottom resumes it.",
+	"Press PgUp/PgDn to scroll history while running; Home jumps to the beginning, End resumes live output.",
 	"Press Ctrl+C to cancel the running prompt, a picker, or a `/bash` command without exiting qcode.",
 	"Keep typing while the agent works — queued prompts stay visible above the prompt; press Alt+Q to expand them.",
 	"Run `/history` to search completed prompts newest-first; Enter views one response, Esc returns to the live view.",

@@ -366,6 +366,7 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	display.ui = u
 	t.AutoCompleteCallback = u.completeSlashCommand
 	input.setPageHandler(u.showPage)
+	input.setHistoryBoundaryHandler(u.showHistoryBoundary)
 	input.setQueueHandler(u.toggleQueuePanel)
 	input.setTabHandler(u.requestTabSwitch)
 	u.SetRunner(runner)
@@ -2018,6 +2019,23 @@ func (u *UI) showPage(direction int) {
 		return
 	}
 	u.repaintActiveLocked(direction)
+}
+
+func (u *UI) showHistoryBoundary(beginning bool) {
+	u.commandMenu.reset()
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	v := u.activeViewportLocked()
+	v.browsing = beginning
+	if beginning {
+		rows := historyRows(u.display.Snapshot(), u.width)
+		if len(rows) == 0 {
+			v.browsing = false
+		} else {
+			v.anchor = rows[0].position
+		}
+	}
+	u.repaintActiveLocked(0)
 }
 
 func terminalSize(out *os.File) (int, int) {

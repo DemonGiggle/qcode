@@ -203,6 +203,33 @@ func TestQueuedPanelStaysVisibleAndPagesIndependently(t *testing.T) {
 	}
 }
 
+func TestHistoryBoundaryNavigatesTranscriptWithExpandedQueue(t *testing.T) {
+	u, _ := layoutFixture(t)
+	u.manager.(*layoutManager).queued = map[string][]session.QueuedPrompt{"main": {
+		{RequestID: "first", Prompt: strings.Repeat("queued line\n", 20)},
+		{RequestID: "second", Prompt: "next prompt"},
+	}}
+	for i := 0; i < 40; i++ {
+		u.display.AddLine("transcript line")
+	}
+	u.renderInput(inputPrompt, "draft", 3)
+	u.toggleQueuePanel()
+	u.showPage(-1)
+	queue := *u.activeQueueLocked()
+	if queue.anchorRow == 0 {
+		t.Fatal("queue fixture did not scroll")
+	}
+	u.showHistoryBoundary(true)
+	oldest := historyRows(u.display.Snapshot(), u.width)[0]
+	if !u.activeViewportLocked().browsing || u.activeViewportLocked().anchor != oldest.position {
+		t.Fatalf("Home did not reach transcript beginning: %+v", u.activeViewportLocked())
+	}
+	u.showHistoryBoundary(false)
+	if u.activeViewportLocked().browsing || *u.activeQueueLocked() != queue {
+		t.Fatalf("End changed queue or left history paused: queue=%+v history=%+v", u.activeQueueLocked(), u.activeViewportLocked())
+	}
+}
+
 func TestQueuedPanelStateIsPerTabAndEscapesPromptControls(t *testing.T) {
 	u, frame := layoutFixture(t)
 	manager := u.manager.(*layoutManager)

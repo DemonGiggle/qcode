@@ -85,6 +85,11 @@ body {
 }
 .tab.active { border-color: var(--cyan); color: var(--text); }
 .tab.running::after { content: ' ●'; color: var(--green); }
+.history-navigation {
+  flex: 0 0 auto;
+  display: flex;
+  gap: .25rem;
+}
 
 main {
   min-width: 0;
@@ -256,6 +261,7 @@ button {
   touch-action: manipulation;
 }
 button:focus-visible,
+main:focus-visible,
 input:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 button:disabled { opacity: .5; cursor: default; }
 .notice { color: var(--yellow); }
@@ -296,13 +302,13 @@ button:disabled { opacity: .5; cursor: default; }
   .selector-list { max-height: 10rem; }
 }
 </style></head><body>
-<header class="top"><span class="brand" aria-label="qcode remote">qcode</span><nav id="tabs" aria-label="Agents"></nav></header>
-<main id="scroll"><pre id="transcript" class="transcript empty">Sign in using the link or QR code displayed by /remote.</pre></main>
+<header class="top"><span class="brand" aria-label="qcode remote">qcode</span><nav id="tabs" aria-label="Agents"></nav><nav class="history-navigation" aria-label="Transcript navigation"><button id="history-home" class="tab" type="button" aria-controls="scroll" title="Beginning of transcript (Home)">Beginning</button><button id="history-end" class="tab" type="button" aria-controls="scroll" title="Latest transcript content (End)">Latest</button></nav></header>
+<main id="scroll" tabindex="0" aria-label="Transcript"><pre id="transcript" class="transcript empty">Sign in using the link or QR code displayed by /remote.</pre></main>
 <footer class="bottom"><div id="interaction" class="interaction"></div><div id="command" class="command-panel"></div><div id="waiting" class="waiting" hidden></div><div id="status" class="status" role="status" aria-live="polite">Connecting to qcode…</div><section id="queue-panel" class="queue-panel" aria-label="Queued prompts" hidden><button id="queue-toggle" class="queue-toggle" type="button" aria-expanded="false" aria-controls="queue-list"></button><div id="queue-list" class="queue-list" role="list" aria-label="Queued prompts in execution order" tabindex="-1"></div></section><form id="form"><label class="sr-only" for="input">Message or slash command</label><input id="input" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Send a prompt or slash command"><button id="send" type="submit">Send</button></form></footer>
 <script>
 (()=>{
 const tabs=document.querySelector('#tabs'),out=document.querySelector('#transcript'),status=document.querySelector('#status'),interaction=document.querySelector('#interaction'),command=document.querySelector('#command'),form=document.querySelector('#form'),input=document.querySelector('#input'),send=document.querySelector('#send'),scroll=document.querySelector('#scroll'),waiting=document.querySelector('#waiting'),queuePanel=document.querySelector('#queue-panel'),queueToggle=document.querySelector('#queue-toggle'),queueList=document.querySelector('#queue-list');
-let snapshot=null,active='',timer=0,closed=false;const cleared={},queueExpanded={},queueScroll={};
+let snapshot=null,active='',timer=0,closed=false,historyAtBeginning=false;const cleared={},queueExpanded={},queueScroll={};
 let sessionKey='',eventController=null;
 const authRequired={{.AuthRequired}};
 const storageKey='qcode.remote.session:'+new URL(document.baseURI).pathname;
@@ -434,8 +440,17 @@ function renderQueue(view){if(queuePanel.dataset.agent&&queuePanel.classList.con
 function toggleQueue(){if(queuePanel.hidden)return;queueExpanded[active]=!queueExpanded[active];renderQueue((snapshot.presentation.views||[]).find(v=>v.id===active));if(queueExpanded[active])queueList.focus();else input.focus()}
 queueToggle.onclick=toggleQueue;
 queueList.onkeydown=e=>{if(e.key==='PageUp'||e.key==='PageDown'){e.preventDefault();queueList.scrollTop+=(e.key==='PageDown'?1:-1)*queueList.clientHeight}};
-document.addEventListener('keydown',e=>{if(e.altKey&&e.key.toLowerCase()==='q'&&!e.ctrlKey&&!e.metaKey){e.preventDefault();toggleQueue()}});
-function render(){if(!snapshot||!snapshot.presentation)return;const views=snapshot.presentation.views||[];if(!views.some(v=>v.id===active))active=snapshot.presentation.active||(views[0]&&views[0].id)||'';tabs.replaceChildren(...views.map(v=>{const b=document.createElement('button');b.className='tab '+(v.id===active?'active ':'')+(v.status==='running'?'running':'');b.textContent=v.name||v.id;b.onclick=()=>{active=v.id;render()};return b}));const v=views.find(v=>v.id===active);const nearBottom=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;const lines=v?v.lines.slice(cleared[active]||0):[];out.innerHTML=lines.length?ansiHTML(lines.join('\n')):'No transcript yet.';out.className='transcript '+(lines.length?'':'empty');status.innerHTML=ansiHTML(snapshot.presentation.status_bar||'Connecting to qcode…');const activeSummary=agents().find(x=>x.id===active);waitingRunning=!!activeSummary&&activeSummary.status==='running';waitingQueued=waitingRunning&&activeSummary.queue_depth||0;if(!waitingRunning)waitingFrame=0;drawWaiting();renderQueue(v);renderInteraction((snapshot.runtime.interactions||[]).find(x=>x.agent_id===active)||(snapshot.runtime.interactions||[])[0]);if(nearBottom)scroll.scrollTop=scroll.scrollHeight}
+function jumpHistory(beginning){historyAtBeginning=beginning;scroll.scrollTop=beginning?0:scroll.scrollHeight}
+document.querySelector('#history-home').onclick=()=>jumpHistory(true);
+document.querySelector('#history-end').onclick=()=>jumpHistory(false);
+scroll.onscroll=()=>{if(scroll.scrollTop>0)historyAtBeginning=false};
+document.addEventListener('keydown',e=>{
+  if(e.altKey&&e.key.toLowerCase()==='q'&&!e.ctrlKey&&!e.metaKey){e.preventDefault();toggleQueue();return}
+  if(e.defaultPrevented||e.altKey||e.ctrlKey||e.metaKey||e.shiftKey)return;
+  if(e.target.closest('input,textarea,select,[contenteditable],#command,#queue-list'))return;
+  if(e.key==='Home'||e.key==='End'){e.preventDefault();jumpHistory(e.key==='Home')}
+});
+function render(){if(!snapshot||!snapshot.presentation)return;const views=snapshot.presentation.views||[];if(!views.some(v=>v.id===active))active=snapshot.presentation.active||(views[0]&&views[0].id)||'';tabs.replaceChildren(...views.map(v=>{const b=document.createElement('button');b.className='tab '+(v.id===active?'active ':'')+(v.status==='running'?'running':'');b.textContent=v.name||v.id;b.onclick=()=>{active=v.id;historyAtBeginning=false;render()};return b}));const v=views.find(v=>v.id===active);const nearBottom=!historyAtBeginning&&scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;const lines=v?v.lines.slice(cleared[active]||0):[];out.innerHTML=lines.length?ansiHTML(lines.join('\n')):'No transcript yet.';out.className='transcript '+(lines.length?'':'empty');status.innerHTML=ansiHTML(snapshot.presentation.status_bar||'Connecting to qcode…');const activeSummary=agents().find(x=>x.id===active);waitingRunning=!!activeSummary&&activeSummary.status==='running';waitingQueued=waitingRunning&&activeSummary.queue_depth||0;if(!waitingRunning)waitingFrame=0;drawWaiting();renderQueue(v);renderInteraction((snapshot.runtime.interactions||[]).find(x=>x.agent_id===active)||(snapshot.runtime.interactions||[])[0]);if(historyAtBeginning)scroll.scrollTop=0;else if(nearBottom)scroll.scrollTop=scroll.scrollHeight}
 function choice(label,value,id){const b=document.createElement('button');b.textContent=label;b.onclick=()=>resolve(id,value);return b}
 function renderInteraction(item){interaction.replaceChildren();interaction.className='interaction'+(item?' open':'');if(!item)return;let payload={};try{payload=typeof item.payload==='string'?JSON.parse(item.payload):item.payload||{}}catch(_){}const title=document.createElement('div');title.className='interaction-title';title.textContent=item.kind.replaceAll('_',' ');interaction.append(title);const choices=document.createElement('div');choices.className='choices';if(item.kind==='directory_approval'){title.textContent='Directory access: '+(payload.requested||'');choices.append(choice('Grant '+(payload.proposed||'requested path'),{selected:payload.proposed||payload.requested,approved:true},item.id),choice('Deny',{selected:'',approved:false},item.id))}else if(item.kind==='questions'){const questions=Array.isArray(payload)?payload:[];const fields=questions.map(q=>{const field=document.createElement('input'),options=q.Options||q.options||[];field.placeholder=(q.Text||q.text)+(options.length?' — '+options.join(' / '):'');field.autocomplete='off';interaction.append(field);return field});title.textContent='Questions';const answer=choice('Submit answers',null,item.id);answer.onclick=()=>resolve(item.id,fields.map(field=>field.value));choices.append(answer)}else if(item.kind==='learning_approval'){title.textContent='Apply the proposed global learning changes?';choices.append(choice('Apply',true,item.id),choice('Reject',false,item.id))}else if(item.kind==='skill_plan_decision'){title.textContent='The skill draft is ready. Create it now?';choices.append(choice('Create skill','create',item.id),choice('Stay in Skill Plan mode','stay',item.id))}else{title.textContent='The plan is ready. What would you like to do?';choices.append(choice('Start implementation','implement',item.id),choice('Stay in plan mode','stay',item.id))}interaction.append(choices)}
 async function resolve(id,value){try{const r=await apiFetch('api/v1/interactions/'+encodeURIComponent(id)+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value})});if(!r.ok)throw new Error(await r.text());schedule()}catch(e){status.innerHTML='<span class="notice">'+escapeHTML(String(e))+'</span>'}}

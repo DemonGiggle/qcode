@@ -36,6 +36,22 @@ var tabKeySequences = []tabKeySequence{
 	{value: altNextTab, direction: 1},
 }
 
+type historyBoundarySequence struct {
+	value     string
+	beginning bool
+}
+
+var historyBoundarySequences = []historyBoundarySequence{
+	{value: "\x1b[H", beginning: true},
+	{value: "\x1b[F"},
+	{value: "\x1bOH", beginning: true},
+	{value: "\x1bOF"},
+	{value: "\x1b[1~", beginning: true},
+	{value: "\x1b[4~"},
+	{value: "\x1b[7~", beginning: true},
+	{value: "\x1b[8~"},
+}
+
 // interruptReader owns terminal input so Ctrl+C can cancel an active agent
 // task while ordinary input remains available for queued prompts.
 type interruptReader struct {
@@ -49,6 +65,7 @@ type interruptReader struct {
 	injectMu sync.Mutex
 	cancel   context.CancelFunc
 	page     func(int)
+	boundary func(bool)
 	tab      func(int)
 	queue    func()
 	err      error
@@ -73,6 +90,12 @@ func (r *interruptReader) setCancel(cancel context.CancelFunc) {
 func (r *interruptReader) setPageHandler(page func(int)) {
 	r.mu.Lock()
 	r.page = page
+	r.mu.Unlock()
+}
+
+func (r *interruptReader) setHistoryBoundaryHandler(boundary func(bool)) {
+	r.mu.Lock()
+	r.boundary = boundary
 	r.mu.Unlock()
 }
 
@@ -271,6 +294,7 @@ func (r *interruptReader) route(input []byte) {
 	}
 	cancel := r.cancel
 	page := r.page
+	boundary := r.boundary
 	tab := r.tab
 	queue := r.queue
 	pending := append([]byte(nil), r.pending...)
@@ -279,6 +303,11 @@ func (r *interruptReader) route(input []byte) {
 
 	input = append(pending, input...)
 	for len(input) > 0 {
+		if beginning, length, ok := matchHistoryBoundarySequence(input); ok && boundary != nil {
+			boundary(beginning)
+			input = input[length:]
+			continue
+		}
 		if len(input) >= len(altQueuePanel) && string(input[:len(altQueuePanel)]) == altQueuePanel {
 			if queue != nil {
 				queue()
@@ -341,6 +370,15 @@ func matchTabKeySequence(input []byte) (direction, length int, ok bool) {
 	return 0, 0, false
 }
 
+func matchHistoryBoundarySequence(input []byte) (beginning bool, length int, ok bool) {
+	for _, sequence := range historyBoundarySequences {
+		if len(input) >= len(sequence.value) && string(input[:len(sequence.value)]) == sequence.value {
+			return sequence.beginning, len(sequence.value), true
+		}
+	}
+	return false, 0, false
+}
+
 func isKnownSequencePrefix(input []byte) bool {
 	prefix := string(input)
 	if len(prefix) < len(altQueuePanel) && altQueuePanel[:len(prefix)] == prefix {
@@ -352,6 +390,11 @@ func isKnownSequencePrefix(input []byte) bool {
 		}
 	}
 	for _, sequence := range tabKeySequences {
+		if len(prefix) < len(sequence.value) && sequence.value[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	for _, sequence := range historyBoundarySequences {
 		if len(prefix) < len(sequence.value) && sequence.value[:len(prefix)] == prefix {
 			return true
 		}

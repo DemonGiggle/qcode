@@ -143,6 +143,68 @@ func TestTranscriptLayoutsUseTwoRowPageOverlap(t *testing.T) {
 	}
 }
 
+func TestHistoryBoundaryJumpsPreserveDraftAndResumeLiveOutput(t *testing.T) {
+	for _, fixed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fixed=%v", fixed), func(t *testing.T) {
+			u, out := pagingTestUI(t)
+			u.fixedInput = fixed
+			u.AddAgentView("main", "demo", "demo")
+			background, _ := u.AddAgentView("agent-1", "demo", "demo")
+			for i := 0; i < 40; i++ {
+				fmt.Fprintf(u.display, "line %d\n", i)
+			}
+			u.renderInput(inputPrompt, "draft", 3)
+			u.input.route([]byte("\x1b[H"))
+			v := u.activeViewportLocked()
+			oldest := historyRows(u.display.Snapshot(), u.width)[0]
+			if !v.browsing || v.anchor != oldest.position {
+				t.Fatalf("Home viewport = %+v, want oldest position %v", v, oldest.position)
+			}
+			before := fileSize(t, out)
+			_, _ = io.WriteString(u.display, "latest streamed output\n")
+			_, _ = io.WriteString(background, "background output\n")
+			if v.anchor != oldest.position || !v.browsing {
+				t.Fatal("streaming moved the Home position")
+			}
+			u.input.route([]byte("\x1b[F"))
+			if v.browsing {
+				t.Fatal("End did not resume live output")
+			}
+			data, err := os.ReadFile(out.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data[before:]), "latest streamed output") || strings.Contains(string(data[before:]), "background output") {
+				t.Fatal("End did not restore the active tab's latest output")
+			}
+			if u.inputText != "draft" || u.inputPosition != 3 {
+				t.Fatalf("history jump changed draft: text=%q position=%d", u.inputText, u.inputPosition)
+			}
+			before = fileSize(t, out)
+			_, _ = io.WriteString(u.display, "live continuation\n")
+			if fileSize(t, out) <= before {
+				t.Fatal("End did not resume subsequent streamed output")
+			}
+		})
+	}
+}
+
+func TestHistoryBoundaryOnEmptyAndShortHistory(t *testing.T) {
+	for _, text := range []string{"", "short transcript"} {
+		t.Run(text, func(t *testing.T) {
+			u, _ := pagingTestUI(t)
+			if text != "" {
+				u.display.AddLine(text)
+			}
+			u.showHistoryBoundary(true)
+			u.showHistoryBoundary(false)
+			if u.activeViewportLocked().browsing {
+				t.Fatal("End left short history paused")
+			}
+		})
+	}
+}
+
 func TestViewportKeepsAnchorAsOutputArrives(t *testing.T) {
 	h := newHistoryWriter(io.Discard)
 	for i := 0; i < 30; i++ {
