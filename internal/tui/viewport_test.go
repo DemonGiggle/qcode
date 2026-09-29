@@ -13,6 +13,136 @@ import (
 	"qcode/internal/session"
 )
 
+func TestViewportPagesOverlapTwoRenderedRows(t *testing.T) {
+	for _, wrapped := range []bool{false, true} {
+		t.Run(fmt.Sprintf("wrapped=%v", wrapped), func(t *testing.T) {
+			h := newHistoryWriter(io.Discard)
+			if wrapped {
+				// All rows belong to one styled logical line, so position columns
+				// distinguish overlapping rows even though their text is identical.
+				h.AddLine("\x1b[31m" + strings.Repeat("界", 200) + "\x1b[0m")
+			} else {
+				for i := 0; i < 40; i++ {
+					h.AddLine(fmt.Sprintf("line %d", i))
+				}
+			}
+			rows := historyRows(h.Snapshot(), 10)
+			v := viewport{}
+			previous := v.page(rows, 10, 0)
+			original := previous[0].position
+			for _, direction := range []int{1, 1, -1, -1} {
+				page := v.page(rows, 10, direction)
+				oldOverlap, newOverlap := previous[:2], page[len(page)-2:]
+				if direction < 0 {
+					oldOverlap, newOverlap = previous[len(previous)-2:], page[:2]
+				}
+				for i := range oldOverlap {
+					if oldOverlap[i] != newOverlap[i] {
+						t.Fatalf("direction %d: overlap = %v, want %v", direction, newOverlap, oldOverlap)
+					}
+				}
+				previous = page
+			}
+			if previous[0].position != original || v.browsing {
+				t.Fatalf("round trip did not restore live page: viewport=%+v page=%v", v, previous)
+			}
+		})
+	}
+}
+
+func TestViewportPagingSmallViewsAndBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		count     int
+		size      int
+		wantStart int
+	}{
+		{"empty", 0, 5, -1},
+		{"short history", 3, 5, 0},
+		{"exact page", 5, 5, 0},
+		{"one row", 30, 1, 28},
+		{"two rows", 30, 2, 27},
+		{"three rows", 30, 3, 26},
+		{"five rows", 30, 5, 22},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := make([]historyRow, tc.count)
+			for i := range rows {
+				rows[i] = historyRow{position: historyPosition{line: uint64(i + 1)}, text: fmt.Sprint(i)}
+			}
+			v := viewport{}
+			page := v.page(rows, tc.size, 1)
+			if tc.count == 0 {
+				if len(page) != 0 || v.browsing {
+					t.Fatalf("empty history: page=%v viewport=%+v", page, v)
+				}
+				return
+			}
+			if len(page) != min(tc.size, tc.count) || page[0] != rows[tc.wantStart] {
+				t.Fatalf("first PageUp = %v, want start %v", page, rows[tc.wantStart])
+			}
+			for i := 0; i <= tc.count; i++ {
+				page = v.page(rows, tc.size, 1)
+			}
+			if page[0] != rows[0] {
+				t.Fatalf("top boundary = %v", page)
+			}
+			for i := 0; i <= tc.count; i++ {
+				page = v.page(rows, tc.size, -1)
+			}
+			if v.browsing || page[0] != rows[max(0, tc.count-tc.size)] {
+				t.Fatalf("bottom boundary: page=%v viewport=%+v", page, v)
+			}
+		})
+	}
+}
+
+func TestTranscriptLayoutsUseTwoRowPageOverlap(t *testing.T) {
+	for _, fixed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fixed=%v", fixed), func(t *testing.T) {
+			u, out := pagingTestUI(t)
+			u.fixedInput = fixed
+			for i := 0; i < 40; i++ {
+				u.display.AddLine(fmt.Sprintf("line %d", i))
+			}
+			u.renderInput(inputPrompt, "draft", 5)
+			size := u.height - 3 - u.statusLinesLocked()
+			if fixed {
+				// The fixture has a single input row and no queue or candidates.
+				size = u.inputCursorRow - 2
+			}
+			if size <= 2 {
+				t.Fatalf("fixture has insufficient transcript rows: %d", size)
+			}
+			rows := historyRows(u.display.Snapshot(), u.width)
+			tail := len(rows) - size
+			before := fileSize(t, out)
+			u.showPage(1)
+			want := rows[tail-size+2]
+			if !u.activeViewportLocked().browsing || u.activeViewportLocked().anchor != want.position {
+				t.Fatalf("PageUp viewport = %+v, want anchor %v", u.activeViewportLocked(), want.position)
+			}
+			if fixed {
+				if u.inputScreenRows[2] != want.text {
+					t.Fatalf("top screen row = %q, want %q", u.inputScreenRows[2], want.text)
+				}
+			} else {
+				data, err := os.ReadFile(out.Name())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(string(data[before:]), "\x1b[2;1H\x1b[J"+want.text) {
+					t.Fatalf("PageUp did not render expected top row %q", want.text)
+				}
+			}
+			u.showPage(-1)
+			if u.activeViewportLocked().browsing {
+				t.Fatal("PageDown did not restore live output")
+			}
+		})
+	}
+}
+
 func TestViewportKeepsAnchorAsOutputArrives(t *testing.T) {
 	h := newHistoryWriter(io.Discard)
 	for i := 0; i < 30; i++ {

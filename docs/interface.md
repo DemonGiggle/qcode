@@ -48,7 +48,7 @@ Interactive mode always records concise colored activity events for tool calls a
 
 ## Scrolling
 
-Use Page Up and Page Down to scroll through qcode's output history, including while an agent is running. Scrolling back pauses the live view: new output is still recorded, but the page you are reading stays in place. Page Down to the latest content resumes live output.
+Use Page Up and Page Down to scroll through qcode's output history, including while an agent is running. Each page retains two visible rows from the previous page for reading context, including wrapped text. Very short views move at least one row. Scrolling back pauses the live view: new output is still recorded, but the page you are reading stays in place. Page Down to the latest content resumes live output.
 
 Each agent tab remembers its reading position across tab switches and terminal resizing. Completion and cancellation do not force a paused view to the bottom. Directory approval requests return to live output so the question is visible before you answer. History is bounded; if the content you were reading is evicted, the next repaint shows the oldest retained content.
 

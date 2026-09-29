@@ -78,11 +78,13 @@ func (v *viewport) page(rows []historyRow, size, direction int) []historyRow {
 	}
 	tail := max(0, len(rows)-size)
 	start := v.start(rows, size)
+	// Retain two rendered rows between pages, while allowing small views to move.
+	step := max(1, size-2)
 	if direction > 0 {
-		start -= size
+		start -= step
 	}
 	if direction < 0 {
-		start += size
+		start += step
 	}
 	start = max(0, min(start, len(rows)-1))
 	if direction != 0 {
