@@ -116,6 +116,7 @@ func renderThemePicker(out io.Writer, options []qtheme.Palette, selected, start,
 	for index := start; index < end; index++ {
 		lines = append(lines, renderThemeOption(options[index], index == selected, width, color))
 	}
+	lines = append(lines, "", "", "")
 	lines = append(lines, renderThemePreview(options[selected], width, color)...)
 	for _, line := range lines {
 		fmt.Fprintln(out, line)
@@ -178,8 +179,12 @@ func renderThemePreview(palette qtheme.Palette, width int, color bool) []string 
 		}
 		return rgbSGR(38, hex) + text + reset
 	}
+	previewTitle := "Preview Output"
+	if color {
+		previewTitle = cyan + bold + previewTitle + reset
+	}
 	lines := []string{
-		roleColor(palette.Markdown, cyan, "# Markdown preview"),
+		previewTitle,
 		"A response with " + roleColor(palette.Accent, magenta, "**bold text**") + " and " + roleColor(palette.Link, cyan, "a link") + ".",
 		roleColor(palette.Prompt, cyan, "> A quoted passage from the answer."),
 		roleColor(palette.Diff, yellow, "~ modified line"),
@@ -188,14 +193,15 @@ func renderThemePreview(palette qtheme.Palette, width int, color bool) []string 
 		roleColor(palette.Success, green, "✓ success") + "  " + roleColor(palette.Warning, yellow, "! warning") + "  " + roleColor(palette.Error, red, "× error"),
 	}
 	if palette.ID != "default" && color {
-		for index := range lines {
+		for index := 1; index < len(lines); index++ {
 			lines[index] = qtheme.PaintRow(truncateDiffLine(lines[index], width, false), width, palette)
 		}
 	} else {
-		for index := range lines {
+		for index := 1; index < len(lines); index++ {
 			lines[index] = truncateDiffLine(lines[index], width, false)
 		}
 	}
+	lines[0] = truncateDiffLine(lines[0], width, false)
 	return lines
 }
 

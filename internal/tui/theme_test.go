@@ -44,7 +44,7 @@ func TestThemePickerNarrowLayoutFitsTerminalWidth(t *testing.T) {
 			t.Errorf("row %d width = %d: %q", index, width, line)
 		}
 	}
-	if !strings.Contains(output.String(), "# Markdown preview") {
+	if !strings.Contains(output.String(), "Preview Output") {
 		t.Fatal("narrow layout omitted its preview")
 	}
 }
@@ -63,15 +63,36 @@ func TestThemePickerPlacesPreviewBelowOptionsAndColorsOptions(t *testing.T) {
 		if strings.Contains(line, "Nord Light · Light") {
 			lastOption = index
 		}
-		if strings.Contains(line, "# Markdown preview") {
+		if strings.Contains(line, "Preview Output") {
 			preview = index
 		}
 	}
 	if lastOption < 0 || preview < 0 || preview <= lastOption {
 		t.Fatalf("preview must follow all theme options (last option row %d, preview row %d): %q", lastOption, preview, lines)
 	}
+	if preview-lastOption != 4 || lines[lastOption+1] != "" || lines[lastOption+2] != "" || lines[lastOption+3] != "" {
+		t.Fatalf("preview should have three blank rows after the theme options: %q", lines[lastOption+1:preview])
+	}
 	if !strings.Contains(lines[2], "\x1b[48;2;30;30;46m") {
 		t.Fatalf("unselected Catppuccin Mocha option is missing its palette background: %q", lines[2])
+	}
+}
+
+func TestThemePreviewHeadingColorStaysFixedAcrossPalettes(t *testing.T) {
+	palettes := []qtheme.Palette{qtheme.Default()}
+	for _, id := range []string{"catppuccin-mocha", "catppuccin-latte", "dracula"} {
+		palette, ok := qtheme.Lookup(id)
+		if !ok {
+			t.Fatalf("missing test palette %q", id)
+		}
+		palettes = append(palettes, palette)
+	}
+	want := "\x1b[36m\x1b[1mPreview Output\x1b[0m"
+	for _, palette := range palettes {
+		lines := renderThemePreview(palette, 80, true)
+		if lines[0] != want {
+			t.Errorf("%s preview heading = %q, want fixed color %q", palette.ID, lines[0], want)
+		}
 	}
 }
 
