@@ -34,7 +34,7 @@ func (u *UI) chooseTools() {
 		u.endRawSelector()
 	}()
 	visible := min(12, max(3, u.height-6))
-	accepted, err := selectTools(u.input, u.terminal, names, runner, visible, u.width, ColorEnabled(u.out))
+	accepted, err := selectTools(u.input, u.themedSelectorWriter(), names, runner, visible, u.width, ColorEnabled(u.out))
 	if err != nil {
 		return
 	}

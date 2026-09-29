@@ -176,6 +176,63 @@ func TestPersistReportsUnwritableTargetWithoutChangingParent(t *testing.T) {
 	if string(data) != "keep" {
 		t.Fatalf("unwritable parent changed to %q", data)
 	}
+	if err := newRuntimePreferenceWriter(path).PersistTheme("dracula"); err == nil {
+		t.Fatal("PersistTheme succeeded below a regular file")
+	}
+}
+
+func TestPersistThemePreservesTOMLAndValidatesIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	original := `# retain this comment
+provider = "openai"
+theme = "default" # keep this note
+
+[learning]
+context_budget = 1200
+`
+	if err := os.WriteFile(path, []byte(original), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	writer := newRuntimePreferenceWriter(path)
+	if err := writer.PersistTheme(" Dracula "); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{"# retain this comment", `provider = "openai"`, `theme = "dracula" # keep this note`, "[learning]", "context_budget = 1200"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("updated config missing %q: %s", want, text)
+		}
+	}
+	var parsed Config
+	if err := loadAndDecodeForTest(data, &parsed); err != nil || parsed.Theme != "dracula" {
+		t.Fatalf("decoded theme = %q, err = %v", parsed.Theme, err)
+	}
+	assertMode(t, path, 0o640)
+	if err := writer.PersistTheme("not-a-theme"); err == nil {
+		t.Fatal("PersistTheme accepted an unknown theme")
+	}
+	unchanged, err := os.ReadFile(path)
+	if err != nil || string(unchanged) != text {
+		t.Fatalf("invalid theme changed config: %q, %v", unchanged, err)
+	}
+}
+
+func TestPersistThemeCreatesUserPreference(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "config.toml")
+	if err := newRuntimePreferenceWriter(path).PersistTheme("solarized-light"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "theme = \"solarized-light\"\n"; got != want {
+		t.Fatalf("new config = %q, want %q", got, want)
+	}
 }
 
 func assertMode(t *testing.T, path string, want os.FileMode) {

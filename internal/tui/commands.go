@@ -157,6 +157,10 @@ var slashCommands = []slashCommand{
 		examples: []string{"/statusline", "/statusline tok off", "/statusline show"},
 	},
 	{
+		name: "/theme", usage: "/theme", description: "Choose a terminal color theme with a live preview",
+		examples: []string{"/theme"},
+	},
+	{
 		name: "/tool", usage: "/tool [<name> <on|off>]", description: "Enable or disable tools",
 		arguments: []helpArgument{
 			{name: "name", description: "Tool to change; omit both arguments to open the tool picker."},

@@ -496,7 +496,7 @@ func (u *UI) selectSession(entries []session.Entry) (string, bool, error) {
 		return "", false, fmt.Errorf("enlarge the terminal to at least 20 columns and 7 rows to select a session")
 	}
 	visible := min(12, max(3, u.height-6))
-	return selectSession(u.input, u.terminal, entries, visible, u.width, ColorEnabled(u.out))
+	return selectSession(u.input, u.themedSelectorWriter(), entries, visible, u.width, ColorEnabled(u.out))
 }
 
 func selectSession(in io.Reader, out io.Writer, entries []session.Entry, visible, width int, color bool) (string, bool, error) {

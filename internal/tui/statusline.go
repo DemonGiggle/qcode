@@ -699,7 +699,7 @@ func (u *UI) chooseStatusline() {
 		u.endRawSelector()
 	}()
 	visible := min(12, max(3, u.height-6))
-	enabled, accepted, err := selectStatusline(u.input, u.terminal, options, initial, visible, u.width, ColorEnabled(u.out))
+	enabled, accepted, err := selectStatusline(u.input, u.themedSelectorWriter(), options, initial, visible, u.width, ColorEnabled(u.out))
 	if err != nil {
 		return
 	}

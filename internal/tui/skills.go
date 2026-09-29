@@ -41,7 +41,7 @@ func (u *UI) chooseSkills() {
 		u.endRawSelector()
 	}()
 	visible := min(12, max(3, u.height-6))
-	names, summaries, accepted, err := selectSkills(u.input, u.terminal, u.skills, initial, visible, u.width, ColorEnabled(u.out))
+	names, summaries, accepted, err := selectSkills(u.input, u.themedSelectorWriter(), u.skills, initial, visible, u.width, ColorEnabled(u.out))
 	if err != nil {
 		return
 	}

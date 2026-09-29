@@ -9,6 +9,7 @@ api_key = "your-api-key"
 model = "my-model"
 thinking = "high"
 max_steps = 32
+theme = "catppuccin-mocha"
 agent_timeout = "5m"
 sandbox = true
 sandbox_command_paths = ["~/.local/bin", "~/go/bin"]
@@ -34,10 +35,15 @@ In the normal interactive UI, `/model` (including its explicit thinking
 level) and `/maxsteps` update the user-level file synchronously when issued
 from the `main` tab. On Linux this is `~/.local/etc/qcode/config.toml`; other
 platforms use the user configuration path shown below. Existing comments and
-unrelated settings are preserved. Changes made in other agent tabs, demo
-mode, one-shot mode, and piped execution remain session-only. Command-line
-flags, environment variables, and higher-priority configuration files retain
-their usual precedence.
+unrelated settings are preserved. `/theme` is terminal-wide and saves its
+choice from any agent tab, including when the selection is Default (Auto).
+Other preference changes in worker tabs, demo mode, one-shot mode, and piped
+execution remain session-only. `theme` accepts
+`default`, `catppuccin-mocha`, `dracula`, `gruvbox-dark`, `solarized-dark`,
+`nord-dark`, `catppuccin-latte`, `alucard`, `gruvbox-light`,
+`solarized-light`, or `nord-light`. `default` keeps the terminal's ANSI palette
+and background. Command-line flags, environment variables, and higher-priority
+configuration files retain their usual precedence.
 
 `skills.paths` adds directories to the built-in skill locations. Paths from all
 configuration layers are appended from lowest to highest priority. Blank paths
