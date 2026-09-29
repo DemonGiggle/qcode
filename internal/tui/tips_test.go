@@ -33,6 +33,15 @@ func TestAllTipsFitOneOrTwoLines(t *testing.T) {
 	}
 }
 
+func TestTipsIncludeThemePicker(t *testing.T) {
+	for _, tip := range tipTexts {
+		if strings.Contains(tip, "`/theme`") {
+			return
+		}
+	}
+	t.Fatal("startup tips do not mention /theme")
+}
+
 func TestFormatTipColorRespectsFlag(t *testing.T) {
 	colored := formatTip(80, true)
 	if !strings.Contains(colored, tipVivid) || !strings.Contains(colored, reset) || !strings.Contains(colored, "Tip: ") {
