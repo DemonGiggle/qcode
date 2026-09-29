@@ -49,7 +49,7 @@ func TestThemePickerNarrowLayoutFitsTerminalWidth(t *testing.T) {
 	}
 }
 
-func TestThemePickerPlacesPreviewBelowOptionsAndColorsOptions(t *testing.T) {
+func TestThemePickerPlacesPreviewBelowOptionsAndUsesStandardOptionColors(t *testing.T) {
 	var output bytes.Buffer
 	options := qtheme.All()
 	rows := renderThemePicker(&output, options, 0, 0, len(options), 90, 24, true)
@@ -73,8 +73,16 @@ func TestThemePickerPlacesPreviewBelowOptionsAndColorsOptions(t *testing.T) {
 	if preview-lastOption != 4 || lines[lastOption+1] != "" || lines[lastOption+2] != "" || lines[lastOption+3] != "" {
 		t.Fatalf("preview should have three blank rows after the theme options: %q", lines[lastOption+1:preview])
 	}
-	if !strings.Contains(lines[2], "\x1b[48;2;30;30;46m") {
-		t.Fatalf("unselected Catppuccin Mocha option is missing its palette background: %q", lines[2])
+	if !strings.Contains(lines[1], cyan+bold) || strings.Contains(lines[1], "48;2;") {
+		t.Fatalf("selected option should use the standard selector highlight: %q", lines[1])
+	}
+	if got, want := lines[2], "  Catppuccin Mocha · Dark"; got != want {
+		t.Fatalf("unselected option should use the normal terminal color: got %q, want %q", got, want)
+	}
+	for _, line := range lines[1 : 1+len(options)] {
+		if strings.Contains(line, "38;2;") || strings.Contains(line, "48;2;") {
+			t.Errorf("theme-specific RGB color appeared in option list: %q", line)
+		}
 	}
 }
 

@@ -3,9 +3,7 @@ package tui
 import (
 	"fmt"
 	"io"
-	"math"
 	"strconv"
-	"strings"
 
 	qtheme "qcode/internal/theme"
 )
@@ -134,28 +132,9 @@ func renderThemeOption(option qtheme.Palette, selected bool, width int, color bo
 		name = "Default (Auto)"
 	}
 	label := marker + name
-	if !color {
-		return truncateDiffLine(label, width, false)
-	}
-	if selected && option.ID != "default" {
-		foreground := option.Background
-		if contrastRatio(option.Text, option.Accent) > contrastRatio(option.Background, option.Accent) {
-			foreground = option.Text
-		}
-		label = rgbSGR(48, option.Accent) + rgbSGR(38, foreground) + label + strings.Repeat(" ", max(0, width-visibleWidth(label))) + reset
-		return label
-	} else if selected {
-		label = cyan + bold + label + reset
-	} else {
-		if option.ID == "default" {
-			label = cyan + label + reset
-		} else {
-			label = rgbSGR(38, option.Accent) + label + reset
-		}
-	}
 	label = truncateDiffLine(label, width, false)
-	if option.ID != "default" {
-		return qtheme.PaintRow(label, width, option)
+	if color && selected {
+		return cyan + bold + label + reset
 	}
 	return label
 }
@@ -216,31 +195,4 @@ func rgbSGR(kind int, hex string) string {
 		return ""
 	}
 	return fmt.Sprintf("\x1b[%d;2;%d;%d;%dm", kind, r, g, b)
-}
-
-func contrastRatio(first, second string) float64 {
-	linear := func(hex string) float64 {
-		if len(hex) != 7 || hex[0] != '#' {
-			return 0
-		}
-		channels := [3]float64{}
-		for index, pair := range []string{hex[1:3], hex[3:5], hex[5:7]} {
-			value, err := strconv.ParseInt(pair, 16, 0)
-			if err != nil {
-				return 0
-			}
-			component := float64(value) / 255
-			if component <= 0.04045 {
-				channels[index] = component / 12.92
-			} else {
-				channels[index] = math.Pow((component+0.055)/1.055, 2.4)
-			}
-		}
-		return 0.2126*channels[0] + 0.7152*channels[1] + 0.0722*channels[2]
-	}
-	a, b := linear(first), linear(second)
-	if a < b {
-		a, b = b, a
-	}
-	return (a + 0.05) / (b + 0.05)
 }
