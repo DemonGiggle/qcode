@@ -196,3 +196,10 @@ func rgbSGR(kind int, hex string) string {
 	}
 	return fmt.Sprintf("\x1b[%d;2;%d;%d;%dm", kind, r, g, b)
 }
+
+func renderThemeStatusBarLine(line string, width int, palette qtheme.Palette, color bool) string {
+	if !color {
+		return line
+	}
+	return qtheme.PaintRow(line, width, palette)
+}

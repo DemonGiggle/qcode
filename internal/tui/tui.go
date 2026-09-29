@@ -1774,9 +1774,12 @@ func (u *UI) renderStatusBarLocked(force bool) {
 	u.statusBarText = bar
 	lines := strings.Split(bar, "\n")
 	start := u.height - len(lines) + 1
+	palette := u.currentTheme()
+	color := ColorEnabled(u.out)
 	fmt.Fprint(u.out, "\x1b[s")
 	for i, line := range lines {
-		fmt.Fprintf(u.out, "%s", u.themeOutput(fmt.Sprintf("\x1b[%d;1H\x1b[2K%s", start+i, line)))
+		line = renderThemeStatusBarLine(line, u.width, palette, color)
+		fmt.Fprintf(u.out, "\x1b[%d;1H\x1b[2K%s", start+i, line)
 	}
 	// Clear a freed row when shrinking from two lines to one so the old
 	// second line does not linger above the new single line.

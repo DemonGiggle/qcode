@@ -104,6 +104,40 @@ func TestThemePreviewHeadingColorStaysFixedAcrossPalettes(t *testing.T) {
 	}
 }
 
+func TestThemeStatusBarPaintsBackgroundAcrossEachLine(t *testing.T) {
+	const width = 80
+	bar := statusBar("ollama", "qwen", "/workspace", width, true, true, "73% left", "I:1 O:2", "2/32")
+	for _, id := range []string{"catppuccin-mocha", "catppuccin-latte"} {
+		palette, ok := qtheme.Lookup(id)
+		if !ok {
+			t.Fatalf("missing test palette %q", id)
+		}
+		lines := strings.Split(bar, "\n")
+		for index, line := range lines {
+			painted := renderThemeStatusBarLine(line, width, palette, true)
+			if gotWidth := visibleWidth(painted); gotWidth != width {
+				t.Errorf("%s status line %d width = %d, want %d", id, index, gotWidth, width)
+			}
+			if !strings.Contains(painted, rgbSGR(48, palette.Background)) {
+				t.Errorf("%s status line %d has no themed background: %q", id, index, painted)
+			}
+		}
+	}
+}
+
+func TestThemeStatusBarKeepsAutoAndNoColorBehavior(t *testing.T) {
+	bar := statusBar("ollama", "qwen", "/workspace", 80, true, true)
+	auto := renderThemeStatusBarLine(bar, 80, qtheme.Default(), true)
+	if auto != bar {
+		t.Fatalf("Auto changed status bar styling: got %q, want %q", auto, bar)
+	}
+	palette, _ := qtheme.Lookup("dracula")
+	plain := "status bar"
+	if got := renderThemeStatusBarLine(plain, 80, palette, false); got != plain {
+		t.Fatalf("color-disabled status bar changed: %q", got)
+	}
+}
+
 func TestThemeRecolorsRetainedHistoryForEveryAgentView(t *testing.T) {
 	write := func(text string) *historyWriter {
 		history := newHistoryWriter(io.Discard)
