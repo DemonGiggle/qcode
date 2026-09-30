@@ -50,7 +50,7 @@ func TestFixedInputSurvivesStreamingAndFiltersCandidates(t *testing.T) {
 		_, _ = u.display.Write([]byte("streamed output\n"))
 	}
 	got := frame()
-	for _, want := range []string{"(Queue)> /", "  /agent", "  /exit", "  /history", "type to filter", "streamed output"} {
+	for _, want := range []string{"(Steer)> /", "  /agent", "  /exit", "  /history", "type to filter", "streamed output"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in frame %q", want, got)
 		}
@@ -71,18 +71,18 @@ func TestFixedInputSurvivesStreamingAndFiltersCandidates(t *testing.T) {
 func TestFixedPromptUsesActiveAgentState(t *testing.T) {
 	u, frame := layoutFixture(t)
 	u.renderInput(inputPrompt, "draft", 3)
-	if !strings.Contains(frame(), "(Queue)> draft") {
+	if !strings.Contains(frame(), "(Steer)> draft") {
 		t.Fatal("running prompt missing")
 	}
 	u.activeAgent = "agent-1"
 	u.renderInput(inputPrompt, "other draft", 2)
-	if strings.Contains(frame(), "(Queue)>") || !strings.Contains(frame(), "> other draft") {
+	if strings.Contains(frame(), "(Steer)>") || !strings.Contains(frame(), "> other draft") {
 		t.Fatal("idle tab inherited queue state")
 	}
 	u.activeAgent = "main"
 	u.manager.(*layoutManager).states["main"] = session.StatusCompleted
 	u.renderInput(inputPrompt, "draft", 3)
-	if strings.Contains(frame(), "(Queue)>") {
+	if strings.Contains(frame(), "(Steer)>") {
 		t.Fatal("completed task retained queue prompt")
 	}
 }
@@ -121,7 +121,7 @@ func TestFixedHistoryStaysPausedWhileInputChanges(t *testing.T) {
 	if !u.activeViewportLocked().browsing || u.activeViewportLocked().anchor != anchor {
 		t.Fatal("stream or suggestions moved the reading position")
 	}
-	if !strings.Contains(frame(), "(Queue)> /h") {
+	if !strings.Contains(frame(), "(Steer)> /h") {
 		t.Fatal("paging moved the prompt")
 	}
 }
@@ -164,7 +164,7 @@ func TestQueuedPanelStaysVisibleAndPagesIndependently(t *testing.T) {
 	}}
 	u.width, u.height = 32, 17
 	u.renderInput(inputPrompt, "draft", 5)
-	if got := frame(); !strings.Contains(got, "Queued 3 | Alt+Q expand") || !strings.Contains(got, "1. first queued") || !strings.Contains(got, "2. second queued") || !strings.Contains(got, "(Queue)> draft") {
+	if got := frame(); !strings.Contains(got, "Queued 3 | Alt+Q expand") || !strings.Contains(got, "1. first queued") || !strings.Contains(got, "2. second queued") || !strings.Contains(got, "(Steer)> draft") {
 		t.Fatalf("reserved queue area = %q", got)
 	}
 	for i := 0; i < 30; i++ {

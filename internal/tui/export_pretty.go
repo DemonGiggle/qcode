@@ -63,6 +63,11 @@ func prettyExportAgents(summaries []session.Summary, records []session.WorkRecor
 		if agent.Closed && record.AgentName != "" {
 			agent.Name = record.AgentName
 		}
+		for _, item := range record.Steers {
+			if item.State == session.InputDelivered {
+				record.Prompt += "\n\nUser steering (" + item.Actor + "): " + item.Text
+			}
+		}
 		agent.Records = append(agent.Records, record)
 	}
 	result := make([]prettyAgent, 0, len(agents))

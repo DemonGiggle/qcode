@@ -313,8 +313,10 @@ func (d *agentDisplay) ExportSnapshot() historyExportSnapshot {
 func (u *UI) watchAgentEvents(events <-chan session.Event) {
 	defer close(u.agentEventsDone)
 	u.replayConsultationEvents()
+	u.replaySteeringEvents()
 	for event := range events {
 		u.replayConsultationEvents()
+		u.replaySteeringEvents()
 		if event.Barrier != nil {
 			close(event.Barrier)
 			continue
@@ -325,6 +327,7 @@ func (u *UI) watchAgentEvents(events <-chan session.Event) {
 		u.handleAgentEvent(event)
 	}
 	u.replayConsultationEvents()
+	u.replaySteeringEvents()
 }
 
 // Consultation events are replayed from the journal rather than relying on a
@@ -619,6 +622,9 @@ func (u *UI) removeApprovalRequest(id string, target *approvalRequest) {
 }
 
 func (u *UI) handlePendingApproval(ctx context.Context) {
+	if u.deferredInteractions[u.activeAgent] {
+		return
+	}
 	if u.manager == nil {
 		return
 	}
@@ -634,6 +640,20 @@ func (u *UI) handlePendingApproval(ctx context.Context) {
 	u.approvalMu.Unlock()
 	u.input.setCancel(nil)
 	selected, approved, err := u.ApproveDirectory(request.ctx, request.requested, request.proposed)
+	if errors.Is(err, errQuestionDeferred) {
+		u.deferredInteractions[id] = true
+		u.approvalMu.Lock()
+		u.approvals[id] = append([]*approvalRequest{request}, u.approvals[id]...)
+		u.approvalMu.Unlock()
+		u.updateActiveCancellation()
+		u.screenMu.Lock()
+		draft := u.drafts[id]
+		u.screenMu.Unlock()
+		if draft != "" {
+			u.input.inject([]byte(draft))
+		}
+		return
+	}
 	select {
 	case request.result <- approvalResult{selected: selected, approved: approved, err: err}:
 	case <-ctx.Done():
@@ -1006,8 +1026,25 @@ func (u *UI) runActiveTask(ctx context.Context, line string) error {
 	if u.manager == nil {
 		return u.runner.Run(ctx, line)
 	}
-	if _, err := u.manager.Submit(u.activeAgent, line); err != nil {
+	var err error
+	if host, ok := u.manager.(promptController); ok {
+		intent := u.submissionIntent
+		if intent == "" {
+			intent = session.IntentQueue
+		}
+		_, err = host.SubmitPrompt(session.PromptSubmission{AgentID: u.activeAgent, ObservedTaskID: u.observedTaskID, Prompt: line, Intent: intent, Source: "terminal", Actor: "local-tui"})
+	} else {
+		_, err = u.manager.Submit(u.activeAgent, line)
+	}
+	if err != nil {
+		u.rememberDraft(line)
+		if u.input != nil {
+			u.input.inject([]byte(line))
+		}
 		return err
+	}
+	if u.deferredInteractions != nil {
+		u.deferredInteractions[u.activeAgent] = false
 	}
 	u.updateActiveCancellation()
 	u.drawTaskIndicator()
@@ -1015,3 +1052,36 @@ func (u *UI) runActiveTask(ctx context.Context, line string) error {
 }
 
 var _ io.Writer = (*agentDisplay)(nil)
+
+func (u *UI) replaySteeringEvents() {
+	source, ok := u.manager.(interface {
+		SteeringEvents(uint64) []session.SteeringEvent
+	})
+	if !ok {
+		return
+	}
+	u.screenMu.Lock()
+	cursor := u.steeringCursor
+	u.screenMu.Unlock()
+	events := source.SteeringEvents(cursor)
+	for _, event := range events {
+		item := event.Input
+		message := fmt.Sprintf("Steer %s (%s/%s): %s", item.ID, item.Source, item.Actor, item.State)
+		if item.ReplacedBy != "" {
+			message += " by " + item.ReplacedBy
+		}
+		if item.State == session.InputDelivered {
+			message += " — " + item.Text
+		}
+		u.screenMu.Lock()
+		if view := u.views[event.AgentID]; view != nil {
+			_, _ = view.display.writeLocked([]byte("\n" + sanitizeDiffLine(message, "<ESC>") + "\n"))
+		}
+		u.steeringCursor = event.Sequence
+		u.screenMu.Unlock()
+	}
+	if len(events) > 0 {
+		u.signalPresentation()
+		u.requestSessionSave()
+	}
+}

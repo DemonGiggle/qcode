@@ -47,3 +47,5 @@ Keep this manual about **using** qcode: install, prompt, queue, commands,
 models, agents, plans, skills, memory, web tools, sessions, browser control,
 settings, and troubleshooting. Do not add package layouts, control-plane,
 event-bus, provider wire formats, or other internals here.
+
+While an agent is busy, Enter steers its current task; Tab queues a separate task. In the browser, use Steer/Queue; Tab navigates normally. Steering waits for the current response or executing tool, withdraws unanswered interactions, and replaces earlier pending steering. Alt+Q opens pending work; Up/Down selects, Delete removes, and Esc closes. Ctrl+C cancels active work.

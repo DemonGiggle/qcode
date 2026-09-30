@@ -2,7 +2,7 @@
 
 The terminal UI is a full-viewport, keyboard-driven interface with editable input, per-agent history, full word wrapping, streamed responses, and ANSI-colored Markdown, including aligned GFM tables. Fixed tabs sit at the top and a status bar at the bottom. The normal terminal buffer and scrollback are retained.
 
-The prompt is pinned above the task indicator and status bar from launch. It displays `>` for an idle agent, `(Plan)>` in Plan mode, and `(Queue)>` while the current tab's agent is working. Pending prompts appear in a reserved, multi-row queue area directly above the prompt. It shows the queued text in FIFO order by default; Alt+Q expands it for more room, and Page Up/Page Down scroll that expanded area. Alt+Q folds it back to the smaller queue area, where queued text remains visible. Page Up/Page Down scroll the transcript when the queue is folded. Each agent tab keeps its own queue view and draft. The queue area disappears when its pending work drains. The browser remote control has the same smaller and expanded queue above its input; its expanded list also supports mouse wheel and touch scrolling. The status bar includes `STEP current/max` for the active agent's model-turn progress and `MODE PLAN` when planning is active, or `MODE INTERACTIVE` when normal-mode questions are enabled. Long drafts wrap upward within the input area.
+The prompt is pinned above the task indicator and status bar from launch. It displays `>` for an idle agent, `(Plan)>` in Plan mode, and `(Steer)>` while the current tab's agent is working. Pending prompts appear in a reserved, multi-row queue area directly above the prompt. It shows the queued text in FIFO order by default; Alt+Q expands it for more room, and Page Up/Page Down scroll that expanded area. Alt+Q folds it back to the smaller queue area, where queued text remains visible. Page Up/Page Down scroll the transcript when the queue is folded. Each agent tab keeps its own queue view and draft. The queue area disappears when its pending work drains. The browser remote control has the same smaller and expanded queue above its input; its expanded list also supports mouse wheel and touch scrolling. The status bar includes `STEP current/max` for the active agent's model-turn progress and `MODE PLAN` when planning is active, or `MODE INTERACTIVE` when normal-mode questions are enabled. Long drafts wrap upward within the input area.
 
 Typing `/` opens up to five matching command suggestions directly above the prompt. Type more characters to filter them or press Tab to complete the first match. Suggestions stay in their own area while output streams, and disappear when the draft no longer matches a command; they are not saved in conversation history.
 
@@ -45,7 +45,7 @@ After a crash, recovery uses the latest successful checkpoint and marks unfinish
 
 ## Activity events
 
-Interactive mode always records concise colored activity events for tool calls and agent coordination, such as `Reading internal/tui/tui.go`, `Writing README.md`, or `Consulting agent-2`. These events are presentation-only and never enter the next model request. A task-level indicator remains visible while the active tab is running and includes its queued prompt count. The input remains editable: another submitted prompt is marked `Queued #N` and runs in FIFO order. Page Up/Page Down, Ctrl+C cancellation of the running prompt, and tab switching remain available.
+Interactive mode always records concise colored activity events for tool calls and agent coordination, such as `Reading internal/tui/tui.go`, `Writing README.md`, or `Consulting agent-2`. These events are presentation-only and never enter the next model request. A task-level indicator remains visible while the active tab is running and includes its queued prompt count. The input remains editable: Enter steers the active task and Tab queues a nonempty prompt as a separate task. Page Up/Page Down, Ctrl+C cancellation of the running prompt, and tab switching remain available.
 
 ## Scrolling
 
@@ -101,3 +101,10 @@ compaction, `/new`, and session restores. Older sessions without a journal may
 have no structured prompt history; use `/export raw` to read their available
 transcript instead. Times use the exporting machine's local timezone and show
 the UTC offset.
+
+
+While an agent is busy, terminal Enter steers its current task; Tab queues a separate task (slash-command Tab completion still works). Browser Enter and **Steer** steer, **Queue** queues, and Tab keeps native focus navigation. Idle submission starts an ordinary task. Steering during manual `/compact` is unavailable and keeps your draft; Tab can queue work.
+
+A steer waits for the streaming response or executing tool to finish. Completed output and side effects stay recorded. Unanswered approvals and questions are withdrawn, and unstarted tool actions are skipped before replanning. Esc defers terminal approvals or questions and opens the composer; Esc from the composer returns to the deferred interaction. Ctrl+C cancels active work.
+
+Steering belongs to the current task and its one final answer. The newest pending steer replaces earlier pending steering; delivered instructions remain in the conversation. Pending work shows steering separately from queued tasks. Alt+Q opens the pending panel: Up/Down selects, Page Up/Down scrolls, Delete removes a pending item, and Esc or Alt+Q returns to the composer. Browser pending items have **Remove** controls. Removal stops working once a steer starts replanning. Task cancellation or failure cancels undelivered steers while FIFO work continues. Stale submissions are rejected and preserve the draft. Resuming a session marks unfinished work interrupted without resubmitting it.

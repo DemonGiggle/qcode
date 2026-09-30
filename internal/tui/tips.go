@@ -14,6 +14,8 @@ const tipVivid = "\x1b[1;38;5;220m"
 // two wrapped lines at 80 columns once prefixed with "Tip: ".
 var tipTexts = []string{
 	// Commands and terminal navigation.
+	"While busy, Enter steers the current task and Tab queues another task. The newest pending steer replaces the previous one.",
+	"Alt+Q opens pending work. Use Up/Down to select, Delete to remove, and Esc to return to your draft.",
 	"Type `/` to see matching slash commands, keep typing to filter, and press Tab to complete the first match.",
 	"Run `/help` to list commands, or `/help <command>` (e.g. `/help model`) for arguments and examples.",
 	"Run `/model` to search the provider catalog with Up/Down + Enter, or `/model <id> [thinking]` to set it directly.",

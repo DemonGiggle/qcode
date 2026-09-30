@@ -32,12 +32,14 @@ type RemoteAgentView struct {
 }
 
 type RemotePresentation struct {
-	Sequence     uint64                `json:"sequence"`
-	Active       string                `json:"active"`
-	StatusBar    string                `json:"status_bar"`
-	Views        []RemoteAgentView     `json:"views"`
-	Agents       []session.Summary     `json:"agents"`
-	Interactions []session.Interaction `json:"interactions,omitempty"`
+	PendingInputs  map[string][]session.QueuedPrompt `json:"pending_inputs,omitempty"`
+	SteeringEvents []session.SteeringEvent           `json:"steering_events,omitempty"`
+	Sequence       uint64                            `json:"sequence"`
+	Active         string                            `json:"active"`
+	StatusBar      string                            `json:"status_bar"`
+	Views          []RemoteAgentView                 `json:"views"`
+	Agents         []session.Summary                 `json:"agents"`
+	Interactions   []session.Interaction             `json:"interactions,omitempty"`
 }
 
 // RemoteCatalog contains the read-only selector data needed by the browser UI.
@@ -222,9 +224,14 @@ func (u *UI) RemotePresentation() RemotePresentation {
 	}
 	u.screenMu.Unlock()
 	sort.Slice(views, func(i, j int) bool { return views[i].id < views[j].id })
-	result := RemotePresentation{Sequence: sequence, Active: active, StatusBar: u.remoteStatusBar(), Agents: agents}
+	result := RemotePresentation{PendingInputs: make(map[string][]session.QueuedPrompt), Sequence: sequence, Active: active, StatusBar: u.remoteStatusBar(), Agents: agents}
 	if source, ok := u.manager.(interface{ PendingInteractions() []session.Interaction }); ok {
 		result.Interactions = source.PendingInteractions()
+	}
+	if source, ok := u.manager.(interface {
+		SteeringEvents(uint64) []session.SteeringEvent
+	}); ok {
+		result.SteeringEvents = source.SteeringEvents(0)
 	}
 	for _, view := range views {
 		summary := summaries[view.id]
@@ -240,7 +247,11 @@ func (u *UI) RemotePresentation() RemotePresentation {
 		var queued []session.QueuedPrompt
 		if source, ok := u.manager.(queuedPromptReader); ok {
 			queued = source.QueuedPrompts(view.id)
+			if host, ok := u.manager.(promptController); ok {
+				queued = host.PendingInputs(view.id)
+			}
 		}
+		result.PendingInputs[view.id] = queued
 		result.Views = append(result.Views, RemoteAgentView{
 			ID: view.id, Name: name, Provider: view.provider, Model: view.model,
 			Status: string(summary.Status), Lines: lines, QueuedPrompts: queued,
@@ -519,4 +530,44 @@ func (u *UI) RemoteRequestRejected(method, path, reason string) {
 		return
 	}
 	u.printSystemMessage(dim + "Remote reject: " + sanitizeDiffLine(reason, "<ESC>") + " (" + sanitizeDiffLine(method, "<ESC>") + " " + sanitizeDiffLine(path, "<ESC>") + ")" + reset)
+}
+
+type promptController interface {
+	SubmitPrompt(session.PromptSubmission) (session.Submission, error)
+	PendingInputs(string) []session.QueuedPrompt
+	CancelInput(string, string) error
+}
+
+func (u *UI) SubmitRemotePrompt(actor string, input session.PromptSubmission) (session.Submission, error) {
+	host, ok := u.manager.(promptController)
+	if !ok {
+		return session.Submission{}, fmt.Errorf("structured prompts unavailable")
+	}
+	if strings.HasPrefix(strings.TrimSpace(input.Prompt), "/") {
+		return session.Submission{}, fmt.Errorf("use the command endpoint for slash commands")
+	}
+	input.Source = "browser"
+	input.Actor = actor
+	sub, err := host.SubmitPrompt(input)
+	u.signalPresentation()
+	return sub, err
+}
+func (u *UI) CancelRemoteInput(agentID, promptID string) error {
+	host, ok := u.manager.(promptController)
+	if !ok {
+		return fmt.Errorf("pending input cancellation unavailable")
+	}
+	err := host.CancelInput(agentID, promptID)
+	u.signalPresentation()
+	return err
+}
+
+func (u *UI) CancelRemoteActive(agentID, observedID string) error {
+	host, ok := u.manager.(interface{ CancelTask(string, string) error })
+	if !ok {
+		return fmt.Errorf("active cancellation unavailable")
+	}
+	err := host.CancelTask(agentID, observedID)
+	u.signalPresentation()
+	return err
 }

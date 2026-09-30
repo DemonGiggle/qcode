@@ -28,7 +28,7 @@ func (u *UI) renderInput(prompt, line string, pos int) {
 
 func queuePrompt(status session.Status) string {
 	if status == session.StatusRunning || status == session.StatusWaitingForApproval {
-		return "(Queue)> "
+		return "(Steer)> "
 	}
 	return "> "
 }
@@ -175,7 +175,7 @@ func (u *UI) paintFixedLocked(direction int) {
 		queueStart := promptRow - queueHeight
 		header := fmt.Sprintf("Queued %d | Alt+Q expand", len(queued))
 		if queue.expanded {
-			header = fmt.Sprintf("Queued %d | Alt+Q close | PgUp/PgDn scroll", len(queued))
+			header = fmt.Sprintf("Pending %d | Alt+Q close | Up/Down | Delete remove | Esc", len(queued))
 		}
 		if u.width < 30 {
 			header = fmt.Sprintf("Q%d Alt+Q", len(queued))
@@ -194,6 +194,9 @@ func (u *UI) paintFixedLocked(direction int) {
 			}
 			for i, item := range visible {
 				screenRows[queueStart+1+i] = item.text
+				if queue.expanded && item.id == queue.selectedID {
+					screenRows[queueStart+1+i] = "> " + item.text
+				}
 			}
 		}
 	}

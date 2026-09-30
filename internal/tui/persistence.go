@@ -48,6 +48,7 @@ type savedPresentation struct {
 	Verbose            bool
 	Views              []savedView
 	ConsultationCursor uint64
+	SteeringCursor     uint64
 }
 type sessionPersistence struct {
 	mu          sync.Mutex
@@ -95,6 +96,7 @@ func (u *UI) snapshotPresentation() savedPresentation {
 		h.mu.Lock()
 		if v.id == "main" {
 			s.ConsultationCursor = u.consultationCursor
+			s.SteeringCursor = u.steeringCursor
 		}
 		sv := savedView{ID: v.id, Provider: v.provider, Model: v.model, Unseen: v.unseen,
 			Browsing: v.viewport.browsing, AnchorLine: v.viewport.anchor.line, AnchorColumn: v.viewport.anchor.column,
@@ -165,6 +167,7 @@ func (u *UI) RestorePresentation(data json.RawMessage) error {
 	}
 	u.verbose = s.Verbose
 	u.consultationCursor = s.ConsultationCursor
+	u.steeringCursor = s.SteeringCursor
 	for id, v := range u.views {
 		if runner, ok := u.manager.Runner(id); ok {
 			if r, ok := runner.(verboseRunner); ok {

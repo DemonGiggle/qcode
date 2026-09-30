@@ -214,6 +214,10 @@ type agentController interface {
 }
 
 type UI struct {
+	observedTaskID       string
+	composerReading      bool
+	deferredInteractions map[string]bool
+	submissionIntent     session.SubmissionIntent
 	fixedInput           bool
 	inputText            string
 	inputLabel           string
@@ -248,7 +252,8 @@ type UI struct {
 	skillLocations       []string
 	skillCatalogLoader   skillCatalogLoader
 	onSkills             func([]string)
-	consultationCursor   uint64 // Guarded by screenMu; persisted with the transcript.
+	consultationCursor   uint64
+	steeringCursor       uint64 // Guarded by screenMu; persisted with the transcript.
 	manager              agentController
 	activeAgent          string
 	views                map[string]*agentView
@@ -367,6 +372,13 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	t.AutoCompleteCallback = u.completeSlashCommand
 	input.setPageHandler(u.showPage)
 	input.setHistoryBoundaryHandler(u.showHistoryBoundary)
+	u.terminal.SubmitOnTab = func(line string) bool {
+		u.observeComposerTask()
+		return u.composerReading && u.observedTaskID != "" && strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "/")
+	}
+	u.deferredInteractions = make(map[string]bool)
+	u.terminal.SubmitOnEscape = func() bool { return true }
+	u.terminal.KeyHandler = func(key rune) bool { u.observeComposerTask(); return u.handlePendingPanelKey(key) }
 	input.setQueueHandler(u.toggleQueuePanel)
 	input.setTabHandler(u.requestTabSwitch)
 	u.SetRunner(runner)
@@ -699,7 +711,24 @@ func (u *UI) Run(ctx context.Context) error {
 			continue
 		}
 		u.handlePendingModeDecision(ctx)
+		u.observedTaskID = ""
+		if u.manager != nil {
+			if summary, err := u.manager.Summary(u.activeAgent); err == nil {
+				u.observedTaskID = summary.ActiveTaskID
+			}
+		}
+		u.composerReading = true
 		line, err := u.readLine()
+		u.composerReading = false
+		if u.terminal.SubmissionKey == 27 {
+			u.deferredInteractions[u.activeAgent] = false
+			u.rememberDraft(line)
+			continue
+		}
+		u.submissionIntent = session.IntentAutomatic
+		if u.terminal.SubmissionKey == '\t' {
+			u.submissionIntent = session.IntentQueue
+		}
 		u.commandMenu.dismiss(u.out)
 		if err != nil {
 			if err == io.EOF {
@@ -918,7 +947,11 @@ func (u *UI) startDemoPromptScript(ctx context.Context) func() {
 				timer.Stop()
 				return
 			}
-			u.input.inject([]byte(strings.TrimSpace(prompt) + "\r"))
+			key := "\r"
+			if index > 0 {
+				key = "\t"
+			}
+			u.input.inject([]byte(strings.TrimSpace(prompt) + key))
 		}
 	}()
 	return func() {
@@ -957,6 +990,9 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 	u.terminal.SetPrompt(yellow + "Directory to grant (Enter for " + sanitizeDiffLine(proposed, "<ESC>") + "): " + reset)
 	line, err := u.readLine()
 	u.terminal.SetPrompt(inputPrompt)
+	if u.terminal.SubmissionKey == 27 {
+		return "", false, errQuestionDeferred
+	}
 	if err != nil {
 		return "", false, err
 	}
@@ -978,6 +1014,9 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 	u.terminal.SetPrompt(yellow + "Grant read/write access to " + sanitizeDiffLine(selected, "<ESC>") + " for this session? [y/N] " + reset)
 	answer, err := u.readLine()
 	u.terminal.SetPrompt(inputPrompt)
+	if u.terminal.SubmissionKey == 27 {
+		return "", false, errQuestionDeferred
+	}
 	if err != nil {
 		return "", false, err
 	}
@@ -989,6 +1028,9 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 		u.terminal.SetPrompt(yellow + bold + "Confirm broad home access by typing YES: " + reset)
 		confirmation, confirmErr := u.readLine()
 		u.terminal.SetPrompt(inputPrompt)
+		if u.terminal.SubmissionKey == 27 {
+			return "", false, errQuestionDeferred
+		}
 		if confirmErr != nil {
 			return "", false, confirmErr
 		}
@@ -2242,4 +2284,15 @@ func (u *UI) printToolSummary() {
 		fmt.Fprintln(u.display, wrapANSI(line, u.width, "  "))
 	}
 	fmt.Fprintln(u.display)
+}
+
+// Observe a task that started while an idle composer was open. Once a busy
+// task has been observed, retain its identity through submission conflicts.
+func (u *UI) observeComposerTask() {
+	if !u.composerReading || u.observedTaskID != "" || u.manager == nil {
+		return
+	}
+	if summary, err := u.manager.Summary(u.activeAgent); err == nil {
+		u.observedTaskID = summary.ActiveTaskID
+	}
 }

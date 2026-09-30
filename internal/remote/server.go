@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"qcode/internal/session"
 	"qcode/internal/tui"
 )
 
@@ -493,6 +494,9 @@ func (m *Manager) routesWithAuth(auth *authStore, prefix ...string) http.Handler
 	api.HandleFunc("GET /api/v1/catalog", m.catalog)
 	api.HandleFunc("GET /api/v1/export", m.export)
 	api.HandleFunc("GET /api/v1/events", m.events)
+	api.HandleFunc("POST /api/v1/agents/{id}/cancel", m.cancelActive)
+	api.HandleFunc("POST /api/v1/prompts", m.prompt)
+	api.HandleFunc("POST /api/v1/prompts/{id}/cancel", m.cancelPrompt)
 	api.HandleFunc("POST /api/v1/actions", m.action)
 	api.HandleFunc("POST /api/v1/interactions/{id}/resolve", m.resolveInteraction)
 	if auth.mode == tui.RemoteModePureWebOpen {
@@ -566,7 +570,7 @@ func (m *Manager) index(w http.ResponseWriter, basePath string, mode tui.RemoteM
 func (m *Manager) snapshot(w http.ResponseWriter, r *http.Request) {
 	presentation := m.ui.RemotePresentation()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"runtime":      map[string]any{"sequence": presentation.Sequence, "agents": presentation.Agents, "interactions": presentation.Interactions},
+		"runtime":      map[string]any{"sequence": presentation.Sequence, "agents": presentation.Agents, "interactions": presentation.Interactions, "pending_inputs": presentation.PendingInputs, "steering_events": presentation.SteeringEvents},
 		"presentation": presentation, "actor": r.Header.Get("X-Qcode-Actor"),
 	})
 }
@@ -687,4 +691,69 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+type promptPresentation interface {
+	SubmitRemotePrompt(string, session.PromptSubmission) (session.Submission, error)
+	CancelRemoteInput(string, string) error
+}
+
+func (m *Manager) prompt(w http.ResponseWriter, r *http.Request) {
+	var input session.PromptSubmission
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		http.Error(w, "invalid prompt", http.StatusBadRequest)
+		return
+	}
+	ui, ok := m.ui.(promptPresentation)
+	if !ok {
+		http.Error(w, "structured prompts unavailable", http.StatusNotImplemented)
+		return
+	}
+	sub, err := ui.SubmitRemotePrompt(r.Header.Get("X-Qcode-Actor"), input)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, sub)
+}
+func (m *Manager) cancelPrompt(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		AgentID string `json:"agent_id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&input); err != nil {
+		http.Error(w, "invalid cancellation", http.StatusBadRequest)
+		return
+	}
+	ui, ok := m.ui.(promptPresentation)
+	if !ok {
+		http.Error(w, "unavailable", http.StatusNotImplemented)
+		return
+	}
+	if err := ui.CancelRemoteInput(input.AgentID, r.PathValue("id")); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"removed": true})
+}
+
+func (m *Manager) cancelActive(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		ObservedTaskID string `json:"observed_task_id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&input); err != nil {
+		http.Error(w, "invalid cancellation", http.StatusBadRequest)
+		return
+	}
+	ui, ok := m.ui.(interface{ CancelRemoteActive(string, string) error })
+	if !ok {
+		http.Error(w, "unavailable", http.StatusNotImplemented)
+		return
+	}
+	if err := ui.CancelRemoteActive(r.PathValue("id"), input.ObservedTaskID); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"cancelled": true})
 }

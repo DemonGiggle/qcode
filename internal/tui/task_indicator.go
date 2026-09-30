@@ -105,6 +105,9 @@ func (u *UI) drawTaskIndicator() {
 }
 
 func taskIndicatorMessage(status session.Status, queueDepth int, unicodeEnabled bool, now time.Time) string {
+	if status == session.StatusWaitingForApproval {
+		return dim + "Waiting for input | Ctrl+C to cancel | Enter steer | Tab queue | Esc review" + reset
+	}
 	if status != session.StatusRunning {
 		return ""
 	}
@@ -117,5 +120,5 @@ func taskIndicatorMessage(status session.Status, queueDepth int, unicodeEnabled 
 	if queueDepth > 0 {
 		queued = fmt.Sprintf("%s%d queued", interfaceGlyph(unicodeEnabled, " · ", " | "), queueDepth)
 	}
-	return dim + "Waiting (" + frame + ")" + queued + "  Ctrl+C to cancel" + reset
+	return dim + "Waiting (" + frame + ")" + queued + "  Ctrl+C to cancel | Enter steer | Tab queue" + reset
 }
