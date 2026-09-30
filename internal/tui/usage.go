@@ -21,7 +21,7 @@ func (u *UI) usageLabel() string {
 	}
 	label := fmt.Sprintf("I:%s O:%s%s", compactTokenCount(s.InputTokens), compactTokenCount(s.OutputTokens), suffix)
 	if u.width >= 100 {
-		label += " Σ:" + compactTokenCount(s.TotalTokens)
+		label += interfaceGlyph(u.unicode, " Σ:", " T:") + compactTokenCount(s.TotalTokens)
 	}
 	return label
 }

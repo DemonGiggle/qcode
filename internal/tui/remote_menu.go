@@ -80,7 +80,7 @@ func renderRemoteModeMenu(out interface{ Write([]byte) (int, error) }, modes []R
 		if index == selected {
 			prefix = "> "
 		}
-		line := prefix + name + " — " + detail
+		line := prefix + name + interfaceGlyph(UnicodeEnabled(), " — ", " - ") + detail
 		if color && index == selected {
 			line = cyan + bold + line + reset
 		}
@@ -132,7 +132,7 @@ func renderRemoteNetworkMenu(out interface{ Write([]byte) (int, error) }, networ
 		if index == selected {
 			prefix = "> "
 		}
-		line := fmt.Sprintf("%s%s — %s (subnet %s)", prefix, network.Name, network.Address, network.Subnet)
+		line := fmt.Sprintf("%s%s%s%s (subnet %s)", prefix, network.Name, interfaceGlyph(UnicodeEnabled(), " — ", " - "), network.Address, network.Subnet)
 		if color && index == selected {
 			line = cyan + bold + line + reset
 		}
@@ -258,12 +258,13 @@ func (u *UI) dismissRemoteMenuForInput() {
 }
 
 func renderRemoteActiveMenu(out interface{ Write([]byte) (int, error) }, status RemoteStatus, selected remoteMenuChoice, loginRows []string, loginURL, notice string, width int, color bool) int {
-	mode := "Pure Web · trusted LAN HTTP"
+	separator := interfaceGlyph(UnicodeEnabled(), " · ", " | ")
+	mode := "Pure Web" + separator + "trusted LAN HTTP"
 	if status.Mode == RemoteModePureWebOpen {
-		mode = "Pure Web (NO AUTH) · anyone with the URL can control qcode"
+		mode = "Pure Web (NO AUTH)" + separator + "anyone with the URL can control qcode"
 	}
 	if status.Mode == RemoteModeTailscale {
-		mode = "Tailscale · HTTPS and tailnet identity"
+		mode = "Tailscale" + separator + "HTTPS and tailnet identity"
 	}
 	rows := []string{
 		"Remote control active | " + mode,

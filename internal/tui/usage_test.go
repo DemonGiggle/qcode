@@ -68,7 +68,7 @@ func TestSessionUsageLabels(t *testing.T) {
 			}
 		}
 	}
-	u := &UI{runner: tokenRunner{usage: llm.SessionUsage{InputTokens: 120, OutputTokens: 30, TotalTokens: 150}}, width: 120}
+	u := &UI{runner: tokenRunner{usage: llm.SessionUsage{InputTokens: 120, OutputTokens: 30, TotalTokens: 150}}, width: 120, unicode: true}
 	if !strings.Contains(u.usageLabel(), "Σ:150") {
 		t.Fatal(u.usageLabel())
 	}

@@ -646,5 +646,6 @@ func sessionEntryLabel(entry session.Entry) string {
 	} else if entry.Busy {
 		preview = "Open elsewhere: " + preview
 	}
-	return sanitizeDiffLine(when+" · "+agents+" · "+preview, "<ESC>")
+	separator := interfaceGlyph(UnicodeEnabled(), " · ", " | ")
+	return sanitizeDiffLine(when+separator+agents+separator+preview, "<ESC>")
 }

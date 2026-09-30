@@ -49,7 +49,7 @@ func TestToolActivitySanitizesAndBoundsTargets(t *testing.T) {
 	}
 	long := strings.Repeat("x", maxActivityTargetRunes+1)
 	got = toolActivity(activityCall("read", `{"path":"`+long+`"}`))
-	if !strings.HasSuffix(got.Start, "…") || len([]rune(got.Start)) > len([]rune("Reading "))+maxActivityTargetRunes+1 {
+	if !strings.HasSuffix(got.Start, "...") || len([]rune(got.Start)) > len([]rune("Reading "))+maxActivityTargetRunes+3 {
 		t.Fatalf("bounded activity = %q", got.Start)
 	}
 	long = strings.Repeat("x", maxActivityTargetRunes)

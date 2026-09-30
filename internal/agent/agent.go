@@ -475,7 +475,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			return
 		}
 		injectionSeen = true
-		fmt.Fprint(a.out, "\n🚨 POSSIBLE PROMPT INJECTION: Untrusted content contains an instruction-like request. qcode is treating it as data. Further tool actions that can access data or cause side effects require your approval.\n\n")
+		fmt.Fprint(a.out, "\n[!] POSSIBLE PROMPT INJECTION: Untrusted content contains an instruction-like request. qcode is treating it as data. Further tool actions that can access data or cause side effects require your approval.\n\n")
 	}
 	for _, message := range a.messages[1 : len(a.messages)-1] {
 		if (message.Untrusted || a.restored) && trust.Suspicious(message.Content) {

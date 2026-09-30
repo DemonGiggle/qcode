@@ -48,7 +48,7 @@ func TestInjectionBlocksSideEffectAndShowsWarning(t *testing.T) {
 	if len(toolset.calls) != 1 || toolset.calls[0] != "read" {
 		t.Fatalf("unexpected executions: %v", toolset.calls)
 	}
-	if !strings.Contains(output.String(), "🚨 POSSIBLE PROMPT INJECTION") || strings.Contains(output.String(), "attacker.example") {
+	if !strings.Contains(output.String(), "[!] POSSIBLE PROMPT INJECTION") || strings.Contains(output.String(), "attacker.example") {
 		t.Fatalf("warning leaked content or is missing: %q", output.String())
 	}
 	var envelope struct {
@@ -113,7 +113,7 @@ func TestInjectionFromEverySourceBlocksCredentialRead(t *testing.T) {
 			if err := a.Run(context.Background(), "summarize this content"); err != nil {
 				t.Fatal(err)
 			}
-			if len(toolset.calls) != 1 || toolset.calls[0] != source || strings.Contains(output.String(), "TOP-SECRET-CREDENTIAL") || !strings.Contains(output.String(), "🚨 POSSIBLE PROMPT INJECTION") {
+			if len(toolset.calls) != 1 || toolset.calls[0] != source || strings.Contains(output.String(), "TOP-SECRET-CREDENTIAL") || !strings.Contains(output.String(), "[!] POSSIBLE PROMPT INJECTION") {
 				t.Fatalf("credential access was not blocked: calls=%v output=%q", toolset.calls, output.String())
 			}
 		})

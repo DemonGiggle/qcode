@@ -131,7 +131,7 @@ func renderThemeOption(option qtheme.Palette, selected bool, width int, color bo
 	if selected {
 		marker = "> "
 	}
-	name := option.Name + " · " + option.Appearance
+	name := option.Name + interfaceGlyph(UnicodeEnabled(), " · ", " | ") + option.Appearance
 	if option.ID == "default" {
 		name = "Default (Auto)"
 	}
@@ -173,7 +173,7 @@ func renderThemePreview(palette qtheme.Palette, width int, color bool) []string 
 		roleColor(palette.Diff, yellow, "~ modified line"),
 		roleColor(palette.Success, green, "+ added line") + "  " + roleColor(palette.Error, red, "- removed line"),
 		roleColor(palette.Status, magenta, "[MODE PLAN]") + "  " + roleColor(palette.Prompt, cyan, "[CTX 73% left]"),
-		roleColor(palette.Success, green, "✓ success") + "  " + roleColor(palette.Warning, yellow, "! warning") + "  " + roleColor(palette.Error, red, "× error"),
+		roleColor(palette.Success, green, interfaceGlyph(UnicodeEnabled(), "✓", "+")+" success") + "  " + roleColor(palette.Warning, yellow, "! warning") + "  " + roleColor(palette.Error, red, interfaceGlyph(UnicodeEnabled(), "×", "x")+" error"),
 	}
 	if palette.ID != "default" && color {
 		for index := 1; index < len(lines); index++ {

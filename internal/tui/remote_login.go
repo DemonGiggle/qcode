@@ -16,7 +16,7 @@ func (u *UI) showRemoteLogin(login RemoteLogin) {
 	qr, err := qrcode.New(login.URL, qrcode.Medium)
 	var rows []string
 	if err == nil {
-		rows = terminalQR(qr.Bitmap())
+		rows = terminalQRWithUnicode(qr.Bitmap(), u.unicode)
 	}
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
@@ -123,7 +123,7 @@ func (u *UI) remoteLoginRows(width, height int) []string {
 	}
 	login := u.remoteLogin
 	if login.OpenAccess {
-		rows := []string{"Remote link (NO AUTH — anyone with this URL can control qcode)"}
+		rows := []string{"Remote link (NO AUTH" + interfaceGlyph(u.unicode, " — ", " - ") + "anyone with this URL can control qcode)"}
 		for remaining := login.URL; len(remaining) > 0; {
 			n := min(len(remaining), width)
 			rows = append(rows, remaining[:n])
@@ -139,7 +139,7 @@ func (u *UI) remoteLoginRows(width, height int) []string {
 			return []string{truncateDiffLine("Enlarge the terminal or select Save QR as PNG.", width, false)}
 		}
 		for i := range rows {
-			rows[i] = truncateDiffLine(rows[i], width, true)
+			rows[i] = truncateDiffLine(rows[i], width, u.unicode)
 		}
 		return rows
 	}
@@ -164,7 +164,7 @@ func (u *UI) remoteLoginRows(width, height int) []string {
 		return []string{truncateDiffLine("Enlarge the terminal or select Save QR as PNG.", width, false)}
 	}
 	for i := range rows {
-		rows[i] = truncateDiffLine(rows[i], width, true)
+		rows[i] = truncateDiffLine(rows[i], width, u.unicode)
 	}
 	return rows
 }
@@ -183,7 +183,28 @@ func terminalLink(label, target string) string {
 }
 
 func terminalQR(bitmap [][]bool) []string {
+	return terminalQRWithUnicode(bitmap, true)
+}
+
+func terminalQRWithUnicode(bitmap [][]bool, unicodeEnabled bool) []string {
 	var rows []string
+	if !unicodeEnabled {
+		// Two spaces per module preserve the square QR geometry using only
+		// ASCII characters. Explicit backgrounds keep its contrast intact.
+		for _, modules := range bitmap {
+			var row strings.Builder
+			for _, black := range modules {
+				if black {
+					row.WriteString("\x1b[40m  ")
+				} else {
+					row.WriteString("\x1b[47m  ")
+				}
+			}
+			row.WriteString("\x1b[0m")
+			rows = append(rows, row.String())
+		}
+		return rows
+	}
 	for y := 0; y < len(bitmap); y += 2 {
 		var row strings.Builder
 		row.WriteString("\x1b[30;47m")

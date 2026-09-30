@@ -702,7 +702,7 @@ func selectStatusline(in io.Reader, out io.Writer, options []statuslineOption, i
 	statuses := make([]statuslineStatus, len(options))
 	for i, option := range options {
 		enabled := i < len(initial) && initial[i]
-		statuses[i] = statuslineStatus{id: option.id, label: option.id + " — " + option.description, enabled: enabled}
+		statuses[i] = statuslineStatus{id: option.id, label: option.id + interfaceGlyph(UnicodeEnabled(), " — ", " - ") + option.description, enabled: enabled}
 	}
 	current := 0
 	start := 0

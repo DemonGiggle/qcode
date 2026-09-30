@@ -1159,7 +1159,7 @@ func (u *UI) chooseModel(ctx context.Context) {
 	u.drawStatusBar()
 	message := fmt.Sprintf("%sModel: %s", green, selected)
 	if level != "" {
-		message += " · thinking: " + level
+		message += interfaceGlyph(u.unicode, " · thinking: ", " | thinking: ") + level
 	}
 	u.printSystemMessage(message + reset)
 }

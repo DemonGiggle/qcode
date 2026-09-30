@@ -31,3 +31,12 @@ func firstLocale(names ...string) string {
 	}
 	return ""
 }
+
+// interfaceGlyph selects only qcode's own decorations. User text, paths, and
+// model output retain their original characters in ASCII interface mode.
+func interfaceGlyph(unicodeEnabled bool, unicodeGlyph, asciiGlyph string) string {
+	if unicodeEnabled {
+		return unicodeGlyph
+	}
+	return asciiGlyph
+}

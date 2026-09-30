@@ -115,7 +115,7 @@ func taskIndicatorMessage(status session.Status, queueDepth int, unicodeEnabled 
 	frame := frames[int(now.UnixMilli()/100)%len(frames)]
 	queued := ""
 	if queueDepth > 0 {
-		queued = fmt.Sprintf(" · %d queued", queueDepth)
+		queued = fmt.Sprintf("%s%d queued", interfaceGlyph(unicodeEnabled, " · ", " | "), queueDepth)
 	}
 	return dim + "Waiting (" + frame + ")" + queued + "  Ctrl+C to cancel" + reset
 }

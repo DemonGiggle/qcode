@@ -119,7 +119,7 @@ func readActivityTarget(path string, arguments json.RawMessage) string {
 	suffix := ":" + strconv.Itoa(offset) + "-" + strconv.Itoa(end)
 	// Reserve room for the range so a long path cannot make the useful part of
 	// the activity title disappear when it is truncated for the terminal.
-	return truncateActivityTarget(path, maxActivityTargetRunes-utf8.RuneCountInString(suffix)-1) + suffix
+	return truncateActivityTarget(path, maxActivityTargetRunes-utf8.RuneCountInString(suffix)-len("...")) + suffix
 }
 
 func activity(action, start, completed string, category trace.ActivityCategory) trace.Activity {
@@ -207,7 +207,7 @@ func truncateActivityTarget(value string, maxRunes int) string {
 		count++
 		if count == maxRunes {
 			if utf8.RuneCountInString(value) > count {
-				out.WriteRune('…')
+				out.WriteString("...")
 			}
 			break
 		}

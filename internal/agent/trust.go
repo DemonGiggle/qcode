@@ -31,7 +31,7 @@ func (a *Agent) approveInjectionAction(ctx context.Context, call llm.ToolCall) e
 	if len(args) > 2048 {
 		return fmt.Errorf("action blocked after a prompt-injection warning: arguments are too long for review")
 	}
-	question := fmt.Sprintf("🚨 Possible prompt injection was found in untrusted content. Approve this exact %s call?\n%s", call.Name, args)
+	question := fmt.Sprintf("Warning: possible prompt injection was found in untrusted content. Approve this exact %s call?\n%s", call.Name, args)
 	answers, err := questioner(ctx, []Question{{Text: question, Options: []string{"Deny", "Approve once"}, AllowCustom: false}})
 	if err != nil {
 		return fmt.Errorf("prompt-injection approval failed: %w", err)

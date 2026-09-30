@@ -348,7 +348,7 @@ func formatQuestionWithFooter(item question.Question, index, total, width int, f
 		option = sanitizeDiffLine(strings.TrimSpace(option), "<ESC>")
 		if optionIndex < len(item.OptionDescriptions) {
 			if description := sanitizeDiffLine(strings.TrimSpace(item.OptionDescriptions[optionIndex]), "<ESC>"); description != "" {
-				option += " — " + description
+				option += interfaceGlyph(UnicodeEnabled(), " — ", " - ") + description
 			}
 		}
 		fmt.Fprintf(&output, "   %d) %s\n", optionIndex+1, wrapANSI(option, width, "      "))
