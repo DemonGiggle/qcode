@@ -26,6 +26,7 @@ type SavedToolCall struct {
 }
 
 type SavedState struct {
+	ArtifactVersion                                 uint64
 	ProviderSession                                 string
 	PendingImages                                   []llm.Image
 	Provider, Model, Thinking, Endpoint, System     string
@@ -97,6 +98,7 @@ func (a *Agent) publishCheckpoint() {
 	}
 	a.stateMu.RLock()
 	s.LastResponse, s.Usage = a.lastResponse, a.sessionUsage
+	s.ArtifactVersion = a.artifactVersion
 	a.stateMu.RUnlock()
 	if c := a.contextStatus.Load(); c != nil {
 		s.Remaining, s.Known, s.Estimated = c.remaining, c.known, c.estimated
@@ -194,6 +196,7 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 	a.contextWindow, a.contextOverride, a.contextMessages = s.ContextWindow, s.ContextOverride, s.ContextMessages
 	a.contextUsage, a.sessionUsage = s.ContextUsage, s.Usage
 	a.autoCompact, a.autoCompactThreshold = s.AutoCompact, s.AutoCompactThreshold
+	a.artifactVersion = s.ArtifactVersion
 	a.planMode.Store(s.PlanMode)
 	a.skillPlanMode.Store(s.SkillPlanMode)
 	a.interactiveMode.Store(s.InteractiveMode)
@@ -315,6 +318,7 @@ func (m *AgentManager) RestoreAgents(saved []session.SavedAgent, nextID int) err
 			s.summary.Error = "Interrupted when the previous process ended"
 		}
 		s.summary.QueueDepth = 0
+		s.summary.ActiveTaskID = ""
 	}
 	m.nextID = nextID
 	return nil

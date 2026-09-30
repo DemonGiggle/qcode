@@ -62,6 +62,8 @@ type managedSession struct {
 type promptRequest struct {
 	id           string
 	targetID     string
+	source       string
+	actor        string
 	prompt       string
 	compact      bool
 	done         chan struct{}
@@ -71,11 +73,14 @@ type promptRequest struct {
 	deadline     time.Time
 	finished     bool
 	abortErr     error
+	input        *taskInput
 }
 
 // AgentManager owns independent agent lifecycles and the shared workspace
 // mutation lock. Terminal presentation remains the UI's responsibility.
 type AgentManager struct {
+	onSteer func(string, string)
+
 	ctx                 context.Context
 	cancel              context.CancelFunc
 	mu                  sync.RWMutex
@@ -98,6 +103,7 @@ type AgentManager struct {
 	consultationTimeout time.Duration
 	work                []session.WorkRecord
 	consultationEvents  []session.ConsultationEvent
+	steeringEvents      []session.SteeringEvent
 }
 
 func NewAgentManager(ctx context.Context, maxAgents int) *AgentManager {
@@ -319,7 +325,7 @@ func (m *AgentManager) QueuedPrompts(id string) []session.QueuedPrompt {
 	}
 	items := make([]session.QueuedPrompt, len(s.queue))
 	for i, req := range s.queue {
-		items[i] = session.QueuedPrompt{RequestID: req.id, Prompt: req.prompt}
+		items[i] = session.QueuedPrompt{RequestID: req.id, Prompt: req.prompt, Source: req.source, Actor: req.actor, Intent: session.IntentQueue, State: session.InputPending}
 	}
 	return items
 }
@@ -377,6 +383,9 @@ func (m *AgentManager) submitRequest(id, task string, deadline time.Time, compac
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.submitRequestLocked(id, task, deadline, compact)
+}
+func (m *AgentManager) submitRequestLocked(id, task string, deadline time.Time, compact bool, attribution ...string) (*promptRequest, Submission, error) {
 	if m.shutdown {
 		return nil, Submission{}, ErrManagerClosed
 	}
@@ -402,8 +411,14 @@ func (m *AgentManager) submitRequest(id, task string, deadline time.Time, compac
 		prompt: strings.TrimSpace(task), compact: compact, done: make(chan struct{}),
 		journalIndex: len(m.work), deadline: deadline,
 	}
+	if len(attribution) > 0 {
+		req.source = attribution[0]
+	}
+	if len(attribution) > 1 {
+		req.actor = attribution[1]
+	}
 	m.work = append(m.work, session.WorkRecord{
-		RequestID: req.id, AgentID: id, AgentName: s.summary.Name, Model: s.summary.Model,
+		Source: req.source, Actor: req.actor, RequestID: req.id, AgentID: id, AgentName: s.summary.Name, Model: s.summary.Model,
 		Prompt: req.prompt, Status: "queued", Created: time.Now().UTC(), Consultation: !deadline.IsZero(),
 	})
 	position := 0
@@ -426,7 +441,9 @@ func (m *AgentManager) startRequestLocked(id string, s *managedSession, req *pro
 	} else {
 		runCtx, cancel = context.WithDeadline(m.ctx, req.deadline)
 	}
+	req.input = &taskInput{manager: m, request: req}
 	s.active = req
+	s.summary.ActiveTaskID = req.id
 	s.cancel = cancel
 	s.started = time.Now()
 	m.work[req.journalIndex].Status = "running"
@@ -446,7 +463,7 @@ func (m *AgentManager) startRequestLocked(id string, s *managedSession, req *pro
 		if req.compact {
 			outcome, err = runner.Compact(runCtx)
 		} else {
-			err = runner.Run(runCtx, req.prompt)
+			err = runner.runWithInput(runCtx, req.prompt, req.input)
 			outcome = runner.LastResponse()
 		}
 		if runCtx.Err() != nil {
@@ -476,7 +493,9 @@ func (m *AgentManager) finish(id string, req *promptRequest, err error, outcome 
 		m.work[req.journalIndex].ChangedFiles = append([]string(nil), s.summary.ChangedFiles...)
 	}
 	m.completeRequestLocked(req, outcome, err, s.summary.ChangedFiles)
+	m.cancelSteersLocked(req)
 	s.active = nil
+	s.summary.ActiveTaskID = ""
 	s.cancel = nil
 	duration := time.Since(s.started)
 	if err == nil {
@@ -843,7 +862,7 @@ func (t *managedToolset) createAgent(ctx context.Context, arguments json.RawMess
 	if task == "" {
 		return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q; no task assigned", summary.ID, summary.Model)}, nil
 	}
-	submission, err := t.manager.Submit(summary.ID, task)
+	submission, err := t.manager.SubmitPrompt(session.PromptSubmission{AgentID: summary.ID, Prompt: task, Intent: session.IntentQueue, Source: "delegation", Actor: t.id})
 	if err != nil {
 		return llm.ToolResult{
 			Output: fmt.Sprintf("created agent %s using model %q, but task assignment failed; the agent remains idle and can be retried with delegate_task", summary.ID, summary.Model),
@@ -866,7 +885,7 @@ func (t *managedToolset) delegate(ctx context.Context, arguments json.RawMessage
 	if err := ctx.Err(); err != nil {
 		return llm.ToolResult{}, err
 	}
-	submission, err := t.manager.Submit(args.AgentID, args.Prompt)
+	submission, err := t.manager.SubmitPrompt(session.PromptSubmission{AgentID: args.AgentID, Prompt: args.Prompt, Intent: session.IntentQueue, Source: "delegation", Actor: t.id})
 	if err != nil {
 		return llm.ToolResult{}, err
 	}
