@@ -4,7 +4,7 @@ GO ?= go
 AGG ?= agg
 BUILD_FLAGS := -trimpath -ldflags=-s\ -w\ -X\ main.version=$(VERSION)
 
-.PHONY: build test eval release clean demo-gif manual
+.PHONY: build test eval release clean demo-record demo-gif manual
 
 build:
 	mkdir -p bin
@@ -16,6 +16,9 @@ test:
 eval: build
 	cd tools/qcode-tester && $(GO) test ./...
 	cd tools/qcode-tester && $(GO) run ./cmd/qcode-tester --qcode-bin ../../bin/qcode
+
+demo-record: build
+	python3 scripts/record-demo.py
 
 # Requires agg (https://github.com/asciinema/agg). Keep the demo in an
 # explicit color theme so ANSI colors render consistently on every refresh.
