@@ -1074,7 +1074,7 @@ func (u *UI) replaySteeringEvents() {
 			message += " — " + item.Text
 		}
 		u.screenMu.Lock()
-		if view := u.views[event.AgentID]; view != nil {
+		if view := u.views[event.AgentID]; u.verbose && view != nil {
 			_, _ = view.display.writeLocked([]byte("\n" + sanitizeDiffLine(message, "<ESC>") + "\n"))
 		}
 		u.steeringCursor = event.Sequence

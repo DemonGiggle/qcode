@@ -2286,13 +2286,16 @@ func (u *UI) printToolSummary() {
 	fmt.Fprintln(u.display)
 }
 
-// Observe a task that started while an idle composer was open. Once a busy
-// task has been observed, retain its identity through submission conflicts.
+// Refresh the composer when its task finishes or starts from idle. Retain an
+// observed busy task's identity if another task replaces it, so a submission
+// cannot silently steer the next queued task.
 func (u *UI) observeComposerTask() {
-	if !u.composerReading || u.observedTaskID != "" || u.manager == nil {
+	if !u.composerReading || u.manager == nil {
 		return
 	}
 	if summary, err := u.manager.Summary(u.activeAgent); err == nil {
-		u.observedTaskID = summary.ActiveTaskID
+		if summary.ActiveTaskID == "" || u.observedTaskID == "" {
+			u.observedTaskID = summary.ActiveTaskID
+		}
 	}
 }
