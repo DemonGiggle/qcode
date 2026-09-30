@@ -175,3 +175,99 @@ func TestFixedLayoutReservesTwoRowsForWrappedStatus(t *testing.T) {
 		t.Fatal("want a status row")
 	}
 }
+
+func TestStatuslinePreservesLongWorkspaceTail(t *testing.T) {
+	const root = "/home/user/source/parent-folder-with-long-name/qcode"
+	for _, test := range []struct {
+		name    string
+		width   int
+		color   bool
+		unicode bool
+	}{
+		{"plain", 64, false, true},
+		{"colored", 84, true, true},
+		{"ascii", 84, true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			bar := statusBar("ollama", "qwen", root, test.width, test.unicode, test.color, "73% left", "I:1 O:2")
+			lines := strings.Split(bar, "\n")
+			if len(lines) != 2 {
+				t.Fatalf("want two status rows: %q", bar)
+			}
+			for _, line := range lines {
+				if visibleWidth(line) > test.width {
+					t.Fatalf("row exceeds width: %q", line)
+				}
+			}
+			for _, text := range []string{"parent-folder-with-long-name/qcode", "MODEL", "qwen", "CTX", "73% left", "TOK", "I:1 O:2"} {
+				if !strings.Contains(bar, text) {
+					t.Fatalf("status bar lost %q: %q", text, bar)
+				}
+			}
+		})
+	}
+}
+
+func TestStatuslineMovesWorkspaceToSecondRow(t *testing.T) {
+	bar := statusBar("ollama", "qwen", "/home/user/source/parent-folder-with-long-name/qcode", 48, true, false)
+	lines := strings.Split(bar, "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "[MODEL qwen]") || !strings.Contains(lines[1], "parent-folder-with-long-name/qcode]") {
+		t.Fatalf("want model and complete workspace tail on separate rows: %q", bar)
+	}
+	for _, line := range lines {
+		if visibleWidth(line) > 48 {
+			t.Fatalf("row exceeds width: %q", line)
+		}
+	}
+}
+
+func TestStatuslineWorkspaceTinyRowFallbackAndHidden(t *testing.T) {
+	const root = "/home/user/very-long-parent/very-long-project"
+	bar := statusBarWithStatuslineHidden("ollama", "qwen", root, 18, true, false, false, []string{"model"}, magenta, blue)
+	if !strings.Contains(bar, "[WS ") || !strings.Contains(bar, "…") || visibleWidth(bar) > 18 {
+		t.Fatalf("want WS shortened to fit a tiny row: %q", bar)
+	}
+	hidden := statusBarWithStatuslineHidden("ollama", "qwen", root, 80, true, false, false, []string{"ws"}, magenta, blue)
+	if strings.Contains(hidden, "[WS ") || strings.Contains(hidden, "very-long-project") {
+		t.Fatalf("hidden workspace is visible: %q", hidden)
+	}
+	web := statusBarWithRemoteColors("ollama", "qwen", root, 100, true, true, false, webStatusModelColor, webStatusWorkspaceColor)
+	if !strings.Contains(web, root) || !strings.Contains(web, webStatusWorkspaceColor) {
+		t.Fatalf("browser formatter lost full workspace or styling: %q", web)
+	}
+}
+
+func TestStatuslinePreservesHomeRelativeWorkspace(t *testing.T) {
+	for _, test := range []struct {
+		root    string
+		width   int
+		unicode bool
+		want    string
+	}{
+		{"~/work/foo", 33, true, "~/work/foo"},
+		{"~/source/company/work/foo", 37, true, "~/…/work/foo"},
+		{"~/source/company/work/foo", 39, false, "~/.../work/foo"},
+	} {
+		bar := statusBar("ollama", "qwen", test.root, test.width, test.unicode, false)
+		if !strings.Contains(bar, "[WS "+test.want+"]") || !strings.Contains(bar, "[MODEL qwen]") {
+			t.Fatalf("want home-relative workspace %q and model: %q", test.want, bar)
+		}
+		for _, line := range strings.Split(bar, "\n") {
+			if visibleWidth(line) > test.width {
+				t.Fatalf("status row exceeds width: %q", line)
+			}
+		}
+	}
+}
+
+func TestStatuslineClipsWorkspaceNameWithoutChangingParent(t *testing.T) {
+	const root = "~/workspace/this-folder-is-very-very-long"
+	bar := statusBarWithStatuslineHidden("ollama", "qwen", root, 30, true, false, false, []string{"model"}, magenta, blue)
+	if bar != "[WS ~/workspace/this-folder-…]" {
+		t.Fatalf("workspace parent must remain intact when clipping the name: %q", bar)
+	}
+	bar = statusBarWithStatuslineHidden("ollama", "qwen", root, 18, true, false, false, []string{"model"}, magenta, blue)
+	if bar != "[WS ~/…/this-fol…]" {
+		t.Fatalf("omitted parent must be marked explicitly: %q", bar)
+	}
+}

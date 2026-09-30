@@ -40,11 +40,6 @@ const skillPlanInputPrompt = cyan + bold + "(Skill plan)> " + reset
 
 const maxStepsNoticePrefix = "Reached the maximum of "
 
-// Keep the workspace path from crowding out the model and usage segments on
-// wide terminals. The path is still allowed to use less space when the
-// terminal itself is narrow.
-const maxWorkspaceStatusWidth = 24
-
 var qcodeBanner = []string{
 	` #####    #####    #####   ######  #######`,
 	`##   ##  ##       ##   ##  ##   ## ##     `,
@@ -1940,47 +1935,77 @@ func buildStatusBar(provider, model, root string, unicodeEnabled, color, remote 
 	return strings.Join(segments, separator)
 }
 
-// shortenWorkspacePath follows the usual shell prompt convention of showing
-// the home directory as ~ and eliding leading directories with an ellipsis,
-// while retaining as many trailing path components as the available width
-// allows. The final component (usually the project name) is kept whenever it
-// can fit.
+// workspaceMinimumPath keeps the last two complete folders and explicitly
+// marks any omitted leading folders.
+func workspaceMinimumPath(path string, unicodeEnabled bool) string {
+	prefix, parts := workspacePathParts(path)
+	if len(parts) <= 2 {
+		return filepath.Clean(path)
+	}
+	separator := string(filepath.Separator)
+	return prefix + workspacePathMarker(unicodeEnabled) + separator + strings.Join(parts[len(parts)-2:], separator)
+}
+
+func workspacePathParts(path string) (string, []string) {
+	separator := string(filepath.Separator)
+	clean := filepath.Clean(path)
+	prefix := ""
+	if strings.HasPrefix(clean, "~"+separator) {
+		prefix = "~" + separator
+		clean = strings.TrimPrefix(clean, prefix)
+	}
+	return prefix, strings.FieldsFunc(clean, func(r rune) bool { return r == filepath.Separator })
+}
+
+func workspacePathMarker(unicodeEnabled bool) string {
+	if unicodeEnabled {
+		return "…"
+	}
+	return "..."
+}
+
+// shortenWorkspacePath distinguishes omitted folders from clipped names.
+// Prefer complete trailing folders, then keep the parent and clip the final
+// name. Every removed ancestor is represented by an ellipsis directory.
 func shortenWorkspacePath(path string, width int, unicodeEnabled bool) string {
 	if width <= 0 || visibleWidth(path) <= width {
 		return path
 	}
-
 	separator := string(filepath.Separator)
-	marker := "…" + separator
-	if !unicodeEnabled {
-		marker = "..." + separator
+	prefix, parts := workspacePathParts(path)
+	if len(parts) == 0 {
+		return truncateDiffLine(path, width, unicodeEnabled)
 	}
-	prefix := ""
-	remainder := path
-	if strings.HasPrefix(path, "~"+separator) {
-		prefix = "~" + separator
-		remainder = strings.TrimPrefix(path, prefix)
-	}
-	parts := strings.Split(remainder, separator)
-	for index := 0; index < len(parts); index++ {
-		if parts[index] == "" {
-			continue
+	marker := workspacePathMarker(unicodeEnabled)
+	decoration := func(index int) string {
+		if index > 0 {
+			return prefix + marker + separator
 		}
-		tail := strings.Join(parts[index:], separator)
-		candidate := prefix + marker + tail
+		// Preserve the original root for paths whose ancestors are intact.
+		return strings.TrimSuffix(filepath.Clean(path), strings.Join(parts, separator))
+	}
+	for index := 0; index <= len(parts)-2; index++ {
+		candidate := decoration(index) + strings.Join(parts[index:], separator)
 		if visibleWidth(candidate) <= width {
 			return candidate
 		}
 	}
-
-	// A single directory name can itself exceed the budget. Keep the
-	// rightmost part of that name, which is more useful for identifying a
-	// workspace than truncating the complete status bar.
-	base := filepath.Base(path)
-	if prefix != "" {
-		base = prefix + base
+	base := parts[len(parts)-1]
+	if len(parts) >= 2 {
+		parent := len(parts) - 2
+		start := decoration(parent) + parts[parent] + separator
+		available := width - visibleWidth(start)
+		// Keep enough room for a visible part of the name and its marker.
+		if available >= visibleWidth(marker)+visibleWidth(string([]rune(base)[0])) {
+			return start + truncateDiffLine(base, available, unicodeEnabled)
+		}
 	}
-	return truncateDiffLine(base, width, unicodeEnabled)
+	start := decoration(len(parts) - 1)
+	available := width - visibleWidth(start)
+	if available > 0 {
+		return start + truncateDiffLine(base, available, unicodeEnabled)
+	}
+	return truncateDiffLine(start, width, unicodeEnabled)
 }
 
 func compactStatusBar(labels []string, color, unicodeEnabled, remote bool) string {

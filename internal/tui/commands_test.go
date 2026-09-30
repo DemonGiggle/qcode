@@ -513,29 +513,28 @@ func TestStatusBarFitsTerminalWidth(t *testing.T) {
 	}
 }
 
-func TestStatusBarShortensWorkspacePathBeforeTruncatingBar(t *testing.T) {
+func TestStatusBarPreservesWorkspaceAndTotalsAcrossRows(t *testing.T) {
 	got := statusBar("ollama", "qwen", "~/src/company/projects/qcode", 72, true, false, "73% left", "I:1.2K O:340")
-	if visibleWidth(got) > 72 {
-		t.Fatalf("status bar width = %d, want at most 72: %q", visibleWidth(got), got)
+	for _, line := range strings.Split(got, "\n") {
+		if visibleWidth(line) > 72 {
+			t.Fatalf("status row exceeds 72 columns: %q", line)
+		}
 	}
-	if !strings.Contains(got, "[WS ") || !strings.Contains(got, "…/") || !strings.Contains(got, "qcode]") {
-		t.Fatalf("status bar = %q, want an elided workspace path ending in qcode", got)
+	if !strings.Contains(got, "projects/qcode]") {
+		t.Fatalf("status bar must retain both trailing folders: %q", got)
 	}
 	if !strings.Contains(got, "[TOK I:1.2K O:340]") {
 		t.Fatalf("status bar = %q, workspace shortening displaced token totals", got)
 	}
 }
 
-func TestStatusBarLimitsWorkspacePathOnWideTerminals(t *testing.T) {
+func TestStatusBarShowsFullWorkspacePathOnWideTerminals(t *testing.T) {
 	got := statusBar("ollama", "qwen", "/home/user/src/company/projects/qcode", 120, true, false, "73% left", "I:1.2K O:340")
 	if visibleWidth(got) > 120 {
 		t.Fatalf("status bar width = %d, want at most 120: %q", visibleWidth(got), got)
 	}
-	if !strings.Contains(got, "[WS …/company/projects/qcode]") {
-		t.Fatalf("status bar = %q, want the workspace path capped to its useful tail", got)
-	}
-	if visibleWidth("…/company/projects/qcode") > maxWorkspaceStatusWidth {
-		t.Fatalf("workspace path exceeds cap: %q", got)
+	if !strings.Contains(got, "[WS /home/user/src/company/projects/qcode]") {
+		t.Fatalf("status bar = %q, want the full workspace path", got)
 	}
 }
 
@@ -547,7 +546,15 @@ func TestShortenWorkspacePathKeepsTrailingComponents(t *testing.T) {
 		want    string
 	}{
 		{path: "~/src/company/projects/qcode", width: 18, unicode: true, want: "~/…/projects/qcode"},
-		{path: "/home/user/src/company/projects/qcode", width: 13, unicode: true, want: "…/qcode"},
+		{path: "~/src/company/projects/qcode", width: 16, unicode: true, want: "~/…/projects/qc…"},
+		{path: "~/src/company/projects/qcode", width: 14, unicode: true, want: "~/…/qcode"},
+		{path: "/home/user/projects/qcode/", width: 16, unicode: true, want: "…/projects/qcode"},
+		{path: "/home/user/工作/專案", width: 11, unicode: true, want: "…/工作/專案"},
+		{path: "/home/user/projects/qcode", width: 18, unicode: false, want: ".../projects/qcode"},
+		{path: "/qcode", width: 20, unicode: true, want: "/qcode"},
+		{path: "/", width: 1, unicode: true, want: "/"},
+		{path: "/parent/an-extremely-long-folder-name", width: 8, unicode: true, want: "…/an-ex…"},
+		{path: "/home/user/src/company/projects/qcode", width: 13, unicode: true, want: "…/projects/q…"},
 		{path: "/home/user/src/company/projects/qcode", width: 16, unicode: false, want: ".../qcode"},
 	}
 	for _, test := range tests {
@@ -732,6 +739,38 @@ func TestSlashCommandMenuCountsWrappedRows(t *testing.T) {
 	for _, line := range strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n") {
 		if visibleWidth(line) > menu.width {
 			t.Fatalf("line width = %d: %q", visibleWidth(line), line)
+		}
+	}
+}
+
+func TestShortenWorkspacePathPreservesStructureWhenClippingName(t *testing.T) {
+	const path = "~/workspace/this-folder-is-very-very-long"
+	for _, test := range []struct {
+		path    string
+		width   int
+		unicode bool
+		want    string
+	}{
+		{path, 25, true, "~/workspace/this-folder-…"},
+		{path, 18, true, "~/workspace/this-…"},
+		{path, 13, true, "~/…/this-fol…"},
+		{path, 16, false, "~/workspace/t..."},
+		{path, 15, false, "~/.../this-f..."},
+		{"~/company/source/workspace/this-folder-is-very-very-long", 27, true, "~/…/workspace/this-folder-…"},
+		{"~/工作/這個資料夾名稱非常長", 15, true, "~/工作/這個資…"},
+		{"~/directly-under-home-with-a-long-name", 15, true, "~/directly-und…"},
+	} {
+		got := shortenWorkspacePath(test.path, test.width, test.unicode)
+		if got != test.want || visibleWidth(got) > test.width {
+			t.Errorf("shortenWorkspacePath(%q, %d, %t) = %q, want %q", test.path, test.width, test.unicode, got, test.want)
+		}
+	}
+	for _, unicode := range []bool{true, false} {
+		for width := 1; width <= 50; width++ {
+			got := shortenWorkspacePath(path, width, unicode)
+			if visibleWidth(got) > width || strings.HasPrefix(got, "~/this-folder") {
+				t.Fatalf("misleading or oversized workspace at width %d: %q", width, got)
+			}
 		}
 	}
 }

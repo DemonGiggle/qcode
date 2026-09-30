@@ -364,21 +364,19 @@ func renderStatusBarWithPriority(provider, model, root string, width int, unicod
 		return renderFilteredStatusBar(provider, model, wsPath, unicodeEnabled, color, remote, modelColor, workspaceColor, labels, combined, map[string]bool{}, shortMode)
 	}
 
-	// fitWS shortens the workspace path so the given single-line set fits
-	// when possible, keeping the useful tail visible.
+	// Reserve the final two folders and home prefix whenever WS can show them on
+	// a row of its own. A candidate with less space must try another split.
+	minimumWS := visibleWidth(workspaceMinimumPath(root, unicodeEnabled))
+	workspaceRowBudget := width - visibleWidth(renderSet([]string{statusSegmentWS}, "", false, nil))
 	fitWS := func(set []string, shortMode bool, dropped map[string]bool) string {
 		if width <= 0 || !containsWS(set) {
 			return root
 		}
-		base := renderSet(set, "", shortMode, dropped)
-		available := width - visibleWidth(base)
-		if available > maxWorkspaceStatusWidth {
-			available = maxWorkspaceStatusWidth
+		available := width - visibleWidth(renderSet(set, "", shortMode, dropped))
+		if minimumWS <= workspaceRowBudget {
+			available = max(available, minimumWS)
 		}
-		if available > 0 && visibleWidth(root) > available {
-			if available > maxWorkspaceStatusWidth {
-				available = maxWorkspaceStatusWidth
-			}
+		if available > 0 {
 			return shortenWorkspacePath(root, available, unicodeEnabled)
 		}
 		return root
@@ -423,34 +421,8 @@ func renderStatusBarWithPriority(provider, model, root string, width int, unicod
 		var first, second string
 		for k := len(set) - 1; k >= 1; k-- {
 			line1, line2 := set[:k], set[k:]
-			ws1, ws2 := root, root
-			if containsWS(line1) {
-				// Fit WS against its own line so the other line is not
-				// needlessly squeezed.
-				base := renderSet(line1, "", shortMode, dropped)
-				available := width - visibleWidth(base)
-				if available > maxWorkspaceStatusWidth {
-					available = maxWorkspaceStatusWidth
-				}
-				if available > 0 && visibleWidth(root) > available {
-					ws1 = shortenWorkspacePath(root, available, unicodeEnabled)
-				}
-			}
-			if containsWS(line2) {
-				base := renderSet(line2, "", shortMode, dropped)
-				available := width - visibleWidth(base)
-				if available > maxWorkspaceStatusWidth {
-					available = maxWorkspaceStatusWidth
-				}
-				if available > 0 && visibleWidth(root) > available {
-					ws2 = shortenWorkspacePath(root, available, unicodeEnabled)
-				}
-			}
-			_ = ws2
-			// WS appears on exactly one line; use the shortened path for
-			// that line and root (unused) for the other.
-			r1 := renderSet(line1, ws1, shortMode, dropped)
-			r2 := renderSet(line2, ws2, shortMode, dropped)
+			r1 := renderSet(line1, fitWS(line1, shortMode, dropped), shortMode, dropped)
+			r2 := renderSet(line2, fitWS(line2, shortMode, dropped), shortMode, dropped)
 			if fits(r1) && fits(r2) {
 				first, second, found = r1, r2, true
 				break
