@@ -36,6 +36,7 @@ var tipTexts = []string{
 	"Press Up/Down at the prompt to recall earlier input and return to your unfinished draft.",
 	"In pickers type to filter, move with Up/Down or PgUp/PgDn, Enter to apply, Esc to go back, Ctrl+C to cancel all.",
 	"Run `/compact` to summarize old context; watch STEP, CONTEXT % left, and MODE PLAN in the status bar.",
+	"Run `/theme` to preview terminal color palettes; Enter applies and saves your choice for future sessions.",
 	"Set `NO_COLOR=1` before launch to disable styling, or `QCODE_ASCII=1` for ASCII interface glyphs.",
 
 	// Agents and queued work.

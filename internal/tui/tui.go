@@ -21,6 +21,7 @@ import (
 	"qcode/internal/prompt"
 	"qcode/internal/session"
 	"qcode/internal/skills"
+	qtheme "qcode/internal/theme"
 )
 
 const (
@@ -136,13 +137,14 @@ type maxStepsReader interface {
 	MaxSteps() int
 }
 
-// RuntimePreferenceWriter persists changes made by the main interactive tab.
-// It is injected so the UI remains independent from the configuration file
-// format and can report write failures without changing runtime state back.
+// RuntimePreferenceWriter persists preferences changed by the TUI. Model,
+// step-limit, and statusline controls are main-tab settings; themes apply to
+// the whole terminal and can be saved from any tab.
 type RuntimePreferenceWriter interface {
 	PersistModel(model, thinking string) error
 	PersistMaxSteps(maxSteps int) error
 	PersistStatuslineHidden(hidden []string) error
+	PersistTheme(id string) error
 }
 
 type planController interface {
@@ -279,6 +281,8 @@ type UI struct {
 	persistence          *sessionPersistence
 	sessionHost          *UI
 	statuslineHidden     []string
+	themeMu              sync.RWMutex
+	themePalette         qtheme.Palette
 	remoteService        RemoteService
 	remoteLogin          *RemoteLogin
 	remoteQR             []string
@@ -356,6 +360,7 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 		width:            width,
 		height:           height,
 		unicode:          unicodeEnabled,
+		themePalette:     qtheme.Default(),
 		views:            make(map[string]*agentView),
 		drafts:           make(map[string]string),
 		approvals:        make(map[string][]*approvalRequest),
@@ -385,7 +390,7 @@ func (u *UI) printExitMessage() {
 	if u.persistence == nil {
 		return
 	}
-	fmt.Fprint(u.out, exitMessage(ColorEnabled(u.out)))
+	fmt.Fprint(u.out, u.themeOutput(exitMessage(ColorEnabled(u.out))))
 }
 
 func exitMessage(color bool) string {
@@ -537,13 +542,86 @@ func (u *UI) SetStartupNotice(message string, requireChoice bool) {
 	u.startupChoice = requireChoice
 }
 
-// SetRuntimePreferenceWriter enables persistence for the main interactive
-// tab. Demo and restored UIs only receive this when normal interactive
-// startup configured it.
+// SetRuntimePreferenceWriter enables persistence for interactive preferences.
 func (u *UI) SetRuntimePreferenceWriter(writer RuntimePreferenceWriter) {
 	u.screenMu.Lock()
 	u.runtimePreferences = writer
 	u.screenMu.Unlock()
+}
+
+// SetTheme selects a terminal palette without persisting it. Startup uses the
+// configured value; the /theme command applies and saves interactive choices.
+func (u *UI) SetTheme(id string) error {
+	palette, ok := qtheme.Lookup(id)
+	if !ok {
+		return fmt.Errorf("unknown theme %q", id)
+	}
+	u.setThemePalette(palette)
+	return nil
+}
+
+func (u *UI) setThemePalette(palette qtheme.Palette) {
+	u.themeMu.Lock()
+	u.themePalette = palette
+	u.themeMu.Unlock()
+	u.screenMu.Lock()
+	u.statusBarText = ""
+	u.inputFrame = ""
+	if u.fixedInput {
+		u.paintFixedLocked(0)
+	} else if u.statusActive {
+		u.repaintActiveLocked(0)
+		u.drawStatusBarLocked()
+	}
+	u.screenMu.Unlock()
+}
+
+func (u *UI) currentTheme() qtheme.Palette {
+	u.themeMu.RLock()
+	defer u.themeMu.RUnlock()
+	if u.themePalette.ID == "" {
+		return qtheme.Default()
+	}
+	return u.themePalette
+}
+
+func (u *UI) outputTheme() qtheme.Palette {
+	if u.out == nil || !ColorEnabled(u.out) {
+		return qtheme.Default()
+	}
+	return u.currentTheme()
+}
+
+func (u *UI) themeOutput(text string) string {
+	if u.out == nil || !ColorEnabled(u.out) {
+		return text
+	}
+	return qtheme.TransformANSI(text, u.currentTheme())
+}
+
+type themeWriter struct {
+	out     io.Writer
+	palette qtheme.Palette
+	color   bool
+}
+
+func (w themeWriter) Write(data []byte) (int, error) {
+	originalLength := len(data)
+	if w.color {
+		data = []byte(qtheme.TransformANSI(string(data), w.palette))
+	}
+	n, err := w.out.Write(data)
+	if err != nil {
+		return 0, err
+	}
+	if n != len(data) {
+		return 0, io.ErrShortWrite
+	}
+	return originalLength, nil
+}
+
+func (u *UI) themedSelectorWriter() io.Writer {
+	return themeWriter{out: u.terminal, palette: u.currentTheme(), color: u.out != nil && ColorEnabled(u.out)}
 }
 
 // SetDemoPromptScript configures prompts that are injected into the line
@@ -733,6 +811,14 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		if len(fields) > 0 && fields[0] == "/statusline" {
 			u.handleStatuslineCommand(fields)
+			continue
+		}
+		if len(fields) > 0 && fields[0] == "/theme" {
+			if len(fields) != 1 {
+				u.printSystemMessage(yellow + "Usage: /theme" + reset)
+			} else {
+				u.chooseTheme()
+			}
 			continue
 		}
 		switch line {
@@ -1019,7 +1105,7 @@ func (u *UI) chooseModel(ctx context.Context) {
 		u.beginRawSelector()
 		var result selectorResult
 		var selectErr error
-		selected, result, modelQuery, selectErr = selectModelWithQuery(u.input, u.terminal, models, u.model, modelQuery, visible, u.width, ColorEnabled(u.out))
+		selected, result, modelQuery, selectErr = selectModelWithQuery(u.input, u.themedSelectorWriter(), models, u.model, modelQuery, visible, u.width, ColorEnabled(u.out))
 		u.input.setRaw(false)
 		u.endRawSelector()
 		if selectErr != nil {
@@ -1180,7 +1266,7 @@ func (u *UI) selectThinkingLevelWithBack(runner modelRunner, model string, visib
 	u.printSystemMessage(dim + "Select a thinking level; Esc returns to the model list; Ctrl+C cancels." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
-	selected, accepted, back, err := selectThinkingWithBack(u.input, u.terminal, capability.Levels, current, visible, u.width, ColorEnabled(u.out))
+	selected, accepted, back, err := selectThinkingWithBack(u.input, u.themedSelectorWriter(), capability.Levels, current, visible, u.width, ColorEnabled(u.out))
 	u.input.setRaw(false)
 	u.endRawSelector()
 	if err != nil || !accepted {
@@ -1688,8 +1774,11 @@ func (u *UI) renderStatusBarLocked(force bool) {
 	u.statusBarText = bar
 	lines := strings.Split(bar, "\n")
 	start := u.height - len(lines) + 1
+	palette := u.currentTheme()
+	color := ColorEnabled(u.out)
 	fmt.Fprint(u.out, "\x1b[s")
 	for i, line := range lines {
+		line = renderThemeStatusBarLine(line, u.width, palette, color)
 		fmt.Fprintf(u.out, "\x1b[%d;1H\x1b[2K%s", start+i, line)
 	}
 	// Clear a freed row when shrinking from two lines to one so the old

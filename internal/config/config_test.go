@@ -56,6 +56,7 @@ func TestCandidatePathsWindows(t *testing.T) {
 func TestLoadLayersConfiguration(t *testing.T) {
 	dir := t.TempDir()
 	high := writeConfig(t, dir, "high.toml", `provider = "openai"
+theme = "dracula"
 model = ""
 max_steps = 48
 sandbox = true
@@ -71,6 +72,7 @@ autoload_paths = [" high-auto ", "low-auto", ""]
 `)
 	low := writeConfig(t, dir, "low.toml", `provider = "ollama"
 model = "qwen"
+theme = "nord-light"
 base_url = "http://low.test"
 api_key = "low-key"
 thinking = "high"
@@ -99,7 +101,7 @@ autoload_paths = ["low-auto", " /opt/auto-skills ", ""]
 	if got, want := strings.Join(inspected, ","), strings.Join([]string{low, high}, ","); got != want {
 		t.Fatalf("inspected = %q, want %q", got, want)
 	}
-	if cfg.Provider != "openai" || cfg.Model != "qwen" || cfg.BaseURL != "http://low.test" || cfg.APIKey != "low-key" || cfg.Thinking != "high" {
+	if cfg.Provider != "openai" || cfg.Model != "qwen" || cfg.BaseURL != "http://low.test" || cfg.APIKey != "low-key" || cfg.Thinking != "high" || cfg.Theme != "dracula" {
 		t.Fatalf("string settings = %+v", cfg)
 	}
 	if cfg.ContextWindow == nil || *cfg.ContextWindow != 8192 || cfg.AutoCompactThreshold == nil || *cfg.AutoCompactThreshold != 70 || cfg.DisableAutoCompact == nil || *cfg.DisableAutoCompact || cfg.MaxSteps == nil || *cfg.MaxSteps != 48 || cfg.Sandbox == nil || !*cfg.Sandbox || cfg.DangerSkipTLSVerify == nil || !*cfg.DangerSkipTLSVerify || cfg.AgentTimeout == nil || *cfg.AgentTimeout != "90s" {
@@ -156,6 +158,7 @@ func TestValidationSkipsInvalidValues(t *testing.T) {
 		{"auto_compact_threshold = 100\n", "auto_compact_threshold"},
 		{"max_steps = 0\n", "max_steps"},
 		{"agent_timeout = \"0s\"\n", "agent_timeout"},
+		{"theme = \"not-a-theme\"\n", "theme must be one of"},
 	} {
 		t.Run(tc.message, func(t *testing.T) {
 			path := writeConfig(t, t.TempDir(), "config.toml", tc.content)
@@ -169,7 +172,7 @@ func TestValidationSkipsInvalidValues(t *testing.T) {
 
 func TestLoadReturnsEmptyWhenNoFileExists(t *testing.T) {
 	cfg, inspected, diagnostics := load([]string{filepath.Join(t.TempDir(), "missing.toml")})
-	if len(inspected) != 0 || len(diagnostics) != 0 || cfg.Provider != "" || cfg.Model != "" || len(cfg.Skills.Paths) != 0 {
+	if len(inspected) != 0 || len(diagnostics) != 0 || cfg.Provider != "" || cfg.Model != "" || cfg.Theme != "" || len(cfg.Skills.Paths) != 0 {
 		t.Fatalf("load = (%+v, %q, %v), want empty result", cfg, inspected, diagnostics)
 	}
 	if cfg.SandboxCommandPaths != nil {

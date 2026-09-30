@@ -4,6 +4,10 @@ provider = "ollama"
 # Model identifier passed to the selected provider.
 model = "qwen2.5-coder:7b"
 
+# Terminal palette. Omit this field or choose "default" to keep the terminal's
+# current ANSI colors and background. /theme opens a live-preview picker.
+# theme = "catppuccin-mocha"
+
 # Optional thinking level for a model with an explicit capability entry. qcode
 # omits this field for unknown models; use values such as off, low, medium, high, max.
 # thinking = "high"

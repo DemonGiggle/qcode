@@ -65,9 +65,12 @@ type runtimePreferenceRecorder struct {
 	modelCalls  int
 	stepsCalls  int
 	statusCalls int
+	theme       string
+	themeCalls  int
 	modelErr    error
 	maxStepsErr error
 	statusErr   error
+	themeErr    error
 }
 
 func (r *runtimePreferenceRecorder) PersistModel(model, thinking string) error {
@@ -86,6 +89,12 @@ func (r *runtimePreferenceRecorder) PersistStatuslineHidden(hidden []string) err
 	r.statusCalls++
 	r.hidden = append([]string(nil), hidden...)
 	return r.statusErr
+}
+
+func (r *runtimePreferenceRecorder) PersistTheme(id string) error {
+	r.themeCalls++
+	r.theme = id
+	return r.themeErr
 }
 
 type configurableModelRunner struct {
@@ -108,7 +117,7 @@ func TestMatchingSlashCommands(t *testing.T) {
 		want []string
 	}{
 		{line: "", want: nil},
-		{line: "/", want: []string{"/agent", "/bash", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/history", "/interactive", "/learn", "/maxsteps", "/model", "/new", "/plan", "/resume", "/remote", "/skill", "/skillplan", "/quit", "/statusline", "/tool", "/verbose"}},
+		{line: "/", want: []string{"/agent", "/bash", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/history", "/interactive", "/learn", "/maxsteps", "/model", "/new", "/plan", "/resume", "/remote", "/skill", "/skillplan", "/quit", "/statusline", "/theme", "/tool", "/verbose"}},
 		{line: "/d", want: []string{"/diff"}},
 		{line: "/h", want: []string{"/help", "/history"}},
 		{line: "/m", want: []string{"/maxsteps", "/model"}},
@@ -118,6 +127,7 @@ func TestMatchingSlashCommands(t *testing.T) {
 		{line: "/ski", want: []string{"/skill", "/skillplan"}},
 		{line: "/skillp", want: []string{"/skillplan"}},
 		{line: "/st", want: []string{"/statusline"}},
+		{line: "/th", want: []string{"/theme"}},
 		{line: "/qu", want: []string{"/quit"}},
 		{line: "/v", want: []string{"/verbose"}},
 		{line: "/unknown", want: nil},

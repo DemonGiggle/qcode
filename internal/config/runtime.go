@@ -15,12 +15,12 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/pelletier/go-toml/v2/unstable"
+	"qcode/internal/theme"
 )
 
-// RuntimePreferenceWriter stores the preferences changed by the interactive
-// main agent. It deliberately writes only the user configuration layer; the
-// normal configuration precedence rules still decide whether those values
-// are effective on a later startup.
+// RuntimePreferenceWriter stores preferences changed by the interactive TUI.
+// It deliberately writes only the user configuration layer; normal config
+// precedence still decides whether those values are effective next startup.
 type RuntimePreferenceWriter struct {
 	mu   sync.Mutex
 	path string
@@ -143,6 +143,25 @@ func (w *RuntimePreferenceWriter) PersistStatuslineHidden(hidden []string) error
 	}
 	value := encodeStatuslineHidden(normalized)
 	return w.persist(map[string]*string{"statusline_hidden": &value})
+}
+
+// PersistTheme records the selected terminal palette in the user config.
+func (w *RuntimePreferenceWriter) PersistTheme(id string) error {
+	if w == nil {
+		return errors.New("runtime preference writer is nil")
+	}
+	id = strings.ToLower(strings.TrimSpace(id))
+	if !theme.ValidID(id) {
+		return fmt.Errorf("unknown theme %q", id)
+	}
+	if !utf8.ValidString(id) {
+		return errors.New("theme contains invalid UTF-8")
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	value := tomlString(id)
+	return w.persist(map[string]*string{"theme": &value})
 }
 
 func normalizeStatuslineHidden(hidden []string) ([]string, error) {
@@ -348,7 +367,7 @@ func runtimeConfigEntries(data []byte) (map[string]runtimeConfigEntry, int, erro
 				continue
 			}
 			name := string(key.Data)
-			if name != "model" && name != "thinking" && name != "max_steps" && name != "statusline_hidden" {
+			if name != "model" && name != "thinking" && name != "max_steps" && name != "statusline_hidden" && name != "theme" {
 				continue
 			}
 			value := expression.Value()
@@ -368,7 +387,7 @@ func runtimeConfigEntries(data []byte) (map[string]runtimeConfigEntry, int, erro
 
 func renderRuntimeKeys(changes map[string]*string, newline string) []byte {
 	var output bytes.Buffer
-	for _, key := range []string{"model", "thinking", "max_steps", "statusline_hidden"} {
+	for _, key := range []string{"model", "thinking", "max_steps", "statusline_hidden", "theme"} {
 		value, ok := changes[key]
 		if !ok || value == nil {
 			continue

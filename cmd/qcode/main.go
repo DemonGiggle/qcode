@@ -99,6 +99,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	var configuredSkillPaths []string
 	var configuredAutoloadPaths []string
 	var configuredStatuslineHidden []string
+	var configuredTheme string
 	var sandboxCommandPathFlags sandboxCommandPathsFlag
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -153,6 +154,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		configuredSkillPaths = append([]string(nil), cfg.Skills.Paths...)
 		configuredAutoloadPaths = append([]string(nil), cfg.Skills.AutoloadPaths...)
 		configuredStatuslineHidden = append([]string(nil), cfg.StatuslineHidden...)
+		configuredTheme = cfg.Theme
 		setFlags := make(map[string]bool)
 		flags.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
 		if setFlags["sandbox-command-path"] {
@@ -310,6 +312,11 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	// updates do not corrupt the editable input line.
 	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
 	ui.SetStatuslineHidden(configuredStatuslineHidden)
+	if configuredTheme != "" {
+		if err := ui.SetTheme(configuredTheme); err != nil {
+			return err
+		}
+	}
 	var runtimePreferences *config.RuntimePreferenceWriter
 	if !opts.demo {
 		var preferenceErr error
@@ -434,6 +441,11 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		if err := ui.EnableSessions(store, func(snap session.Snapshot) (*tui.UI, error) {
 			staged := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
 			staged.SetStatuslineHidden(configuredStatuslineHidden)
+			if configuredTheme != "" {
+				if err := staged.SetTheme(configuredTheme); err != nil {
+					return nil, err
+				}
+			}
 			staged.SetRuntimePreferenceWriter(runtimePreferences)
 			staged.SetSkillCatalogLoader(loadSkills)
 			staged.SetSkillLocations(skillLocations)

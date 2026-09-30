@@ -8,6 +8,7 @@ import (
 
 	"github.com/mattn/go-runewidth"
 	"qcode/internal/session"
+	qtheme "qcode/internal/theme"
 )
 
 // renderInput receives committed editor state after every edit, including
@@ -143,7 +144,7 @@ func (u *UI) paintFixedLocked(direction int) {
 		screenRows[1] = tabBar(u.manager.List(), u.activeAgent, u.views, u.width, u.unicode, ColorEnabled(u.out))
 	}
 	if outputHeight > 0 && u.display != nil {
-		page := u.activeViewportLocked().page(historyRows(u.display.Snapshot(), u.width), outputHeight, historyDirection)
+		page := u.activeViewportLocked().page(historyRowsForTheme(u.display.Snapshot(), u.width, u.outputTheme()), outputHeight, historyDirection)
 		for i, row := range page {
 			screenRows[i+2] = row.text
 		}
@@ -249,7 +250,11 @@ func (u *UI) writeFixedScreenLocked(screenRows []string, cursorRow, cursorColumn
 		if !full && screenRows[row] == u.inputScreenRows[row] {
 			continue
 		}
-		fmt.Fprintf(&output, "\x1b[%d;1H\x1b[2K%s\x1b[0m", row, screenRows[row])
+		painted := screenRows[row]
+		if ColorEnabled(u.out) {
+			painted = qtheme.PaintRow(painted, u.width, u.currentTheme())
+		}
+		fmt.Fprintf(&output, "\x1b[%d;1H\x1b[2K%s\x1b[0m", row, painted)
 	}
 	fmt.Fprintf(&output, "\x1b[%d;%dH\x1b[?25h", cursorRow, cursorColumn)
 	if _, err := u.out.WriteString(output.String()); err != nil {

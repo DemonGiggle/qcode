@@ -1,6 +1,10 @@
 package tui
 
-import "strings"
+import (
+	"strings"
+
+	qtheme "qcode/internal/theme"
+)
 
 // viewport has one owner: UI.screenMu. The anchor is a logical line ID and
 // byte offset in its unstyled text, independent of incoming output and width.
@@ -54,6 +58,15 @@ func historyRows(snapshot historySnapshot, width int) []historyRow {
 		}
 	}
 	return rows
+}
+
+func historyRowsForTheme(snapshot historySnapshot, width int, palette qtheme.Palette) []historyRow {
+	snapshot.lines = append([]historyLine(nil), snapshot.lines...)
+	for index := range snapshot.lines {
+		snapshot.lines[index].text = qtheme.TransformANSI(snapshot.lines[index].text, palette)
+	}
+	snapshot.style = qtheme.TransformANSI(snapshot.style, palette)
+	return historyRows(snapshot, width)
 }
 
 func (v *viewport) start(rows []historyRow, size int) int {

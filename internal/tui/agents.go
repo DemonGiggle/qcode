@@ -119,7 +119,7 @@ func (u *UI) selectAgentList(ctx context.Context) {
 	visible = min(len(entries), visible)
 	u.input.setRaw(true)
 	u.beginRawSelector()
-	selected, accepted, err := selectAgent(u.input, u.terminal, entries, u.activeAgent, visible, u.width, ColorEnabled(u.out))
+	selected, accepted, err := selectAgent(u.input, u.themedSelectorWriter(), entries, u.activeAgent, visible, u.width, ColorEnabled(u.out))
 	u.input.setRaw(false)
 	u.endRawSelector()
 	if err != nil {
@@ -193,7 +193,7 @@ func (u *UI) selectAgentModel(ctx context.Context, runner modelRunner) (string, 
 	for {
 		u.input.setRaw(true)
 		u.beginRawSelector()
-		selected, result, nextQuery, selectErr := selectModelWithQuery(u.input, u.terminal, models, u.model, modelQuery, visible, u.width, ColorEnabled(u.out))
+		selected, result, nextQuery, selectErr := selectModelWithQuery(u.input, u.themedSelectorWriter(), models, u.model, modelQuery, visible, u.width, ColorEnabled(u.out))
 		modelQuery = nextQuery
 		u.input.setRaw(false)
 		u.endRawSelector()
@@ -297,7 +297,7 @@ func (d *agentDisplay) writeLocked(data []byte) (int, error) {
 		return len(data), nil
 	}
 	if d.ui.activeAgent == d.id && d.ui.terminal != nil && (!d.ui.statusActive || !d.ui.activeViewportLocked().browsing) {
-		return d.ui.terminal.Write(data)
+		return d.ui.terminal.Write([]byte(d.ui.themeOutput(string(data))))
 	}
 	return len(data), nil
 }
@@ -711,7 +711,7 @@ func (u *UI) repaintActiveLocked(direction int) {
 		return
 	}
 	snapshot := u.display.Snapshot()
-	rows := historyRows(snapshot, u.width)
+	rows := historyRowsForTheme(snapshot, u.width, u.outputTheme())
 	v := u.activeViewportLocked()
 	statusN := u.statusLinesLocked()
 	page := v.page(rows, max(1, u.height-3-statusN), direction)
@@ -729,7 +729,7 @@ func (u *UI) repaintActiveLocked(direction int) {
 			output.WriteByte('\n')
 		}
 	} else {
-		output.WriteString(snapshot.style)
+		output.WriteString(u.themeOutput(snapshot.style))
 		// Reestablish the unfinished line's cursor as well as its contents, so
 		// a carriage-return rewrite continues in the same place after paging.
 		last := snapshot.lines[len(snapshot.lines)-1]
@@ -751,7 +751,7 @@ func (u *UI) repaintActiveLocked(direction int) {
 	u.drawStatusBarLocked()
 	u.drawNavigationLocked()
 	if !v.browsing && u.out != nil {
-		fmt.Fprint(u.out, snapshot.style)
+		fmt.Fprint(u.out, u.themeOutput(snapshot.style))
 	}
 }
 
@@ -760,7 +760,7 @@ func (u *UI) drawNavigationLocked() {
 		return
 	}
 	message := truncateDiffLine("History paused | PgUp/PgDn | PgDn to bottom resumes", u.width, u.unicode)
-	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s%s%s\x1b[u", u.statusTaskRowLocked(), dim, message, reset)
+	fmt.Fprint(u.out, u.themeOutput(fmt.Sprintf("\x1b[s\x1b[%d;1H\x1b[2K%s%s%s\x1b[u", u.statusTaskRowLocked(), dim, message, reset)))
 }
 
 func (u *UI) drawTabBar() {
@@ -777,7 +777,7 @@ func (u *UI) drawTabBarLocked() {
 		return
 	}
 	bar := tabBar(u.manager.List(), u.activeAgent, u.views, u.width, u.unicode, ColorEnabled(u.out))
-	fmt.Fprintf(u.out, "\x1b[s\x1b[1;1H\x1b[2K%s\x1b[u", bar)
+	fmt.Fprint(u.out, u.themeOutput(fmt.Sprintf("\x1b[s\x1b[1;1H\x1b[2K%s\x1b[u", bar)))
 }
 
 func tabBar(summaries []session.Summary, active string, views map[string]*agentView, width int, unicodeEnabled, color bool) string {

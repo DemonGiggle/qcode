@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+	"qcode/internal/theme"
 )
 
 const fileName = "config.toml"
@@ -51,7 +52,8 @@ type Config struct {
 	Sandbox              *bool     `toml:"sandbox"`
 	SandboxCommandPaths  []string  `toml:"sandbox_command_paths"`
 	DangerSkipTLSVerify  *bool     `toml:"danger_skip_tls_verify"`
-	StatuslineHidden   []string  `toml:"statusline_hidden"`
+	StatuslineHidden     []string  `toml:"statusline_hidden"`
+	Theme                string    `toml:"theme"`
 }
 
 // Load returns the configuration assembled from every existing configuration
@@ -168,6 +170,9 @@ func validate(path string, cfg Config) error {
 			}
 		}
 	}
+	if cfg.Theme != "" && !theme.ValidID(cfg.Theme) {
+		return fmt.Errorf("parse config %s: theme must be one of default, catppuccin-mocha, dracula, gruvbox-dark, solarized-dark, nord-dark, catppuccin-latte, alucard, gruvbox-light, solarized-light, nord-light", path)
+	}
 	return nil
 }
 
@@ -239,6 +244,9 @@ func merge(dst *Config, incoming Config) {
 	}
 	if incoming.StatuslineHidden != nil {
 		dst.StatuslineHidden = append([]string(nil), incoming.StatuslineHidden...)
+	}
+	if incoming.Theme != "" {
+		dst.Theme = incoming.Theme
 	}
 	dst.Skills.Paths = appendUniquePaths(dst.Skills.Paths, incoming.Skills.Paths)
 	dst.Skills.AutoloadPaths = appendUniquePaths(dst.Skills.AutoloadPaths, incoming.Skills.AutoloadPaths)
