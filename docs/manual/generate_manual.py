@@ -385,6 +385,10 @@ def setup_fonts(pdf: Manual):
 
 
 def h1(pdf: Manual, title: str):
+    # Give numbered chapters a clear start; reserve space for their opening
+    # content so a heading cannot be stranded at the bottom of a page.
+    if (title[:1].isdigit() and pdf.get_y() > 35) or pdf.will_page_break(40):
+        pdf.add_page()
     pdf.set_font("Serif", "B", 18)
     pdf.set_text_color(20, 25, 35)
     pdf.start_section(title, level=0)
@@ -396,6 +400,8 @@ def h1(pdf: Manual, title: str):
 
 
 def h2(pdf: Manual, title: str):
+    if pdf.will_page_break(30):
+        pdf.add_page()
     pdf.set_font("Sans", "B", 12)
     pdf.set_text_color(30, 60, 110)
     pdf.start_section(title, level=1)
@@ -406,7 +412,7 @@ def h2(pdf: Manual, title: str):
 def body(pdf: Manual, text: str):
     pdf.set_font("Sans", "", 10)
     pdf.set_text_color(35, 35, 35)
-    pdf.multi_cell(0, 5.8, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.multi_cell(0, 5.4, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(2)
 
 
@@ -416,8 +422,8 @@ def bullets(pdf: Manual, items: list[str]):
     for it in items:
         x0 = pdf.l_margin
         pdf.set_x(x0)
-        pdf.cell(6, 5.8, chr(8226))
-        pdf.multi_cell(0, 5.8, it, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(6, 5.4, chr(8226))
+        pdf.multi_cell(0, 5.4, it, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(2)
 
 
@@ -427,17 +433,18 @@ def numbered(pdf: Manual, items: list[str]):
     for i, it in enumerate(items, 1):
         x0 = pdf.l_margin
         pdf.set_x(x0)
-        pdf.cell(8, 5.8, f"{i}.")
-        pdf.multi_cell(0, 5.8, it, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(8, 5.4, f"{i}.")
+        pdf.multi_cell(0, 5.4, it, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(2)
 
 
 def code(pdf: Manual, text: str):
-    pdf.set_fill_color(243, 244, 246)
-    pdf.set_font("Mono", "", 9)
-    pdf.set_text_color(25, 25, 30)
-    pdf.multi_cell(0, 5.4, text, fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.ln(3)
+    with pdf.unbreakable() as block:
+        block.set_fill_color(243, 244, 246)
+        block.set_font("Mono", "", 9)
+        block.set_text_color(25, 25, 30)
+        block.multi_cell(0, 5.4, text, fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        block.ln(3)
 
 
 def tip(pdf: Manual, text: str):
@@ -448,12 +455,14 @@ def tip(pdf: Manual, text: str):
     pdf.cell(0, 6, "Tip", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_font("Sans", "", 10)
     pdf.set_text_color(35, 35, 35)
-    pdf.multi_cell(0, 5.8, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.multi_cell(0, 5.4, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(2)
 
 
 def figure(pdf: Manual, img: Path, caption: str, w: int = 170):
-    if pdf.get_y() > 190:
+    with Image.open(img) as image:
+        height = w * image.height / image.width
+    if pdf.will_page_break(height + 22):
         pdf.add_page()
     pdf.image(str(img), w=w, x=(210 - w) / 2)
     pdf.ln(2)
@@ -526,7 +535,7 @@ def build_pdf(images: dict[str, Path]):
     pdf.multi_cell(
         0,
         5.5,
-        "In this manual: install once, tour the screen, ask and queue work,\n"
+        "In this manual: install once, tour the screen, try practical use cases,\n"
         "clarifying questions, switch models, use agents, plan, skills, memory,\n"
         "web tools, sessions, browser control, and settings.",
         align="C",
@@ -539,7 +548,8 @@ def build_pdf(images: dict[str, Path]):
     body(
         pdf,
         "Read chapters 1-3 to start. Keep chapters 4 and 15 nearby as a command "
-        "reference. Chapters 5-12 are task guides you can read when you need them: "
+        "reference. The Use cases pages after chapter 3 offer complete example workflows. "
+        "Chapters 5-12 are task guides you can read when you need them: "
         "models, agents, planning, skills, memory, web, sessions, and phone/browser control.",
     )
     bullets(
@@ -593,8 +603,9 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             "Type `/` to see up to five matching commands. Type more to filter, Tab to complete the first match, Esc to close.",
-            "Left/Right, Home/End move in the line. Ctrl+Left/Right jumps by word. Ctrl+W deletes a word. Ctrl+A/E jump to ends.",
-            "PageUp/PageDown scrolls history, even while the agent works. Scrolling pauses the live view; PageDown to the bottom resumes it.",
+            "Left/Right moves in the input. Ctrl+Left/Right jumps by word. Ctrl+W deletes a word. Ctrl+A/E jump to the input's beginning/end.",
+            "PageUp/PageDown scrolls history with two overlapping rows of context, even while the agent works. Scrolling pauses the live view; PageDown to the bottom resumes it.",
+            "Home jumps to the oldest retained transcript; End jumps to the latest and resumes live output. In browser text fields, Home/End still edit text.",
             "Alt+Q expands a long queue so you can scroll it; Alt+Q again folds it back.",
             "Ctrl+C cancels the running prompt. Queued prompts wait their turn.",
         ],
@@ -641,6 +652,71 @@ def build_pdf(images: dict[str, Path]):
     )
     tip(pdf, "Turn it on when tasks are ambiguous (which database, which scope). Leave it off for strict hands-off runs.")
 
+    # Practical recipes keep existing chapter numbers stable.
+    pdf.add_page()
+    h1(pdf, "Use cases: understand and fix")
+    body(pdf, "These are example requests, not built-in commands. Replace paths, commands, and symptoms with those from your project. Review the resulting files and command output before accepting a change.")
+    h2(pdf, "Understand an unfamiliar repository")
+    body(pdf, "Goal: find the entry points and learn how to run the project before making changes.")
+    numbered(pdf, [
+        "Start qcode in the project folder and submit the example below.",
+        "Ask a follow-up about the part you need to change. Use /history to revisit the explanation.",
+        "Check the cited files and confirm the suggested commands against the project's README.",
+    ])
+    code(pdf, "Explain this repository without changing files. Identify the\nentry points, how to run it, and how to run its tests. Cite the\nfiles you used, and list anything you could not confirm.")
+    body(pdf, "Result to look for: a file-grounded starting guide with clear run and test commands, plus open questions.")
+    h2(pdf, "Fix a bug and queue the next step")
+    body(pdf, "Goal: reproduce a specific failure, make a focused fix, and check the result.")
+    numbered(pdf, [
+        "Use /interactive on if expected behavior needs clarification; then describe the failure and a reproduction command.",
+        "While the fix runs, submit the follow-up below. It waits in the active agent's FIFO queue.",
+        "Review the diff with /diff and inspect test output. Ask for an explanation if the checks fail.",
+    ])
+    code(pdf, "Fix the login timeout: retry once after a temporary network\nfailure, but never retry invalid credentials. Reproduce it\nwith the login tests before changing the handler.\n\n# Submit while the first request is running:\nRun the login tests after the fix and summarize the results.")
+    body(pdf, "Result to look for: a small diff and observed test results, with any remaining failure stated explicitly.")
+
+    pdf.add_page()
+    h1(pdf, "Use cases: plan and divide work")
+    h2(pdf, "Plan a change before editing")
+    body(pdf, "Goal: settle scope and review the approach before implementation.")
+    numbered(pdf, [
+        "On an idle agent, enter /plan and describe the change below.",
+        "Answer design questions, then use /plan show to review the proposal. Request revisions if needed.",
+        "Use /plan act only when ready to implement. Review the diff and the planned checks afterward; /plan off leaves without implementing.",
+    ])
+    code(pdf, "/plan\nPlan pagination for the search results. Inspect the current\nAPI and UI, identify compatibility concerns, and propose\nacceptance checks before changing files.\n/plan show\n/plan act")
+    body(pdf, "Result to look for: an agreed plan followed by changes that meet its acceptance checks.")
+    h2(pdf, "Use independent agents for implementation and investigation")
+    body(pdf, "Goal: keep a focused implementation moving while another tab investigates a separate question.")
+    numbered(pdf, [
+        "Give main the implementation task. Use /agent new to pick a model for a helper; rename its displayed ID with /agent rename <id> review-tests.",
+        "In the helper tab, ask for a read-only review of relevant tests and missing edge cases. Switch tabs with Ctrl+PageUp/PageDown.",
+        "Bring the helper's findings back to main, request the needed checks, and review the combined result.",
+    ])
+    code(pdf, "# Main prompt:\nAdd the agreed pagination behavior to the search endpoint.\n\n# Helper prompt:\nRead the search tests without changing files. Identify\nmissing pagination edge cases and report the file locations.")
+    tip(pdf, "Agents share the workspace. Give them distinct responsibilities; avoid asking two tabs to edit the same files at once. Each tab has its own history and queue.")
+
+    pdf.add_page()
+    h1(pdf, "Use cases: reuse and continue")
+    h2(pdf, "Turn a repeated review into a skill")
+    body(pdf, "Goal: make a repeatable checklist available in future work.")
+    numbered(pdf, [
+        "Start /skillplan with the example below and answer questions about scope, inputs, and validation.",
+        "Review with /skillplan show; request edits until the draft describes your actual workflow.",
+        "Use /skillplan create to write the reviewed skill, then /skill to enable it before the next review.",
+    ])
+    code(pdf, "/skillplan Create a database migration review checklist.\nCheck rollback behavior, existing data compatibility,\nand validation commands. Report risks with file references.\n/skillplan show\n/skillplan create\n/skill")
+    body(pdf, "Result to look for: an enabled, reusable skill whose instructions and completion checks you have reviewed.")
+    h2(pdf, "Resume work and share its outcome")
+    body(pdf, "Goal: continue a saved conversation and produce a readable handoff.")
+    numbered(pdf, [
+        "Return to the same project folder, start qcode, and use /resume to choose the saved session.",
+        "Use /history to find the last completed answer. Ask for current status and remaining work before continuing; interrupted tools are not rerun automatically.",
+        "Use /export pretty for a shareable HTML conversation, or /export raw when the handoff needs detailed activity.",
+    ])
+    code(pdf, "/resume\nSummarize the completed changes and remaining work. Verify\nthe current files before continuing the unfinished task.\n/export pretty")
+    tip(pdf, "To continue from a phone on a trusted network, use /remote and redeem the QR link. The browser controls the same live session; its /export downloads the HTML. Close the connection when finished.")
+
     # 4 Commands
     h1(pdf, "4. Slash commands at a glance")
     body(pdf, "Type `/help` to list commands or `/help <name>` for one command. The leading `/` is optional in the name. Agent, skill, learning, plan, remote, model, tool, and interactive commands are covered in their chapters below.")
@@ -658,6 +734,7 @@ def build_pdf(images: dict[str, Path]):
             ("/verbose", "Show or hide detailed action traces."),
             ("/maxsteps [N]", "Show or change the model-turn limit."),
             ("/statusline", "Show, hide, or reset status bar parts."),
+            ("/theme", "Preview, apply, and save a terminal color theme."),
             ("/compact", "Summarize old context to make room."),
             ("/export", "Export conversations or full transcript as HTML."),
             ("/quit, /exit", "Save the session and exit qcode."),
@@ -704,7 +781,7 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             ("/agent", "Create an agent (same as /agent new)."),
-            ("/agent new [name]", "Create an agent, optionally named."),
+            ("/agent new [model]", "Create an agent, optionally with a model ID."),
             ("/agent list", "Pick and switch with Up/Down + Enter."),
             ("/agent switch <id>", "Jump directly to one agent."),
             ("/agent rename <id> <name>", "Give an agent a new display name."),
@@ -835,10 +912,13 @@ def build_pdf(images: dict[str, Path]):
 
     # 13 Config
     h1(pdf, "13. Settings you actually change")
-    body(pdf, "Most daily choices live in the terminal (`/model`, `/maxsteps`, `/statusline`, `/tool`). Use a config file only for defaults you always want.")
+    body(pdf, "Most daily choices live in the terminal (`/model`, `/maxsteps`, `/statusline`, `/theme`, `/tool`). Use a config file only for defaults you always want.")
+    h2(pdf, "Terminal colors and workspace visibility")
+    body(pdf, "Use /theme to preview terminal palettes with Up/Down. Enter applies and saves the choice; Esc or Ctrl+C cancels. Default (Auto) follows your terminal. Dark and light choices include Catppuccin, Dracula/Alucard, Gruvbox, Solarized, and Nord. The setting is terminal-wide and saves from any agent tab; it does not change browser colors.")
+    body(pdf, "WS uses available status bar space and keeps the final two complete folders when possible, using a second row as needed. Home-relative paths retain ~/; omitted parents appear as an ellipsis folder, for example ~/.../work/foo. If the final folder name must be clipped, its ending gets an ellipsis: ~/workspace/this-folder-is... (the final dots shorten the name).")
     code(
         pdf,
-        "provider = \"ollama\"\nmodel = \"qwen2.5-coder:7b\"\nmax_steps = 32\nsandbox = true",
+        "provider = \"ollama\"\nmodel = \"qwen2.5-coder:7b\"\nmax_steps = 32\ntheme = \"catppuccin-mocha\"\nsandbox = true",
     )
     bullets(
         pdf,
@@ -889,6 +969,7 @@ def build_pdf(images: dict[str, Path]):
             ("/export", "Save pretty or raw HTML."),
             ("/remote", "Browser control via QR link."),
             ("/statusline", "Choose status bar parts."),
+            ("/theme", "Preview and save terminal colors."),
             ("/maxsteps", "Show/set step limit."),
             ("/clear", "Clear view and redraw header."),
             ("/quit, /exit", "Save session and exit."),
@@ -924,6 +1005,7 @@ def build_pdf(images: dict[str, Path]):
             "1. Getting started",
             "2. Touring the terminal",
             "3. Asking, queueing, and history",
+            "Use cases: understand and fix; plan and divide work; reuse and continue",
             "4. Slash commands at a glance",
             "5. Choosing models and providers",
             "6. Working with multiple agents",
