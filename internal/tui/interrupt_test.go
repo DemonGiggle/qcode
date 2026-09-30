@@ -105,11 +105,12 @@ func TestInterruptReaderRoutesHistoryBoundariesDuringTask(t *testing.T) {
 			t.Run(fmt.Sprintf("%q/split=%v", sequence.value, split), func(t *testing.T) {
 				reader := newInterruptReader(nil)
 				calls := 0
-				reader.setHistoryBoundaryHandler(func(beginning bool) {
+				reader.setHistoryBoundaryHandler(func(beginning bool) bool {
 					calls++
 					if beginning != sequence.beginning {
 						t.Fatalf("beginning = %v, want %v", beginning, sequence.beginning)
 					}
+					return true
 				})
 				cancelled := false
 				reader.setCancel(func() { cancelled = true })
@@ -144,7 +145,7 @@ func TestInterruptReaderRoutesHistoryBoundariesDuringTask(t *testing.T) {
 
 func TestInterruptReaderForwardsHistoryBoundariesInRawMode(t *testing.T) {
 	reader := newInterruptReader(nil)
-	reader.setHistoryBoundaryHandler(func(bool) { t.Fatal("raw key navigated transcript") })
+	reader.setHistoryBoundaryHandler(func(bool) bool { t.Fatal("raw key navigated transcript"); return true })
 	reader.setRaw(true)
 	for _, sequence := range historyBoundarySequences {
 		reader.route([]byte(sequence.value))
@@ -313,6 +314,30 @@ func TestSelectorKeyKeepsTerminalEscapeSequencesTogether(t *testing.T) {
 		key, err := readSelectorKey(reader)
 		if err != nil || key != want {
 			t.Fatalf("key = %q, want %q, err = %v", key, want, err)
+		}
+	}
+}
+
+func TestInterruptReaderForwardsHistoryBoundariesWhileEditing(t *testing.T) {
+	for _, sequence := range historyBoundarySequences {
+		for _, split := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%q/split=%v", sequence.value, split), func(t *testing.T) {
+				reader := newInterruptReader(nil)
+				calls := 0
+				reader.setHistoryBoundaryHandler(func(bool) bool { calls++; return false })
+				input := []byte(sequence.value + "draft")
+				if split {
+					for _, key := range input {
+						reader.route([]byte{key})
+					}
+				} else {
+					reader.route(input)
+				}
+				buffer := make([]byte, len(input))
+				if _, err := io.ReadFull(reader, buffer); err != nil || string(buffer) != string(input) || calls != 1 {
+					t.Fatalf("editor input = %q, calls = %d, err = %v", buffer, calls, err)
+				}
+			})
 		}
 	}
 }

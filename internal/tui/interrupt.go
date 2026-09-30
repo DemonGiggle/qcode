@@ -65,7 +65,7 @@ type interruptReader struct {
 	injectMu sync.Mutex
 	cancel   context.CancelFunc
 	page     func(int)
-	boundary func(bool)
+	boundary func(bool) bool
 	tab      func(int)
 	queue    func()
 	err      error
@@ -93,7 +93,9 @@ func (r *interruptReader) setPageHandler(page func(int)) {
 	r.mu.Unlock()
 }
 
-func (r *interruptReader) setHistoryBoundaryHandler(boundary func(bool)) {
+// The handler returns true when history browsing consumes the key. Otherwise
+// the complete terminal sequence is forwarded to the prompt editor.
+func (r *interruptReader) setHistoryBoundaryHandler(boundary func(bool) bool) {
 	r.mu.Lock()
 	r.boundary = boundary
 	r.mu.Unlock()
@@ -304,7 +306,11 @@ func (r *interruptReader) route(input []byte) {
 	input = append(pending, input...)
 	for len(input) > 0 {
 		if beginning, length, ok := matchHistoryBoundarySequence(input); ok && boundary != nil {
-			boundary(beginning)
+			if !boundary(beginning) {
+				for _, key := range input[:length] {
+					r.data <- key
+				}
+			}
 			input = input[length:]
 			continue
 		}

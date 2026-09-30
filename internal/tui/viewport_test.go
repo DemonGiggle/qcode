@@ -154,6 +154,7 @@ func TestHistoryBoundaryJumpsPreserveDraftAndResumeLiveOutput(t *testing.T) {
 				fmt.Fprintf(u.display, "line %d\n", i)
 			}
 			u.renderInput(inputPrompt, "draft", 3)
+			u.showPage(1)
 			u.input.route([]byte("\x1b[H"))
 			v := u.activeViewportLocked()
 			oldest := historyRows(u.display.Snapshot(), u.width)[0]
@@ -427,5 +428,32 @@ func TestConcurrentPagingAndOutput(t *testing.T) {
 	u.resetPage()
 	if len(u.display.Lines()) != 140 {
 		t.Fatal("paging dropped output")
+	}
+}
+
+func TestHistoryBoundaryKeysEditPromptInLiveView(t *testing.T) {
+	for _, resumeKey := range []string{"", "\x1b[F", pageDownSequence} {
+		t.Run(fmt.Sprintf("resumeKey=%q", resumeKey), func(t *testing.T) {
+			u, _ := pagingTestUI(t)
+			for i := 0; i < 40; i++ {
+				u.display.AddLine(fmt.Sprintf("line %d", i))
+			}
+			if resumeKey != "" {
+				u.input.route([]byte(pageUpSequence))
+				if !u.activeViewportLocked().browsing {
+					t.Fatal("PageUp did not enter history browsing")
+				}
+				u.input.route([]byte(resumeKey))
+				if u.activeViewportLocked().browsing {
+					t.Fatal("history navigation did not restore live view")
+				}
+			}
+			u.input.route([]byte("draft\x1b[HX\x1b[FY\r"))
+			editor := lineedit.NewTerminal(readWriter{Reader: u.input, Writer: io.Discard}, inputPrompt)
+			line, err := editor.ReadLine()
+			if err != nil || line != "XdraftY" || u.activeViewportLocked().browsing {
+				t.Fatalf("Home/End must edit the live prompt: line=%q err=%v viewport=%+v", line, err, u.activeViewportLocked())
+			}
+		})
 	}
 }

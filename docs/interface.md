@@ -6,7 +6,7 @@ The prompt is pinned above the task indicator and status bar from launch. It dis
 
 Typing `/` opens up to five matching command suggestions directly above the prompt. Type more characters to filter them or press Tab to complete the first match. Suggestions stay in their own area while output streams, and disappear when the draft no longer matches a command; they are not saved in conversation history.
 
-Input editing follows terminal conventions: Left/Right moves by character, Ctrl+Left/Right and Alt+Left/Right move by word, Alt+B/F provide Meta word movement, Ctrl+W deletes the previous word, and Ctrl+A/E move to the beginning/end of the line. Home/End navigate the transcript.
+Input editing follows terminal conventions: Left/Right moves by character, Ctrl+Left/Right and Alt+Left/Right move by word, Alt+B/F provide Meta word movement, Ctrl+W deletes the previous word, and Ctrl+A/E move to the beginning/end of the line. When the current view includes the end of the output, Home/End move to the beginning/end of the prompt. When the view is above the end, Home/End navigate the transcript.
 
 Set `NO_COLOR=1` to disable response styling. UTF-8 terminals use Unicode interface glyphs; other locales fall back to ASCII without disabling color. Set `QCODE_ASCII=1` to force the ASCII-safe display mode.
 
@@ -51,7 +51,7 @@ Interactive mode always records concise colored activity events for tool calls a
 
 Use Page Up and Page Down to scroll through qcode's output history, including while an agent is running. Each page retains two visible rows from the previous page for reading context, including wrapped text. Very short views move at least one row. Scrolling back pauses the live view: new output is still recorded, but the page you are reading stays in place. Page Down to the latest content resumes live output.
 
-Home jumps to the oldest retained transcript row and pauses live output. End jumps to the latest content and resumes live output. These keys navigate the transcript even when the queue panel is expanded. In the `/remote` browser page, use the **Beginning** and **Latest** buttons, or Home/End while focus is outside text fields, command panels, and the expanded queue list. Home/End keep their normal editing behavior in browser text fields.
+When the current view is above the end of the output, Home jumps to the oldest retained transcript row and End jumps to the latest content and resumes live output. When the view includes the end of the output, Home/End move the prompt cursor to the beginning/end. This depends on the visible position, including after resizing or changes to the prompt layout. History browsing is per agent tab; an expanded queue does not change these Home/End bindings. In the `/remote` browser page, use the **Beginning** and **Latest** buttons, or Home/End while focus is outside text fields, command panels, and the expanded queue list. Home/End keep their normal editing behavior in browser text fields.
 
 Each agent tab remembers its reading position across tab switches and terminal resizing. Completion and cancellation do not force a paused view to the bottom. Directory approval requests return to live output so the question is visible before you answer. History is bounded; if the content you were reading is evicted, the next repaint shows the oldest retained content.
 

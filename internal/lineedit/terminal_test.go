@@ -229,6 +229,8 @@ func TestHomeAndEndSupportCommonTerminalSequences(t *testing.T) {
 		keys string
 		want string
 	}{
+		{name: "csi-H-and-F", keys: "one two\x1b[HX\x1b[FY\r", want: "Xone twoY"},
+		{name: "ss3-H-and-F", keys: "one two\x1bOHX\x1bOFY\r", want: "Xone twoY"},
 		{name: "csi-1-and-4", keys: "one two\x1b[1~X\x1b[4~Y\r", want: "Xone twoY"},
 		{name: "rxvt-7-and-8", keys: "one two\x1b[7~X\x1b[8~Y\r", want: "Xone twoY"},
 	} {

@@ -213,6 +213,7 @@ func TestHistoryBoundaryNavigatesTranscriptWithExpandedQueue(t *testing.T) {
 		u.display.AddLine("transcript line")
 	}
 	u.renderInput(inputPrompt, "draft", 3)
+	u.showPage(1)
 	u.toggleQueuePanel()
 	u.showPage(-1)
 	queue := *u.activeQueueLocked()

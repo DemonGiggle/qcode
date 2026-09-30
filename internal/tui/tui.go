@@ -2142,21 +2142,28 @@ func (u *UI) showPage(direction int) {
 	u.repaintActiveLocked(direction)
 }
 
-func (u *UI) showHistoryBoundary(beginning bool) {
-	u.commandMenu.reset()
+func (u *UI) showHistoryBoundary(beginning bool) bool {
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
 	v := u.activeViewportLocked()
+	if u.display == nil {
+		return false
+	}
+	rows := historyRows(u.display.Snapshot(), u.width)
+	if v.atBottom(rows) {
+		if v.browsing {
+			v.browsing = false
+			u.repaintActiveLocked(0)
+		}
+		return false
+	}
+	u.commandMenu.reset()
 	v.browsing = beginning
 	if beginning {
-		rows := historyRows(u.display.Snapshot(), u.width)
-		if len(rows) == 0 {
-			v.browsing = false
-		} else {
-			v.anchor = rows[0].position
-		}
+		v.anchor = rows[0].position
 	}
 	u.repaintActiveLocked(0)
+	return true
 }
 
 func terminalSize(out *os.File) (int, int) {

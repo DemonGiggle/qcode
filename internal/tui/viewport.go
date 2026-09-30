@@ -9,8 +9,9 @@ import (
 // viewport has one owner: UI.screenMu. The anchor is a logical line ID and
 // byte offset in its unstyled text, independent of incoming output and width.
 type viewport struct {
-	browsing bool
-	anchor   historyPosition
+	browsing    bool
+	anchor      historyPosition
+	visibleRows int
 }
 
 type historyPosition struct {
@@ -83,8 +84,19 @@ func (v *viewport) start(rows []historyRow, size int) int {
 	return start
 }
 
+// atBottom checks the current row position against the actual output height.
+// Resizing, rewrapping, or removing footer rows can bring a paused view to the
+// bottom without a PageDown key changing its stored browsing flag.
+func (v *viewport) atBottom(rows []historyRow) bool {
+	if len(rows) == 0 || v.visibleRows <= 0 {
+		return true
+	}
+	return v.start(rows, v.visibleRows) >= max(0, len(rows)-v.visibleRows)
+}
+
 func (v *viewport) page(rows []historyRow, size, direction int) []historyRow {
 	size = max(1, size)
+	v.visibleRows = size
 	if len(rows) == 0 {
 		v.browsing = false
 		return nil

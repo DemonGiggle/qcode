@@ -139,6 +139,7 @@ func (u *UI) paintFixedLocked(direction int) {
 		queueHeight = min(1+len(queueRows), room, max(queueHeight, 2*room/3))
 	}
 	outputHeight := max(0, promptRow-count-queueHeight-2)
+	u.activeViewportLocked().visibleRows = outputHeight
 	screenRows := make([]string, u.height+1)
 	if u.manager != nil && u.height > 3 {
 		screenRows[1] = tabBar(u.manager.List(), u.activeAgent, u.views, u.width, u.unicode, ColorEnabled(u.out))

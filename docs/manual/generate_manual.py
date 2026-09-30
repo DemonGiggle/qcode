@@ -603,9 +603,9 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             "Type `/` to see up to five matching commands. Type more to filter, Tab to complete the first match, Esc to close.",
-            "Left/Right moves in the input. Ctrl+Left/Right jumps by word. Ctrl+W deletes a word. Ctrl+A/E jump to the input's beginning/end.",
+            "Left/Right edits input. At the bottom of output, Home/End move to input ends. Ctrl+Left/Right jumps by word; Ctrl+W deletes a word; Ctrl+A/E moves to input ends.",
             "PageUp/PageDown scrolls history with two overlapping rows of context, even while the agent works. Scrolling pauses the live view; PageDown to the bottom resumes it.",
-            "Home jumps to the oldest retained transcript; End jumps to the latest and resumes live output. In browser text fields, Home/End still edit text.",
+            "When the view is above the bottom, Home/End jump to oldest/latest output. At the bottom they edit the prompt again. Browser text fields keep editing keys.",
             "Alt+Q expands a long queue so you can scroll it; Alt+Q again folds it back.",
             "Ctrl+C cancels the running prompt. Queued prompts wait their turn.",
         ],
@@ -613,7 +613,7 @@ def build_pdf(images: dict[str, Path]):
     bullets(
         pdf,
         [
-            "Set NO_COLOR=1 to turn off colors. Set QCODE_ASCII=1 for plain-ASCII borders.",
+            "NO_COLOR=1 disables colors; QCODE_ASCII=1 uses ASCII glyphs.",
         ],
     )
 

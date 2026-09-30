@@ -187,6 +187,19 @@ func bytesToKey(b []byte, pasteActive bool) (rune, []byte) {
 		return r, b[l:]
 	}
 
+	if !pasteActive && len(b) >= 2 && b[0] == keyEscape && b[1] == 'O' {
+		// Application cursor mode uses SS3 for Home and End.
+		if len(b) < 3 {
+			return utf8.RuneError, b
+		}
+		switch b[2] {
+		case 'H':
+			return keyHome, b[3:]
+		case 'F':
+			return keyEnd, b[3:]
+		}
+	}
+
 	if !pasteActive && len(b) >= 3 && b[0] == keyEscape && b[1] == '[' {
 		switch b[2] {
 		case 'A':
