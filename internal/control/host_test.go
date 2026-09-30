@@ -2,12 +2,14 @@ package control
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 	"time"
 
 	"qcode/internal/agent"
 	"qcode/internal/llm"
+	"qcode/internal/session"
 	"qcode/internal/trace"
 )
 
@@ -145,4 +147,50 @@ func TestHostPublishesInteractionLifecycle(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestHostSteeringWithdrawsOnlyOwningTaskAndRejectsLateAnswers(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	host := NewHost(context.Background(), 2)
+	defer host.Shutdown()
+	host.SetFactory(func(id, name, model string, main bool) (*agent.Agent, error) {
+		return agent.New(&hostBlockingProvider{started: started, release: release}, model, &hostTools{}, trace.New(io.Discard, false), io.Discard, 2), nil
+	})
+	_, _ = host.CreateMain("test")
+	sub, err := host.Submit("main", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	request, err := host.BeginInteraction(session.Interaction{AgentID: "main", Kind: session.InteractionQuestions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.InteractionInfo().TaskID != sub.RequestID {
+		t.Fatal("interaction lacks owning task")
+	}
+	other, _ := host.Interactions().Begin(session.Interaction{AgentID: "main", TaskID: "another-task", Kind: session.InteractionQuestions})
+	steer, err := host.SubmitPrompt(session.PromptSubmission{AgentID: "main", ObservedTaskID: sub.RequestID, Prompt: "new direction", Intent: session.IntentSteer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := request.Wait(context.Background())
+	if !errors.Is(err, ErrInteractionWithdrawn) || !result.Withdrawn {
+		t.Fatalf("withdrawal=%+v %v", result, err)
+	}
+	if err := host.ResolveInteraction(session.Resolution{InteractionID: request.InteractionInfo().ID}); !errors.Is(err, ErrInteractionResolved) {
+		t.Fatal("late answer accepted")
+	}
+	if _, err := host.BeginInteraction(session.Interaction{AgentID: "main", Kind: session.InteractionDirectoryApproval}); err == nil {
+		t.Fatal("obsolete interaction opened after steering")
+	}
+	snapshot := host.Snapshot()
+	if len(snapshot.PendingInputs["main"]) != 1 || snapshot.PendingInputs["main"][0].RequestID != steer.RequestID || len(snapshot.SteeringEvents) != 1 {
+		t.Fatalf("snapshot=%+v", snapshot)
+	}
+	if len(snapshot.Interactions) != 1 || snapshot.Interactions[0].ID != other.Interaction.ID {
+		t.Fatal("withdrawal crossed task boundary")
+	}
+	_ = host.Cancel("main")
 }
