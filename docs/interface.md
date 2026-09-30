@@ -108,3 +108,16 @@ While an agent is busy, terminal Enter steers its current task; Tab queues a sep
 A steer waits for the streaming response or executing tool to finish. Completed output and side effects stay recorded. Unanswered approvals and questions are withdrawn, and unstarted tool actions are skipped before replanning. Esc defers terminal approvals or questions and opens the composer; Esc from the composer returns to the deferred interaction. Ctrl+C cancels active work.
 
 Steering belongs to the current task and its one final answer. The newest pending steer replaces earlier pending steering; delivered instructions remain in the conversation. Pending work shows steering separately from queued tasks. Detailed steering lifecycle messages appear only with `/verbose` enabled. Alt+Q opens the pending panel: Up/Down selects, Page Up/Down scrolls, Delete removes a pending item, and Esc or Alt+Q returns to the composer. Browser pending items have **Remove** controls. Removal stops working once a steer starts replanning. Task cancellation or failure cancels undelivered steers while FIFO work continues. If the task finishes before a steer is accepted, the submission is rejected and its draft is preserved; it cannot steer a different task automatically. Resuming a session marks unfinished work interrupted without resubmitting it.
+
+The terminal groups pending input under separate headings, without inline source or lifecycle labels:
+
+```text
+Steer
+ ╰─ adjust the button to be more flexible
+
+Queued | Alt+Q expand
+ │  1. after that please commit the code
+ ╰─ 2. The commit message should be as short as possible
+```
+
+ASCII mode uses `|` and `+-` for the tree connectors. Wrapped and multiline prompts keep their indentation; each item retains its identity for selection and removal.

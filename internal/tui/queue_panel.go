@@ -17,9 +17,10 @@ type queuePanel struct {
 }
 
 type queuedDisplayRow struct {
-	id   string
-	row  int
-	text string
+	id      string
+	row     int
+	text    string
+	heading bool
 }
 
 type queuedPromptReader interface {
@@ -57,33 +58,82 @@ func (u *UI) toggleQueuePanel() {
 	u.repaintActiveLocked(0)
 }
 
-func queueDisplayRows(items []session.QueuedPrompt, width int) []queuedDisplayRow {
-	var rows []queuedDisplayRow
-	queueNumber := 0
+func queuePreviewLimit(items []session.QueuedPrompt) int {
+	steer, queued := false, false
 	for _, item := range items {
-		if item.Intent != session.IntentSteer {
-			queueNumber++
+		if item.Intent == session.IntentSteer {
+			steer = true
+		} else {
+			queued = true
 		}
-		rowNumber := 0
-		for lineIndex, line := range strings.Split(item.Prompt, "\n") {
-			prefix := "   "
-			if lineIndex == 0 {
-				prefix = fmt.Sprintf("%d. ", queueNumber)
-				if item.Intent == session.IntentSteer {
-					prefix = "Steer (" + string(item.State) + "): "
+	}
+	if steer && queued {
+		return 6
+	}
+	return 4
+}
+
+func queueDisplayRows(items []session.QueuedPrompt, width int, unicodeEnabled bool) []queuedDisplayRow {
+	var steers, queued []session.QueuedPrompt
+	for _, item := range items {
+		if item.Intent == session.IntentSteer {
+			steers = append(steers, item)
+		} else {
+			queued = append(queued, item)
+		}
+	}
+	var rows []queuedDisplayRow
+	for _, group := range []struct {
+		title string
+		items []session.QueuedPrompt
+	}{{"Steer", steers}, {"Queued", queued}} {
+		if len(group.items) == 0 {
+			continue
+		}
+		// Anchor section headings to their first item without making them
+		// selectable prompt rows.
+		firstID := group.items[0].RequestID
+		if len(rows) > 0 {
+			rows = append(rows, queuedDisplayRow{id: firstID, row: -2, heading: true})
+		}
+		rows = append(rows, queuedDisplayRow{id: firstID, row: -1, text: group.title, heading: true})
+		for index, item := range group.items {
+			connector := " " + interfaceGlyph(unicodeEnabled, "│", "|") + "  "
+			continuation := connector
+			if index == len(group.items)-1 {
+				connector = " " + interfaceGlyph(unicodeEnabled, "╰─", "+-") + " "
+				continuation = "    "
+			}
+			number := ""
+			if group.title == "Queued" {
+				number = fmt.Sprintf("%d. ", index+1)
+				continuation += strings.Repeat(" ", len(number))
+			}
+			rowNumber := 0
+			for lineIndex, line := range strings.Split(item.Prompt, "\n") {
+				prefix := continuation
+				if lineIndex == 0 {
+					prefix = connector + number
 				}
-			}
-			if lineIndex == 0 && item.Source != "" {
-				prefix += "[" + item.Source + ": " + item.Actor + "] "
-			}
-			plain := sanitizeDiffLine(strings.ReplaceAll(line, "\t", " "), "<ESC>")
-			for _, wrapped := range strings.Split(wrapANSI(prefix+plain, max(1, width), "   "), "\n") {
-				rows = append(rows, queuedDisplayRow{id: item.RequestID, row: rowNumber, text: wrapped})
-				rowNumber++
+				plain := sanitizeDiffLine(strings.ReplaceAll(line, "\t", " "), "<ESC>")
+				for _, wrapped := range strings.Split(wrapANSI(prefix+plain, max(1, width), continuation), "\n") {
+					rows = append(rows, queuedDisplayRow{id: item.RequestID, row: rowNumber, text: wrapped})
+					rowNumber++
+				}
 			}
 		}
 	}
 	return rows
+}
+
+func queueHeading(title string, width int) string {
+	if width < 30 {
+		if title == "Queued" {
+			title = "Q"
+		}
+		return title + " Alt+Q"
+	}
+	return title + " | Alt+Q expand"
 }
 
 func (p *queuePanel) page(rows []queuedDisplayRow, size, direction int) []queuedDisplayRow {

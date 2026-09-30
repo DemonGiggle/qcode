@@ -94,9 +94,15 @@ func (u *UI) paintFixedLocked(direction int) {
 	}
 	rows, cy, cx := inputRows(label+u.inputText, utf8.RuneCountInString(label)+u.inputPosition, u.width)
 	queued := u.queuedPromptsLocked()
+	queue := u.activeQueueLocked()
+	previewLimit := queuePreviewLimit(queued)
 	var queueRows []queuedDisplayRow
 	if len(queued) > 0 {
-		queueRows = queueDisplayRows(queued, u.width)
+		queueWidth := u.width
+		if queue.expanded {
+			queueWidth = max(1, queueWidth-2)
+		}
+		queueRows = queueDisplayRows(queued, queueWidth, u.unicode)
 	}
 	statusN := statusBarLineCount(u.statusBar())
 	if u.height < 5 {
@@ -106,7 +112,7 @@ func (u *UI) paintFixedLocked(direction int) {
 	// Keep a cursor-centered window for drafts taller than the terminal.
 	inputLimit := u.height - 4 - statusN
 	if len(queued) > 0 {
-		reserve := min(4, 1+len(queueRows), max(1, u.height-footer-4))
+		reserve := min(previewLimit, len(queueRows), max(1, u.height-footer-4))
 		inputLimit = min(inputLimit, u.height-footer-3-reserve)
 	}
 	inputHeight := min(len(rows), max(1, inputLimit))
@@ -114,7 +120,6 @@ func (u *UI) paintFixedLocked(direction int) {
 	rows = rows[start:min(len(rows), start+inputHeight)]
 	cy -= start
 	promptRow := u.height - footer - len(rows) + 1
-	queue := u.activeQueueLocked()
 	if len(queued) == 0 {
 		queue.expanded, queue.anchorID, queue.anchorRow = false, "", 0
 	}
@@ -131,7 +136,7 @@ func (u *UI) paintFixedLocked(direction int) {
 	extras := max(0, promptRow-4) // Preserve two conversation rows when possible.
 	queueHeight := 0
 	if len(queued) > 0 && extras > 0 {
-		queueHeight = min(4, 1+len(queueRows), extras)
+		queueHeight = min(previewLimit, len(queueRows), extras)
 	}
 	count := min(len(matches), extras-queueHeight)
 	if queue.expanded && queueHeight > 0 {
@@ -173,31 +178,38 @@ func (u *UI) paintFixedLocked(direction int) {
 	}
 	if queueHeight > 0 {
 		queueStart := promptRow - queueHeight
-		header := fmt.Sprintf("Queued %d | Alt+Q expand", len(queued))
+		visible := queueRows[:min(len(queueRows), queueHeight)]
 		if queue.expanded {
-			header = fmt.Sprintf("Pending %d | Alt+Q close | Up/Down | Delete remove | Esc", len(queued))
+			header := "Alt+Q close | Up/Down | Delete remove | Esc"
+			if u.width < 30 {
+				header = "Alt+Q PgUp/Dn"
+			}
+			if ColorEnabled(u.out) {
+				header = dim + header + reset
+			}
+			screenRows[queueStart] = truncateDiffLine(header, u.width, u.unicode)
+			queueStart++
+			visible = queue.page(queueRows, queueHeight-1, direction)
 		}
-		if u.width < 30 {
-			header = fmt.Sprintf("Q%d Alt+Q", len(queued))
-			if queue.expanded {
-				header = fmt.Sprintf("Q%d Alt+Q PgUp/Dn", len(queued))
+		hasQueueHeading := false
+		for _, item := range visible {
+			if item.heading && item.text == "Queued" {
+				hasQueueHeading = true
 			}
 		}
-		if ColorEnabled(u.out) {
-			header = dim + header + reset
-		}
-		screenRows[queueStart] = truncateDiffLine(header, u.width, u.unicode)
-		if queueHeight > 1 {
-			visible := queueRows[:min(len(queueRows), queueHeight-1)]
-			if queue.expanded {
-				visible = queue.page(queueRows, queueHeight-1, direction)
-			}
-			for i, item := range visible {
-				screenRows[queueStart+1+i] = item.text
-				if queue.expanded && item.id == queue.selectedID {
-					screenRows[queueStart+1+i] = "> " + item.text
+		for i, item := range visible {
+			text := item.text
+			if item.heading && text != "" {
+				if !queue.expanded && (text == "Queued" || !hasQueueHeading) {
+					text = queueHeading(text, u.width)
 				}
+				if ColorEnabled(u.out) {
+					text = dim + text + reset
+				}
+			} else if !item.heading && queue.expanded && item.id == queue.selectedID {
+				text = "> " + text
 			}
+			screenRows[queueStart+i] = truncateDiffLine(text, u.width, u.unicode)
 		}
 	}
 	for i, row := range rows {
