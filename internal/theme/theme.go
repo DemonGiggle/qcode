@@ -302,6 +302,24 @@ func PaintRow(row string, width int, palette Palette) string {
 func visibleWidth(s string) int {
 	width := 0
 	for len(s) > 0 {
+		// OSC hyperlinks carry a target that takes no terminal cells.
+		if strings.HasPrefix(s, "\x1b]") {
+			end := -1
+			for index := 2; index < len(s); index++ {
+				if s[index] == '\a' {
+					end = index + 1
+					break
+				}
+				if s[index] == '\x1b' && index+1 < len(s) && s[index+1] == '\\' {
+					end = index + 2
+					break
+				}
+			}
+			if end >= 0 {
+				s = s[end:]
+				continue
+			}
+		}
 		if strings.HasPrefix(s, "\x1b[") {
 			end := strings.IndexByte(s, 'm')
 			if end >= 0 {

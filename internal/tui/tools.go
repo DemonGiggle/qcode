@@ -186,19 +186,19 @@ func matchingToolIndices(statuses []toolStatus, query string) []int {
 
 func renderToolSelector(out io.Writer, statuses []toolStatus, matches []int, current, start, visible, width int, query string, color bool) {
 	header := selectorHeader(fmt.Sprintf("Select tools (%d/%d) | Filter: %s", len(matches), len(statuses), query), width)
-	fmt.Fprintln(out, header)
+	printSelectorRow(out, header)
 	for row := 0; row < visible; row++ {
 		matchIndex := start + row
 		if matchIndex >= len(matches) {
 			if row == 0 && len(matches) == 0 {
-				fmt.Fprintln(out, "  No matching tools")
+				printSelectorRow(out, "  No matching tools")
 			} else {
-				fmt.Fprintln(out)
+				printSelectorRow(out, "")
 			}
 			continue
 		}
 		i := matches[matchIndex]
-		fmt.Fprintln(out, renderToolLine(statuses[i], matchIndex == current, width, color))
+		printSelectorRow(out, renderToolLine(statuses[i], matchIndex == current, width, color))
 	}
 }
 

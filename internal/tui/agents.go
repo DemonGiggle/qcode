@@ -760,7 +760,7 @@ func (u *UI) drawNavigationLocked() {
 		return
 	}
 	message := truncateDiffLine("History paused | PgUp/PgDn | PgDn to bottom resumes", u.width, u.unicode)
-	fmt.Fprint(u.out, u.themeOutput(fmt.Sprintf("\x1b[s\x1b[%d;1H\x1b[2K%s%s%s\x1b[u", u.statusTaskRowLocked(), dim, message, reset)))
+	fmt.Fprint(u.out, fmt.Sprintf("\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", u.statusTaskRowLocked(), renderThemeStatusBarLine(dim+message+reset, u.width, u.outputTheme(), true)))
 }
 
 func (u *UI) drawTabBar() {
@@ -777,7 +777,7 @@ func (u *UI) drawTabBarLocked() {
 		return
 	}
 	bar := tabBar(u.manager.List(), u.activeAgent, u.views, u.width, u.unicode, ColorEnabled(u.out))
-	fmt.Fprint(u.out, u.themeOutput(fmt.Sprintf("\x1b[s\x1b[1;1H\x1b[2K%s\x1b[u", bar)))
+	fmt.Fprint(u.out, fmt.Sprintf("\x1b[s\x1b[1;1H\x1b[2K%s\x1b[u", renderThemeStatusBarLine(bar, u.width, u.outputTheme(), true)))
 }
 
 func tabBar(summaries []session.Summary, active string, views map[string]*agentView, width int, unicodeEnabled, color bool) string {

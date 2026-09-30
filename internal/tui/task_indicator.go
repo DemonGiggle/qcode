@@ -101,7 +101,7 @@ func (u *UI) drawTaskIndicator() {
 		return
 	}
 	u.taskIndicatorText = message
-	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", u.statusTaskRowLocked(), message)
+	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", u.statusTaskRowLocked(), renderThemeStatusBarLine(message, u.width, u.outputTheme(), true))
 }
 
 func taskIndicatorMessage(status session.Status, queueDepth int, unicodeEnabled bool, now time.Time) string {

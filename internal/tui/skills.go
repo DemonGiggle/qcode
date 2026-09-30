@@ -281,19 +281,19 @@ func matchingSkillIndices(skills []prompt.SkillSummary, query string) []int {
 }
 
 func renderSkillSelector(out io.Writer, skills []prompt.SkillSummary, matches []int, selected map[int]bool, current, start, visible, width int, query string, color bool) {
-	fmt.Fprintln(out, renderSkillHeader(skills, matches, selected, query, width, color))
+	printSelectorRow(out, renderSkillHeader(skills, matches, selected, query, width, color))
 	for row := 0; row < visible; row++ {
 		matchIndex := start + row
 		if matchIndex >= len(matches) {
 			if row == 0 && len(matches) == 0 {
-				fmt.Fprintln(out, "  No matching skills")
+				printSelectorRow(out, "  No matching skills")
 			} else {
-				fmt.Fprintln(out)
+				printSelectorRow(out, "")
 			}
 			continue
 		}
 		i := matches[matchIndex]
-		fmt.Fprintln(out, renderSkillLine(skills[i], selected[i], matchIndex == current, width, color))
+		printSelectorRow(out, renderSkillLine(skills[i], selected[i], matchIndex == current, width, color))
 	}
 }
 

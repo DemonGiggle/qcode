@@ -18,7 +18,7 @@ func (u *UI) chooseTheme() {
 	u.beginRawSelector()
 	visibleRows := u.height - 12
 	visible := min(len(qtheme.All()), max(3, visibleRows))
-	selected, accepted, err := selectTheme(u.input, u.terminal, qtheme.All(), u.currentTheme().ID, visible, u.width, u.height, ColorEnabled(u.out))
+	selected, accepted, err := selectTheme(u.input, u.themedSelectorWriter(), qtheme.All(), u.currentTheme().ID, visible, u.width, u.height, ColorEnabled(u.out))
 	u.input.setRaw(false)
 	u.endRawSelector()
 	if err != nil {
@@ -116,7 +116,11 @@ func renderThemePicker(out io.Writer, options []qtheme.Palette, selected, start,
 	}
 	lines = append(lines, "", "", "")
 	lines = append(lines, renderThemePreview(options[selected], width, color)...)
-	for _, line := range lines {
+	for index, line := range lines {
+		// Keep the sample in the candidate palette; menu rows use the active theme.
+		if index < 1+end-start+3 {
+			line = paintSelectorRow(out, line)
+		}
 		fmt.Fprintln(out, line)
 	}
 	return len(lines)

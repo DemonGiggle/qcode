@@ -90,10 +90,23 @@ func selectorHeader(body string, width int) string {
 	return truncateDiffLine(body, bodyWidth, false) + suffix
 }
 
+// paintSelectorRow lets every selector share the active palette while keeping
+// standalone renderers usable with ordinary writers.
+func paintSelectorRow(out io.Writer, line string) string {
+	if painter, ok := out.(interface{ paintRow(string) string }); ok {
+		return painter.paintRow(line)
+	}
+	return line
+}
+
+func printSelectorRow(out io.Writer, line string) {
+	fmt.Fprintln(out, paintSelectorRow(out, line))
+}
+
 // replaceSelectorRow changes one row while preserving the cursor immediately
 // below the selector. row is zero-based from the top of the rendered block.
 func replaceSelectorRow(out io.Writer, rows, row int, line string) {
-	fmt.Fprintf(out, "\x1b[s\x1b[%dA\r\x1b[2K%s\x1b[u", rows-row, line)
+	fmt.Fprintf(out, "\x1b[s\x1b[%dA\r\x1b[2K%s\x1b[u", rows-row, paintSelectorRow(out, line))
 }
 
 func clearSelector(out io.Writer, rows int) {

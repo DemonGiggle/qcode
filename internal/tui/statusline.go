@@ -826,19 +826,19 @@ func matchingStatuslineIndices(statuses []statuslineStatus, query string) []int 
 
 func renderStatuslineSelector(out io.Writer, statuses []statuslineStatus, matches []int, current, start, visible, width int, query string, color bool) {
 	header := selectorHeader(fmt.Sprintf("Select statusline segments (%d/%d) | Filter: %s", len(matches), len(statuses), query), width)
-	fmt.Fprintln(out, header)
+	printSelectorRow(out, header)
 	for row := 0; row < visible; row++ {
 		matchIndex := start + row
 		if matchIndex >= len(matches) {
 			if row == 0 && len(matches) == 0 {
-				fmt.Fprintln(out, "  No matching segments")
+				printSelectorRow(out, "  No matching segments")
 			} else {
-				fmt.Fprintln(out)
+				printSelectorRow(out, "")
 			}
 			continue
 		}
 		i := matches[matchIndex]
-		fmt.Fprintln(out, renderStatuslineLine(statuses[i], matchIndex == current, width, color))
+		printSelectorRow(out, renderStatuslineLine(statuses[i], matchIndex == current, width, color))
 	}
 }
 

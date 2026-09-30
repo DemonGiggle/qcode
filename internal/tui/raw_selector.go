@@ -13,7 +13,7 @@ func (u *UI) beginRawSelector() {
 	lastOutputRow := u.height - 3 // prompt, task indicator, and status follow.
 	fmt.Fprintf(u.out, "\x1b[2;%dr\x1b[2;1H", lastOutputRow)
 	for row := 2; row <= lastOutputRow; row++ {
-		fmt.Fprintf(u.out, "\x1b[%d;1H\x1b[2K", row)
+		fmt.Fprintf(u.out, "\x1b[%d;1H\x1b[2K%s", row, (themeWriter{palette: u.outputTheme(), color: true, width: u.width}).paintRow(""))
 	}
 	fmt.Fprint(u.out, "\x1b[2;1H")
 	u.inputFrame = ""

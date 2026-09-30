@@ -64,13 +64,13 @@ func selectAgent(in io.Reader, out io.Writer, entries []agentSelectorEntry, curr
 
 func renderAgentSelector(out io.Writer, entries []agentSelectorEntry, selected, start, visible, width int, color bool) int {
 	header := selectorHeader(fmt.Sprintf("Select agent (%d/%d) | Up/Down, PgUp/PgDn, Enter to switch", selected+1, len(entries)), width)
-	fmt.Fprintln(out, header)
+	printSelectorRow(out, header)
 	rows := 1
 	end := min(len(entries), start+visible)
 	for index := start; index < end; index++ {
 		block := renderAgentEntry(entries[index], index == selected, width, color)
 		for _, line := range block {
-			fmt.Fprintln(out, line)
+			printSelectorRow(out, line)
 			rows++
 		}
 	}

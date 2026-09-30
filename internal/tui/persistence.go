@@ -592,18 +592,18 @@ func matchingSessionIndices(entries []session.Entry, query string) []int {
 
 func renderSessionSelector(out io.Writer, entries []session.Entry, matches []int, selected, start, visible, width int, query string, color bool) {
 	header := selectorHeader(fmt.Sprintf("Resume session (%d/%d) | Filter: %s", len(matches), len(entries), query), width)
-	fmt.Fprintln(out, header)
+	printSelectorRow(out, header)
 	for row := 0; row < visible; row++ {
 		matchIndex := start + row
 		if matchIndex >= len(matches) {
 			if row == 0 && len(matches) == 0 {
-				fmt.Fprintln(out, "  No matching sessions")
+				printSelectorRow(out, "  No matching sessions")
 			} else {
-				fmt.Fprintln(out)
+				printSelectorRow(out, "")
 			}
 			continue
 		}
-		fmt.Fprintln(out, renderSessionLine(entries[matches[matchIndex]], matchIndex == selected, width, color))
+		printSelectorRow(out, renderSessionLine(entries[matches[matchIndex]], matchIndex == selected, width, color))
 	}
 }
 

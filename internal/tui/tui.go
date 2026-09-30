@@ -603,13 +603,11 @@ type themeWriter struct {
 	out     io.Writer
 	palette qtheme.Palette
 	color   bool
+	width   int
 }
 
 func (w themeWriter) Write(data []byte) (int, error) {
 	originalLength := len(data)
-	if w.color {
-		data = []byte(qtheme.TransformANSI(string(data), w.palette))
-	}
 	n, err := w.out.Write(data)
 	if err != nil {
 		return 0, err
@@ -620,8 +618,17 @@ func (w themeWriter) Write(data []byte) (int, error) {
 	return originalLength, nil
 }
 
+func (w themeWriter) paintRow(line string) string {
+	if !w.color || w.palette.ID == "" || w.palette.ID == "default" {
+		return line
+	}
+	// Keep QR modules black on white instead of mapping them to theme roles.
+	line = strings.ReplaceAll(line, "\x1b[30;47m", "\x1b[38;2;0;0;0;48;2;255;255;255m")
+	return qtheme.PaintRow(line, w.width, w.palette)
+}
+
 func (u *UI) themedSelectorWriter() io.Writer {
-	return themeWriter{out: u.terminal, palette: u.currentTheme(), color: u.out != nil && ColorEnabled(u.out)}
+	return themeWriter{out: u.terminal, palette: u.currentTheme(), color: u.out != nil && ColorEnabled(u.out), width: u.width}
 }
 
 // SetDemoPromptScript configures prompts that are injected into the line

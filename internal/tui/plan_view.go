@@ -151,12 +151,16 @@ func renderPlanPager(out io.Writer, pager planPager, width, height int, color bo
 				line = marker + line
 			}
 		}
-		fmt.Fprintf(&output, "\x1b[%d;1H\x1b[2K%s\x1b[0m", row+2, truncateDiffLine(line, width, false))
+		fmt.Fprintf(&output, "\x1b[%d;1H\x1b[2K%s\x1b[0m", row+2, paintSelectorRow(out, truncateDiffLine(line, width, false)))
 	}
 	_, _ = io.WriteString(out, output.String())
 }
 
 type planViewWriter struct{ ui *UI }
+
+func (w planViewWriter) paintRow(line string) string {
+	return (themeWriter{palette: w.ui.outputTheme(), color: true, width: w.ui.width}).paintRow(line)
+}
 
 func (w planViewWriter) Write(data []byte) (int, error) {
 	w.ui.screenMu.Lock()

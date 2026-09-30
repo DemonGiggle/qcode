@@ -43,18 +43,18 @@ func (u *UI) selectRemoteMode(current RemoteMode) (RemoteMode, bool, error) {
 	u.beginRawSelector()
 	defer func() { u.input.setRaw(false); u.endRawSelector() }()
 	for {
-		rows := renderRemoteModeMenu(u.terminal, modes, selected, u.width, ColorEnabled(u.out))
+		rows := renderRemoteModeMenu(u.themedSelectorWriter(), modes, selected, u.width, ColorEnabled(u.out))
 		key, err := readSelectorKey(u.input)
 		if err != nil {
-			clearSelector(u.terminal, rows)
+			clearSelector(u.themedSelectorWriter(), rows)
 			return "", false, err
 		}
 		switch key {
 		case "\r", "\n":
-			clearSelector(u.terminal, rows)
+			clearSelector(u.themedSelectorWriter(), rows)
 			return modes[selected], true, nil
 		case string([]byte{ctrlC}), "\x1b":
-			clearSelector(u.terminal, rows)
+			clearSelector(u.themedSelectorWriter(), rows)
 			return "", false, nil
 		case arrowUpSequence, arrowDownSequence:
 			if key == arrowUpSequence {
@@ -62,7 +62,7 @@ func (u *UI) selectRemoteMode(current RemoteMode) (RemoteMode, bool, error) {
 			} else {
 				selected = (selected + 1) % len(modes)
 			}
-			clearSelector(u.terminal, rows)
+			clearSelector(u.themedSelectorWriter(), rows)
 		}
 	}
 }
@@ -87,7 +87,7 @@ func renderRemoteModeMenu(out interface{ Write([]byte) (int, error) }, modes []R
 		rows = append(rows, line)
 	}
 	for _, row := range rows {
-		fmt.Fprintln(out, truncateDiffLine(row, width, false))
+		printSelectorRow(out, truncateDiffLine(row, width, false))
 	}
 	return len(rows)
 }
@@ -98,21 +98,21 @@ func (u *UI) selectRemoteNetwork(networks []RemoteNetwork) (bool, RemoteNetwork,
 	u.beginRawSelector()
 	defer func() { u.input.setRaw(false); u.endRawSelector() }()
 	for {
-		rows := renderRemoteNetworkMenu(u.terminal, networks, selected, u.width, ColorEnabled(u.out))
+		rows := renderRemoteNetworkMenu(u.themedSelectorWriter(), networks, selected, u.width, ColorEnabled(u.out))
 		key, err := readSelectorKey(u.input)
 		if err != nil {
-			clearSelector(u.terminal, rows)
+			clearSelector(u.themedSelectorWriter(), rows)
 			return false, RemoteNetwork{}, false, err
 		}
 		switch key {
 		case "\r", "\n":
-			clearSelector(u.terminal, rows)
+			clearSelector(u.themedSelectorWriter(), rows)
 			return true, networks[selected], false, nil
 		case string([]byte{ctrlC}):
-			clearSelector(u.terminal, rows)
+			clearSelector(u.themedSelectorWriter(), rows)
 			return false, RemoteNetwork{}, false, nil
 		case "\x1b":
-			clearSelector(u.terminal, rows)
+			clearSelector(u.themedSelectorWriter(), rows)
 			return false, RemoteNetwork{}, true, nil
 		case arrowUpSequence, arrowDownSequence:
 			if key == arrowUpSequence {
@@ -120,7 +120,7 @@ func (u *UI) selectRemoteNetwork(networks []RemoteNetwork) (bool, RemoteNetwork,
 			} else {
 				selected = (selected + 1) % len(networks)
 			}
-			clearSelector(u.terminal, rows)
+			clearSelector(u.themedSelectorWriter(), rows)
 		}
 	}
 }
@@ -139,7 +139,7 @@ func renderRemoteNetworkMenu(out interface{ Write([]byte) (int, error) }, networ
 		rows = append(rows, line)
 	}
 	for _, row := range rows {
-		fmt.Fprintln(out, truncateDiffLine(row, width, false))
+		printSelectorRow(out, truncateDiffLine(row, width, false))
 	}
 	return len(rows)
 }
@@ -172,18 +172,18 @@ func (u *UI) showRemoteActive(status RemoteStatus) error {
 			loginURL = u.remoteLogin.URL
 		}
 		u.screenMu.Unlock()
-		rows := renderRemoteActiveMenu(u.terminal, status, selected, loginRows, loginURL, notice, u.width, ColorEnabled(u.out))
+		rows := renderRemoteActiveMenu(u.themedSelectorWriter(), status, selected, loginRows, loginURL, notice, u.width, ColorEnabled(u.out))
 		key, err := readSelectorKey(u.input)
 		if err != nil {
-			clearSelector(u.terminal, rows)
+			clearSelector(u.themedSelectorWriter(), rows)
 			return err
 		}
 		switch key {
 		case remoteMenuWake:
-			clearSelector(u.terminal, rows)
+			clearSelector(u.themedSelectorWriter(), rows)
 			return nil
 		case string([]byte{ctrlC}), "\x1b":
-			clearSelector(u.terminal, rows)
+			clearSelector(u.themedSelectorWriter(), rows)
 			return nil
 		case arrowUpSequence, arrowDownSequence:
 			if key == arrowUpSequence {
@@ -191,9 +191,9 @@ func (u *UI) showRemoteActive(status RemoteStatus) error {
 			} else {
 				selected = (selected + 1) % 3
 			}
-			clearSelector(u.terminal, rows)
+			clearSelector(u.themedSelectorWriter(), rows)
 		case "\r", "\n":
-			clearSelector(u.terminal, rows)
+			clearSelector(u.themedSelectorWriter(), rows)
 			if selected == remoteAccept {
 				u.clearRemoteLogin()
 				return nil
@@ -298,7 +298,7 @@ func renderRemoteActiveMenu(out interface{ Write([]byte) (int, error) }, status 
 				row = terminalLink(row, loginURL)
 			}
 		}
-		fmt.Fprintln(out, row)
+		printSelectorRow(out, row)
 	}
 	return len(rows)
 }
@@ -318,10 +318,10 @@ func (u *UI) confirmRemoteClose(status RemoteStatus) (remoteCloseResult, error) 
 					row = cyan + bold + row + reset
 				}
 			}
-			fmt.Fprintln(u.terminal, truncateDiffLine(row, u.width, false))
+			printSelectorRow(u.themedSelectorWriter(), truncateDiffLine(row, u.width, false))
 		}
 		key, err := readSelectorKey(u.input)
-		clearSelector(u.terminal, len(rows))
+		clearSelector(u.themedSelectorWriter(), len(rows))
 		if err != nil {
 			return remoteCloseCancelled, err
 		}

@@ -172,18 +172,18 @@ func renderModelSelector(out io.Writer, models []string, matches []int, selected
 		header += " | Search: " + query
 	}
 	header = selectorHeader(header, width)
-	fmt.Fprintln(out, header)
+	printSelectorRow(out, header)
 	for row := 0; row < visible; row++ {
 		matchIndex := start + row
 		if matchIndex >= len(matches) {
 			if row == 0 && len(matches) == 0 {
-				fmt.Fprintln(out, "  No matching models")
+				printSelectorRow(out, "  No matching models")
 			} else {
-				fmt.Fprintln(out)
+				printSelectorRow(out, "")
 			}
 			continue
 		}
-		fmt.Fprintln(out, renderModelLine(models, matches, matchIndex, matchIndex == selected, width, color))
+		printSelectorRow(out, renderModelLine(models, matches, matchIndex, matchIndex == selected, width, color))
 	}
 }
 
