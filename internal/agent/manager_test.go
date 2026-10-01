@@ -616,6 +616,9 @@ func TestMainCanCreateAgentWithDefaultModel(t *testing.T) {
 	if created.Model != "main-model" || created.Status != StatusIdle {
 		t.Fatalf("created agent = %+v, want main-model and idle", created)
 	}
+	if records := manager.WorkRecords(); len(records) != 0 {
+		t.Fatalf("creating an idle agent recorded work without a task: %+v", records)
+	}
 }
 
 func TestMainCanCreateAgentAndAssignTaskAsynchronously(t *testing.T) {
