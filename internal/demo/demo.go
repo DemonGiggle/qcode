@@ -97,9 +97,9 @@ func (p *Provider) Complete(ctx context.Context, request llm.Request, onText llm
 	}
 	if toolResultsSinceLastUser(request.Messages) == 0 && len(request.Tools) > 0 {
 		if hasPreviousUserPrompt(request.Messages) {
-			message := `## Queued prompt complete
+			message := `## Follow-up complete
 
-This prompt was accepted while the previous prompt was running, then executed in FIFO order. The TUI stayed responsive so another prompt could be entered immediately.`
+While an agent is busy, Enter steers its current task and Tab queues a separate task in FIFO order. Steering waits for the response or executing tool to finish; the newest pending steer replaces the previous one. Alt+Q opens pending work, Delete removes the selection, and Ctrl+C cancels active work.`
 			if onText != nil {
 				onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: message})
 			}
@@ -131,6 +131,8 @@ The mocked LLM connection succeeded and all %d available tools ran. Use Page Up 
 | :--- | :---: | ---: |
 | LLM connection | Mocked with delay | Offline |
 | Tool calls | All %d schemas | Mocked |
+| Steering | Update active task | Enter |
+| Queueing | Separate FIFO tasks | Tab |
 | Cancellation | Every phase | Ctrl+C |
 | Code diffs | Write and edit | No files changed |
 | Markdown tables | Aligned output | Width bounded |

@@ -166,15 +166,17 @@ func (u *UI) removeQuestionRequest(target *questionRequest) bool {
 }
 
 func (u *UI) restoreQuestionDraft(request *questionRequest) {
+	u.screenMu.Lock()
 	if request.draft == "" {
+		u.screenMu.Unlock()
 		return
 	}
-	u.screenMu.Lock()
-	u.drafts[request.agentID] = request.draft
+	draft := request.draft
+	u.drafts[request.agentID] = draft
 	active := u.activeAgent == request.agentID
 	u.screenMu.Unlock()
 	if active && u.input != nil {
-		u.input.inject([]byte(request.draft))
+		u.input.inject([]byte(draft))
 	}
 }
 
@@ -192,6 +194,9 @@ func (u *UI) hasPendingQuestion(id string) bool {
 // handlePendingQuestions is called only by the UI goroutine, so all terminal
 // reads remain serialized with the line editor.
 func (u *UI) handlePendingQuestions(ctx context.Context) bool {
+	if u.deferredInteractions[u.activeAgent] {
+		return false
+	}
 	u.screenMu.Lock()
 	activeID := u.activeAgent
 	manager := u.manager
@@ -210,6 +215,9 @@ func (u *UI) handlePendingQuestions(ctx context.Context) bool {
 		return false
 	}
 	u.screenMu.Lock()
+	if request.draft == "" {
+		request.draft = u.drafts[activeID]
+	}
 	u.drafts[activeID] = request.draft
 	u.screenMu.Unlock()
 
@@ -224,9 +232,19 @@ func (u *UI) handlePendingQuestions(ctx context.Context) bool {
 	}
 	if errors.Is(err, errQuestionDeferred) {
 		request.answers = answers
+		if u.terminal.SubmissionKey == 27 {
+			u.deferredInteractions[activeID] = true
+		}
 		u.questionMu.Lock()
 		u.questions = append([]*questionRequest{request}, u.questions...)
 		u.questionMu.Unlock()
+		if u.deferredInteractions[activeID] {
+			u.restoreQuestionDraft(request)
+			u.screenMu.Lock()
+			request.draft = ""
+			u.screenMu.Unlock()
+			return false
+		}
 		return true
 	}
 	request.result <- questionResult{answers: answers, err: err}
@@ -295,6 +313,9 @@ func (u *UI) runQuestionnaireProgress(ctx context.Context, questions []question.
 			u.terminal.SetPrompt(prompt)
 			u.renderInput(prompt, "", 0)
 			answer, err := u.readLine()
+			if u.terminal.SubmissionKey == 27 && allowTabSwitch {
+				return answers, i, errQuestionDeferred
+			}
 			if err != nil {
 				return nil, i, err
 			}

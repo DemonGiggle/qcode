@@ -177,7 +177,7 @@ def make_screenshots() -> dict[str, Path]:
             ("", FG, None, False),
             ("Queued #1: run the tests after the fix", YELLOW, PANEL, False),
             ("Working (*)  ·  1 queued  ·  input stays editable", CYAN, None, False),
-            ("> add retry logic to the login flow", WHITE, None, True),
+            ("(Steer)> add retry logic to the login flow", WHITE, None, True),
             ("ollama [MODEL qwen2.5-coder:7b] [WS ~/demo] [CTX 12% left]", DIM, STATUS_BG, False),
             ("[STEP 3/32] [TOK I:1.2K O:340]", DIM, STATUS_BG, False),
         ],
@@ -321,7 +321,7 @@ def make_screenshots() -> dict[str, Path]:
             ("  Postgres (shared, needs connection)", FG, None, False),
             ("  Type a custom answer instead", FG, None, False),
             ("", FG, None, False),
-            ("Up/Down moves, Enter answers, Ctrl+C skips. 1 of 3 max.", DIM, None, False),
+            ("Up/Down moves, Enter answers, Esc defers, Ctrl+C cancels.", DIM, None, False),
             ("[MODE INTERACTIVE] in status bar | draft kept while answering", CYAN, None, False),
         ],
     )
@@ -557,7 +557,7 @@ def build_pdf(images: dict[str, Path]):
         [
             "Words in `code style` are things you type, for example `/model` or `qcode --demo`.",
             "Figures are illustrative example screens. Your colors and sizes may differ slightly.",
-            "The prompt line shows `>` when idle, `(Plan)>` in Plan mode, `(Skill plan)>` in Skill Plan mode, and `(Queue)>` while busy.",
+            "The prompt line shows `>` when idle, `(Plan)>` in Plan mode, `(Skill plan)>` in Skill Plan mode, and `(Steer)>` while busy.",
             "Esc goes back one level. Ctrl+C cancels without applying changes.",
         ],
     )
@@ -593,8 +593,8 @@ def build_pdf(images: dict[str, Path]):
         [
             "Tabs: `main` is always there. Extra agents appear as new tabs (up to 20 total).",
             "Transcript: streamed answers with Markdown, tables, and tool activity like `Reading ...` or `Writing ...`.",
-            "Queue area: appears only while busy. It lists waiting prompts in order.",
-            "Prompt: `>` idle, `(Plan)>` planning, `(Skill plan)>` skill design, `(Queue)>` working. You can keep typing while work runs.",
+            "Pending area: shows the current steer separately from FIFO tasks.",
+            "Prompt: `>` idle, `(Plan)>` planning, `(Skill plan)>` skill design, `(Steer)>` working. You can keep typing while work runs.",
             "Status bar: provider plus [MODEL name], [WS folder], [CTX % left], [STEP n/max], [TOK I/O], plus [THINK level] when set, [MODE PLAN] / [MODE INTERACTIVE] only when active, and [REMOTE] only while browser control runs. No MODE badge appears for normal work. Hide parts with `/statusline`.",
         ],
     )
@@ -606,7 +606,7 @@ def build_pdf(images: dict[str, Path]):
             "Left/Right edits input. At the bottom of output, Home/End move to input ends. Ctrl+Left/Right jumps by word; Ctrl+W deletes a word; Ctrl+A/E moves to input ends.",
             "PageUp/PageDown scrolls history with two overlapping rows of context, even while the agent works. Scrolling pauses the live view; PageDown to the bottom resumes it.",
             "When the view is above the bottom, Home/End jump to oldest/latest output. At the bottom they edit the prompt again. Browser text fields keep editing keys.",
-            "Alt+Q expands a long queue so you can scroll it; Alt+Q again folds it back.",
+            "Alt+Q opens pending work. Up/Down selects, PgUp/PgDn scrolls, Delete removes, and Esc closes.",
             "Ctrl+C cancels the running prompt. Queued prompts wait their turn.",
         ],
     )
@@ -619,7 +619,7 @@ def build_pdf(images: dict[str, Path]):
 
     # 3 Asking
     h1(pdf, "3. Asking, queueing, and history")
-    body(pdf, "Type a request and press Enter. While one request runs, you can type the next one. It is marked `Queued #N` and runs automatically in order.")
+    body(pdf, "Type a request and press Enter. While one request runs, you can type the next one. Enter steers the current task; Tab queues a separate task. Steering waits for a response or tool, replaces pending steering, and withdraws unanswered interactions.")
     bullets(
         pdf,
         [
@@ -646,7 +646,7 @@ def build_pdf(images: dict[str, Path]):
             "One question at a time, with suggested choices or your own custom answer. At most 3 distinct questions per submitted prompt.",
             "Your answer becomes context for that agent only. It is not auto-saved; use `/learn` to keep it.",
             "The status bar shows [MODE INTERACTIVE] while enabled ([MODE INT] when narrow). Your half-typed draft is saved and restored around the question.",
-            "Questions for other tabs wait on those tabs. Ctrl+C skips the question. The browser remote can also answer.",
+            "Esc defers a question and opens the composer; Esc returns to it. A steer withdraws unanswered interactions. Ctrl+C cancels active work. The browser can also answer.",
             "One-shot prompts, piped input, non-terminal runs, and --json-events never wait; qcode just proceeds with available context.",
         ],
     )
@@ -669,7 +669,7 @@ def build_pdf(images: dict[str, Path]):
     body(pdf, "Goal: reproduce a specific failure, make a focused fix, and check the result.")
     numbered(pdf, [
         "Use /interactive on if expected behavior needs clarification; then describe the failure and a reproduction command.",
-        "While the fix runs, submit the follow-up below. It waits in the active agent's FIFO queue.",
+        "While the fix runs, press Tab to queue the follow-up below. It waits in the active agent's FIFO queue.",
         "Review the diff with /diff and inspect test output. Ask for an explanation if the checks fail.",
     ])
     code(pdf, "Fix the login timeout: retry once after a temporary network\nfailure, but never retry invalid credentials. Reproduce it\nwith the login tests before changing the handler.\n\n# Submit while the first request is running:\nRun the login tests after the fix and summarize the results.")
@@ -903,7 +903,8 @@ def build_pdf(images: dict[str, Path]):
     bullets(
         pdf,
         [
-            "The browser shows the same tabs, queues, prompts, questions, and selectors as the terminal.",
+            "Browser Enter and Steer update the busy task; Queue submits a separate task. Tab navigates controls normally.",
+ "Remove cancels pending input; Cancel active work stops the running task. Rejected submissions keep your draft.",
             "Reloading the same browser tab resumes. A fresh browser needs a fresh link.",
             "In the browser, `/export` downloads the same HTML you get in the terminal.",
             "Use only on networks you trust. Pure Web is plain HTTP on your LAN.",

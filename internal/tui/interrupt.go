@@ -61,16 +61,17 @@ type interruptReader struct {
 	rawWake  chan byte
 	once     sync.Once
 
-	mu       sync.Mutex
-	injectMu sync.Mutex
-	cancel   context.CancelFunc
-	page     func(int)
-	boundary func(bool) bool
-	tab      func(int)
-	queue    func()
-	err      error
-	pending  []byte
-	raw      bool
+	mu          sync.Mutex
+	injectMu    sync.Mutex
+	cancel      context.CancelFunc
+	page        func(int)
+	boundary    func(bool) bool
+	tab         func(int)
+	queue       func()
+	err         error
+	escapeTimer *time.Timer
+	pending     []byte
+	raw         bool
 }
 
 func newInterruptReader(source io.Reader) *interruptReader {
@@ -268,7 +269,15 @@ func (r *interruptReader) nextByte() (byte, <-chan byte, bool) {
 }
 
 func (r *interruptReader) readLoop() {
-	defer close(r.data)
+	defer func() {
+		r.mu.Lock()
+		if r.escapeTimer != nil {
+			r.escapeTimer.Stop()
+		}
+		r.pending = nil
+		close(r.data)
+		r.mu.Unlock()
+	}()
 	buffer := make([]byte, 256)
 	for {
 		count, err := r.source.Read(buffer)
@@ -301,6 +310,10 @@ func (r *interruptReader) route(input []byte) {
 	queue := r.queue
 	pending := append([]byte(nil), r.pending...)
 	r.pending = nil
+	if r.escapeTimer != nil {
+		r.escapeTimer.Stop()
+		r.escapeTimer = nil
+	}
 	r.mu.Unlock()
 
 	input = append(pending, input...)
@@ -345,6 +358,18 @@ func (r *interruptReader) route(input []byte) {
 		if isKnownSequencePrefix(input) {
 			r.mu.Lock()
 			r.pending = append(r.pending, input...)
+			if len(r.pending) == 1 && r.pending[0] == 27 {
+				r.escapeTimer = time.AfterFunc(35*time.Millisecond, func() {
+					r.mu.Lock()
+					if len(r.pending) == 1 && r.pending[0] == 27 {
+						r.pending = nil
+						r.data <- 29
+						r.mu.Unlock()
+						return
+					}
+					r.mu.Unlock()
+				})
+			}
 			r.mu.Unlock()
 			return
 		}

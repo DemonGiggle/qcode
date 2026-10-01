@@ -10,10 +10,12 @@ import (
 )
 
 type modeDecisionRequest struct {
-	agentID  string
-	artifact string
-	kind     session.InteractionKind
-	waiter   session.InteractionWaiter
+	version   uint64
+	versioned bool
+	agentID   string
+	artifact  string
+	kind      session.InteractionKind
+	waiter    session.InteractionWaiter
 }
 
 type planDecisionRunner interface {
@@ -51,21 +53,37 @@ func (u *UI) queueModeDecision(id string) {
 		if !ok {
 			return
 		}
-		plan, ready := reader.TakePlanDecision()
+		var plan string
+		var ready bool
+		var version uint64
+		versionedReader, versioned := value.(modeDecisionVersionReader)
+		if versioned {
+			plan, version, ready = versionedReader.TakeModeDecision(session.InteractionPlanDecision)
+		} else {
+			plan, ready = reader.TakePlanDecision()
+		}
 		if !ready {
 			return
 		}
-		request = &modeDecisionRequest{agentID: id, artifact: plan, kind: session.InteractionPlanDecision}
+		request = &modeDecisionRequest{version: version, versioned: versioned, agentID: id, artifact: plan, kind: session.InteractionPlanDecision}
 	} else if controller, ok := value.(skillPlanController); ok && controller.SkillPlanMode() {
 		reader, ok := value.(skillPlanDecisionRunner)
 		if !ok {
 			return
 		}
-		draft, ready := reader.TakeSkillPlanDecision()
+		var draft string
+		var ready bool
+		var version uint64
+		versionedReader, versioned := value.(modeDecisionVersionReader)
+		if versioned {
+			draft, version, ready = versionedReader.TakeModeDecision(session.InteractionSkillPlanDecision)
+		} else {
+			draft, ready = reader.TakeSkillPlanDecision()
+		}
 		if !ready {
 			return
 		}
-		request = &modeDecisionRequest{agentID: id, artifact: draft, kind: session.InteractionSkillPlanDecision}
+		request = &modeDecisionRequest{version: version, versioned: versioned, agentID: id, artifact: draft, kind: session.InteractionSkillPlanDecision}
 	}
 	if request == nil {
 		return
@@ -124,6 +142,9 @@ func (u *UI) handlePendingModeDecision(ctx context.Context) {
 	if !ok {
 		return
 	}
+	if !modeDecisionCurrent(value, request) {
+		return
+	}
 	var options []string
 	var promptText, cancelMessage, action string
 	switch request.kind {
@@ -132,7 +153,7 @@ func (u *UI) handlePendingModeDecision(ctx context.Context) {
 		if !ok || !controller.PlanMode() {
 			return
 		}
-		if _, exists := controller.LatestPlanText(); !exists {
+		if artifact, exists := controller.LatestPlanText(); !exists || artifact != request.artifact {
 			return
 		}
 		options = planDecisionOptions
@@ -144,7 +165,7 @@ func (u *UI) handlePendingModeDecision(ctx context.Context) {
 		if !ok || !controller.SkillPlanMode() {
 			return
 		}
-		if _, exists := controller.LatestSkillDraftText(); !exists {
+		if artifact, exists := controller.LatestSkillDraftText(); !exists || artifact != request.artifact {
 			return
 		}
 		options = skillPlanDecisionOptions
@@ -204,6 +225,7 @@ func (u *UI) handlePendingModeDecision(ctx context.Context) {
 					u.signalPresentation()
 				}
 				resolved := <-remoteResult
+				err = resolved.err
 				if resolved.err == nil {
 					_ = json.Unmarshal(resolved.resolution.Value, &decision)
 				}
@@ -221,6 +243,9 @@ func (u *UI) handlePendingModeDecision(ctx context.Context) {
 		if errors.Is(err, context.Canceled) && ctx.Err() == nil {
 			u.printSystemMessage(dim + cancelMessage + reset)
 		}
+		return
+	}
+	if !modeDecisionCurrent(value, request) {
 		return
 	}
 	if decision == "" {
@@ -242,4 +267,17 @@ func (u *UI) handlePendingModeDecision(ctx context.Context) {
 			u.printSystemMessage(green + "Skill draft saved; staying in Skill Plan mode." + reset)
 		}
 	}
+}
+
+type modeDecisionVersionReader interface {
+	TakeModeDecision(session.InteractionKind) (string, uint64, bool)
+	ArtifactVersion() uint64
+}
+
+func modeDecisionCurrent(value any, request *modeDecisionRequest) bool {
+	if !request.versioned {
+		return true
+	}
+	reader, ok := value.(modeDecisionVersionReader)
+	return ok && reader.ArtifactVersion() == request.version
 }

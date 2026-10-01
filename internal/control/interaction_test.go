@@ -68,3 +68,42 @@ func TestInteractionBrokerRemovesCancelledRequest(t *testing.T) {
 		t.Fatalf("pending after cancellation = %+v", pending)
 	}
 }
+
+func TestWithdrawalResolutionRaceAndTaskIsolation(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		broker := NewInteractionBroker()
+		request, err := broker.Begin(Interaction{AgentID: "main", TaskID: "task-1", Kind: InteractionQuestions})
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, _ := broker.Begin(Interaction{AgentID: "agent-1", TaskID: "task-1", Kind: InteractionDirectoryApproval})
+		next, _ := broker.Begin(Interaction{AgentID: "main", TaskID: "task-2", Kind: InteractionDirectoryApproval})
+		gate := make(chan struct{})
+		resolved := make(chan error, 1)
+		withdrawn := make(chan struct{})
+		go func() {
+			<-gate
+			resolved <- broker.Resolve(Resolution{InteractionID: request.Interaction.ID, Value: json.RawMessage(`"answer"`)})
+		}()
+		go func() { <-gate; broker.WithdrawTask("main", "task-1"); close(withdrawn) }()
+		close(gate)
+		resolveErr := <-resolved
+		<-withdrawn
+		result, waitErr := request.Wait(context.Background())
+		if result.Withdrawn {
+			if !errors.Is(waitErr, ErrInteractionWithdrawn) || !errors.Is(resolveErr, ErrInteractionResolved) {
+				t.Fatalf("withdrawal lost arbitration: %v %v", waitErr, resolveErr)
+			}
+		} else if waitErr != nil || resolveErr != nil {
+			t.Fatalf("resolution lost arbitration: %v %v", waitErr, resolveErr)
+		}
+		if err := broker.Resolve(Resolution{InteractionID: request.Interaction.ID}); !errors.Is(err, ErrInteractionResolved) {
+			t.Fatal("late answer accepted")
+		}
+		if len(broker.Pending()) != 2 {
+			t.Fatal("withdrawal crossed task or agent boundary")
+		}
+		_ = broker.Resolve(Resolution{InteractionID: other.Interaction.ID})
+		_ = broker.Resolve(Resolution{InteractionID: next.Interaction.ID})
+	}
+}

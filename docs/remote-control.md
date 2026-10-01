@@ -178,3 +178,8 @@ are generated automatically; custom paths are no longer accepted.
 Downloads use `GET api/v1/export?mode=pretty` (or `raw`) through the existing
 remote access controls. The response is an HTML attachment with caching disabled.
 Browser exports do not write files in the host workspace.
+
+
+Busy-agent prompts use structured submissions addressed to the browser's selected agent and observed task ID. Enter/**Steer** updates that task; **Queue** starts a separate FIFO task later. Tab navigates controls normally. A rejected submission retains the draft and refreshes state. **Remove** cancels pending input; **Cancel active work** cancels the running task. Steering waits for a streaming response or running tool, replaces the previous pending steer, and withdraws unanswered interactions. See [interface behavior](interface.md).
+
+Authenticated controllers can POST `/api/v1/prompts` with `agent_id`, `observed_task_id`, `prompt`, and `intent` (`automatic`, `steer`, or `queue`). The response includes `request_id`, accepted `intent`, `state`, `parent_task_id`, and `queue_position`. POST `/api/v1/prompts/{id}/cancel` with `agent_id` removes only pending input. Conflicts return HTTP 409. Runtime snapshots expose pending inputs and durable steering lifecycle events with sequence cursors.

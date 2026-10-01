@@ -70,6 +70,7 @@ type Agent struct {
 	questionsAsked           int
 	askedQuestions           map[string]bool
 	questioner               Questioner
+	artifactVersion          uint64
 	latestPlan               *Plan
 	latestSkillDraft         *SkillDraft
 	planDecisionPending      bool
@@ -438,6 +439,10 @@ func (a *Agent) RunShell(ctx context.Context, command string) (string, error) {
 }
 
 func (a *Agent) Run(ctx context.Context, userText string) error {
+	return a.runWithInput(ctx, userText, nil)
+}
+
+func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskInput) error {
 	if validator, ok := a.provider.(llm.ModelValidator); ok {
 		if err := validator.ValidateModel(a.model); err != nil {
 			return err
@@ -493,12 +498,42 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		}
 	}
 	recoveryInstruction := ""
+	var replanning []*session.SteeringInput
+	applySteer := func(item *session.SteeringInput) {
+		a.messages = append(a.messages, llm.Message{Role: "user", Content: item.Text})
+		a.stateMu.Lock()
+		a.artifactVersion++
+		a.latestPlan = nil
+		a.latestSkillDraft = nil
+		a.planDecisionPending = false
+		a.skillPlanDecisionPending = false
+		a.stateMu.Unlock()
+		a.questionsAsked = 0
+		a.askedQuestions = make(map[string]bool)
+		identicalToolCalls = map[string]int{}
+		recoveryInstruction = ""
+		if contextual, ok := a.tools.(interface{ TaskContext(string) string }); ok {
+			a.taskContext = contextual.TaskContext(item.Text)
+		}
+		a.contextUsage = nil
+		replanning = append(replanning, item)
+		a.publishContext()
+	}
 	for step := 0; step < a.MaxSteps(); step++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		a.currentStep.Store(int64(step + 1))
 		if step > 0 {
 			// Usage and tool results from the previous model turn can push the
 			// conversation over the threshold while Run is still active.
 			a.autoCompactIfNeeded(ctx)
+		}
+		if item := input.take(false); item != nil {
+			applySteer(item)
+			step = 0
+			a.currentStep.Store(1)
 		}
 		requestMessages := a.requestMessages(ctx)
 		if a.InteractiveMode() && a.interactiveAvailable.Load() && !a.PlanMode() && !a.SkillPlanMode() && len(requestMessages) > 0 {
@@ -526,6 +561,10 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 		if rendersResponses {
 			lifecycle.BeginResponse()
 		}
+		for _, item := range replanning {
+			input.delivered(item.ID)
+		}
+		replanning = nil
 		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Thinking: a.thinking, Messages: requestMessages, Tools: a.enabledSchemas()}, func(event llm.StreamEvent) {
 			if ctx.Err() != nil {
 				return
@@ -607,16 +646,30 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			a.lastResponse = response.Message.Content
 			a.stateMu.Unlock()
 			a.autoCompactIfNeeded(ctx)
+			if item := input.take(true); item != nil {
+				applySteer(item)
+				step = -1
+				continue
+			}
 			return nil
 		}
 		a.pendingImages = nil
 		endTurn := false
 		endTurnResponse := ""
 		userAnswer := ""
+		var nextSteer *session.SteeringInput
 		for index, call := range response.Message.ToolCalls {
+			if nextSteer == nil {
+				nextSteer = input.take(false)
+			}
+			if nextSteer != nil {
+				a.messages = append(a.messages, llm.Message{Role: "tool", Content: "Skipped: user steering arrived before this action started.", Name: call.Name, ToolCallID: call.ID})
+				continue
+			}
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+			input.setToolCall(call.ID)
 			task.Resume()
 			fingerprint := toolFingerprint(call)
 			identicalToolCalls[fingerprint]++
@@ -648,12 +701,18 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 				if deniedCalls[fingerprint] {
 					toolErr = fmt.Errorf("action remains denied after a prompt-injection warning")
 				} else if err := a.approveInjectionAction(ctx, call); err != nil {
-					deniedCalls[fingerprint] = true
+					if !errors.Is(err, session.ErrInteractionWithdrawn) {
+						deniedCalls[fingerprint] = true
+					}
 					toolErr = err
 				}
 			}
 			if toolErr == nil {
-				execution, toolErr = a.executeDetailed(ctx, call)
+				if nextSteer = input.take(false); nextSteer != nil {
+					toolErr = errors.New("Skipped: user steering arrived before this action started")
+				} else {
+					execution, toolErr = a.executeDetailed(ctx, call)
+				}
 			}
 			toolSpan.End(toolErr)
 			activityOutput := execution.Output
@@ -682,7 +741,11 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 				if result != "" {
 					result += "\n"
 				}
-				result += "ERROR: " + toolErr.Error()
+				if errors.Is(toolErr, session.ErrInteractionWithdrawn) {
+					result += "Skipped: unanswered interaction withdrawn by user steering."
+				} else {
+					result += "ERROR: " + toolErr.Error()
+				}
 			}
 			if trust.Suspicious(result) {
 				warnInjection()
@@ -699,6 +762,7 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 				a.pendingImages = append(a.pendingImages, execution.Images...)
 			}
 			a.publishContext()
+			input.setToolCall("")
 		}
 		if len(a.pendingImages) > 0 {
 			a.messages = append(a.messages, llm.Message{
@@ -713,11 +777,24 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 			a.messages = append(a.messages, llm.Message{Role: "user", Content: userAnswer})
 			a.publishContext()
 		}
+		if nextSteer == nil {
+			nextSteer = input.take(false)
+		}
+		if nextSteer != nil {
+			applySteer(nextSteer)
+			step = -1
+			continue
+		}
 		if endTurn {
 			a.stateMu.Lock()
 			a.lastResponse = strings.TrimSpace(endTurnResponse)
 			a.stateMu.Unlock()
 			a.autoCompactIfNeeded(ctx)
+			if item := input.take(true); item != nil {
+				applySteer(item)
+				step = -1
+				continue
+			}
 			return nil
 		}
 	}

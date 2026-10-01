@@ -49,6 +49,10 @@ type Terminal struct {
 	// bytes, as an index into |line|). If it returns ok=false, the key
 	// press is processed normally. Otherwise it returns a replacement line
 	// and the new cursor position.
+	SubmissionKey        rune
+	SubmitOnTab          func(string) bool
+	SubmitOnEscape       func() bool
+	KeyHandler           func(rune) bool
 	AutoCompleteCallback func(line string, pos int, key rune) (newLine string, newPos int, ok bool)
 
 	// Escape contains a pointer to the escape codes for this terminal.
@@ -505,6 +509,27 @@ func (t *Terminal) handleKey(key rune) (line string, ok bool) {
 		return
 	}
 
+	if key == '\t' && t.SubmitOnTab != nil && t.SubmitOnTab(string(t.line)) && !t.pasteActive {
+		t.SubmissionKey = key
+		key = keyEnter
+	} else if key == keyEnter {
+		t.SubmissionKey = key
+	}
+	if key == 29 {
+		key = keyEscape
+	}
+	if !t.pasteActive && t.KeyHandler != nil {
+		t.lock.Unlock()
+		consumed := t.KeyHandler(key)
+		t.lock.Lock()
+		if consumed {
+			return
+		}
+	}
+	if key == keyEscape && t.SubmitOnEscape != nil && t.SubmitOnEscape() {
+		t.SubmissionKey = key
+		key = keyEnter
+	}
 	switch key {
 	case keyBackspace:
 		if t.pos == 0 {
@@ -1097,3 +1122,10 @@ func readPasswordLine(reader io.Reader) ([]byte, error) {
 		}
 	}
 }
+
+const (
+	KeyUp     = keyUp
+	KeyDown   = keyDown
+	KeyDelete = keyDelete
+	KeyEscape = keyEscape
+)

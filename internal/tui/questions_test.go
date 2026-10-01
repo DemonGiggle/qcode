@@ -109,3 +109,31 @@ func TestFormatQuestionWithOptionDescription(t *testing.T) {
 		t.Fatalf("selected answer = %q, %v", answer, valid)
 	}
 }
+
+func TestEscapeDefersQuestionWithoutAnswering(t *testing.T) {
+	input := newInterruptReader(nil)
+	u := &UI{input: input, display: newHistoryWriter(io.Discard), drafts: map[string]string{"main": "unfinished draft"}, deferredInteractions: make(map[string]bool), activeAgent: "main", width: 80}
+	u.terminal = lineedit.NewTerminal(readWriter{Reader: input, Writer: io.Discard}, "> ")
+	u.terminal.SubmitOnEscape = func() bool { return true }
+	request := &questionRequest{agentID: "main", questions: []question.Question{{Text: "Which flow?", AllowCustom: true}}, draft: "unfinished draft", ctx: context.Background(), result: make(chan questionResult, 1)}
+	u.questions = []*questionRequest{request}
+	done := make(chan bool, 1)
+	go func() { done <- u.handlePendingQuestions(context.Background()) }()
+	input.route([]byte{29}) // interruptReader's decoded standalone Escape.
+	select {
+	case handled := <-done:
+		if handled {
+			t.Fatal("deferred question blocked composer")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Escape did not open composer")
+	}
+	if !u.deferredInteractions["main"] || len(u.questions) != 1 || u.drafts["main"] != "unfinished draft" {
+		t.Fatal("deferred interaction/draft lost")
+	}
+	select {
+	case <-request.result:
+		t.Fatal("Escape answered question")
+	default:
+	}
+}

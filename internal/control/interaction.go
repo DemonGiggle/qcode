@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	ErrInteractionNotFound = errors.New("interaction not found")
-	ErrInteractionResolved = errors.New("interaction already resolved")
+	ErrInteractionWithdrawn = session.ErrInteractionWithdrawn
+	ErrInteractionNotFound  = errors.New("interaction not found")
+	ErrInteractionResolved  = errors.New("interaction already resolved")
 )
 
 const resolvedInteractionHistory = 256
@@ -100,6 +101,9 @@ func (r *InteractionRequest) Wait(ctx context.Context) (Resolution, error) {
 	}
 	select {
 	case result := <-r.pending.result:
+		if result.Withdrawn {
+			return result, ErrInteractionWithdrawn
+		}
 		return result, nil
 	case <-ctx.Done():
 		r.broker.mu.Lock()
@@ -161,4 +165,13 @@ func formatUint(value uint64) string {
 		value /= 10
 	}
 	return string(buffer[index:])
+}
+
+// Withdrawal and resolution share the same arbitration and terminal history.
+func (b *InteractionBroker) WithdrawTask(agentID, taskID string) {
+	for _, item := range b.Pending() {
+		if item.AgentID == agentID && item.TaskID == taskID {
+			_ = b.Resolve(Resolution{InteractionID: item.ID, Withdrawn: true, ResolvedBy: "user-steering"})
+		}
+	}
 }

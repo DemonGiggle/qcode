@@ -22,11 +22,12 @@ type ConsultationRequest struct {
 }
 
 type ConsultationReply struct {
-	AgentID   string `json:"agent_id"`
-	RequestID string `json:"request_id,omitempty"`
-	Status    string `json:"status"`
-	Response  string `json:"response,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Steers    []session.SteeringInput `json:"user_steering,omitempty"`
+	AgentID   string                  `json:"agent_id"`
+	RequestID string                  `json:"request_id,omitempty"`
+	Status    string                  `json:"status"`
+	Response  string                  `json:"response,omitempty"`
+	Error     string                  `json:"error,omitempty"`
 }
 
 func (m *AgentManager) SetConsultationTimeout(timeout time.Duration) error {
@@ -42,6 +43,9 @@ func (m *AgentManager) SetConsultationTimeout(timeout time.Duration) error {
 // Consult dispatches the entire batch before waiting. Errors belong to individual
 // replies; only caller cancellation or manager shutdown fails the overall call.
 func (m *AgentManager) Consult(ctx context.Context, requests []ConsultationRequest) ([]ConsultationReply, error) {
+	return m.consult(ctx, requests, "")
+}
+func (m *AgentManager) consult(ctx context.Context, requests []ConsultationRequest, actor string) ([]ConsultationReply, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -75,7 +79,13 @@ func (m *AgentManager) Consult(ctx context.Context, requests []ConsultationReque
 		replies[i].AgentID = request.AgentID
 		var err error
 		if err = waitCtx.Err(); err == nil {
-			pending[i], _, err = m.submitRequest(request.AgentID, request.Prompt, deadline, false)
+			if strings.TrimSpace(request.Prompt) == "" {
+				err = fmt.Errorf("task must not be empty")
+			} else {
+				m.mu.Lock()
+				pending[i], _, err = m.submitRequestLocked(request.AgentID, strings.TrimSpace(request.Prompt), deadline, false, "consultation", actor)
+				m.mu.Unlock()
+			}
 		}
 		if err != nil {
 			replies[i].Status, replies[i].Error = requestStatus(err), err.Error()
@@ -101,6 +111,13 @@ func (m *AgentManager) Consult(ctx context.Context, requests []ConsultationReque
 			}
 			// Completion, expiry, and cancellation all close done exactly once.
 			<-req.done
+			m.mu.RLock()
+			for _, item := range m.work[req.journalIndex].Steers {
+				if item.State == session.InputDelivered {
+					replies[i].Steers = append(replies[i].Steers, item)
+				}
+			}
+			m.mu.RUnlock()
 			replies[i].RequestID = req.id
 			replies[i].Status = requestStatus(req.err)
 			if req.err != nil {
@@ -167,6 +184,7 @@ func (m *AgentManager) completeRequestLocked(req *promptRequest, response string
 	if req.finished {
 		return
 	}
+	m.cancelSteersLocked(req)
 	req.finished = true
 	work := &m.work[req.journalIndex]
 	work.Status, work.Finished = requestStatus(err), time.Now().UTC()
@@ -215,7 +233,7 @@ func (t *managedToolset) consult(ctx context.Context, arguments json.RawMessage)
 	if err := json.Unmarshal(arguments, &args); err != nil {
 		return llm.ToolResult{}, fmt.Errorf("invalid consult_agents arguments: %w", err)
 	}
-	replies, err := t.manager.Consult(ctx, args.Requests)
+	replies, err := t.manager.consult(ctx, args.Requests, t.id)
 	if err != nil {
 		return llm.ToolResult{}, err
 	}

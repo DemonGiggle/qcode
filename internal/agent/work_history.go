@@ -89,7 +89,7 @@ func (m *AgentManager) matchWorkLocked(query, agentID string) []int {
 		if work.AgentID == "main" || agentID != "" && work.AgentID != agentID {
 			continue
 		}
-		text := strings.ToLower(work.Prompt + "\n" + work.Response + "\n" + strings.Join(work.ChangedFiles, " ") + "\n" + work.AgentName)
+		text := strings.ToLower(steeredPrompt(work) + "\n" + work.Response + "\n" + strings.Join(work.ChangedFiles, " ") + "\n" + work.AgentName)
 		score := 0
 		for _, term := range terms {
 			if strings.Contains(text, term) {
@@ -147,7 +147,7 @@ func (m *AgentManager) workMatchLocked(index int, query string) WorkMatch {
 	w := m.work[index]
 	_, available := m.sessions[w.AgentID]
 	return WorkMatch{RequestID: w.RequestID, AgentID: w.AgentID, AgentName: truncateUTF8(w.AgentName, 64), Available: available,
-		Status: w.Status, Task: excerpt(w.Prompt, query, 256), Findings: excerpt(w.Response, query, 768), Files: truncateUTF8(strings.Join(w.ChangedFiles, ", "), 256), Created: w.Created, Finished: w.Finished}
+		Status: w.Status, Task: excerpt(steeredPrompt(w), query, 256), Findings: excerpt(w.Response, query, 768), Files: truncateUTF8(strings.Join(w.ChangedFiles, ", "), 256), Created: w.Created, Finished: w.Finished}
 }
 
 // TaskContext is computed once before each new main request, on the agent's
@@ -210,6 +210,7 @@ func (m *AgentManager) WorkRecords() []session.WorkRecord {
 	records := make([]session.WorkRecord, len(m.work))
 	for i, work := range m.work {
 		work.ChangedFiles = append([]string(nil), work.ChangedFiles...)
+		work.Steers = append([]session.SteeringInput(nil), work.Steers...)
 		work.Activities = append([]session.WorkActivity(nil), work.Activities...)
 		records[i] = work
 	}
@@ -217,9 +218,10 @@ func (m *AgentManager) WorkRecords() []session.WorkRecord {
 }
 
 func (m *AgentManager) saveWorkHistoryLocked() *session.WorkHistory {
-	state := &session.WorkHistory{NextRequestID: m.nextRequestID, Events: append([]session.ConsultationEvent(nil), m.consultationEvents...)}
+	state := &session.WorkHistory{NextRequestID: m.nextRequestID, Events: append([]session.ConsultationEvent(nil), m.consultationEvents...), SteeringEvents: append([]session.SteeringEvent(nil), m.steeringEvents...)}
 	for _, work := range m.work {
 		work.ChangedFiles = append([]string(nil), work.ChangedFiles...)
+		work.Steers = append([]session.SteeringInput(nil), work.Steers...)
 		work.Activities = append([]session.WorkActivity(nil), work.Activities...)
 		state.Records = append(state.Records, work)
 	}
@@ -261,6 +263,7 @@ func (m *AgentManager) RestoreWorkHistory(saved *session.WorkHistory) error {
 		}
 		seen[work.RequestID] = true
 		work.ChangedFiles = append([]string(nil), work.ChangedFiles...)
+		work.Steers = append([]session.SteeringInput(nil), work.Steers...)
 		work.Activities = append([]session.WorkActivity(nil), work.Activities...)
 		records = append(records, work)
 	}
@@ -269,10 +272,35 @@ func (m *AgentManager) RestoreWorkHistory(saved *session.WorkHistory) error {
 			return fmt.Errorf("invalid consultation event sequence")
 		}
 	}
+	for i, event := range saved.SteeringEvents {
+		if event.Sequence != uint64(i+1) {
+			return fmt.Errorf("invalid steering event sequence")
+		}
+	}
+	for i := range records {
+		for _, item := range records[i].Steers {
+			n, err := strconv.ParseUint(strings.TrimPrefix(item.ID, "request-"), 10, 64)
+			if err != nil || n == 0 || n > saved.NextRequestID || item.ID != fmt.Sprintf("request-%d", n) || seen[item.ID] || item.ParentTaskID != records[i].RequestID {
+				return fmt.Errorf("invalid steering input")
+			}
+			seen[item.ID] = true
+			switch item.State {
+			case session.InputPending, session.InputReplanning, session.InputDelivered, session.InputSuperseded, session.InputCancelled, session.InputInterrupted:
+			default:
+				return fmt.Errorf("invalid steering state")
+			}
+		}
+	}
 	m.work, m.nextRequestID = records, saved.NextRequestID
+	m.steeringEvents = append([]session.SteeringEvent(nil), saved.SteeringEvents...)
 	m.consultationEvents = append([]session.ConsultationEvent(nil), saved.Events...)
 	for i := range m.work {
 		work := &m.work[i]
+		for j := range work.Steers {
+			if work.Steers[j].State == session.InputPending || work.Steers[j].State == session.InputReplanning {
+				m.steerStateLocked(&promptRequest{journalIndex: i, targetID: work.AgentID}, j, session.InputInterrupted)
+			}
+		}
 		if _, exists := m.sessions[work.AgentID]; !exists {
 			m.closed[work.AgentID] = struct{}{}
 		}
@@ -285,4 +313,14 @@ func (m *AgentManager) RestoreWorkHistory(saved *session.WorkHistory) error {
 		}
 	}
 	return nil
+}
+
+func steeredPrompt(work session.WorkRecord) string {
+	text := work.Prompt
+	for _, item := range work.Steers {
+		if item.State == session.InputDelivered {
+			text += "\nUser steering (" + item.Actor + "): " + item.Text
+		}
+	}
+	return text
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"qcode/internal/lineedit"
 	"qcode/internal/session"
 )
 
@@ -50,7 +51,7 @@ func TestFixedInputSurvivesStreamingAndFiltersCandidates(t *testing.T) {
 		_, _ = u.display.Write([]byte("streamed output\n"))
 	}
 	got := frame()
-	for _, want := range []string{"(Queue)> /", "  /agent", "  /exit", "  /history", "type to filter", "streamed output"} {
+	for _, want := range []string{"(Steer)> /", "  /agent", "  /exit", "  /history", "type to filter", "streamed output"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in frame %q", want, got)
 		}
@@ -71,18 +72,18 @@ func TestFixedInputSurvivesStreamingAndFiltersCandidates(t *testing.T) {
 func TestFixedPromptUsesActiveAgentState(t *testing.T) {
 	u, frame := layoutFixture(t)
 	u.renderInput(inputPrompt, "draft", 3)
-	if !strings.Contains(frame(), "(Queue)> draft") {
+	if !strings.Contains(frame(), "(Steer)> draft") {
 		t.Fatal("running prompt missing")
 	}
 	u.activeAgent = "agent-1"
 	u.renderInput(inputPrompt, "other draft", 2)
-	if strings.Contains(frame(), "(Queue)>") || !strings.Contains(frame(), "> other draft") {
+	if strings.Contains(frame(), "(Steer)>") || !strings.Contains(frame(), "> other draft") {
 		t.Fatal("idle tab inherited queue state")
 	}
 	u.activeAgent = "main"
 	u.manager.(*layoutManager).states["main"] = session.StatusCompleted
 	u.renderInput(inputPrompt, "draft", 3)
-	if strings.Contains(frame(), "(Queue)>") {
+	if strings.Contains(frame(), "(Steer)>") {
 		t.Fatal("completed task retained queue prompt")
 	}
 }
@@ -121,7 +122,7 @@ func TestFixedHistoryStaysPausedWhileInputChanges(t *testing.T) {
 	if !u.activeViewportLocked().browsing || u.activeViewportLocked().anchor != anchor {
 		t.Fatal("stream or suggestions moved the reading position")
 	}
-	if !strings.Contains(frame(), "(Queue)> /h") {
+	if !strings.Contains(frame(), "(Steer)> /h") {
 		t.Fatal("paging moved the prompt")
 	}
 }
@@ -164,13 +165,13 @@ func TestQueuedPanelStaysVisibleAndPagesIndependently(t *testing.T) {
 	}}
 	u.width, u.height = 32, 17
 	u.renderInput(inputPrompt, "draft", 5)
-	if got := frame(); !strings.Contains(got, "Queued 3 | Alt+Q expand") || !strings.Contains(got, "1. first queued") || !strings.Contains(got, "2. second queued") || !strings.Contains(got, "(Queue)> draft") {
+	if got := frame(); !strings.Contains(got, "Queued | Alt+Q expand") || !strings.Contains(got, "1. first queued") || !strings.Contains(got, "2. second queued") || !strings.Contains(got, "(Steer)> draft") {
 		t.Fatalf("reserved queue area = %q", got)
 	}
 	for i := 0; i < 30; i++ {
 		u.display.AddLine("streamed output")
 	}
-	if !strings.Contains(frame(), "Queued 3 | Alt+Q expand") || !strings.Contains(frame(), "1. first queued") {
+	if !strings.Contains(frame(), "Queued | Alt+Q expand") || !strings.Contains(frame(), "1. first queued") {
 		t.Fatal("streamed output displaced queue panel")
 	}
 	u.showPage(1)
@@ -193,13 +194,76 @@ func TestQueuedPanelStaysVisibleAndPagesIndependently(t *testing.T) {
 	}
 	u.width, u.height = 12, 8
 	u.renderInput(inputPrompt, strings.Repeat("x", 200), 200)
-	if !strings.Contains(frame(), "Q3 Alt+Q") {
+	if !strings.Contains(frame(), "Q Alt+Q") {
 		t.Fatal("tall draft or small width hid the queue shortcut")
 	}
 	manager.queued["main"] = nil
 	u.renderInput(inputPrompt, "draft", 5)
-	if strings.Contains(frame(), "Queued 3") || u.activeQueueLocked().expanded {
+	if strings.Contains(frame(), "Alt+Q") || u.activeQueueLocked().expanded {
 		t.Fatal("drained queue retained panel state")
+	}
+}
+
+type pendingLayoutManager struct {
+	*layoutManager
+	cancelledID string
+}
+
+func (*pendingLayoutManager) SubmitPrompt(session.PromptSubmission) (session.Submission, error) {
+	return session.Submission{}, nil
+}
+
+func (m *pendingLayoutManager) PendingInputs(id string) []session.QueuedPrompt {
+	return m.QueuedPrompts(id)
+}
+
+func (m *pendingLayoutManager) CancelInput(agentID, promptID string) error {
+	m.cancelledID = promptID
+	for i, item := range m.queued[agentID] {
+		if item.RequestID == promptID {
+			m.queued[agentID] = append(m.queued[agentID][:i], m.queued[agentID][i+1:]...)
+			break
+		}
+	}
+	return nil
+}
+
+func TestPendingPanelSeparatesSteeringAndQueuedWork(t *testing.T) {
+	for _, unicodeEnabled := range []bool{true, false} {
+		t.Run(map[bool]string{true: "unicode", false: "ascii"}[unicodeEnabled], func(t *testing.T) {
+			u, frame := layoutFixture(t)
+			u.unicode = unicodeEnabled
+			manager := &pendingLayoutManager{layoutManager: u.manager.(*layoutManager)}
+			u.manager = manager
+			manager.queued = map[string][]session.QueuedPrompt{"main": {
+				{RequestID: "steer", Intent: session.IntentSteer, State: session.InputPending, Source: "terminal", Actor: "local-tui", Prompt: "adjust the button to be more flexible"},
+				{RequestID: "first", Intent: session.IntentQueue, Source: "terminal", Actor: "local-tui", Prompt: "after that please commit the code"},
+				{RequestID: "second", Intent: session.IntentQueue, Source: "terminal", Actor: "local-tui", Prompt: "The commit message should be as short as possible"},
+			}}
+			u.renderInput(inputPrompt, "draft 你好", 8)
+			want := "Steer\n ╰─ adjust the button to be more flexible\n\nQueued | Alt+Q expand\n │  1. after that please commit the code\n ╰─ 2. The commit message should be as short as possible"
+			if !unicodeEnabled {
+				want = strings.ReplaceAll(strings.ReplaceAll(want, "╰─", "+-"), "│", "|")
+			}
+			if got := frame(); !strings.Contains(got, want) || strings.Contains(got, "terminal:") || strings.Contains(got, "(pending)") {
+				t.Fatalf("pending panel does not match requested layout:\n%s", got)
+			}
+			u.toggleQueuePanel()
+			if !u.handlePendingPanelKey(lineedit.KeyDown) || u.activeQueueLocked().selectedID != "first" {
+				t.Fatal("section headings changed item selection")
+			}
+			if !strings.Contains(frame(), ">  "+map[bool]string{true: "│", false: "|"}[unicodeEnabled]+"  1. after that please commit") {
+				t.Fatalf("selected queued prompt is not marked: %s", frame())
+			}
+			u.handlePendingPanelKey(lineedit.KeyDelete)
+			if manager.cancelledID != "first" || len(manager.queued["main"]) != 2 || u.drafts["main"] != "draft 你好" {
+				t.Fatal("tree panel removal changed selection or composer draft")
+			}
+			u.handlePendingPanelKey(lineedit.KeyEscape)
+			if !strings.Contains(frame(), "1. The commit message") || strings.Contains(frame(), "after that please commit") {
+				t.Fatalf("collapsed panel did not refresh after removal: %s", frame())
+			}
+		})
 	}
 }
 

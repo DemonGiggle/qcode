@@ -305,7 +305,7 @@ func TestRemotePageShowsWaitingIndicator(t *testing.T) {
 		"spinnerFrames=['⠋'",
 		"'Waiting ('",
 		"' · '+waitingQueued+' queued'",
-		"'/agent cancel '+active",
+		"'api/v1/agents/'+encodeURIComponent(target)+'/cancel'",
 		"setInterval(()=>{if(!waitingRunning)return;waitingFrame++;drawWaiting()},100)",
 	} {
 		if !strings.Contains(indexHTML, fragment) {
@@ -318,7 +318,7 @@ func TestRemotePageHasAccessibleQueuedPromptPanel(t *testing.T) {
 	for _, fragment := range []string{
 		`id="queue-panel"`, `id="queue-toggle"`, `aria-expanded="false"`,
 		`id="queue-list"`, `role="list"`, `tabindex="-1"`,
-		`view.queued_prompts`, `row.textContent=(index+1)+'. '+String(item.prompt||'')`,
+		`view.queued_prompts`, `item.intent==='steer'`,
 		`queuePanel.classList.toggle('expanded',expanded)`,
 		`queueList.scrollTop+=`, `e.altKey&&e.key.toLowerCase()==='q'`,
 	} {

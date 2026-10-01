@@ -12,9 +12,11 @@ import (
 const legacyEventBuffer = 32
 
 type Snapshot struct {
-	Sequence     uint64            `json:"sequence"`
-	Agents       []session.Summary `json:"agents"`
-	Interactions []Interaction     `json:"interactions,omitempty"`
+	Sequence       uint64                            `json:"sequence"`
+	Agents         []session.Summary                 `json:"agents"`
+	Interactions   []Interaction                     `json:"interactions,omitempty"`
+	PendingInputs  map[string][]session.QueuedPrompt `json:"pending_inputs,omitempty"`
+	SteeringEvents []session.SteeringEvent           `json:"steering_events,omitempty"`
 }
 
 // Host is the single in-process application runtime shared by every control
@@ -48,6 +50,7 @@ func NewHost(ctx context.Context, maxAgents int) *Host {
 			host.events.publish(Event{Type: EventInteractionResolved, Resolution: &resolution})
 		},
 	)
+	manager.SetSteeringObserver(host.interactions.WithdrawTask)
 	go host.forwardEvents()
 	return host
 }
@@ -92,13 +95,25 @@ func (h *Host) Subscribe(ctx context.Context, after uint64) *Subscription {
 // that subscribes after Sequence; applying agent snapshots is idempotent.
 func (h *Host) Snapshot() Snapshot {
 	sequence := h.events.sequence()
-	return Snapshot{Sequence: sequence, Agents: h.List(), Interactions: h.interactions.Pending()}
+	snapshot := Snapshot{Sequence: sequence, Agents: h.List(), Interactions: h.interactions.Pending(), PendingInputs: make(map[string][]session.QueuedPrompt), SteeringEvents: h.SteeringEvents(0)}
+	for _, summary := range snapshot.Agents {
+		snapshot.PendingInputs[summary.ID] = h.PendingInputs(summary.ID)
+	}
+	return snapshot
 }
 
 func (h *Host) Interactions() *InteractionBroker { return h.interactions }
 
 func (h *Host) BeginInteraction(interaction session.Interaction) (session.InteractionWaiter, error) {
-	return h.interactions.Begin(interaction)
+	var waiter session.InteractionWaiter
+	err := h.manager.InteractionScope(interaction.AgentID, func(taskID, toolCallID string) error {
+		interaction.TaskID = taskID
+		interaction.ToolCallID = toolCallID
+		var err error
+		waiter, err = h.interactions.Begin(interaction)
+		return err
+	})
+	return waiter, err
 }
 
 func (h *Host) ResolveInteraction(resolution session.Resolution) error {
@@ -174,3 +189,16 @@ func (h *Host) Shutdown() {
 		<-h.done
 	})
 }
+
+func (h *Host) SubmitPrompt(input session.PromptSubmission) (session.Submission, error) {
+	sub, err := h.manager.SubmitPrompt(input)
+
+	return sub, err
+}
+func (h *Host) PendingInputs(id string) []session.QueuedPrompt { return h.manager.PendingInputs(id) }
+func (h *Host) CancelInput(id, promptID string) error          { return h.manager.CancelInput(id, promptID) }
+func (h *Host) SteeringEvents(after uint64) []session.SteeringEvent {
+	return h.manager.SteeringEvents(after)
+}
+
+func (h *Host) CancelTask(id, observedID string) error { return h.manager.CancelTask(id, observedID) }

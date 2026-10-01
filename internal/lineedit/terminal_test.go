@@ -243,3 +243,24 @@ func TestHomeAndEndSupportCommonTerminalSequences(t *testing.T) {
 		})
 	}
 }
+
+func TestSubmissionKeyTabEnterAndPaste(t *testing.T) {
+	for _, test := range []struct {
+		name, input, want string
+		key               rune
+	}{
+		{"enter", "你好\r", "你好", '\r'}, {"queue", "next task\t", "next task", '\t'}, {"paste", "\x1b[200~a\tb\x1b[201~\r", "a\tb", '\r'},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			terminal := NewTerminal(readWriter{keyReader{strings.NewReader(test.input)}, io.Discard}, "> ")
+			terminal.SubmitOnTab = func(text string) bool { return text != "" }
+			line, err := terminal.ReadLine()
+			if err == ErrPasteIndicator {
+				err = nil
+			}
+			if err != nil || line != test.want || terminal.SubmissionKey != test.key {
+				t.Fatalf("line=%q key=%q err=%v", line, terminal.SubmissionKey, err)
+			}
+		})
+	}
+}

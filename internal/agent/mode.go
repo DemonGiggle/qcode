@@ -9,6 +9,7 @@ import (
 
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
+	"qcode/internal/session"
 )
 
 // ExecutionMode controls the authority available to an agent request.
@@ -178,6 +179,7 @@ func (a *Agent) LatestSkillDraftText() (string, bool) {
 // ClearLatestSkillDraft starts a fresh guided skill-design flow.
 func (a *Agent) ClearLatestSkillDraft() {
 	a.stateMu.Lock()
+	a.artifactVersion++
 	a.latestSkillDraft = nil
 	a.skillPlanDecisionPending = false
 	a.stateMu.Unlock()
@@ -186,6 +188,7 @@ func (a *Agent) ClearLatestSkillDraft() {
 
 func (a *Agent) saveSkillDraft(draft SkillDraft) {
 	a.stateMu.Lock()
+	a.artifactVersion++
 	a.latestSkillDraft = &draft
 	a.skillPlanDecisionPending = true
 	a.stateMu.Unlock()
@@ -195,13 +198,8 @@ func (a *Agent) saveSkillDraft(draft SkillDraft) {
 // TakeSkillPlanDecision returns the latest draft once when the interactive
 // host should ask whether to create it or remain in Skill Plan mode.
 func (a *Agent) TakeSkillPlanDecision() (string, bool) {
-	a.stateMu.Lock()
-	defer a.stateMu.Unlock()
-	if !a.skillPlanDecisionPending || a.latestSkillDraft == nil {
-		return "", false
-	}
-	a.skillPlanDecisionPending = false
-	return renderSkillDraft(*a.latestSkillDraft), true
+	text, _, ready := a.TakeModeDecision(session.InteractionSkillPlanDecision)
+	return text, ready
 }
 
 // LatestPlan returns a copy of the executable plan, if one has been saved.
@@ -227,6 +225,7 @@ func (a *Agent) LatestPlanText() (string, bool) {
 // revisions in the conversation transcript.
 func (a *Agent) ClearLatestPlan() {
 	a.stateMu.Lock()
+	a.artifactVersion++
 	a.latestPlan = nil
 	a.planDecisionPending = false
 	a.stateMu.Unlock()
@@ -236,13 +235,8 @@ func (a *Agent) ClearLatestPlan() {
 // TakePlanDecision returns the latest plan once when the interactive host
 // should ask whether to implement it or remain in Plan mode.
 func (a *Agent) TakePlanDecision() (string, bool) {
-	a.stateMu.Lock()
-	defer a.stateMu.Unlock()
-	if !a.planDecisionPending || a.latestPlan == nil {
-		return "", false
-	}
-	a.planDecisionPending = false
-	return renderPlan(*a.latestPlan), true
+	text, _, ready := a.TakeModeDecision(session.InteractionPlanDecision)
+	return text, ready
 }
 
 func (a *Agent) enabledSchemas() []llm.Tool {
@@ -281,6 +275,7 @@ func (a *Agent) executeDetailed(ctx context.Context, call llm.ToolCall) (llm.Too
 
 func (a *Agent) savePlan(plan Plan) {
 	a.stateMu.Lock()
+	a.artifactVersion++
 	a.latestPlan = &plan
 	a.planDecisionPending = true
 	a.stateMu.Unlock()
@@ -693,4 +688,28 @@ func (t *modeToolset) WorkspaceState(ctx context.Context) map[string]string {
 		return tracker.WorkspaceState(ctx)
 	}
 	return nil
+}
+
+// TakeModeDecision atomically captures the artifact identity and its contents.
+func (a *Agent) TakeModeDecision(kind session.InteractionKind) (string, uint64, bool) {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	switch kind {
+	case session.InteractionPlanDecision:
+		if a.planDecisionPending && a.latestPlan != nil {
+			a.planDecisionPending = false
+			return renderPlan(*a.latestPlan), a.artifactVersion, true
+		}
+	case session.InteractionSkillPlanDecision:
+		if a.skillPlanDecisionPending && a.latestSkillDraft != nil {
+			a.skillPlanDecisionPending = false
+			return renderSkillDraft(*a.latestSkillDraft), a.artifactVersion, true
+		}
+	}
+	return "", a.artifactVersion, false
+}
+func (a *Agent) ArtifactVersion() uint64 {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	return a.artifactVersion
 }
