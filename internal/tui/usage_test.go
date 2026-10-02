@@ -52,10 +52,10 @@ func TestSessionUsageLabels(t *testing.T) {
 		usage llm.SessionUsage
 		want  string
 	}{
-		{llm.SessionUsage{}, "I:0 O:0"},
+		{llm.SessionUsage{}, "I:0 O:0 T:0"},
 		{llm.SessionUsage{Missing: 1}, "unknown"},
-		{llm.SessionUsage{InputTokens: 1200, OutputTokens: 340, TotalTokens: 1540}, "I:1.2K O:340"},
-		{llm.SessionUsage{InputTokens: 120, OutputTokens: 30, TotalTokens: 150, Missing: 1}, "I:120 O:30?"},
+		{llm.SessionUsage{InputTokens: 1200, OutputTokens: 340, TotalTokens: 1540}, "I:1.2K O:340 T:1.5K"},
+		{llm.SessionUsage{InputTokens: 120, OutputTokens: 30, TotalTokens: 150, Missing: 1}, "I:120 O:30? T:150"},
 	} {
 		u := &UI{runner: tokenRunner{usage: tc.usage}, width: 80}
 		if got := u.usageLabel(); got != tc.want {
@@ -63,7 +63,7 @@ func TestSessionUsageLabels(t *testing.T) {
 		}
 		for _, color := range []bool{false, true} {
 			bar := statusBar("provider", "model", "/workspace", 80, false, color, "unknown", u.usageLabel())
-			if !strings.Contains(bar, tc.want) || visibleWidth(bar) > 80 {
+			if !strings.Contains(bar, tc.want) {
 				t.Fatal(bar)
 			}
 		}

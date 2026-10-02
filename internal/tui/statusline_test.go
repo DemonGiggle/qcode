@@ -271,3 +271,32 @@ func TestStatuslineClipsWorkspaceNameWithoutChangingParent(t *testing.T) {
 		t.Fatalf("omitted parent must be marked explicitly: %q", bar)
 	}
 }
+
+func TestStatuslineTokenTotalFitsWrappedRow(t *testing.T) {
+	for _, color := range []bool{false, true} {
+		for _, unicode := range []bool{false, true} {
+			total := interfaceGlyph(unicode, "Σ:150", "T:150")
+			for _, width := range []int{60, 19} {
+				bar := statusBar("ollama", "qwen", "/w", width, unicode, color, "73% left", "I:120 O:30 "+total)
+				if width == 19 {
+					bar = statusBarWithStatuslineHidden("p", "m", "/w", width, unicode, color, false, []string{"ws", "ctx"}, magenta, blue, "73% left", "I:120 O:30 "+total)
+				}
+				lines := strings.Split(bar, "\n")
+				if len(lines) != 2 {
+					t.Fatalf("want wrapped status: %q", bar)
+				}
+				if !strings.Contains(lines[1], "TOK") || !strings.Contains(lines[1], "I:120 O:30") {
+					t.Fatalf("want tokens on second row: %q", bar)
+				}
+				if strings.Contains(bar, total) != (width == 60) {
+					t.Fatalf("total should depend on available row space (width %d): %q", width, bar)
+				}
+				for _, line := range lines {
+					if visibleWidth(line) > width {
+						t.Fatalf("row exceeds width %d: %q", width, line)
+					}
+				}
+			}
+		}
+	}
+}

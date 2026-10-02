@@ -332,6 +332,19 @@ func renderStatusBarWithPriority(provider, model, root string, width int, unicod
 		return false
 	}
 
+	// Try the total in the actual layout before falling back to input/output only.
+	fullLabels := labels
+	compactLabels := append([]string(nil), labels...)
+	if len(compactLabels) > 1 {
+		for _, marker := range []string{" Σ:", " T:"} {
+			if i := strings.Index(compactLabels[1], marker); i >= 0 {
+				compactLabels[1] = compactLabels[1][:i]
+				break
+			}
+		}
+	}
+	compactTokens := false
+
 	// renderSet renders exactly the toggles in set (in display order) as one
 	// line. Toggles outside set are treated as dropped for this line only.
 	renderSet := func(set []string, wsPath string, shortMode bool, dropped map[string]bool) string {
@@ -431,9 +444,15 @@ func renderStatusBarWithPriority(provider, model, root string, width int, unicod
 		if found {
 			return finishDouble(first, second)
 		}
+		if !compactTokens && len(labels) > 1 && compactLabels[1] != fullLabels[1] {
+			labels = compactLabels
+			compactTokens = true
+			continue
+		}
 		// Squeeze INTERACTIVE to INT before dropping whole segments.
 		if !shortMode && hasInteractive() {
 			shortMode = true
+			labels, compactTokens = fullLabels, false
 			continue
 		}
 		// Drop the lowest-priority remaining toggle and retry. Two lines
@@ -463,6 +482,7 @@ func renderStatusBarWithPriority(provider, model, root string, width int, unicod
 			break
 		}
 		dropped[next] = true
+		labels, compactTokens = fullLabels, false
 	}
 
 	// Final fallback: even two lines overflow. Truncate each line so both
