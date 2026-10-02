@@ -22,6 +22,7 @@ import (
 	"qcode/internal/learning"
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
+	"qcode/internal/redaction"
 	"qcode/internal/remote"
 	"qcode/internal/session"
 	"qcode/internal/skills"
@@ -78,7 +79,11 @@ func main() {
 	}
 }
 
-func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
+func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr error) {
+	policy, _ := redaction.New(redaction.Config{}, redaction.EnvironmentValues())
+	diagnosticsOut := &redaction.DiagnosticWriter{Policy: policy, Sink: redaction.Terminal, Out: stderr}
+	defer func() { runErr = policy.Error(redaction.Terminal, runErr) }()
+	var redactionConfig redaction.Config
 	if qcodeupdate.IsReplacementCommand(arguments) {
 		return qcodeupdate.RunReplacement(arguments, stdout)
 	}
@@ -102,7 +107,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	var configuredTheme string
 	var sandboxCommandPathFlags sandboxCommandPathsFlag
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
-	flags.SetOutput(stderr)
+	flags.SetOutput(diagnosticsOut)
 	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider: ollama, openai, or opencode-go")
 	flags.StringVar(&opts.model, "model", env("QCODE_MODEL", "qwen2.5-coder:7b"), "model identifier")
 	flags.StringVar(&opts.thinking, "thinking", os.Getenv("QCODE_THINKING"), "thinking level for a model that supports it (for example: low, high, max, off)")
@@ -120,9 +125,10 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	flags.BoolVar(&opts.demo, "demo", false, "run without an LLM or real tool execution")
 	flags.BoolVar(&opts.sandbox, "sandbox", false, "isolate tools with bubblewrap (Linux only)")
 	flags.Var(&sandboxCommandPathFlags, "sandbox-command-path", "trusted executable directory to mount read-only in the sandbox and prepend to PATH (repeatable, overrides sandbox_command_paths)")
+	flags.Lookup("api-key").DefValue = ""
 	flags.BoolVar(&opts.dangerSkipTLSVerify, "danger-skip-tls-verify", false, "skip TLS certificate verification (insecure)")
 	flags.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\nUse 'qcode update' to install the latest release.\n\nOptions:\n")
+		fmt.Fprintf(diagnosticsOut, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\nUse 'qcode update' to install the latest release.\n\nOptions:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(arguments); err != nil {
@@ -149,12 +155,13 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		}
 		configPaths = inspectedPaths
 		for _, diagnostic := range diagnostics {
-			fmt.Fprintln(stderr, "WARNING:", diagnostic, "Skipping file.")
+			fmt.Fprintln(diagnosticsOut, "WARNING:", diagnostic, "Skipping file.")
 		}
 		configuredSkillPaths = append([]string(nil), cfg.Skills.Paths...)
 		configuredAutoloadPaths = append([]string(nil), cfg.Skills.AutoloadPaths...)
 		configuredStatuslineHidden = append([]string(nil), cfg.StatuslineHidden...)
 		configuredTheme = cfg.Theme
+		redactionConfig = cfg.Redaction
 		setFlags := make(map[string]bool)
 		flags.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
 		if setFlags["sandbox-command-path"] {
@@ -164,6 +171,11 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	} else if len(sandboxCommandPathFlags) > 0 {
 		opts.sandboxCommandPaths = append([]string(nil), sandboxCommandPathFlags...)
 	}
+	policy, err := redaction.New(redactionConfig, append(redaction.EnvironmentValues(), opts.apiKey))
+	if err != nil {
+		return err
+	}
+	diagnosticsOut.Policy = policy
 	if opts.updateModelMeta {
 		if opts.provider != "openai" && opts.provider != "opencode-go" {
 			return errors.New("--update-model-meta requires --provider openai or opencode-go")
@@ -204,7 +216,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if opts.sandbox && !opts.demo {
 		resolved, warnings := tools.ResolveSandboxCommandPaths(opts.sandboxCommandPaths, protectedPaths)
 		for _, warning := range warnings {
-			fmt.Fprintln(stderr, "WARNING:", warning)
+			fmt.Fprintln(diagnosticsOut, "WARNING:", warning)
 		}
 		sandboxCommandPaths = resolved
 	}
@@ -225,7 +237,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			sandboxNotice = "Sandbox enabled: only approved folders can be changed; home is hidden; network is blocked until a web tool is enabled."
 		}
 		if !sandboxActive && !interactive {
-			fmt.Fprintln(stderr, "WARNING:", sandboxNotice, "Continuing without sandbox.")
+			fmt.Fprintln(diagnosticsOut, "WARNING:", sandboxNotice, "Continuing without sandbox.")
 		}
 	}
 	allSkillPaths := append(append([]string(nil), configuredSkillPaths...), configuredAutoloadPaths...)
@@ -237,7 +249,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if len(configuredAutoloadPaths) > 0 {
 		loaded, discoverErr := autoloadSkillData(root, configuredSkillPaths, configuredAutoloadPaths)
 		if discoverErr != nil {
-			fmt.Fprintln(stderr, "WARNING: cannot autoload skills:", discoverErr)
+			fmt.Fprintln(diagnosticsOut, "WARNING: cannot autoload skills:", discoverErr)
 		} else {
 			autoloadSkills = loaded
 		}
@@ -261,9 +273,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		}
 		providerConfig.ModelMeta = meta
 		if metaErr != nil {
-			fmt.Fprintf(stderr, "WARNING: %s thinking metadata unavailable: %v\n", opts.provider, metaErr)
+			fmt.Fprintf(diagnosticsOut, "WARNING: %s thinking metadata unavailable: %v\n", opts.provider, metaErr)
 			if len(meta.Models) == 0 && opts.thinking != "" {
-				fmt.Fprintln(stderr, "WARNING: ignoring configured thinking level because no choices are available")
+				fmt.Fprintln(diagnosticsOut, "WARNING: ignoring configured thinking level because no choices are available")
 				opts.thinking = ""
 			}
 		}
@@ -286,9 +298,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if !opts.demo {
 		dir, err := learning.DefaultDirectory()
 		if err != nil {
-			fmt.Fprintln(stderr, "Learning unavailable:", err)
+			fmt.Fprintln(diagnosticsOut, "Learning unavailable:", err)
 		} else {
-			learningStore = learning.New(dir, func(message string) { fmt.Fprintln(stderr, "Learning warning:", message) })
+			learningStore = learning.New(dir, func(message string) { fmt.Fprintln(diagnosticsOut, "Learning warning:", message) })
 		}
 	}
 	system := prompt.System
@@ -305,12 +317,13 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	if promptText != "" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
-		return runOneShot(ctx, promptText, provider, opts.model, opts.thinking, toolset, stderr, stdout, opts.jsonEvents, opts.maxSteps, system, learningStore, opts.learningBudget, autoloadSkills)
+		return runOneShot(ctx, promptText, provider, opts.model, opts.thinking, toolset, stderr, stdout, opts.jsonEvents, opts.maxSteps, system, learningStore, opts.learningBudget, autoloadSkills, policy)
 	}
 
 	// Terminal output must go through term.Terminal so asynchronous-looking stream
 	// updates do not corrupt the editable input line.
 	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
+	ui.SetRedaction(policy)
 	ui.SetStatuslineHidden(configuredStatuslineHidden)
 	if configuredTheme != "" {
 		if err := ui.SetTheme(configuredTheme); err != nil {
@@ -322,7 +335,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		var preferenceErr error
 		runtimePreferences, preferenceErr = config.NewRuntimePreferenceWriter()
 		if preferenceErr != nil {
-			fmt.Fprintln(stderr, "WARNING: runtime preferences unavailable:", preferenceErr)
+			fmt.Fprintln(diagnosticsOut, "WARNING: runtime preferences unavailable:", preferenceErr)
 		} else {
 			ui.SetRuntimePreferenceWriter(runtimePreferences)
 		}
@@ -389,6 +402,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 			logger.SetColor(tui.ColorEnabled(stdout))
 			logger.SetWidth(tui.OutputWidth(stdout))
 			runner := agent.NewWithSystem(currentProvider, model, wrappedTools, logger, response, opts.maxSteps, system)
+			runner.SetRedaction(policy)
 			runner.SetInteractiveAvailable(questionsAvailable)
 			if saved == nil {
 				runner.SetInteractiveMode(opts.interactive)
@@ -438,8 +452,10 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 		if err != nil {
 			return err
 		}
+		store.SetSnapshotFilter(func(snap session.Snapshot) (session.Snapshot, error) { return filterSessionSnapshot(policy, snap) })
 		if err := ui.EnableSessions(store, func(snap session.Snapshot) (*tui.UI, error) {
 			staged := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
+			staged.SetRedaction(policy)
 			staged.SetStatuslineHidden(configuredStatuslineHidden)
 			if configuredTheme != "" {
 				if err := staged.SetTheme(configuredTheme); err != nil {
@@ -480,13 +496,19 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) error {
 	return ui.Run(context.Background())
 }
 
-func runOneShot(ctx context.Context, promptText string, provider llm.Provider, model, thinking string, toolset agent.Toolset, stderr, stdout *os.File, jsonEvents bool, maxSteps int, system string, learningStore learning.Store, learningBudget int, autoloadSkills []prompt.SkillSummary) error {
+func runOneShot(ctx context.Context, promptText string, provider llm.Provider, model, thinking string, toolset agent.Toolset, stderr, stdout *os.File, jsonEvents bool, maxSteps int, system string, learningStore learning.Store, learningBudget int, autoloadSkills []prompt.SkillSummary, policies ...*redaction.Policy) error {
+	var policy *redaction.Policy
+	if len(policies) > 0 {
+		policy = policies[0]
+	}
 	host := control.NewHost(ctx, 1)
 	defer host.Shutdown()
 	host.SetFactory(func(id, name, model string, main bool) (*agent.Agent, error) {
 		logger := newTraceLogger(stderr, jsonEvents)
 		responseWriter := newResponseWriter(stdout)
+		responseWriter.SetRedaction(policy)
 		runner := agent.NewWithSystem(provider, model, toolset, logger, responseWriter, maxSteps, system)
+		runner.SetRedaction(policy)
 		runner.SetInteractiveAvailable(false)
 		if len(autoloadSkills) > 0 {
 			runner.SetSkills(autoloadSkills)
@@ -627,4 +649,22 @@ func firstEnv(names ...string) string {
 		}
 	}
 	return ""
+}
+
+func filterSessionSnapshot(policy *redaction.Policy, snap session.Snapshot) (session.Snapshot, error) {
+	filtered, err := tui.FilterSnapshot(policy, snap)
+	if err != nil {
+		return session.Snapshot{}, err
+	}
+	if !policy.Enabled(redaction.Persistence) {
+		return filtered, nil
+	}
+	for i := range filtered.Agents {
+		data, err := agent.FilterSavedState(policy, filtered.Agents[i].State)
+		if err != nil {
+			return session.Snapshot{}, err
+		}
+		filtered.Agents[i].State = data
+	}
+	return filtered, nil
 }

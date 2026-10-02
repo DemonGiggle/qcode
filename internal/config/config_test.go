@@ -207,3 +207,38 @@ func writeConfig(t *testing.T, dir, name, content string) string {
 	}
 	return path
 }
+
+func TestRedactionLayersAndInvalidRegex(t *testing.T) {
+	dir := t.TempDir()
+	low := writeConfig(t, dir, "low.toml", `[redaction]
+terminal = false
+persistence = false
+exports = false
+json_events = false
+remote = false
+custom_patterns = ['PRIVATE-[0-9]+']
+sensitive_paths = ['/private/file']
+sensitive_fields = ['client_credential']
+`)
+	high := writeConfig(t, dir, "high.toml", `[redaction]
+terminal = true
+persistence = true
+custom_patterns = []
+sensitive_paths = []
+sensitive_fields = []
+`)
+	cfg, _, diagnostics := load([]string{high, low})
+	if len(diagnostics) != 0 || cfg.Redaction.Terminal == nil || !*cfg.Redaction.Terminal || !*cfg.Redaction.Persistence || *cfg.Redaction.Exports || *cfg.Redaction.JSONEvents || *cfg.Redaction.Remote {
+		t.Fatal("boolean precedence failed")
+	}
+	if cfg.Redaction.CustomPatterns == nil || cfg.Redaction.SensitivePaths == nil || cfg.Redaction.SensitiveFields == nil || len(cfg.Redaction.CustomPatterns)+len(cfg.Redaction.SensitivePaths)+len(cfg.Redaction.SensitiveFields) != 0 {
+		t.Fatal("empty lists failed to replace lower layers")
+	}
+	invalid := writeConfig(t, dir, "invalid.toml", `[redaction]
+custom_patterns = ['fine', 'private-regex[']
+`)
+	_, _, diagnostics = load([]string{invalid})
+	if len(diagnostics) != 1 || !strings.Contains(diagnostics[0].Error(), "redaction.custom_patterns[1]") || strings.Contains(diagnostics[0].Error(), "private-regex") {
+		t.Fatalf("unsafe diagnostic: %v", diagnostics)
+	}
+}

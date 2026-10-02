@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"qcode/internal/redaction"
 	"qcode/internal/session"
 	"qcode/internal/tui"
 )
@@ -571,7 +572,7 @@ func (m *Manager) snapshot(w http.ResponseWriter, r *http.Request) {
 	presentation := m.ui.RemotePresentation()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"runtime":      map[string]any{"sequence": presentation.Sequence, "agents": presentation.Agents, "interactions": presentation.Interactions, "pending_inputs": presentation.PendingInputs, "steering_events": presentation.SteeringEvents},
-		"presentation": presentation, "actor": r.Header.Get("X-Qcode-Actor"),
+		"presentation": presentation, "actor": m.redact(r.Header.Get("X-Qcode-Actor")),
 	})
 }
 
@@ -594,7 +595,7 @@ func (m *Manager) export(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, tui.ErrExportUsage) {
 			status = http.StatusBadRequest
 		}
-		http.Error(w, err.Error(), status)
+		http.Error(w, m.redact(err.Error()), status)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -614,7 +615,7 @@ func (m *Manager) action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := m.ui.SubmitRemote(r.Header.Get("X-Qcode-Actor"), request.Line); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, m.redact(err.Error()), http.StatusBadRequest)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]bool{"accepted": true})
@@ -632,15 +633,15 @@ func (m *Manager) resolveInteraction(w http.ResponseWriter, r *http.Request) {
 	}
 	err := m.ui.ResolveRemoteInteraction(r.Header.Get("X-Qcode-Actor"), r.PathValue("id"), request.Value)
 	if err != nil && strings.Contains(err.Error(), "already resolved") {
-		http.Error(w, err.Error(), http.StatusConflict)
+		http.Error(w, m.redact(err.Error()), http.StatusConflict)
 		return
 	}
 	if err != nil && strings.Contains(err.Error(), "not found") {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		http.Error(w, m.redact(err.Error()), http.StatusNotFound)
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, m.redact(err.Error()), http.StatusBadRequest)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"resolved": true})
@@ -713,7 +714,7 @@ func (m *Manager) prompt(w http.ResponseWriter, r *http.Request) {
 	}
 	sub, err := ui.SubmitRemotePrompt(r.Header.Get("X-Qcode-Actor"), input)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+		http.Error(w, m.redact(err.Error()), http.StatusConflict)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, sub)
@@ -732,7 +733,7 @@ func (m *Manager) cancelPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := ui.CancelRemoteInput(input.AgentID, r.PathValue("id")); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+		http.Error(w, m.redact(err.Error()), http.StatusConflict)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"removed": true})
@@ -752,8 +753,15 @@ func (m *Manager) cancelActive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := ui.CancelRemoteActive(r.PathValue("id"), input.ObservedTaskID); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+		http.Error(w, m.redact(err.Error()), http.StatusConflict)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"cancelled": true})
+}
+
+func (m *Manager) redact(text string) string {
+	if filter, ok := m.ui.(interface{ RedactRemote(string) string }); ok {
+		return filter.RedactRemote(text)
+	}
+	return (*redaction.Policy)(nil).Text(redaction.Remote, text)
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"qcode/internal/redaction"
 	"qcode/internal/session"
 )
 
@@ -48,7 +49,12 @@ func (u *UI) GenerateExport(argument string) (ExportDocument, error) {
 	document := ExportDocument{Filename: "qcode-session-" + mode + "-" + now.Format("20060102-150405.000000000") + ".html"}
 	if mode == "raw" {
 		views, rawActive := u.exportViews()
-		document.Data = renderSessionHTML(root, rawActive, now, views)
+		for i := range views {
+			views[i].history.lines = filterLines(u.redaction, redaction.Exports, views[i].history.lines)
+			views[i].history.current = u.redaction.Text(redaction.Exports, views[i].history.current)
+			views[i].name = u.redaction.Text(redaction.Exports, views[i].name)
+		}
+		document.Data = renderSessionHTML(u.redaction.Text(redaction.Exports, root), rawActive, now, views)
 		return document, nil
 	}
 	var records []session.WorkRecord
@@ -59,7 +65,12 @@ func (u *UI) GenerateExport(argument string) (ExportDocument, error) {
 			records = reader.WorkRecords()
 		}
 	}
-	document.Data, err = renderPrettyExport(root, active, now, summaries, records)
+	records = redaction.Copy(u.redaction, redaction.Exports, records)
+	summaries = redaction.Copy(u.redaction, redaction.Exports, summaries)
+	for i := range summaries {
+		summaries[i].Name = u.redaction.Text(redaction.Exports, summaries[i].Name)
+	}
+	document.Data, err = renderPrettyExport(u.redaction.Text(redaction.Exports, root), active, now, summaries, records)
 	return document, err
 }
 

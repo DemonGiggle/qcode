@@ -12,6 +12,7 @@ import (
 	"github.com/mattn/go-runewidth"
 
 	"qcode/internal/llm"
+	"qcode/internal/redaction"
 )
 
 const timestampLayout = "15:04:05"
@@ -22,6 +23,7 @@ var (
 )
 
 type Logger struct {
+	policy                   *redaction.Policy
 	out                      io.Writer
 	json                     bool
 	animated                 bool
@@ -366,8 +368,8 @@ func (s *ActivitySpan) stopAnimation() {
 func (l *Logger) writeProgress(s *Span, frame string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	fmt.Fprintf(l.out, "\r[%s] start %s %s (%s)", formatTimestamp(s.start), s.kind, s.name, frame)
-	writeTextFields(l.out, s.fields)
+	fmt.Fprintf(l.out, "\r[%s] start %s %s (%s)", formatTimestamp(s.start), s.kind, l.policy.Text(redaction.Terminal, s.name), frame)
+	writeTextFields(l.out, l.filteredFields(s.fields))
 }
 
 func (l *Logger) writeActivityProgress(s *ActivitySpan, frame string) {
@@ -389,7 +391,7 @@ func (l *Logger) writeActivityProgress(s *ActivitySpan, frame string) {
 	if avail < 1 {
 		avail = 1
 	}
-	start := truncateActivityLine(s.activity.Start, avail, l.unicode, false)
+	start := truncateActivityLine(l.policy.Text(redaction.Terminal, s.activity.Start), avail, l.unicode, false)
 	message := l.style(l.activityColor(s.activity.Category), marker+" "+start)
 	spinner := l.style(traceDim, spinnerSuffix)
 	fmt.Fprintf(l.out, "\r%s%s", message, spinner)
@@ -507,8 +509,8 @@ func (l *Logger) writeCompleted(s *Span, duration time.Duration, fields map[stri
 	if clearLine {
 		fmt.Fprint(l.out, "\r\x1b[2K")
 	}
-	fmt.Fprintf(l.out, "[%s] start %s %s (%s)", formatTimestamp(s.start), s.kind, s.name, duration.Round(time.Millisecond))
-	writeTextFields(l.out, fields)
+	fmt.Fprintf(l.out, "[%s] start %s %s (%s)", formatTimestamp(s.start), s.kind, l.policy.Text(redaction.Terminal, s.name), duration.Round(time.Millisecond))
+	writeTextFields(l.out, l.filteredFields(fields))
 	fmt.Fprintln(l.out)
 }
 
@@ -535,6 +537,7 @@ func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration,
 		color = traceRed
 		message = s.activity.Start
 	}
+	message = l.policy.Text(redaction.Terminal, message)
 	durationSuffix := " (" + duration.Round(time.Millisecond).String() + ")"
 	accent := l.activityColor(s.activity.Category)
 	if s.activity.Action == "shell" {
@@ -569,7 +572,7 @@ func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration,
 	if len(output) > 0 {
 		preview = output[0]
 	}
-	for _, line := range l.activityOutputLines(preview) {
+	for _, line := range l.activityOutputLines(l.policy.Text(redaction.Terminal, preview)) {
 		fmt.Fprintln(l.out, l.style(traceDim, "  "+line))
 	}
 	l.activitySeparatorPending = true
@@ -913,8 +916,13 @@ func (l *Logger) writeJSON(event, kind, name string, at time.Time, duration time
 	for key, value := range fields {
 		entry[key] = value
 	}
-	data, _ := json.Marshal(entry)
-	fmt.Fprintln(l.out, string(data))
+	data, _ := json.Marshal(l.policy.Value(redaction.JSONEvents, entry))
+	data = append(data, '\n')
+	if writer, ok := l.out.(interface{ WriteJSONEvent([]byte) (int, error) }); ok {
+		_, _ = writer.WriteJSONEvent(data)
+	} else {
+		_, _ = l.out.Write(data)
+	}
 }
 
 const (
@@ -966,4 +974,17 @@ func cloneFields(fields map[string]any) map[string]any {
 
 func formatTimestamp(at time.Time) string {
 	return at.In(time.Local).Format(timestampLayout)
+}
+
+// SetRedaction installs the immutable shared policy before logging begins.
+func (l *Logger) SetRedaction(p *redaction.Policy) { l.policy = p }
+func (l *Logger) RedactArguments(data []byte) []byte {
+	sink := redaction.Terminal
+	if l.json {
+		sink = redaction.JSONEvents
+	}
+	return l.policy.JSON(sink, data)
+}
+func (l *Logger) filteredFields(fields map[string]any) map[string]any {
+	return l.policy.Value(redaction.Terminal, fields).(map[string]any)
 }

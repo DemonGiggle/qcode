@@ -69,6 +69,7 @@ qcode update --arch arm64
 - [Web Tools](docs/web-tools.md) - HTTP fetching and search capabilities
 - [Learning](docs/learning.md) - Persistent preferences and procedures
 - [Configuration](docs/configuration.md) - Config file locations and options
+- [Privacy](docs/privacy.md) - Local redaction, saved sessions, and provider disclosure
 - [Trust Model](docs/trust-model.md) - Security and sandbox behavior
 - [Building](docs/build.md) - Build instructions and release process
 - [Extending Providers](docs/extending-providers.md) - Adding new LLM providers

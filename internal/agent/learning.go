@@ -10,6 +10,7 @@ import (
 	"qcode/internal/learning"
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
+	"qcode/internal/redaction"
 	"qcode/internal/trust"
 )
 
@@ -38,7 +39,7 @@ func (a *Agent) requestMessages(ctx context.Context) []llm.Message {
 		if budget > 0 && query != "" {
 			items, err := a.learningStore.Search(ctx, query, budget)
 			if err != nil {
-				fmt.Fprintln(a.out, "Learning warning:", err)
+				fmt.Fprintln(a.out, "Learning warning:", a.redaction.Error(redaction.Terminal, err))
 			} else if len(items) > 0 {
 				extra = prompt.LearningReference + trust.Wrap("user_approved_learning", learning.Context(items))
 			}
@@ -186,6 +187,11 @@ func (a *Agent) Learn(ctx context.Context, arguments string, approve LearningApp
 				return "", err
 			}
 		}
+		for _, draft := range proposal.Changes {
+			if a.redaction.ContainsSecret(draft.Topic + "\n" + draft.Content + "\n" + strings.Join(draft.Tags, " ")) {
+				return "", fmt.Errorf("invalid learning proposal: learning contains a possible credential; remove it before saving")
+			}
+		}
 		plan, err = learning.NewPlan(snapshot, proposal.Changes, a.learningSessionID, action == "compact")
 		if err != nil {
 			return "", fmt.Errorf("invalid learning proposal: %w", err)
@@ -264,7 +270,7 @@ func (a *Agent) learningSession() []llm.Message {
 		if m.Role != "user" && m.Role != "assistant" || strings.TrimSpace(m.Content) == "" {
 			continue
 		}
-		content := learning.Redact(m.Content)
+		content := a.redaction.Redact(m.Content)
 		if len(content) > remaining {
 			end := remaining
 			for end > 0 && !utf8.RuneStart(content[end]) {

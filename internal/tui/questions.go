@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"qcode/internal/question"
+	"qcode/internal/redaction"
 	"qcode/internal/session"
 )
 
@@ -304,7 +305,7 @@ func (u *UI) runQuestionnaireProgress(ctx context.Context, questions []question.
 	answers := append([]string(nil), previous...)
 	for i := start; i < len(questions); i++ {
 		question := questions[i]
-		u.printSystemMessage(formatQuestionWithFooter(question, i, len(questions), u.width, footer))
+		u.printSystemMessage(formatQuestionWithFooter(redaction.Copy(u.redaction, redaction.Terminal, question), i, len(questions), u.width, footer))
 		for {
 			if err := questionCtx.Err(); err != nil {
 				return nil, i, err

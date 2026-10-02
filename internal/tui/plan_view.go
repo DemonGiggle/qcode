@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"qcode/internal/redaction"
 	"strings"
 )
 
@@ -177,6 +178,7 @@ func (u *UI) showSkillPlanView(ctx context.Context, draft string) error {
 }
 
 func (u *UI) showPlanViewWith(ctx context.Context, plan string, skillDraft bool) error {
+	plan = u.redaction.Text(redaction.Terminal, plan)
 	if u.input == nil || u.out == nil || !u.fixedInput {
 		return fmt.Errorf("plan view requires an interactive terminal")
 	}

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"qcode/internal/lineedit"
+	"qcode/internal/redaction"
 	"qcode/internal/session"
 )
 
@@ -29,10 +30,10 @@ type queuedPromptReader interface {
 
 func (u *UI) queuedPromptsLocked() []session.QueuedPrompt {
 	if source, ok := u.manager.(promptController); ok {
-		return source.PendingInputs(u.activeAgent)
+		return redaction.Copy(u.redaction, redaction.Terminal, source.PendingInputs(u.activeAgent))
 	}
 	if source, ok := u.manager.(queuedPromptReader); ok {
-		return source.QueuedPrompts(u.activeAgent)
+		return redaction.Copy(u.redaction, redaction.Terminal, source.QueuedPrompts(u.activeAgent))
 	}
 	return nil
 }

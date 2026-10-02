@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"qcode/internal/redaction"
 	"regexp"
 	"runtime"
 	"sort"
@@ -122,10 +123,8 @@ var validID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 // Reject common credential forms in addition to the extraction prompt and user
 // review. This deliberately does not claim to identify every possible secret.
-var secretPattern = regexp.MustCompile(`(?i)(-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk-[a-z0-9_-]{16,}|gh[pousr]_[a-z0-9]{20,}|github_pat_[a-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b|(?:api[_ -]?key|password|passwd|secret|access[_ -]?token)\s*[:=]\s*["']?[^\s"'<]{8,})`)
-
-func ContainsSecret(s string) bool { return secretPattern.MatchString(s) }
-func Redact(s string) string       { return secretPattern.ReplaceAllString(s, "[REDACTED]") }
+func ContainsSecret(s string) bool { return (*redaction.Policy)(nil).ContainsSecret(s) }
+func Redact(s string) string       { return (*redaction.Policy)(nil).Text(redaction.Persistence, s) }
 func validText(s string, limit int, multiline bool) bool {
 	if strings.TrimSpace(s) == "" || len(s) > limit || !utf8.ValidString(s) {
 		return false

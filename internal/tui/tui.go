@@ -17,6 +17,7 @@ import (
 
 	"qcode/internal/lineedit"
 	"qcode/internal/llm"
+	"qcode/internal/redaction"
 
 	"qcode/internal/prompt"
 	"qcode/internal/session"
@@ -214,6 +215,7 @@ type agentController interface {
 }
 
 type UI struct {
+	redaction            *redaction.Policy
 	observedTaskID       string
 	composerReading      bool
 	deferredInteractions map[string]bool
@@ -425,6 +427,7 @@ func (u *UI) AddAgentView(id, provider, model string) (io.Writer, io.Writer) {
 	history.onChange = u.signalPresentation
 	display := &agentDisplay{ui: u, id: id, history: history}
 	response := NewMarkdownWriter(display, ColorEnabled(u.out), u.width)
+	response.SetRedaction(u.redaction)
 	response.SetUnicode(u.unicode)
 	response.EnableDiffs()
 	u.views[id] = &agentView{id: id, provider: provider, model: model, display: display, response: response}
@@ -987,7 +990,7 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 	}
 	u.resetPage()
 	u.printSystemMessage(yellow + "Additional directory access requested: " + sanitizeDiffLine(requested, "<ESC>") + reset)
-	u.terminal.SetPrompt(yellow + "Directory to grant (Enter for " + sanitizeDiffLine(proposed, "<ESC>") + "): " + reset)
+	u.terminal.SetPrompt(yellow + "Directory to grant (Enter for " + sanitizeDiffLine(u.redaction.Text(redaction.Terminal, proposed), "<ESC>") + "): " + reset)
 	line, err := u.readLine()
 	u.terminal.SetPrompt(inputPrompt)
 	if u.terminal.SubmissionKey == 27 {
@@ -1890,7 +1893,7 @@ func (u *UI) statusBar() string {
 	if u.remoteService != nil {
 		remote = u.remoteService.Status().Running
 	}
-	return statusBarWithStatuslineHidden(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, ColorEnabled(u.out), remote, u.statuslineHidden, magenta, blue, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+	return statusBarWithStatuslineHidden(u.provider, u.model, u.redaction.Text(redaction.Terminal, displayRoot(u.root)), u.width, u.unicode, ColorEnabled(u.out), remote, u.statuslineHidden, magenta, blue, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
 }
 
 func (u *UI) teardownStatusBar() {
@@ -2299,3 +2302,15 @@ func (u *UI) observeComposerTask() {
 		}
 	}
 }
+
+// SetRedaction is called during startup before views start writing.
+func (u *UI) SetRedaction(p *redaction.Policy) {
+	u.redaction = p
+	if u.responseWriter != nil {
+		u.responseWriter.SetRedaction(p)
+	}
+	for _, v := range u.views {
+		v.response.SetRedaction(p)
+	}
+}
+func (u *UI) RedactRemote(text string) string { return u.redaction.Text(redaction.Remote, text) }
