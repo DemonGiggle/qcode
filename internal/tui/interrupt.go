@@ -297,10 +297,12 @@ func (r *interruptReader) route(input []byte) {
 	r.mu.Lock()
 	if r.raw {
 		r.pending = nil
+		r.mu.Unlock()
+		// A selector needs mu to read. Release it before a full input buffer
+		// makes the producer wait for that same reader to drain it.
 		for _, key := range input {
 			r.data <- key
 		}
-		r.mu.Unlock()
 		return
 	}
 	cancel := r.cancel

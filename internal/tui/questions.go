@@ -34,9 +34,17 @@ type questionResult struct {
 // AgentQuestioner returns the UI bridge for agent questions. Questions from
 // inactive agents wait until that tab is selected.
 func (u *UI) AgentQuestioner(id string) question.Questioner {
-	if u.sessionHost != nil {
-		return u.sessionHost.AgentQuestioner(id)
+	// Resume installs callbacks while the UI is detached, then redirects it
+	// to the live UI. Resolve ownership when a question is actually asked.
+	return func(ctx context.Context, questions []question.Question) ([]string, error) {
+		if u.sessionHost != nil {
+			return u.sessionHost.AgentQuestioner(id)(ctx, questions)
+		}
+		return u.agentQuestioner(id)(ctx, questions)
 	}
+}
+
+func (u *UI) agentQuestioner(id string) question.Questioner {
 	local := func(ctx context.Context, questions []question.Question) ([]string, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err

@@ -81,6 +81,48 @@ func TestInterruptReaderDefersInjectedInputWhileRawSelectorIsActive(t *testing.T
 	}
 }
 
+func TestInterruptReaderRawInputBackpressureDoesNotBlockReads(t *testing.T) {
+	reader := newInterruptReader(nil)
+	reader.setRaw(true)
+	routed := make(chan struct{})
+	go func() {
+		reader.route(make([]byte, cap(reader.data)+1))
+		close(routed)
+	}()
+	// Wait until the producer fills the buffer and must wait for a reader.
+	deadline := time.Now().Add(time.Second)
+	for len(reader.data) < cap(reader.data) {
+		if time.Now().After(deadline) {
+			t.Fatal("raw input did not fill the buffer")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	read := make(chan error, 1)
+	go func() {
+		var key [1]byte
+		_, err := reader.Read(key[:])
+		read <- err
+	}()
+	select {
+	case err := <-read:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		// Release the blocked producer directly so the failed test leaves no
+		// goroutines behind, even if Read is waiting for the producer's mutex.
+		<-reader.data
+		<-routed
+		<-read
+		t.Fatal("raw input holds the reader mutex while waiting for buffer space")
+	}
+	select {
+	case <-routed:
+	case <-time.After(time.Second):
+		t.Fatal("reading did not release raw input backpressure")
+	}
+}
+
 func TestInterruptReaderRoutesPageKeys(t *testing.T) {
 	reader := newInterruptReader(nil)
 	var directions []int

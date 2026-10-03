@@ -8,9 +8,70 @@ import (
 	"testing"
 	"time"
 
+	"qcode/internal/control"
 	"qcode/internal/lineedit"
 	"qcode/internal/question"
 )
+
+func TestRestoredQuestionerUsesLiveUIAndInteractionBroker(t *testing.T) {
+	for _, surface := range []string{"terminal", "browser"} {
+		t.Run(surface, func(t *testing.T) {
+			host := control.NewHost(context.Background(), 1)
+			defer host.Shutdown()
+			live := New(nil, nil, nil, "test", "model", ".")
+			live.terminal = lineedit.NewTerminal(readWriter{Reader: live.input, Writer: io.Discard}, inputPrompt)
+			live.activeAgent = "main"
+			live.SetDetachedAgentManager(host)
+			staged := New(nil, nil, nil, "test", "model", ".")
+			staged.activeAgent = "main"
+			// The factory installs the callback before the detached manager is
+			// attached. Resume redirects this UI only after staging succeeds.
+			questioner := staged.AgentQuestioner("main")
+			staged.SetDetachedAgentManager(host)
+			staged.sessionHost = live
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			result := make(chan questionResult, 1)
+			go func() {
+				answers, err := questioner(ctx, []question.Question{{Text: "Database?", Options: []string{"SQLite", "Postgres"}}})
+				result <- questionResult{answers: answers, err: err}
+			}()
+			deadline := time.Now().Add(time.Second)
+			for !live.hasPendingQuestion("main") || len(host.PendingInteractions()) == 0 {
+				if staged.hasPendingQuestion("main") {
+					t.Fatal("restored question was queued on the detached UI")
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("restored question did not reach the live UI and broker")
+				}
+				time.Sleep(time.Millisecond)
+			}
+			want := "SQLite"
+			if surface == "terminal" {
+				var wake [2]byte
+				if _, err := io.ReadFull(live.input, wake[:]); err != nil {
+					t.Fatal(err)
+				}
+				live.input.route([]byte("1\r"))
+				live.handlePendingQuestions(ctx)
+			} else {
+				want = "Postgres"
+				interaction := host.PendingInteractions()[0]
+				if err := live.ResolveRemoteInteraction("browser", interaction.ID, []byte(`["Postgres"]`)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			select {
+			case got := <-result:
+				if got.err != nil || len(got.answers) != 1 || got.answers[0] != want {
+					t.Fatalf("restored question result = %+v, want %s", got, want)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("restored questioner did not receive the answer")
+			}
+		})
+	}
+}
 
 func TestQuestionnaireDefersForTabSwitch(t *testing.T) {
 	input := newInterruptReader(nil)

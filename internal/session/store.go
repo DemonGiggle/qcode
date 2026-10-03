@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 )
 
 const SnapshotVersion = 1
+
+var ErrSessionBusy = errors.New("session is open in another process")
 
 type SavedAgent struct {
 	Summary Summary
@@ -133,7 +136,7 @@ func (s *Store) Lock(id string) (*os.File, error) {
 	if err != nil || !ok {
 		f.Close()
 		if err == nil {
-			err = fmt.Errorf("session is open in another process")
+			err = ErrSessionBusy
 		}
 		return nil, err
 	}
@@ -238,7 +241,15 @@ func (s *Store) List() ([]Entry, error) {
 		}
 		lock, lockErr := s.Lock(id)
 		Release(lock)
-		entries = append(entries, Entry{Snapshot: snap, Busy: lockErr != nil})
+		entry := Entry{Snapshot: snap, Busy: errors.Is(lockErr, ErrSessionBusy)}
+		if lockErr != nil && !entry.Busy {
+			problem, filterErr := s.Sanitize(Snapshot{ID: id, Workspace: s.workspace, Version: SnapshotVersion, Preview: "Cannot lock session: " + lockErr.Error()})
+			if filterErr != nil {
+				return nil, filterErr
+			}
+			entry.Problem = problem.Preview
+		}
+		entries = append(entries, entry)
 	}
 	sort.Slice(entries, func(i, j int) bool { return Departure(entries[i].Snapshot).After(Departure(entries[j].Snapshot)) })
 	return entries, nil

@@ -92,3 +92,33 @@ func TestStoreRejectsInvalidAndPreservesPreviousSnapshot(t *testing.T) {
 		t.Fatalf("corrupt session not isolated: %v %v", entries, err)
 	}
 }
+
+func TestStoreListDoesNotReportLockIOErrorsAsBusy(t *testing.T) {
+	s, err := Open(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, lock, err := s.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save(snap); err != nil {
+		Release(lock)
+		t.Fatal(err)
+	}
+	Release(lock)
+	lockPath := filepath.Join(s.dir, snap.ID+".lock")
+	if err := os.Remove(lockPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(lockPath, 0700); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := s.List()
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("list = %+v, %v", entries, err)
+	}
+	if entries[0].Busy || entries[0].Problem == "" {
+		t.Fatalf("lock I/O error misreported as another process: %+v", entries[0])
+	}
+}

@@ -161,6 +161,8 @@ func TestResumeSwapsSavedTabsAndPreservesCurrentSession(t *testing.T) {
 	}
 	target, _ := persistenceUI(t)
 	target.activeAgent = "agent-1"
+	target.steeringCursor = 2
+	u.steeringCursor = 9
 	target.views["main"].display.AddLine("saved event and error")
 	snap, lock, err := store.New()
 	if err != nil {
@@ -187,6 +189,9 @@ func TestResumeSwapsSavedTabsAndPreservesCurrentSession(t *testing.T) {
 	if u.persistence.current.ID != snap.ID || u.activeAgent != "agent-1" {
 		t.Fatal("session was not switched")
 	}
+	if u.steeringCursor != target.steeringCursor {
+		t.Fatalf("steering cursor = %d, want restored cursor %d", u.steeringCursor, target.steeringCursor)
+	}
 	if !strings.Contains(strings.Join(u.views["main"].display.Lines(), "\n"), "saved event and error") {
 		t.Fatal("lost transcript")
 	}
@@ -195,13 +200,52 @@ func TestResumeSwapsSavedTabsAndPreservesCurrentSession(t *testing.T) {
 	}
 }
 
-func TestSessionPickerCancelsAfterBusyEntry(t *testing.T) {
+func TestSessionPickerRetriesUnavailableEntries(t *testing.T) {
+	for _, entry := range []session.Entry{
+		{Snapshot: session.Snapshot{ID: strings.Repeat("a", 32), Preview: "preview", Saved: time.Now()}, Busy: true},
+		{Snapshot: session.Snapshot{ID: strings.Repeat("b", 32)}, Problem: "unreadable snapshot"},
+	} {
+		u, _ := persistenceUI(t)
+		u.input.data <- '\r'
+		u.input.data <- ctrlC
+		id, accepted, err := u.selectSession([]session.Entry{entry})
+		if err != nil || !accepted || id != entry.ID {
+			t.Fatalf("Enter did not request a fresh restore attempt: id=%q accepted=%v err=%v", id, accepted, err)
+		}
+	}
+}
+
+func TestResumeBusySessionReportsErrorAndPreservesCurrentSession(t *testing.T) {
 	u, _ := persistenceUI(t)
-	entries := []session.Entry{{Snapshot: session.Snapshot{ID: strings.Repeat("a", 32), Preview: "preview", Saved: time.Now()}, Busy: true}}
+	store, err := session.Open(t.TempDir(), u.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, lock, err := store.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Release(lock)
+	snap.Preview = "session still open elsewhere"
+	if err := store.Save(snap); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.EnableSessions(store, func(session.Snapshot) (*UI, error) {
+		t.Fatal("attempted to build a session without acquiring its lock")
+		return nil, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer u.closeSession()
+	currentID := u.persistence.current.ID
 	u.input.data <- '\r'
 	u.input.data <- ctrlC
-	if _, accepted, err := u.selectSession(entries); accepted || err != nil {
-		t.Fatalf("busy entry accepted: %v %v", accepted, err)
+	u.resumeSession()
+	if u.persistence.current.ID != currentID {
+		t.Fatal("busy session replaced the current session")
+	}
+	if !strings.Contains(strings.Join(u.display.Lines(), "\n"), "session is open in another process") {
+		t.Fatal("Enter silently ignored the busy session")
 	}
 }
 

@@ -425,7 +425,7 @@ func (u *UI) resumeSessionID(requestedID string) {
 	defer p.mu.Unlock()
 	lock, err := p.store.Lock(id)
 	if err != nil {
-		u.printSystemMessage(err.Error())
+		u.printSystemMessage("Cannot resume: " + err.Error())
 		return
 	}
 	committed := false
@@ -436,7 +436,7 @@ func (u *UI) resumeSessionID(requestedID string) {
 	}()
 	snap, err := p.store.LoadForResume(id)
 	if err != nil {
-		u.printSystemMessage(err.Error())
+		u.printSystemMessage("Cannot resume: " + err.Error())
 		return
 	}
 	staged, err := p.build(snap)
@@ -464,6 +464,7 @@ func (u *UI) resumeSessionID(requestedID string) {
 	u.drafts = staged.drafts
 	u.verbose = staged.verbose
 	u.consultationCursor = staged.consultationCursor
+	u.steeringCursor = staged.steeringCursor
 	for _, v := range u.views {
 		v.display.ui = u
 		v.display.history.onChange = u.signalPresentation
@@ -528,11 +529,11 @@ func selectSession(in io.Reader, out io.Writer, entries []session.Entry, visible
 				continue
 			}
 			entry := entries[matches[selected]]
-			if !entry.Busy && entry.Problem == "" {
-				clearSelector(out, rows)
-				return entry.ID, true, nil
-			}
-			continue
+			// Availability may change while the picker is open. The caller
+			// acquires the lock and validates the snapshot before restoring it,
+			// reporting any failure instead of silently ignoring Enter.
+			clearSelector(out, rows)
+			return entry.ID, true, nil
 		case string([]byte{ctrlC}), "\x1b":
 			clearSelector(out, rows)
 			return "", false, nil
