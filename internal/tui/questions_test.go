@@ -11,6 +11,8 @@ import (
 	"qcode/internal/control"
 	"qcode/internal/lineedit"
 	"qcode/internal/question"
+	"qcode/internal/redaction"
+	"qcode/internal/session"
 )
 
 func TestRestoredQuestionerUsesLiveUIAndInteractionBroker(t *testing.T) {
@@ -196,5 +198,257 @@ func TestEscapeDefersQuestionWithoutAnswering(t *testing.T) {
 	case <-request.result:
 		t.Fatal("Escape answered question")
 	default:
+	}
+}
+
+func startQuestionnaire(t *testing.T, u *UI, questions []question.Question) (<-chan questionResult, <-chan string) {
+	t.Helper()
+	u.input = newInterruptReader(nil)
+	u.input.setPageHandler(u.showPage)
+	u.input.setHistoryBoundaryHandler(u.showHistoryBoundary)
+	u.input.setTabHandler(u.requestTabSwitch)
+	u.terminal = lineedit.NewTerminal(readWriter{Reader: u.input, Writer: io.Discard}, inputPrompt)
+	u.terminal.SubmitOnEscape = func() bool { return true }
+	u.terminal.KeyHandler = u.handlePendingPanelKey
+	frames := make(chan string, 16)
+	u.terminal.RenderInput = func(prompt, line string, pos int) {
+		u.renderInput(prompt, line, pos)
+		if strings.HasPrefix(prompt, "Answer ") {
+			select {
+			case frames <- questionnaireFrame(u):
+			default:
+			}
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan questionResult, 1)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		answers, _, err := u.runQuestionnaireProgress(ctx, questions, 0, nil, "Ctrl+C cancels this request.", true)
+		result <- questionResult{answers: answers, err: err}
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(time.Second):
+			t.Error("questionnaire did not stop")
+		}
+	})
+	return result, frames
+}
+
+func questionnaireFrame(u *UI) string {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	return strings.Join(u.inputScreenRows, "\n")
+}
+
+func waitQuestionnaireFrame(t *testing.T, frames <-chan string, text string) string {
+	t.Helper()
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case frame := <-frames:
+			if strings.Contains(frame, text) {
+				return frame
+			}
+		case <-timer.C:
+			t.Fatalf("questionnaire did not show %q", text)
+		}
+	}
+}
+
+func TestQuestionnaireVisibleWhileHistoryPaused(t *testing.T) {
+	u, _ := layoutFixture(t)
+	manager := u.manager.(*layoutManager)
+	manager.states["main"] = session.StatusWaitingForApproval
+	manager.latest = map[string]string{"main": strings.Repeat("a long submitted prompt ", 20)}
+	manager.queued = map[string][]session.QueuedPrompt{"main": {{RequestID: "queued", Prompt: "queued task"}}}
+	for i := 0; i < 60; i++ {
+		u.display.AddLine("earlier conversation")
+	}
+	u.renderInput(inputPrompt, "", 0)
+	u.showPage(1)
+	u.toggleQueuePanel()
+	before := *u.activeViewportLocked()
+	result, frames := startQuestionnaire(t, u, []question.Question{{Text: "Which database?", Options: []string{"SQLite", "Postgres"}, AllowCustom: true}})
+	frame := waitQuestionnaireFrame(t, frames, "Answer 1/1>")
+	for _, text := range []string{"Question 1/1", "Which database?", "1) SQLite", "2) Postgres"} {
+		if !strings.Contains(frame, text) {
+			t.Fatalf("missing %q while history is paused:\n%s", text, frame)
+		}
+	}
+	_, _ = u.display.Write([]byte("\rAsking the user (|)"))
+	u.drawTaskIndicator()
+	if !strings.Contains(questionnaireFrame(u), "Which database?") {
+		t.Fatal("activity repaint hid the question")
+	}
+	u.input.route([]byte("2\r"))
+	select {
+	case got := <-result:
+		if got.err != nil || len(got.answers) != 1 || got.answers[0] != "Postgres" {
+			t.Fatalf("answer = %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("questionnaire did not accept answer")
+	}
+	if got := *u.activeViewportLocked(); got.browsing != before.browsing || got.anchor != before.anchor {
+		t.Fatalf("question changed history position: %+v, want %+v", got, before)
+	}
+	if strings.Contains(questionnaireFrame(u), "Answer 1/1>") {
+		t.Fatal("answer prompt was not cleared")
+	}
+	if !strings.Contains(strings.Join(u.display.Lines(), "\n"), "Which database?") {
+		t.Fatal("question was not recorded in history")
+	}
+}
+
+func TestQuestionnaireScrollsLongChoicesOnShortTerminal(t *testing.T) {
+	u, _ := layoutFixture(t)
+	u.height, u.width = 12, 40
+	item := question.Question{Text: "Which database?", Options: []string{"SQLite", "Postgres", "MySQL", "MongoDB", "Redis", "DynamoDB"}, AllowCustom: true}
+	for range item.Options {
+		item.OptionDescriptions = append(item.OptionDescriptions, strings.Repeat("A longer description of this database. ", 3))
+	}
+	result, frames := startQuestionnaire(t, u, []question.Question{item})
+	frame := waitQuestionnaireFrame(t, frames, "Answer 1/1>")
+	if !strings.Contains(frame, "Which database?") || !strings.Contains(frame, "PgUp/PgDn") {
+		t.Fatalf("short terminal did not show question and scroll hint:\n%s", frame)
+	}
+	u.input.route([]byte("6"))
+	waitQuestionnaireFrame(t, frames, "Answer 1/1> 6")
+	seen := frame
+	for i := 0; i < 40; i++ {
+		u.input.route([]byte(pageDownSequence))
+		next := questionnaireFrame(u)
+		if next == frame {
+			break
+		}
+		frame = next
+		if !strings.Contains(frame, "Question 1/1") || !strings.Contains(frame, "Answer 1/1> 6") {
+			t.Fatalf("paging lost the question heading or answer draft:\n%s", frame)
+		}
+		seen += "\n" + frame
+	}
+	for _, option := range item.Options {
+		if !strings.Contains(seen, option) {
+			t.Fatalf("option %q could not be reached by paging", option)
+		}
+	}
+	for i := 0; i < 40; i++ {
+		u.input.route([]byte(pageUpSequence))
+		next := questionnaireFrame(u)
+		if next == frame {
+			break
+		}
+		frame = next
+	}
+	if !strings.Contains(questionnaireFrame(u), "Which database?") {
+		t.Fatal("Page Up did not return to question text")
+	}
+	u.screenMu.Lock()
+	u.width, u.height = 20, 18
+	u.paintFixedLocked(0)
+	for _, row := range u.inputScreenRows {
+		if visibleWidth(row) > u.width {
+			t.Errorf("resized panel row is too wide: %q", row)
+		}
+	}
+	u.screenMu.Unlock()
+	if !strings.Contains(questionnaireFrame(u), "Which database?") {
+		t.Fatal("resize hid the question text")
+	}
+	u.input.route([]byte("\r"))
+	select {
+	case got := <-result:
+		if got.err != nil || len(got.answers) != 1 || got.answers[0] != "DynamoDB" {
+			t.Fatalf("answer = %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("paging prevented answering")
+	}
+}
+
+func TestQuestionnairePanelShowsValidationFeedback(t *testing.T) {
+	u, _ := layoutFixture(t)
+	result, frames := startQuestionnaire(t, u, []question.Question{{Text: "Which database?", Options: []string{"SQLite", "Postgres"}}})
+	waitQuestionnaireFrame(t, frames, "Answer 1/1>")
+	for _, attempt := range []struct{ input, feedback string }{
+		{"\r", "Please enter an answer"},
+		{"unlisted\r", "Choose one of the listed options"},
+	} {
+		u.input.route([]byte(attempt.input))
+		frame := waitQuestionnaireFrame(t, frames, attempt.feedback)
+		if !strings.Contains(frame, "Which database?") {
+			t.Fatal("validation feedback replaced the question")
+		}
+	}
+	u.input.route([]byte("2\r"))
+	select {
+	case got := <-result:
+		if got.err != nil || len(got.answers) != 1 || got.answers[0] != "Postgres" {
+			t.Fatalf("answer = %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("questionnaire did not accept valid answer")
+	}
+}
+
+func TestQuestionnairePanelClearsOnCancelAndDeferral(t *testing.T) {
+	for _, action := range []struct {
+		name, input string
+		want        error
+	}{
+		{"cancel", string(ctrlC), context.Canceled},
+		{"escape", string(byte(29)), errQuestionDeferred},
+		{"tab", ctrlPageDownSequence, errQuestionDeferred},
+	} {
+		t.Run(action.name, func(t *testing.T) {
+			u, _ := layoutFixture(t)
+			u.manager.(*layoutManager).queued = map[string][]session.QueuedPrompt{"main": {{RequestID: "queued", Prompt: "queued task"}}}
+			u.queue.expanded = true
+			result, frames := startQuestionnaire(t, u, []question.Question{{Text: "Which database?", AllowCustom: true}})
+			waitQuestionnaireFrame(t, frames, "Answer 1/1>")
+			u.input.route([]byte(action.input))
+			select {
+			case got := <-result:
+				if !errors.Is(got.err, action.want) {
+					t.Fatalf("result = %+v, want %v", got, action.want)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("questionnaire did not release the input")
+			}
+			if u.questionPanel != nil || strings.Contains(questionnaireFrame(u), "Answer 1/1>") || !u.queue.expanded {
+				t.Fatal("question panel or prompt remained, or previous queue state was lost")
+			}
+		})
+	}
+}
+
+func TestQuestionnairePanelRedactsBeforeWrappingAndKeepsOriginalAnswer(t *testing.T) {
+	u, _ := layoutFixture(t)
+	u.width = 30
+	policy, err := redaction.New(redaction.Config{}, []string{tuiTestSecret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.redaction = policy
+	item := question.Question{Text: "Choose " + tuiTestSecret, Options: []string{tuiTestSecret, "safe"}, OptionDescriptions: []string{"Description " + tuiTestSecret}}
+	result, frames := startQuestionnaire(t, u, []question.Question{item})
+	frame := waitQuestionnaireFrame(t, frames, "Answer 1/1>")
+	if strings.Contains(frame, tuiTestSecret) || !strings.Contains(frame, redaction.Marker) {
+		t.Fatalf("question panel did not redact sensitive text:\n%s", frame)
+	}
+	u.input.route([]byte("1\r"))
+	select {
+	case got := <-result:
+		if got.err != nil || len(got.answers) != 1 || got.answers[0] != tuiTestSecret {
+			t.Fatal("display filtering changed the selected answer")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("questionnaire did not accept answer")
 	}
 }

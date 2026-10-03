@@ -93,7 +93,11 @@ func (u *UI) paintFixedLocked(direction int) {
 		}
 	}
 	rows, cy, cx := inputRows(label+u.inputText, utf8.RuneCountInString(label)+u.inputPosition, u.width)
+	question := u.activeQuestionPanelLocked()
 	queued := u.queuedPromptsLocked()
+	if question != nil {
+		queued = nil
+	}
 	queue := u.activeQueueLocked()
 	previewLimit := queuePreviewLimit(queued)
 	var queueRows []queuedDisplayRow
@@ -112,6 +116,9 @@ func (u *UI) paintFixedLocked(direction int) {
 	// The pin yields space to the composer and two transcript rows on short
 	// screens. Its row count can change without moving a paused history anchor.
 	latest := u.latestPromptRegionRowsLocked(u.height - footer - 4)
+	if question != nil {
+		latest = nil
+	}
 	// Keep a cursor-centered window for drafts taller than the terminal.
 	inputLimit := u.height - 4 - statusN - len(latest)
 	if len(queued) > 0 {
@@ -123,7 +130,7 @@ func (u *UI) paintFixedLocked(direction int) {
 	rows = rows[start:min(len(rows), start+inputHeight)]
 	cy -= start
 	promptRow := u.height - footer - len(rows) + 1
-	if len(queued) == 0 {
+	if len(queued) == 0 && question == nil {
 		queue.expanded, queue.anchorID, queue.anchorRow = false, "", 0
 	}
 	historyDirection := direction
@@ -148,7 +155,9 @@ func (u *UI) paintFixedLocked(direction int) {
 	}
 	outputStart := 2 + len(latest)
 	outputHeight := max(0, promptRow-count-queueHeight-outputStart)
-	u.activeViewportLocked().visibleRows = outputHeight
+	if question == nil {
+		u.activeViewportLocked().visibleRows = outputHeight
+	}
 	screenRows := make([]string, u.height+1)
 	if u.manager != nil && u.height > 3 {
 		screenRows[1] = tabBar(u.manager.List(), u.activeAgent, u.views, u.width, u.unicode, ColorEnabled(u.out))
@@ -156,13 +165,17 @@ func (u *UI) paintFixedLocked(direction int) {
 	for i, row := range latest {
 		screenRows[i+2] = row
 	}
-	if outputHeight > 0 && u.display != nil {
+	if question != nil {
+		for i, row := range question.rows(u.width, outputHeight, direction, u.unicode) {
+			screenRows[i+outputStart] = u.themeOutput(row)
+		}
+	} else if outputHeight > 0 && u.display != nil {
 		page := u.activeViewportLocked().page(historyRowsForTheme(u.display.Snapshot(), u.width, u.outputTheme()), outputHeight, historyDirection)
 		for i, row := range page {
 			screenRows[i+outputStart] = row.text
 		}
 	}
-	if u.remoteLogin != nil && outputHeight > 0 {
+	if question == nil && u.remoteLogin != nil && outputHeight > 0 {
 		for i := 0; i < outputHeight; i++ {
 			screenRows[i+outputStart] = ""
 		}
@@ -225,7 +238,9 @@ func (u *UI) paintFixedLocked(direction int) {
 	taskRow := u.height - statusN
 	if footer == 1+statusN {
 		message := taskIndicatorMessage(summary.Status, summary.QueueDepth, u.unicode, time.Now())
-		if u.activeViewportLocked().browsing {
+		if question != nil {
+			message = "PgUp/PgDn scroll question | Ctrl+C cancel"
+		} else if u.activeViewportLocked().browsing {
 			message = "History paused | PgUp/PgDn | PgDn to bottom resumes"
 		}
 		screenRows[taskRow] = truncateDiffLine(message, u.width, u.unicode)

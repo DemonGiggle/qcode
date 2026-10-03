@@ -308,12 +308,29 @@ func (u *UI) runQuestionnaireProgress(ctx context.Context, questions []question.
 		})
 		defer u.input.setCancel(nil)
 	}
-	defer u.restorePlanPrompt()
+	u.screenMu.Lock()
+	panel := &questionPanel{agentID: u.activeAgent, total: len(questions), footer: footer}
+	u.screenMu.Unlock()
+	defer func() {
+		u.screenMu.Lock()
+		if u.questionPanel == panel {
+			u.questionPanel = nil
+		}
+		u.screenMu.Unlock()
+		u.restorePlanPrompt()
+	}()
 
 	answers := append([]string(nil), previous...)
 	for i := start; i < len(questions); i++ {
 		question := questions[i]
-		u.printSystemMessage(formatQuestionWithFooter(redaction.Copy(u.redaction, redaction.Terminal, question), i, len(questions), u.width, footer))
+		displayed := redaction.Copy(u.redaction, redaction.Terminal, question)
+		u.screenMu.Lock()
+		panel.item, panel.index, panel.top = displayed, i, 0
+		panel.feedback = ""
+		u.questionPanel = panel
+		width := u.width
+		u.screenMu.Unlock()
+		u.printSystemMessage(formatQuestionWithFooter(displayed, i, len(questions), width, footer))
 		for {
 			if err := questionCtx.Err(); err != nil {
 				return nil, i, err
@@ -339,12 +356,12 @@ func (u *UI) runQuestionnaireProgress(ctx context.Context, questions []question.
 			}
 			answer = strings.TrimSpace(answer)
 			if answer == "" {
-				u.printSystemMessage(yellow + "Please enter an answer, or press Ctrl+C to cancel." + reset)
+				u.showQuestionFeedback(panel, yellow+"Please enter an answer, or press Ctrl+C to cancel."+reset)
 				continue
 			}
 			answer, valid := normalizeQuestionAnswerWithCustom(answer, question.Options, question.AllowCustom)
 			if !valid {
-				u.printSystemMessage(yellow + "Choose one of the listed options." + reset)
+				u.showQuestionFeedback(panel, yellow+"Choose one of the listed options."+reset)
 				continue
 			}
 			answers = append(answers, answer)

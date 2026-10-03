@@ -265,6 +265,7 @@ type UI struct {
 	approvals            map[string][]*approvalRequest
 	questionMu           sync.Mutex
 	questions            []*questionRequest
+	questionPanel        *questionPanel // Guarded by screenMu; only the displayed questionnaire.
 	modeDecisionMu       sync.Mutex
 	modeDecisions        []*modeDecisionRequest
 	tabMu                sync.Mutex
@@ -2194,6 +2195,9 @@ func (u *UI) showPage(direction int) {
 func (u *UI) showHistoryBoundary(beginning bool) bool {
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
+	if u.activeQuestionPanelLocked() != nil {
+		return false // Home/End continue to edit the answer.
+	}
 	v := u.activeViewportLocked()
 	if u.display == nil {
 		return false
