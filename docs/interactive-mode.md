@@ -24,8 +24,11 @@ global learning automatically; `/learn` retains its review and approval flow.
 
 If a question arrives while you are typing, qcode saves your unfinished prompt
 and restores it after the answer. Questions for other tabs wait there; switching
-away from a displayed question suspends it so other tabs remain usable. Ctrl+C
-cancels the request. The browser remote can also answer a pending question.
+away from a displayed question suspends it so other tabs remain usable. Esc
+defers the question and opens the composer; Esc in the composer returns to it.
+From the composer, Enter can steer the busy task, withdrawing unanswered
+questions and approvals before replanning. Ctrl+C cancels the request. The browser remote can also
+answer a pending question.
 
 One-shot prompts, piped input, non-TTY runs, and `--json-events` never wait for
 answers. The question tool is unavailable in those runs, and the model proceeds

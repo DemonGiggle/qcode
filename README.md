@@ -10,11 +10,12 @@ qcode is a lightweight, keyboard-driven AI coding assistant that runs entirely i
 
 ## 🎬 Demo
 
-![qcode demo: a scripted offline session that streams mocked tools, a report, and queued prompts](docs/assets/demo.gif)
+![qcode demo: an offline tour of pinned prompts, steering, queues, diffs, themes, and model search](docs/assets/demo.gif)
 
 ## ✨ Features
 
-- 🖥️ **Full-viewport TUI** with editable input, per-agent history, and ANSI-colored Markdown
+- 🖥️ **Full-viewport TUI** with pinned latest prompts, editable input, per-agent history, and ANSI-colored Markdown
+- ⌨️ **Steering and queues**: Enter updates busy work; Tab queues a separate task
 - 🤖 **Multi-agent support** with up to 20 concurrent agent tabs
 - 🔧 **Rich toolset** including read, write, edit, list, search, shell, and web tools
 - 🧭 **Plan mode** for read-only workspace investigation and explicit implementation handoff
@@ -22,6 +23,7 @@ qcode is a lightweight, keyboard-driven AI coding assistant that runs entirely i
 - 🧠 **Global learning** that persists preferences across sessions
 - 🎯 **Skills system** for workspace-local instruction bundles, including [official release skills](docs/skills/)
 - 🔒 **Sandbox mode** for isolated tool execution on Linux
+- 🛡️ **Local redaction** for detected credentials and payment-card data in output, saved sessions, and exports
 - 📊 **Context tracking** with real-time token usage display
 
 ## 🚀 Quick Start
@@ -45,7 +47,10 @@ qcode --model qwen2.5-coder:7b
 export OPENAI_API_KEY=...
 qcode --provider openai --model gpt-5
 
-# Try without configuration
+# Interactive tour without configuration
+qcode --demo
+
+# One-shot text demo
 qcode --demo "show me how qcode works"
 
 # Update an installed qcode binary
@@ -61,6 +66,7 @@ qcode update --arch arm64
 - [Interface](docs/interface.md) - Terminal UI, slash commands, and navigation
 - [Plan mode](docs/plan-mode.md) - Read-only planning and explicit execution handoff
 - [Interactive questions](docs/interactive-mode.md) - Per-agent question toggle and terminal workflow
+- [Browser control](docs/remote-control.md) - Use the same live session from a phone or browser
 - [Skill Plan mode](docs/skillplan.md) - Guided, review-first qcode skill creation
 - [Token usage](docs/token-usage.md) - Per-session totals and structured usage events
 - [Providers](docs/providers.md) - Ollama, OpenAI, and OpenCode Go setup

@@ -2,7 +2,9 @@
 
 The terminal UI is a full-viewport, keyboard-driven interface with editable input, per-agent history, full word wrapping, streamed responses, and ANSI-colored Markdown, including aligned GFM tables. Fixed tabs sit at the top and a status bar at the bottom. The normal terminal buffer and scrollback are retained.
 
-The prompt is pinned above the task indicator and status bar from launch. It displays `>` for an idle agent, `(Plan)>` in Plan mode, and `(Steer)>` while the current tab's agent is working. Pending prompts appear in a reserved, multi-row queue area directly above the prompt. It shows the queued text in FIFO order by default; Alt+Q expands it for more room, and Page Up/Page Down scroll that expanded area. Alt+Q folds it back to the smaller queue area, where queued text remains visible. Page Up/Page Down scroll the transcript when the queue is folded. Each agent tab keeps its own queue view and draft. The queue area disappears when its pending work drains. The browser remote control has the same smaller and expanded queue above its input; its expanded list also supports mouse wheel and touch scrolling. The status bar includes `STEP current/max` for the active agent's model-turn progress and `MODE PLAN` when planning is active, or `MODE INTERACTIVE` when normal-mode questions are enabled. Long drafts wrap upward within the input area.
+The active agent's latest received prompt is pinned directly beneath the tabs, above the scrolling transcript. A `✦` marker (`*` in ASCII mode) introduces up to three wrapped lines on a full-width accent background; long prompts end with an ellipsis. The region updates when a task starts or a steer is delivered, and survives completion, cancellation, failure, `/clear`, and session restore. Queued tasks and pending steers leave it unchanged until delivery. `/new` clears it for the active agent. Small terminals reserve fewer prompt rows to leave room for output and input.
+
+The editable composer is pinned above the task indicator and status bar from launch. It displays `>` for an idle agent, `(Plan)>` in Plan mode, `(Skill plan)>` in Skill Plan mode, and `(Steer)>` while the current tab's agent is working. Pending prompts appear in a reserved, multi-row queue area directly above the prompt. It groups pending steering separately from queued tasks, whose text stays in FIFO order; Alt+Q expands it for more room, and Page Up/Page Down scroll that expanded area. Alt+Q folds it back to the smaller queue area, where queued text remains visible. Page Up/Page Down scroll the transcript when the queue is folded. Each agent tab keeps its own queue view and draft. The queue area disappears when its pending work drains. The browser remote control has the same smaller and expanded queue above its input; its expanded list also supports mouse wheel and touch scrolling. The status bar includes `STEP current/max` for the active agent's model-turn progress and `MODE PLAN` when planning is active, or `MODE INTERACTIVE` when normal-mode questions are enabled. Long drafts wrap upward within the input area.
 
 Typing `/` opens up to five matching command suggestions directly above the prompt. Type more characters to filter them or press Tab to complete the first match. Suggestions stay in their own area while output streams, and disappear when the draft no longer matches a command; they are not saved in conversation history.
 
@@ -25,7 +27,7 @@ Interactive command selectors use the same navigation rule: `Esc` goes back to t
 - `/verbose` adds detailed timestamped telemetry, including raw tool arguments, without disabling concise activity events.
 - `/maxsteps` shows the current per-request model-turn limit; `/maxsteps N` updates it for the active agent.
 - `/statusline` opens a toggle list for status bar segments (remote, mode, model, think, ws, ctx, step, tok); Space toggles, Enter applies. `/statusline <name> on|off`, `/statusline hide|show a,b`, `/statusline show`, and `/statusline reset` work without the picker. Narrow terminals keep high-priority segments first (remote > mode > model > think > ws > ctx > step > tok) after shortening the workspace path. When segments still overflow one line they wrap to a second left-aligned status line; only when two lines overflow are low-priority segments dropped. Changes on main persist to `statusline_hidden` in config.toml.
-- `/theme` opens a terminal-only picker with a live Markdown and status preview. Use Up/Down and Enter to apply, or Esc/Ctrl+C to cancel. It includes Default (Auto), Catppuccin, Dracula/Alucard, Gruvbox, Solarized, and Nord dark/light palettes. The choice recolors retained and future terminal output and saves to the user config from any agent tab.
+- `/theme` opens a terminal-only picker with a live Markdown and status preview. Use Up/Down and Enter to apply, or Esc/Ctrl+C to cancel. It includes Default (Auto), Catppuccin, Dracula/Alucard, Gruvbox, Solarized, and Nord dark/light palettes. The choice recolors retained and future terminal output, updates the browser's pinned-prompt accent and background, and saves to the user config from any agent tab.
 - `/diff` and `/diff N` expand the latest write/edit diff preview (see below).
 - `/history` opens a searchable, newest-first list of completed prompts for the active agent. Select a prompt to read only that prompt and its final response; leaving the browser restores the conversation view without changing its reading position.
 - `/tool` enables or disables the web tools independently; see [Web tools](web-tools.md).
@@ -37,11 +39,32 @@ Interactive command selectors use the same navigation rule: `Esc` goes back to t
 
 Interactive sessions autosave changed state every two seconds and after agent events and commands, with a final save on clean exit or session switch. Each launch starts a separate session; resuming continues the selected session. Empty launches and demo/one-shot runs are not saved. `/new` still resets only the active agent within the current saved session.
 
-Resume restores all agent tabs and models, conversation messages and images, retained styled output (including events, errors, thinking, and diffs), expandable diff data, drafts, reading positions, tool/skill settings, context accounting, and token totals. Existing directory grants are restored when their paths remain valid under current protections; discarded grants produce a notice. Provider credentials come from current configuration and are not saved. The retained history limit remains 5,000 lines per tab; terminal dimensions can change wrapping.
+Resume restores all agent tabs and models, each agent's pinned latest prompt, conversation messages and images, retained styled output (including events, errors, thinking, and diffs), expandable diff data, drafts, reading positions, tool/skill settings, context accounting, and token totals. Existing directory grants are restored when their paths remain valid under current protections; discarded grants produce a notice. Provider credentials come from current configuration and are not saved. The retained history limit remains 5,000 lines per tab; terminal dimensions can change wrapping.
 
 Sessions live outside the workspace: `$XDG_STATE_HOME/qcode/sessions` on Linux (default `~/.local/state/qcode/sessions`), `~/Library/Application Support/qcode/sessions` on macOS, and `%AppData%/qcode/sessions` on Windows. Canonical workspace paths identify session groups, so symlink aliases share sessions and separate worktrees do not. Snapshots contain conversation and tool output and use private file permissions where supported. Sessions are retained without automatic deletion.
 
 After a crash, recovery uses the latest successful checkpoint and marks unfinished agents interrupted. It preserves saved output but never automatically reruns tools or model requests. Unresolved tool results are marked as having an unknown outcome before the next user-directed run. Files on disk and external processes are not rolled back. Session-save errors are shown; a failed save prevents switching away from the current session.
+
+## Steering and pending work
+
+While an agent is busy, terminal Enter steers its current task; Tab queues a separate task (slash-command Tab completion still works). Browser Enter and **Steer** steer, **Queue** queues, and Tab keeps native focus navigation. Idle submission starts an ordinary task. Steering during manual `/compact` is unavailable and keeps your draft; Tab can queue work.
+
+A steer waits for the streaming response or executing tool to finish. Completed output and side effects stay recorded. Unanswered approvals and questions are withdrawn, and unstarted tool actions are skipped before replanning. Esc defers terminal approvals or questions and opens the composer; Esc from the composer returns to the deferred interaction. Ctrl+C cancels active work.
+
+Steering belongs to the current task and its one final answer. The newest pending steer replaces earlier pending steering; delivered instructions remain in the conversation. Pending work shows steering separately from queued tasks. Detailed steering lifecycle messages appear only with `/verbose` enabled. Alt+Q opens the pending panel: Up/Down selects, Page Up/Down scrolls, Delete removes a pending item, and Esc or Alt+Q returns to the composer. Browser pending items have **Remove** controls. Removal stops working once a steer starts replanning. Task cancellation or failure cancels undelivered steers while FIFO work continues. If the task finishes before a steer is accepted, the submission is rejected and its draft is preserved; it cannot steer a different task automatically. Resuming a session marks unfinished work interrupted without resubmitting it.
+
+The terminal groups pending input under separate headings, without inline source or lifecycle labels:
+
+```text
+Steer
+ ╰─ adjust the button to be more flexible
+
+Queued | Alt+Q expand
+ │  1. after that please commit the code
+ ╰─ 2. The commit message should be as short as possible
+```
+
+ASCII mode uses `|` and `+-` for the tree connectors. Wrapped and multiline prompts keep their indentation; each item retains its identity for selection and removal.
 
 ## Activity events
 
@@ -101,23 +124,3 @@ compaction, `/new`, and session restores. Older sessions without a journal may
 have no structured prompt history; use `/export raw` to read their available
 transcript instead. Times use the exporting machine's local timezone and show
 the UTC offset.
-
-
-While an agent is busy, terminal Enter steers its current task; Tab queues a separate task (slash-command Tab completion still works). Browser Enter and **Steer** steer, **Queue** queues, and Tab keeps native focus navigation. Idle submission starts an ordinary task. Steering during manual `/compact` is unavailable and keeps your draft; Tab can queue work.
-
-A steer waits for the streaming response or executing tool to finish. Completed output and side effects stay recorded. Unanswered approvals and questions are withdrawn, and unstarted tool actions are skipped before replanning. Esc defers terminal approvals or questions and opens the composer; Esc from the composer returns to the deferred interaction. Ctrl+C cancels active work.
-
-Steering belongs to the current task and its one final answer. The newest pending steer replaces earlier pending steering; delivered instructions remain in the conversation. Pending work shows steering separately from queued tasks. Detailed steering lifecycle messages appear only with `/verbose` enabled. Alt+Q opens the pending panel: Up/Down selects, Page Up/Down scrolls, Delete removes a pending item, and Esc or Alt+Q returns to the composer. Browser pending items have **Remove** controls. Removal stops working once a steer starts replanning. Task cancellation or failure cancels undelivered steers while FIFO work continues. If the task finishes before a steer is accepted, the submission is rejected and its draft is preserved; it cannot steer a different task automatically. Resuming a session marks unfinished work interrupted without resubmitting it.
-
-The terminal groups pending input under separate headings, without inline source or lifecycle labels:
-
-```text
-Steer
- ╰─ adjust the button to be more flexible
-
-Queued | Alt+Q expand
- │  1. after that please commit the code
- ╰─ 2. The commit message should be as short as possible
-```
-
-ASCII mode uses `|` and `+-` for the tree connectors. Wrapped and multiline prompts keep their indentation; each item retains its identity for selection and removal.

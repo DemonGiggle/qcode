@@ -32,10 +32,12 @@ Repeatable `--sandbox-command-path` overrides the configured list. Omitting
 the key preserves the existing sandbox behaviour without migration.
 
 In the normal interactive UI, `/model` (including its explicit thinking
-level) and `/maxsteps` update the user-level file synchronously when issued
-from the `main` tab. On Linux this is `~/.local/etc/qcode/config.toml`; other
+level), `/maxsteps`, and `/statusline` update the user-level file synchronously
+when issued from the `main` tab. On Linux this is `~/.local/etc/qcode/config.toml`; other
 platforms use the user configuration path shown below. Existing comments and
-unrelated settings are preserved. `/theme` is terminal-wide and saves its
+unrelated settings, including nested tables such as `[redaction]` and `[skills]`,
+are preserved. `/statusline` saves the hidden segment list as the top-level
+`statusline_hidden` setting. `/theme` is terminal-wide and saves its
 choice from any agent tab, including when the selection is Default (Auto).
 Other preference changes in worker tabs, demo mode, one-shot mode, and piped
 execution remain session-only. `theme` accepts

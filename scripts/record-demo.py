@@ -33,12 +33,16 @@ def main():
         parser.error("qcode binary is missing; run make build first")
 
     # Let the automatic prompts demonstrate queueing and mocked tool diffs,
-    # then show live theme previews, transcript navigation, and model search.
+    # then show live theme previews, pending-work navigation, history, model
+    # search, and the Enter/Tab controls with the latest prompt pinned above.
     actions = [
         (3, b"/theme\r"),
         (4, b"\x1b[B"),
         (5, b"\x1b[B"),
         (6, b"\r"),
+        (8, b"\x1bq"),
+        (9, b"\x1b[B"),
+        (10, b"\x1b"),
         (30, b"\x1b[5~"),
         (32, b"\x1b[H"),
         (34, b"\x1b[F"),
@@ -46,7 +50,12 @@ def main():
         (38, b"demo-coder-0"),
         (39, b"\x1b[B"),
         (41, b"\x1b"),
-        (44, b"/quit\r"),
+        (43, b"Explain how steering differs from queueing\r"),
+        (43.5, b"Keep it short and include the keyboard shortcuts\r"),
+        (43.7, b"Then summarize cancellation\t"),
+        (44, b"\x1bq"),
+        (45, b"\x1b"),
+        (49, b"/quit\r"),
     ]
     with tempfile.TemporaryDirectory(prefix="qcode-demo-") as temporary:
         home = Path(temporary)
@@ -69,16 +78,20 @@ def main():
             with args.output.open("w") as recording:
                 header = {"version": 2, "width": 120, "height": 36,
                           "timestamp": int(time.time()),
-                          "title": "qcode: queues, diffs, themes, and history",
+                          "title": "qcode: pinned prompts, steering, queues, and themes",
                           "env": {"TERM": "xterm-256color", "SHELL": "/bin/sh"}}
                 recording.write(json.dumps(header) + "\n")
                 decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
                 pending = iter(actions)
                 action = next(pending, None)
-                while time.monotonic() - start < 50:
+                while time.monotonic() - start < 55:
                     elapsed = time.monotonic() - start
                     if action and elapsed >= action[0]:
                         os.write(master, action[1])
+                        # Keep the last live screen as the GIF's closing frame,
+                        # instead of recording terminal cleanup on exit.
+                        if action[1] == b"/quit\r":
+                            break
                         action = next(pending, None)
                     if not select.select([master], [], [], 0.05)[0]:
                         if process.poll() is not None:

@@ -1,6 +1,6 @@
 # Session token usage
 
-The status bar shows compact input/output counts such as `TOK I:1.2K O:340` for the active agent's session. At widths of 100 columns or more it also includes the combined total, such as `Σ:1.5K`. Counts accumulate across completion requests, including tool-loop steps, compaction, and learning requests.
+The status bar shows compact input/output counts such as `TOK I:1.2K O:340` for the active agent's session. It also includes the combined total, such as `Σ:1.5K` (`T:1.5K` in ASCII mode), whenever it fits the actual one- or two-line layout. If space is tight, the total is omitted before the whole token segment is dropped. There is no fixed minimum terminal width. Counts accumulate across completion requests, including tool-loop steps, compaction, and learning requests.
 
 Before any requests, totals are zero. If a provider omits usage, the display shows `unknown` when no tokens have been reported, or adds `?` to reported totals. Failed or cancelled requests without usage also make totals incomplete. These are provider-reported token counts, not cost estimates.
 

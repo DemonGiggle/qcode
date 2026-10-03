@@ -18,7 +18,9 @@ uses magenta; `NO_COLOR` keeps the terminal region plain.
 
 ## Prompt queues
 
-Each agent has an independent FIFO prompt queue. Submitting another prompt while an agent is running adds it to that agent's queue instead of returning a busy error. The tab and task indicator show the pending count, and the transcript marks a newly accepted pending prompt as `Queued #N`. A reserved multi-row area above the input shows queued prompt text in FIFO order; Alt+Q expands it for Page Up/Page Down scrolling or folds it back to the smaller queue area. The browser remote control shows the same queue with a clickable expansion control. Input remains editable while work runs, so prompts can be added without waiting or blocking tab navigation and directory approvals.
+Each agent has an independent FIFO prompt queue. While an agent is running, terminal Enter steers its current task and Tab queues a separate task; slash-command Tab completion still takes priority. In the browser, Enter or **Steer** updates the busy task and **Queue** adds a separate task. The tab and task indicator show the queued task count, and the transcript marks a newly accepted queued task as `Queued #N`.
+
+A reserved multi-row area above the input groups pending input under **Steer** and **Queued** headings with tree connectors. The newest pending steer replaces the previous one; queued tasks retain their FIFO order. Alt+Q expands the panel: Up/Down selects an item, Page Up/Page Down scrolls, Delete removes pending input, and Esc or Alt+Q returns to the composer. The browser has an expansion control and **Remove** buttons. Input remains editable while work runs, so prompts can be added without waiting or blocking tab navigation. See [steering and pending work](interface.md#steering-and-pending-work) for delivery and cancellation behavior.
 
 Only one prompt runs in an agent at a time. The next prompt starts automatically after the current one completes, fails, or is cancelled. Queues are not global, so a slow sub-agent does not delay prompts sent to `main` or another agent.
 
