@@ -273,7 +273,7 @@ type runtimeConfigEntry struct {
 
 // patchRuntimeConfig validates the complete existing document first, then
 // changes only the managed root-level values. The TOML AST supplies exact
-// value ranges, which keeps comments, spacing, and unrelated settings intact.
+// assignment ranges, which keep comments, spacing, and unrelated settings intact.
 func patchRuntimeConfig(data []byte, changes map[string]*string) ([]byte, bool, error) {
 	if len(data) == 0 {
 		rendered := renderRuntimeKeys(changes, "\n")
@@ -353,7 +353,10 @@ func runtimeConfigEntries(data []byte) (map[string]runtimeConfigEntry, int, erro
 		switch expression.Kind {
 		case unstable.Table, unstable.ArrayTable:
 			if firstTable < 0 {
-				firstTable = lineStart(data, int(expression.Raw.Offset))
+				// Table nodes do not carry a Raw range, but their keys do.
+				keys := expression.Key()
+				keys.Next()
+				firstTable = lineStart(data, int(keys.Node().Raw.Offset))
 			}
 			inRoot = false
 		case unstable.KeyValue:
@@ -370,12 +373,20 @@ func runtimeConfigEntries(data []byte) (map[string]runtimeConfigEntry, int, erro
 			if name != "model" && name != "thinking" && name != "max_steps" && name != "statusline_hidden" && name != "theme" {
 				continue
 			}
-			value := expression.Value()
+			// Array nodes do not carry a Raw range. Derive the value span
+			// from the key and the complete assignment, including closing
+			// brackets and any whitespace or comments inside the array.
+			keyValueEnd := int(expression.Raw.Offset + expression.Raw.Length)
+			valueStart := int(key.Raw.Offset + key.Raw.Length)
+			valueStart += bytes.IndexByte(data[valueStart:keyValueEnd], '=') + 1
+			for valueStart < keyValueEnd && (data[valueStart] == ' ' || data[valueStart] == '\t') {
+				valueStart++
+			}
 			entries[name] = runtimeConfigEntry{
 				keyValueStart: int(expression.Raw.Offset),
-				keyValueEnd:   int(expression.Raw.Offset + expression.Raw.Length),
-				valueStart:    int(value.Raw.Offset),
-				valueEnd:      int(value.Raw.Offset + value.Raw.Length),
+				keyValueEnd:   keyValueEnd,
+				valueStart:    valueStart,
+				valueEnd:      keyValueEnd,
 			}
 		}
 	}

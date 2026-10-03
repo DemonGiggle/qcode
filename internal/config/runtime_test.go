@@ -129,8 +129,8 @@ context_budget = 1200
 		t.Fatal(err)
 	}
 	text := string(data)
-	if strings.Index(text, "max_steps = 64") > strings.Index(text, "[learning]") {
-		t.Fatalf("max_steps was not inserted before the table: %s", text)
+	if want := strings.Replace(original, "[learning]", "max_steps = 64\n[learning]", 1); text != want {
+		t.Fatalf("updated config = %q, want %q", text, want)
 	}
 	var parsed Config
 	if err := loadAndDecodeForTest(data, &parsed); err != nil {
