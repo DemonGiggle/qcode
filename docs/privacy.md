@@ -10,7 +10,19 @@ Built-in detection covers common OpenAI, GitHub, and AWS credential forms,
 credential assignments (including quoted names and values), JSON credential
 fields, Bearer tokens, and complete PEM private-key blocks. Credential field
 names include API keys, passwords, secrets, access and refresh tokens,
-authorization, client secrets, and private keys. The effective provider key and
+authorization, client secrets, and private keys.
+
+Payment-card detection covers compact, spaced, and hyphenated card numbers of
+13–19 digits. Unlabelled numbers must pass the Luhn checksum; an explicit card
+number label also masks numbers with an invalid checksum. Labelled CVV/CVC
+security codes and expiry dates (including `Thru`, `Valid Thru`, `Expiry`, and
+`Expiration Date`) are masked in file previews, response text, and thinking.
+JSON payment fields are masked regardless of their value's type, including
+numeric CVVs and separate expiry month/year fields. Short codes and dates
+without a recognizable payment label remain visible; a model paraphrase that
+omits that context can therefore escape filtering.
+
+The effective provider key and
 nonempty supported credential environment values are also masked wherever they
 appear, including their JSON-escaped form. Registered values and matched text
 are never included in redaction diagnostics.

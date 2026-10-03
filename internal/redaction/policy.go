@@ -101,6 +101,9 @@ func New(c Config, exactValues []string) (*Policy, error) {
 			assignments = append(assignments, regexp.QuoteMeta(name))
 		}
 	}
+	for _, name := range paymentFields {
+		p.fields[normalize(name)] = true
+	}
 	// Retain the learning detector's spelling variants, including API KEY.
 	assignments = append(assignments, `api[_ -]?key`, `access[_ -]?token`, `client[_ -]?secret`, `private[_ -]?key`, `refresh[_ -]?token`)
 	p.assignment = regexp.MustCompile(`(?i)(?:["']?(?:\b|_)(?:` + strings.Join(assignments, "|") + `)["']?[ \t]*[:=][ \t]*)(?:(?:\[REDACTED\])|"(?:\\.|[^"\\])*"?|'(?:\\.|[^'\\])*'?|[^\s"'<>;,}\]]+)`)
@@ -159,6 +162,7 @@ func protect(s string, filter func(string) string) string {
 }
 func (p *Policy) line(line string) string {
 	p = effective(p)
+	line = redactPayments(line)
 	// Match assignments before replacing individual values to preserve syntax on reruns.
 	line = p.assignment.ReplaceAllStringFunc(line, func(match string) string {
 		separator := strings.IndexAny(match, ":=")
@@ -230,7 +234,14 @@ func (p *Policy) value(s Sink, value any, transport, opaque bool) any {
 		return value
 	}
 	switch v := value.(type) {
-	case nil, bool, json.Number, float64, float32, int, int64, uint64:
+	case json.Number:
+		// Ordinary JSON may encode a PAN as a number. Keep numeric transport
+		// metadata intact, since typed counters and identifiers must round-trip.
+		if !transport && cardCandidate.FindString(v.String()) == v.String() && luhn(v.String()) {
+			return Marker
+		}
+		return value
+	case nil, bool, float64, float32, int, int64, uint64:
 		return value
 	case string:
 		return p.Text(s, v)

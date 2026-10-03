@@ -152,7 +152,8 @@ Explicit booleans override lower configuration layers. Each supplied custom
 list replaces its lower-layer list; `[]` clears it. Invalid regular expressions
 stop startup and report the setting and zero-based index without printing the
 pattern. Paths are literal matches, with both their configured and expanded
-forms registered. Custom field names extend the built-in credential names.
+forms registered. Custom field names extend the built-in credential and
+payment-card field names.
 
 Custom regexes use Go's regular-expression syntax and match individual logical
 lines, including when `(?s)` is supplied. Provider streams wait for complete

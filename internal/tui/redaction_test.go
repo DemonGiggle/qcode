@@ -184,3 +184,25 @@ func TestStyledCurrentRowWithinLegacyPEMIsRedacted(t *testing.T) {
 		t.Fatal("PEM body survived in character cells")
 	}
 }
+
+func TestPaymentThinkingIsFilteredBeforeMarkdownWrapping(t *testing.T) {
+	const text = "**Number:** 4111 1111 1111 1111\n**CVV:** `123`\n**Valid Thru:** 04/29"
+	for _, styled := range []bool{false, true} {
+		var out bytes.Buffer
+		// A narrow width would separate a raw PAN before a post-render matcher
+		// could recognize it; filtering must happen before wrapping.
+		writer := NewMarkdownWriter(&out, styled, 16)
+		writer.BeginResponse()
+		writer.BeginThinking()
+		for _, b := range []byte(text) {
+			writer.Write([]byte{b})
+		}
+		writer.EndThinking()
+		writer.EndResponse()
+		for _, sensitive := range []string{"4111", "1111", "123", "04/29"} {
+			if strings.Contains(out.String(), sensitive) {
+				t.Fatalf("styled=%t: payment data survived Markdown rendering", styled)
+			}
+		}
+	}
+}
