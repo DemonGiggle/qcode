@@ -24,6 +24,9 @@ func (u *UI) latestPromptRegionRowsLocked(available int) []string {
 // latestPromptRows keeps literal user text out of the markdown and ANSI parsers.
 // Filtering happens before wrapping so secrets spanning rows remain protected.
 func (u *UI) latestPromptRowsLocked(limit int) []string {
+	if u.commandViewActive {
+		return nil
+	}
 	source, ok := u.manager.(latestPromptReader)
 	if !ok || limit <= 0 {
 		return nil

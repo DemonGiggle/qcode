@@ -247,7 +247,6 @@ type UI struct {
 	queue                queuePanel
 	statusActive         bool
 	statusBarText        string
-	planViewActive       bool
 	startupNotice        string
 	startupChoice        bool
 	skills               []prompt.SkillSummary
@@ -294,6 +293,9 @@ type UI struct {
 	remoteMenuMu         sync.Mutex
 	remoteMenuActive     bool
 	remoteMenuWake       bool
+
+	commandViewActive     bool // Guarded by screenMu; modal command owns the transcript area.
+	commandViewStatusRows int  // Keep the modal footer stable while agent status changes.
 }
 
 // SetSkillCatalog configures the optional /skill selector.
@@ -1799,7 +1801,7 @@ func (u *UI) refreshStatusBar() {
 }
 
 func (u *UI) renderStatusBarLocked(force bool) {
-	if !u.statusActive {
+	if !u.statusActive && !u.commandViewActive {
 		return
 	}
 	bar := u.statusBar()
@@ -1807,6 +1809,17 @@ func (u *UI) renderStatusBarLocked(force bool) {
 		// Tiny terminals keep a single status line to preserve a valid
 		// scroll region; the overflow line is dropped.
 		bar = strings.Split(bar, "\n")[0]
+	}
+	if u.commandViewActive {
+		// Selectors retain cursor-relative rows. Keep their scroll boundary
+		// fixed when background work changes status-line wrapping.
+		lines := strings.Split(bar, "\n")
+		count := u.statusLinesLocked()
+		lines = lines[:min(count, len(lines))]
+		for len(lines) < count {
+			lines = append(lines, "")
+		}
+		bar = strings.Join(lines, "\n")
 	}
 	if !force && bar == u.statusBarText {
 		return
@@ -1841,6 +1854,9 @@ func (u *UI) renderStatusBarLocked(force bool) {
 		}
 	}
 	fmt.Fprint(u.out, "\x1b[u")
+	if u.commandViewActive {
+		u.drawCommandViewHintLocked()
+	}
 }
 
 // statusBarLineCount returns 1 or 2 for a rendered status bar.
@@ -1863,6 +1879,9 @@ func statusBarLineCount(bar string) int {
 func (u *UI) statusLinesLocked() int {
 	if u.height < 5 {
 		return 1
+	}
+	if u.commandViewActive {
+		return max(1, u.commandViewStatusRows)
 	}
 	return statusBarLineCount(u.statusBar())
 }

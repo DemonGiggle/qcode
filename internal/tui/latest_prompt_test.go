@@ -167,22 +167,22 @@ func TestPinnedPromptYieldsSpaceOnCrampedScreens(t *testing.T) {
 	}
 }
 
-func TestPinnedPromptSelectorsAndLoginRespectBoundary(t *testing.T) {
+func TestPinnedPromptHidesInCommandViewsAndReturnsAfterwards(t *testing.T) {
 	u, _ := layoutFixture(t)
 	u.manager.(*layoutManager).latest = map[string]string{"main": "one\ntwo\nthree"}
 	u.renderInput(inputPrompt, "draft", 3)
 	before := fileSize(t, u.out)
 	u.beginRawSelector()
 	data, _ := os.ReadFile(u.out.Name())
-	if !strings.Contains(string(data[before:]), "\x1b[5;21r\x1b[5;1H") || strings.Contains(string(data[before:]), "\x1b[2;1H") {
-		t.Fatal("raw selector overwrote the pinned prompt")
+	if !strings.Contains(string(data[before:]), "\x1b[2;22r\x1b[2;1H") || !strings.Contains(string(data[before:]), "\x1b[2;1H\x1b[2K") {
+		t.Fatal("command view did not hide the pinned prompt")
 	}
-	for _, writer := range []io.Writer{planViewWriter{ui: u, start: 5}, historyViewWriter{ui: u, start: 5}} {
+	for _, writer := range []io.Writer{planViewWriter{ui: u, start: u.latestPromptStartLocked()}, historyViewWriter{ui: u, start: u.latestPromptStartLocked()}} {
 		before = fileSize(t, u.out)
 		renderPlanPager(writer, newPlanPager("plan", 80), 80, 2, false)
 		data, _ = os.ReadFile(u.out.Name())
-		if !strings.Contains(string(data[before:]), "\x1b[5;1H") || strings.Contains(string(data[before:]), "\x1b[2;1H") {
-			t.Fatal("pager overwrote the pinned prompt")
+		if !strings.Contains(string(data[before:]), "\x1b[2;1H") {
+			t.Fatal("pager did not use space freed by the pinned prompt")
 		}
 	}
 	u.endRawSelector()

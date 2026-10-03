@@ -188,24 +188,18 @@ func (u *UI) showPlanViewWith(ctx context.Context, plan string, skillDraft bool)
 		return fmt.Errorf("plan view requires an interactive terminal")
 	}
 
-	u.screenMu.Lock()
-	u.planViewActive = true
-	u.screenMu.Unlock()
 	u.input.setRaw(true)
 	u.beginRawSelector()
 	defer func() {
 		u.input.setRaw(false)
-		u.screenMu.Lock()
-		u.planViewActive = false
-		u.screenMu.Unlock()
 		u.endRawSelector()
 	}()
 
 	u.screenMu.Lock()
-	width, height := u.width, u.height
+	width := u.width
 	start := u.latestPromptStartLocked()
+	visible := u.commandViewHeightLocked()
 	u.screenMu.Unlock()
-	visible := max(1, height-start-2)
 	writer := planViewWriter{ui: u, start: start}
 	if skillDraft {
 		return showSkillPlanPager(u.input, writer, plan, width, visible, ColorEnabled(u.out), u.unicode)

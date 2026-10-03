@@ -161,7 +161,9 @@ func (u *UI) showRemoteActive(status RemoteStatus) error {
 		u.endRawSelector()
 	}()
 	for {
-		loginHeight := max(1, u.height-3-staticRows)
+		u.screenMu.Lock()
+		loginHeight := max(1, u.commandViewHeightLocked()-staticRows-1)
+		u.screenMu.Unlock()
 		if notice != "" {
 			loginHeight = max(1, loginHeight-len(strings.Split(wrapANSI(notice, u.width, ""), "\n")))
 		}

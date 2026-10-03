@@ -805,7 +805,7 @@ func (u *UI) repaintActiveLocked(direction int) {
 }
 
 func (u *UI) drawNavigationLocked() {
-	if !u.statusActive || !u.activeViewportLocked().browsing {
+	if u.commandViewActive || !u.statusActive || !u.activeViewportLocked().browsing {
 		return
 	}
 	message := truncateDiffLine("History paused | PgUp/PgDn | PgDn to bottom resumes", u.width, u.unicode)

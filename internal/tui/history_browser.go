@@ -322,8 +322,6 @@ func (u *UI) showHistory(ctx context.Context) {
 
 	u.screenMu.Lock()
 	agentID := u.activeAgent
-	width, height := u.width, u.height
-	start := u.latestPromptStartLocked()
 	u.screenMu.Unlock()
 	records := completedAgentHistory(redaction.Copy(u.redaction, redaction.Terminal, reader.WorkRecords()), agentID)
 	if len(records) == 0 {
@@ -342,7 +340,10 @@ func (u *UI) showHistory(ctx context.Context) {
 		u.endRawSelector()
 	}()
 
-	err := showHistoryBrowser(u.input, historyViewWriter{ui: u, start: start}, records, agentName, width, max(2, height-start-2), ColorEnabled(u.out), u.unicode)
+	u.screenMu.Lock()
+	width, start, visible := u.width, u.latestPromptStartLocked(), u.commandViewHeightLocked()
+	u.screenMu.Unlock()
+	err := showHistoryBrowser(u.input, historyViewWriter{ui: u, start: start}, records, agentName, width, max(2, visible), ColorEnabled(u.out), u.unicode)
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(ctx.Err(), context.Canceled) {
 		u.printSystemMessage(yellow + "Unable to show history: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 	}

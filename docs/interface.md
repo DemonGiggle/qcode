@@ -20,6 +20,12 @@ Use `/help` to list commands, or `/help <command>` to see a command's arguments 
 
 Interactive command selectors use the same navigation rule: `Esc` goes back to the previous level, or leaves the command from its top level. `Ctrl+C` cancels the whole command without applying pending changes.
 
+Special command views, including `/history`, plan and skill draft viewers, and
+selectors, hide the pinned prompt, composer, and waiting indicator. Their footer
+states that Ctrl+C closes the view; a running agent continues in the background.
+Closing the view restores the pinned prompt, draft, and conversation reading
+position. Ctrl+C in the normal composer cancels the active agent task.
+
 - `/model` fetches the provider's models. Search a large catalog by typing, move through matches with Up/Down, and select with Enter.
 - `/new` discards the current conversation context and resets session token totals without restarting qcode or changing the provider, model, or workspace.
 - `/resume` opens saved sessions for this workspace. Use Up/Down and Enter to restore, or Ctrl+C to cancel. Each entry shows its latest main-agent conversation preview (up to two lines) and how long ago you left it, newest first. Finish or cancel running agents before switching. Sessions open in another process cannot be restored. Enter retries the selected session and reports any lock or snapshot error.
