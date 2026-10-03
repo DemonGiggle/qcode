@@ -269,7 +269,7 @@ func (m *AgentManager) saveAgentsLocked() ([]session.SavedAgent, int) {
 			var identity struct{ Model string }
 			_ = json.Unmarshal(*data, &identity)
 			summary.Model = identity.Model
-			result = append(result, session.SavedAgent{Summary: summary, State: append(json.RawMessage(nil), (*data)...)})
+			result = append(result, session.SavedAgent{Summary: summary, State: append(json.RawMessage(nil), (*data)...), LatestPrompt: s.latestPrompt})
 		}
 	}
 	return result, m.nextID
@@ -313,6 +313,7 @@ func (m *AgentManager) RestoreAgents(saved []session.SavedAgent, nextID int) err
 			return err
 		}
 		s.summary = item.Summary
+		s.latestPrompt = item.LatestPrompt
 		if s.summary.Status == StatusRunning || s.summary.Status == StatusWaitingForApproval {
 			s.summary.Status = StatusCancelled
 			s.summary.Error = "Interrupted when the previous process ended"

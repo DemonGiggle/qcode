@@ -51,6 +51,26 @@ var paletteByID = func() map[string]Palette {
 
 func Default() Palette { return palettes[0] }
 
+// PinnedPromptBackground softly tints the surface with the theme's accent.
+// Default uses a dark neutral surface because terminal Auto has no fixed color.
+func PinnedPromptBackground(palette Palette) string {
+	base, accent := palette.Background, palette.Accent
+	if base == "" {
+		base = "#101018"
+	}
+	if accent == "" {
+		accent = "#d58cff"
+	}
+	b, _ := strconv.ParseUint(base[1:], 16, 32)
+	a, _ := strconv.ParseUint(accent[1:], 16, 32)
+	var blended uint64
+	for _, shift := range []uint{16, 8, 0} {
+		component := (4*((b>>shift)&255) + ((a >> shift) & 255)) / 5
+		blended |= component << shift
+	}
+	return fmt.Sprintf("#%06x", blended)
+}
+
 func Lookup(id string) (Palette, bool) {
 	palette, ok := paletteByID[strings.ToLower(strings.TrimSpace(id))]
 	return palette, ok
@@ -258,6 +278,11 @@ func transformSGR(sequence string, palette Palette) string {
 						continue
 					}
 				}
+				// Unknown RGB colors are one atomic parameter group. Its channel
+				// values must not be interpreted as separate semantic ANSI codes.
+				output = append(output, parts[index:index+5]...)
+				index += 4
+				continue
 			} else if kindErr == nil && kind == 5 && index+2 < len(parts) {
 				role := rolePrompt
 				if value == 48 {

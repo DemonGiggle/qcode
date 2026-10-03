@@ -23,6 +23,8 @@ const indexHTML = `<!doctype html>
   --cyan: #43d9e8;
   --green: #54d17a;
   --yellow: #e8bf55;
+  --prompt: #d58cff;
+  --prompt-background: #372846;
   --content-width: 72rem;
 }
 
@@ -38,7 +40,7 @@ body {
   min-height: 100svh;
   margin: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
@@ -46,6 +48,7 @@ body {
 }
 
 .top {
+  grid-row: 1;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -91,7 +94,32 @@ body {
   gap: .25rem;
 }
 
+.latest-prompt {
+  grid-row: 2;
+  min-width: 0;
+  padding: .55rem calc(.8rem + env(safe-area-inset-right)) .55rem calc(.8rem + env(safe-area-inset-left));
+  background: var(--prompt-background);
+  border-bottom: 1px solid var(--line);
+  color: var(--prompt);
+  font-size: clamp(.82rem, .78rem + .25vw, .96rem);
+  line-height: 1.5;
+}
+.latest-prompt[hidden] { display: none; }
+.latest-prompt-lines {
+  width: min(100%, var(--content-width));
+  margin: 0 auto;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  max-height: 4.5em;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 main {
+  grid-row: 3;
   min-width: 0;
   min-height: 0;
   overflow: auto;
@@ -112,6 +140,7 @@ main {
 .empty { color: var(--muted); }
 
 .bottom {
+  grid-row: 4;
   min-width: 0;
   padding: .65rem max(.75rem, env(safe-area-inset-right)) calc(.65rem + env(safe-area-inset-bottom)) max(.75rem, env(safe-area-inset-left));
   background: var(--panel);
@@ -303,18 +332,19 @@ button:disabled { opacity: .5; cursor: default; }
 }
 </style></head><body>
 <header class="top"><span class="brand" aria-label="qcode remote">qcode</span><nav id="tabs" aria-label="Agents"></nav><nav class="history-navigation" aria-label="Transcript navigation"><button id="history-home" class="tab" type="button" aria-controls="scroll" title="Beginning of transcript (Home)">Beginning</button><button id="history-end" class="tab" type="button" aria-controls="scroll" title="Latest transcript content (End)">Latest</button></nav></header>
+<section id="latest-prompt" class="latest-prompt" aria-label="Latest received prompt" hidden><div class="latest-prompt-lines"><strong id="latest-prompt-marker" aria-hidden="true">✦</strong> <span id="latest-prompt-text"></span></div></section>
 <main id="scroll" tabindex="0" aria-label="Transcript"><pre id="transcript" class="transcript empty">Sign in using the link or QR code displayed by /remote.</pre></main>
 <footer class="bottom"><div id="interaction" class="interaction"></div><div id="command" class="command-panel"></div><div id="waiting" class="waiting" hidden></div><div id="status" class="status" role="status" aria-live="polite">Connecting to qcode…</div><section id="queue-panel" class="queue-panel" aria-label="Queued prompts" hidden><button id="queue-toggle" class="queue-toggle" type="button" aria-expanded="false" aria-controls="queue-list"></button><div id="queue-list" class="queue-list" role="list" aria-label="Queued prompts in execution order" tabindex="-1"></div></section><form id="form"><label class="sr-only" for="input">Message or slash command</label><input id="input" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Send a prompt or slash command"><button id="send" type="submit">Send</button><button id="queue-submit" type="button" hidden>Queue</button></form></footer>
 <script>
 (()=>{
-const tabs=document.querySelector('#tabs'),out=document.querySelector('#transcript'),status=document.querySelector('#status'),interaction=document.querySelector('#interaction'),command=document.querySelector('#command'),form=document.querySelector('#form'),input=document.querySelector('#input'),send=document.querySelector('#send'),scroll=document.querySelector('#scroll'),waiting=document.querySelector('#waiting'),queuePanel=document.querySelector('#queue-panel'),queueToggle=document.querySelector('#queue-toggle'),queueList=document.querySelector('#queue-list');
+const latestPrompt=document.querySelector('#latest-prompt'),latestPromptText=document.querySelector('#latest-prompt-text'),latestPromptMarker=document.querySelector('#latest-prompt-marker'),tabs=document.querySelector('#tabs'),out=document.querySelector('#transcript'),status=document.querySelector('#status'),interaction=document.querySelector('#interaction'),command=document.querySelector('#command'),form=document.querySelector('#form'),input=document.querySelector('#input'),send=document.querySelector('#send'),scroll=document.querySelector('#scroll'),waiting=document.querySelector('#waiting'),queuePanel=document.querySelector('#queue-panel'),queueToggle=document.querySelector('#queue-toggle'),queueList=document.querySelector('#queue-list');
 let snapshot=null,active='',timer=0,closed=false,historyAtBeginning=false,promptNotice='';const drafts={},cleared={},queueExpanded={},queueScroll={};
 let sessionKey='',eventController=null;
 const authRequired={{.AuthRequired}};
 const storageKey='qcode.remote.session:'+new URL(document.baseURI).pathname;
 const events={close(){if(eventController)eventController.abort();eventController=null}};
 input.disabled=true;send.disabled=true;
-function lockSession(message){closed=true;events.close();clearTimeout(timer);sessionKey='';snapshot=null;try{sessionStorage.removeItem(storageKey)}catch(_){}input.disabled=true;send.disabled=true;waitingRunning=false;drawWaiting();queuePanel.hidden=true;tabs.replaceChildren();interaction.replaceChildren();interaction.className='interaction';command.replaceChildren();command.className='command-panel';out.textContent='Run /remote in the terminal for a new login link.';out.className='transcript empty';status.textContent=message}
+function lockSession(message){closed=true;events.close();clearTimeout(timer);sessionKey='';snapshot=null;latestPromptText.textContent='';latestPrompt.hidden=true;try{sessionStorage.removeItem(storageKey)}catch(_){}input.disabled=true;send.disabled=true;waitingRunning=false;drawWaiting();queuePanel.hidden=true;tabs.replaceChildren();interaction.replaceChildren();interaction.className='interaction';command.replaceChildren();command.className='command-panel';out.textContent='Run /remote in the terminal for a new login link.';out.className='transcript empty';status.textContent=message}
 async function apiFetch(path,options={}){if(authRequired&&!sessionKey)throw new Error('Authorization required. Run /remote for a new login link.');const headers=new Headers(options.headers);if(authRequired)headers.set('Authorization','Bearer '+sessionKey);const r=await fetch(path,{...options,headers});if(authRequired&&r.status===401){lockSession('Session is no longer authorized. Run /remote for a new login link.');throw new Error('Session is no longer authorized. Run /remote for a new login link.')}return r}
 function abortableDelay(ms,signal){return new Promise(resolve=>{if(signal.aborted){resolve();return}const finish=()=>{clearTimeout(id);signal.removeEventListener('abort',finish);resolve()};const id=setTimeout(finish,ms);signal.addEventListener('abort',finish,{once:true})})}
 async function streamEvents(){
@@ -450,7 +480,8 @@ document.addEventListener('keydown',e=>{
   if(e.target.closest('input,textarea,select,[contenteditable],#command,#queue-list'))return;
   if(e.key==='Home'||e.key==='End'){e.preventDefault();jumpHistory(e.key==='Home')}
 });
-function render(){if(!snapshot||!snapshot.presentation)return;const views=snapshot.presentation.views||[];if(!views.some(v=>v.id===active)){if(active)drafts[active]=input.value;active=snapshot.presentation.active||(views[0]&&views[0].id)||'';input.value=drafts[active]||'';}tabs.replaceChildren(...views.map(v=>{const b=document.createElement('button');b.className='tab '+(v.id===active?'active ':'')+(v.status==='running'?'running':'');b.textContent=v.name||v.id;b.onclick=()=>{drafts[active]=input.value;active=v.id;input.value=drafts[active]||'';historyAtBeginning=false;render()};return b}));const v=views.find(v=>v.id===active);const nearBottom=!historyAtBeginning&&scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;const lines=v?v.lines.slice(cleared[active]||0):[];out.innerHTML=lines.length?ansiHTML(lines.join('\n')):'No transcript yet.';out.className='transcript '+(lines.length?'':'empty');status.innerHTML=ansiHTML(snapshot.presentation.status_bar||'Connecting to qcode…')+(promptNotice?'<span class="notice">'+escapeHTML(promptNotice)+'</span>':'');const activeSummary=agents().find(x=>x.id===active);waitingRunning=!!activeSummary&&!!activeSummary.active_task_id;waitingQueued=waitingRunning&&activeSummary.queue_depth||0;if(!waitingRunning)waitingFrame=0;drawWaiting();send.textContent=activeSummary&&activeSummary.active_task_id?'Steer':'Send';document.getElementById('queue-submit').hidden=!(activeSummary&&activeSummary.active_task_id);renderQueue(v);renderInteraction((snapshot.runtime.interactions||[]).find(x=>x.agent_id===active)||(snapshot.runtime.interactions||[])[0]);if(historyAtBeginning)scroll.scrollTop=0;else if(nearBottom)scroll.scrollTop=scroll.scrollHeight}
+function renderLatestPrompt(view){const text=String(view&&view.latest_prompt||''),presentation=snapshot&&snapshot.presentation||{};latestPromptText.textContent=text;latestPromptMarker.textContent=presentation.prompt_marker||'✦';latestPrompt.hidden=!text;latestPrompt.style.color=presentation.prompt_color||'var(--prompt)';latestPrompt.style.backgroundColor=presentation.prompt_background||'var(--prompt-background)'}
+function render(){if(!snapshot||!snapshot.presentation)return;const views=snapshot.presentation.views||[];if(!views.some(v=>v.id===active)){if(active)drafts[active]=input.value;active=snapshot.presentation.active||(views[0]&&views[0].id)||'';input.value=drafts[active]||'';}tabs.replaceChildren(...views.map(v=>{const b=document.createElement('button');b.className='tab '+(v.id===active?'active ':'')+(v.status==='running'?'running':'');b.textContent=v.name||v.id;b.onclick=()=>{drafts[active]=input.value;active=v.id;input.value=drafts[active]||'';historyAtBeginning=false;render()};return b}));const v=views.find(v=>v.id===active);const nearBottom=!historyAtBeginning&&scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;renderLatestPrompt(v);const lines=v?v.lines.slice(cleared[active]||0):[];out.innerHTML=lines.length?ansiHTML(lines.join('\n')):'No transcript yet.';out.className='transcript '+(lines.length?'':'empty');status.innerHTML=ansiHTML(snapshot.presentation.status_bar||'Connecting to qcode…')+(promptNotice?'<span class="notice">'+escapeHTML(promptNotice)+'</span>':'');const activeSummary=agents().find(x=>x.id===active);waitingRunning=!!activeSummary&&!!activeSummary.active_task_id;waitingQueued=waitingRunning&&activeSummary.queue_depth||0;if(!waitingRunning)waitingFrame=0;drawWaiting();send.textContent=activeSummary&&activeSummary.active_task_id?'Steer':'Send';document.getElementById('queue-submit').hidden=!(activeSummary&&activeSummary.active_task_id);renderQueue(v);renderInteraction((snapshot.runtime.interactions||[]).find(x=>x.agent_id===active)||(snapshot.runtime.interactions||[])[0]);if(historyAtBeginning)scroll.scrollTop=0;else if(nearBottom)scroll.scrollTop=scroll.scrollHeight}
 function choice(label,value,id){const b=document.createElement('button');b.textContent=label;b.onclick=()=>resolve(id,value);return b}
 function renderInteraction(item){interaction.replaceChildren();interaction.className='interaction'+(item?' open':'');if(!item)return;let payload={};try{payload=typeof item.payload==='string'?JSON.parse(item.payload):item.payload||{}}catch(_){}const title=document.createElement('div');title.className='interaction-title';title.textContent=item.kind.replaceAll('_',' ');interaction.append(title);const choices=document.createElement('div');choices.className='choices';if(item.kind==='directory_approval'){title.textContent='Directory access: '+(payload.requested||'');choices.append(choice('Grant '+(payload.proposed||'requested path'),{selected:'',approved:true},item.id),choice('Deny',{selected:'',approved:false},item.id))}else if(item.kind==='questions'){const questions=Array.isArray(payload)?payload:[];const fields=questions.map(q=>{const field=document.createElement('input'),options=q.Options||q.options||[];field.placeholder=(q.Text||q.text)+(options.length?' — '+options.map((option,index)=>(index+1)+') '+option).join(' / '):'');field.autocomplete='off';interaction.append(field);return field});title.textContent='Questions';const answer=choice('Submit answers',null,item.id);answer.onclick=()=>resolve(item.id,fields.map(field=>field.value));choices.append(answer)}else if(item.kind==='learning_approval'){title.textContent='Apply the proposed global learning changes?';choices.append(choice('Apply',true,item.id),choice('Reject',false,item.id))}else if(item.kind==='skill_plan_decision'){title.textContent='The skill draft is ready. Create it now?';choices.append(choice('Create skill','create',item.id),choice('Stay in Skill Plan mode','stay',item.id))}else{title.textContent='The plan is ready. What would you like to do?';choices.append(choice('Start implementation','implement',item.id),choice('Stay in plan mode','stay',item.id))}interaction.append(choices)}
 async function resolve(id,value){try{const r=await apiFetch('api/v1/interactions/'+encodeURIComponent(id)+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value})});if(!r.ok)throw new Error(await r.text());schedule()}catch(e){status.innerHTML='<span class="notice">'+escapeHTML(String(e))+'</span>'}}

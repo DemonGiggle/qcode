@@ -5,6 +5,17 @@ import (
 	"testing"
 )
 
+func TestTransformANSIPreservesUnknownRGBChannels(t *testing.T) {
+	for _, palette := range All() {
+		for _, color := range []string{"\x1b[38;2;31;32;35m", "\x1b[48;2;42;48;36m"} {
+			input := color + "text\x1b[0m"
+			if got := TransformANSI(input, palette); got != input {
+				t.Fatalf("%s reinterpreted RGB channels: %q", palette.ID, got)
+			}
+		}
+	}
+}
+
 func TestPresetRoster(t *testing.T) {
 	want := []string{"default", "catppuccin-mocha", "dracula", "gruvbox-dark", "solarized-dark", "nord-dark", "catppuccin-latte", "alucard", "gruvbox-light", "solarized-light", "nord-light"}
 	got := All()

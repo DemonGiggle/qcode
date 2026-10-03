@@ -6,6 +6,16 @@ Use `/agent` to create one, `/agent list`, `/agent switch <id>`, `/agent rename 
 
 The tab bar shows the available switch shortcuts when the row has room: Ctrl+PageUp/PageDown or the Alt+, and Alt+. fallbacks. When all agents do not fit, `main` stays pinned while a moving window keeps the active agent and nearby tabs visible; counters at each edge show how many tabs are hidden in that direction. Each agent keeps independent context, model, output, tool settings, and sandbox grants while workspace mutations are serialized.
 
+The active agent's latest received prompt stays directly beneath the tabs in both
+the terminal and remote browser. A bold `✦`
+marker (`*` in ASCII mode) introduces up to three wrapped lines in the theme's
+accent color, on a subtle background that fills each row. Output scrolls beneath
+it. A task replaces this text when it starts; steering replaces it when delivered.
+Queued or pending input leaves it unchanged.
+The prompt remains after completion, cancellation, failure, and `/clear`, and is
+restored with saved sessions. `/new` clears it for the active agent. Default
+uses magenta; `NO_COLOR` keeps the terminal region plain.
+
 ## Prompt queues
 
 Each agent has an independent FIFO prompt queue. Submitting another prompt while an agent is running adds it to that agent's queue instead of returning a busy error. The tab and task indicator show the pending count, and the transcript marks a newly accepted pending prompt as `Queued #N`. A reserved multi-row area above the input shows queued prompt text in FIFO order; Alt+Q expands it for Page Up/Page Down scrolling or folds it back to the smaller queue area. The browser remote control shows the same queue with a clickable expansion control. Input remains editable while work runs, so prompts can be added without waiting or blocking tab navigation and directory approvals.

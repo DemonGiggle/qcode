@@ -11,12 +11,20 @@ func (u *UI) beginRawSelector() {
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
 	lastOutputRow := u.height - 3 // prompt, task indicator, and status follow.
-	fmt.Fprintf(u.out, "\x1b[2;%dr\x1b[2;1H", lastOutputRow)
-	for row := 2; row <= lastOutputRow; row++ {
+	firstOutputRow := u.latestPromptStartLocked()
+	fmt.Fprintf(u.out, "\x1b[%d;%dr\x1b[%d;1H", firstOutputRow, lastOutputRow, firstOutputRow)
+	for row := firstOutputRow; row <= lastOutputRow; row++ {
 		fmt.Fprintf(u.out, "\x1b[%d;1H\x1b[2K%s", row, (themeWriter{palette: u.outputTheme(), color: true, width: u.width}).paintRow(""))
 	}
-	fmt.Fprint(u.out, "\x1b[2;1H")
+	fmt.Fprintf(u.out, "\x1b[%d;1H", firstOutputRow)
 	u.inputFrame = ""
+}
+
+func selectorFirstOutputRow(out interface{}) int {
+	if positioned, ok := out.(interface{ firstOutputRow() int }); ok {
+		return positioned.firstOutputRow()
+	}
+	return 2
 }
 
 // endRawSelector restores the normal screen region after raw selector output

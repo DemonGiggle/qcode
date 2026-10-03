@@ -291,12 +291,17 @@ func renderHistoryDetail(out io.Writer, pager planPager, position, total, width,
 func renderHistoryRows(out io.Writer, lines []string, width int, unicodeEnabled bool) {
 	var output strings.Builder
 	for row, line := range lines {
-		fmt.Fprintf(&output, "\x1b[%d;1H\x1b[2K%s\x1b[0m", row+2, truncateDiffLine(line, width, unicodeEnabled))
+		fmt.Fprintf(&output, "\x1b[%d;1H\x1b[2K%s\x1b[0m", row+selectorFirstOutputRow(out), truncateDiffLine(line, width, unicodeEnabled))
 	}
 	_, _ = io.WriteString(out, output.String())
 }
 
-type historyViewWriter struct{ ui *UI }
+type historyViewWriter struct {
+	ui    *UI
+	start int
+}
+
+func (w historyViewWriter) firstOutputRow() int { return max(2, w.start) }
 
 func (w historyViewWriter) Write(data []byte) (int, error) {
 	w.ui.screenMu.Lock()
@@ -318,6 +323,7 @@ func (u *UI) showHistory(ctx context.Context) {
 	u.screenMu.Lock()
 	agentID := u.activeAgent
 	width, height := u.width, u.height
+	start := u.latestPromptStartLocked()
 	u.screenMu.Unlock()
 	records := completedAgentHistory(redaction.Copy(u.redaction, redaction.Terminal, reader.WorkRecords()), agentID)
 	if len(records) == 0 {
@@ -336,7 +342,7 @@ func (u *UI) showHistory(ctx context.Context) {
 		u.endRawSelector()
 	}()
 
-	err := showHistoryBrowser(u.input, historyViewWriter{ui: u}, records, agentName, width, max(2, height-4), ColorEnabled(u.out), u.unicode)
+	err := showHistoryBrowser(u.input, historyViewWriter{ui: u, start: start}, records, agentName, width, max(2, height-start-2), ColorEnabled(u.out), u.unicode)
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(ctx.Err(), context.Canceled) {
 		u.printSystemMessage(yellow + "Unable to show history: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 	}

@@ -19,6 +19,7 @@ func FilterSnapshot(p *redaction.Policy, snap session.Snapshot) (session.Snapsho
 		item := &snap.Agents[i]
 		item.Summary = redaction.Copy(p, redaction.Persistence, item.Summary)
 		item.Summary.Name = p.Text(redaction.Persistence, item.Summary.Name)
+		item.LatestPrompt = p.Text(redaction.Persistence, item.LatestPrompt)
 	}
 	if len(snap.Presentation) > 0 {
 		filtered, err := FilterPresentation(p, snap.Presentation)

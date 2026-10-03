@@ -84,6 +84,9 @@ func TestHostSharesRuntimeWithIndependentSubscribers(t *testing.T) {
 	if len(records) != 1 || records[0].AgentID != "main" || records[0].Prompt != "work" || records[0].Response != "done" {
 		t.Fatalf("work records = %+v", records)
 	}
+	if host.LatestPrompt("main") != "work" {
+		t.Fatal("host lost the latest completed prompt")
+	}
 }
 
 func TestHostExposesQueuedPromptsToPresentation(t *testing.T) {
@@ -114,6 +117,9 @@ func TestHostExposesQueuedPromptsToPresentation(t *testing.T) {
 		t.Fatal(err)
 	}
 	queued := host.QueuedPrompts("main")
+	if host.LatestPrompt("main") != "active prompt" {
+		t.Fatal("host exposed queued work as the latest received prompt")
+	}
 	if len(queued) != 1 || queued[0].Prompt != "queued prompt" {
 		t.Fatalf("queued prompts = %+v", queued)
 	}

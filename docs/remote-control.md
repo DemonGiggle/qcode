@@ -99,6 +99,16 @@ The web UI is responsive: agent tabs scroll horizontally on narrow screens,
 the composer stacks on phone widths, and selectors remain touch-sized and
 scrollable in short or landscape viewports.
 
+The latest received prompt for the selected agent is pinned directly beneath the
+header, with a `✦` marker (`*` in ASCII mode). It uses the
+theme's accent color on a background spanning the full browser width, and is
+clamped to three lines while the transcript scrolls independently. Snapshots
+include optional `latest_prompt` text in each agent view and `prompt_color`,
+`prompt_marker`, and `prompt_background` in the presentation. The browser displays
+prompt text literally, follows theme changes, and clears the region when
+authorization is lost. The text follows the same redaction policies as other
+terminal, remote, and saved-session content.
+
 The browser mirrors the terminal task indicator: while the active tab's agent is
 running, a dim `Waiting (⠋) · N queued` line with the same animated spinner
 frames appears above the status bar, and a Cancel button replaces the TUI's

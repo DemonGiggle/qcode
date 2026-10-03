@@ -584,6 +584,7 @@ func (u *UI) setThemePalette(palette qtheme.Palette) {
 		u.drawStatusBarLocked()
 	}
 	u.screenMu.Unlock()
+	u.signalPresentation()
 }
 
 func (u *UI) currentTheme() qtheme.Palette {
@@ -1771,9 +1772,11 @@ func (u *UI) resetStatusLayout() {
 	if !u.statusActive {
 		return
 	}
-	// Reserve the first row for tabs and the last statusLineCount rows for
-	// status. The task indicator sits directly above status.
-	fmt.Fprintf(u.out, "\x1b[2;%dr\x1b[2;1H", u.statusScrollBottom())
+	// Reserve tabs and the latest prompt above the scrolling output.
+	u.screenMu.Lock()
+	start := u.latestPromptStartLocked()
+	fmt.Fprintf(u.out, "\x1b[%d;%dr\x1b[%d;1H", start, u.statusScrollBottomLocked(), start)
+	u.screenMu.Unlock()
 	u.drawTabBar()
 	u.drawStatusBar()
 }
@@ -1816,7 +1819,8 @@ func (u *UI) renderStatusBarLocked(force bool) {
 		if bottom < 2 {
 			bottom = 2
 		}
-		fmt.Fprintf(u.out, "\x1b[2;%dr\x1b[2;1H", bottom)
+		start := u.latestPromptStartLocked()
+		fmt.Fprintf(u.out, "\x1b[%d;%dr\x1b[%d;1H", start, bottom, start)
 	}
 	u.statusBarText = bar
 	lines := strings.Split(bar, "\n")

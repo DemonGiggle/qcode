@@ -403,6 +403,7 @@ func (u *UI) handleAgentEvent(event session.Event) {
 	}
 	if active {
 		u.updateActiveCancellation()
+		u.repaintActive()
 		// Agent.Run publishes its latest context usage before the manager emits
 		// the terminal event. Refresh the footer here just as the synchronous
 		// single-agent path did after each run.
@@ -753,10 +754,19 @@ func (u *UI) repaintActiveLocked(direction int) {
 	rows := historyRowsForTheme(snapshot, u.width, u.outputTheme())
 	v := u.activeViewportLocked()
 	statusN := u.statusLinesLocked()
-	page := v.page(rows, max(1, u.height-3-statusN), direction)
+	latest := u.latestPromptRegionRowsLocked(u.height - statusN - 5)
+	outputStart := 2 + len(latest)
+	page := v.page(rows, max(1, u.height-outputStart-1-statusN), direction)
 	u.taskIndicatorText = ""
 	var output strings.Builder
+	fmt.Fprintf(&output, "\x1b[%d;%dr", outputStart, u.statusScrollBottomLocked())
 	output.WriteString("\x1b[0m\x1b[2;1H\x1b[J")
+	if len(latest) > 0 {
+		for i, row := range latest {
+			fmt.Fprintf(&output, "\x1b[%d;1H%s", i+2, u.themeOutput(row))
+		}
+		fmt.Fprintf(&output, "\x1b[%d;1H", outputStart)
+	}
 	for i, row := range page {
 		if i > 0 {
 			output.WriteByte('\n')
@@ -764,7 +774,7 @@ func (u *UI) repaintActiveLocked(direction int) {
 		output.WriteString(row.text)
 	}
 	if v.browsing {
-		if len(page) < u.height-2-statusN {
+		if len(page) < u.height-outputStart-statusN {
 			output.WriteByte('\n')
 		}
 	} else {
@@ -779,7 +789,7 @@ func (u *UI) repaintActiveLocked(direction int) {
 				column := visibleWidth(plain[row.position.column:min(snapshot.cursor, len(plain))])
 				// At the right edge, preserve the terminal's pending wrap.
 				if column < u.width {
-					fmt.Fprintf(&output, "\x1b[%d;%dH", i+2, column+1)
+					fmt.Fprintf(&output, "\x1b[%d;%dH", i+outputStart, column+1)
 				}
 				break
 			}

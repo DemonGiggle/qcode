@@ -109,11 +109,14 @@ func (u *UI) paintFixedLocked(direction int) {
 		statusN = 1
 	}
 	footer := min(1+statusN, max(0, u.height-2))
+	// The pin yields space to the composer and two transcript rows on short
+	// screens. Its row count can change without moving a paused history anchor.
+	latest := u.latestPromptRegionRowsLocked(u.height - footer - 4)
 	// Keep a cursor-centered window for drafts taller than the terminal.
-	inputLimit := u.height - 4 - statusN
+	inputLimit := u.height - 4 - statusN - len(latest)
 	if len(queued) > 0 {
-		reserve := min(previewLimit, len(queueRows), max(1, u.height-footer-4))
-		inputLimit = min(inputLimit, u.height-footer-3-reserve)
+		reserve := min(previewLimit, len(queueRows), max(1, u.height-footer-4-len(latest)))
+		inputLimit = min(inputLimit, u.height-footer-3-len(latest)-reserve)
 	}
 	inputHeight := min(len(rows), max(1, inputLimit))
 	start := max(0, cy-inputHeight+1)
@@ -133,7 +136,7 @@ func (u *UI) paintFixedLocked(direction int) {
 	}
 	// Keep two output rows available: history snapshots end with an unfinished
 	// line, so a single row can otherwise show only that empty tail.
-	extras := max(0, promptRow-4) // Preserve two conversation rows when possible.
+	extras := max(0, promptRow-4-len(latest)) // Preserve two conversation rows when possible.
 	queueHeight := 0
 	if len(queued) > 0 && extras > 0 {
 		queueHeight = min(previewLimit, len(queueRows), extras)
@@ -143,27 +146,31 @@ func (u *UI) paintFixedLocked(direction int) {
 		room := extras - count
 		queueHeight = min(1+len(queueRows), room, max(queueHeight, 2*room/3))
 	}
-	outputHeight := max(0, promptRow-count-queueHeight-2)
+	outputStart := 2 + len(latest)
+	outputHeight := max(0, promptRow-count-queueHeight-outputStart)
 	u.activeViewportLocked().visibleRows = outputHeight
 	screenRows := make([]string, u.height+1)
 	if u.manager != nil && u.height > 3 {
 		screenRows[1] = tabBar(u.manager.List(), u.activeAgent, u.views, u.width, u.unicode, ColorEnabled(u.out))
 	}
+	for i, row := range latest {
+		screenRows[i+2] = row
+	}
 	if outputHeight > 0 && u.display != nil {
 		page := u.activeViewportLocked().page(historyRowsForTheme(u.display.Snapshot(), u.width, u.outputTheme()), outputHeight, historyDirection)
 		for i, row := range page {
-			screenRows[i+2] = row.text
+			screenRows[i+outputStart] = row.text
 		}
 	}
 	if u.remoteLogin != nil && outputHeight > 0 {
 		for i := 0; i < outputHeight; i++ {
-			screenRows[i+2] = ""
+			screenRows[i+outputStart] = ""
 		}
 		for i, row := range u.remoteLoginRows(u.width, outputHeight) {
 			if i == 0 {
 				row = u.remoteLoginHeading(row)
 			}
-			screenRows[i+2] = row
+			screenRows[i+outputStart] = row
 		}
 	}
 	for i := 0; i < count; i++ {

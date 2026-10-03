@@ -60,7 +60,8 @@ func (u *UI) resize() {
 	if bottom < 2 {
 		bottom = 2
 	}
-	fmt.Fprintf(u.out, "\x1b[2;%dr\x1b[2;1H", bottom)
+	start := u.latestPromptStartLocked()
+	fmt.Fprintf(u.out, "\x1b[%d;%dr\x1b[%d;1H", start, bottom, start)
 	u.drawTabBarLocked()
 	u.drawStatusBarLocked()
 	u.screenMu.Unlock()

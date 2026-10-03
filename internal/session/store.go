@@ -20,8 +20,9 @@ const SnapshotVersion = 1
 var ErrSessionBusy = errors.New("session is open in another process")
 
 type SavedAgent struct {
-	Summary Summary
-	State   json.RawMessage
+	Summary      Summary
+	State        json.RawMessage
+	LatestPrompt string `json:",omitempty"`
 }
 
 type Snapshot struct {

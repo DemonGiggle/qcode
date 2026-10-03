@@ -51,12 +51,13 @@ const (
 type SessionFactory func(id, name, model string, main bool) (*Agent, error)
 
 type managedSession struct {
-	summary AgentSummary
-	runner  *Agent
-	cancel  context.CancelFunc
-	started time.Time
-	active  *promptRequest
-	queue   []*promptRequest
+	summary      AgentSummary
+	runner       *Agent
+	cancel       context.CancelFunc
+	started      time.Time
+	active       *promptRequest
+	queue        []*promptRequest
+	latestPrompt string
 }
 
 type promptRequest struct {
@@ -231,6 +232,17 @@ func (m *AgentManager) Runner(id string) (any, bool) {
 	return m.Agent(id)
 }
 
+// LatestPrompt returns the full most recently started task or delivered steer.
+// Pending input never replaces it, and it remains available after a task ends.
+func (m *AgentManager) LatestPrompt(id string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if s := m.sessions[id]; s != nil {
+		return s.latestPrompt
+	}
+	return ""
+}
+
 func (m *AgentManager) List() []AgentSummary {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -298,6 +310,7 @@ func (m *AgentManager) Reset(id string) error {
 	s.summary.LastOutcome = ""
 	s.summary.ChangedFiles = nil
 	s.summary.Error = ""
+	s.latestPrompt = ""
 	runner := s.runner
 	m.mu.Unlock()
 	runner.ResetSession()
@@ -451,6 +464,9 @@ func (m *AgentManager) startRequestLocked(id string, s *managedSession, req *pro
 	s.summary.Status = StatusRunning
 	s.summary.QueueDepth = len(s.queue)
 	s.summary.CurrentTask = truncateUTF8(req.prompt, 512)
+	if !req.compact && !strings.HasPrefix(req.prompt, "/") {
+		s.latestPrompt = req.prompt
+	}
 	s.summary.ChangedFiles = nil
 	s.summary.Error = ""
 	runner := s.runner

@@ -152,12 +152,17 @@ func renderPlanPager(out io.Writer, pager planPager, width, height int, color bo
 				line = marker + line
 			}
 		}
-		fmt.Fprintf(&output, "\x1b[%d;1H\x1b[2K%s\x1b[0m", row+2, paintSelectorRow(out, truncateDiffLine(line, width, false)))
+		fmt.Fprintf(&output, "\x1b[%d;1H\x1b[2K%s\x1b[0m", row+selectorFirstOutputRow(out), paintSelectorRow(out, truncateDiffLine(line, width, false)))
 	}
 	_, _ = io.WriteString(out, output.String())
 }
 
-type planViewWriter struct{ ui *UI }
+type planViewWriter struct {
+	ui    *UI
+	start int
+}
+
+func (w planViewWriter) firstOutputRow() int { return max(2, w.start) }
 
 func (w planViewWriter) paintRow(line string) string {
 	return (themeWriter{palette: w.ui.outputTheme(), color: true, width: w.ui.width}).paintRow(line)
@@ -198,10 +203,12 @@ func (u *UI) showPlanViewWith(ctx context.Context, plan string, skillDraft bool)
 
 	u.screenMu.Lock()
 	width, height := u.width, u.height
+	start := u.latestPromptStartLocked()
 	u.screenMu.Unlock()
-	visible := max(1, height-4)
+	visible := max(1, height-start-2)
+	writer := planViewWriter{ui: u, start: start}
 	if skillDraft {
-		return showSkillPlanPager(u.input, planViewWriter{ui: u}, plan, width, visible, ColorEnabled(u.out), u.unicode)
+		return showSkillPlanPager(u.input, writer, plan, width, visible, ColorEnabled(u.out), u.unicode)
 	}
-	return showPlanPager(u.input, planViewWriter{ui: u}, plan, width, visible, ColorEnabled(u.out))
+	return showPlanPager(u.input, writer, plan, width, visible, ColorEnabled(u.out))
 }

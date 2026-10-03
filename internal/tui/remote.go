@@ -14,6 +14,7 @@ import (
 	"qcode/internal/question"
 	"qcode/internal/redaction"
 	"qcode/internal/session"
+	qtheme "qcode/internal/theme"
 )
 
 const (
@@ -30,17 +31,21 @@ type RemoteAgentView struct {
 	Status        string                 `json:"status"`
 	Lines         []string               `json:"lines"`
 	QueuedPrompts []session.QueuedPrompt `json:"queued_prompts,omitempty"`
+	LatestPrompt  string                 `json:"latest_prompt,omitempty"`
 }
 
 type RemotePresentation struct {
-	PendingInputs  map[string][]session.QueuedPrompt `json:"pending_inputs,omitempty"`
-	SteeringEvents []session.SteeringEvent           `json:"steering_events,omitempty"`
-	Sequence       uint64                            `json:"sequence"`
-	Active         string                            `json:"active"`
-	StatusBar      string                            `json:"status_bar"`
-	Views          []RemoteAgentView                 `json:"views"`
-	Agents         []session.Summary                 `json:"agents"`
-	Interactions   []session.Interaction             `json:"interactions,omitempty"`
+	PendingInputs    map[string][]session.QueuedPrompt `json:"pending_inputs,omitempty"`
+	SteeringEvents   []session.SteeringEvent           `json:"steering_events,omitempty"`
+	Sequence         uint64                            `json:"sequence"`
+	Active           string                            `json:"active"`
+	StatusBar        string                            `json:"status_bar"`
+	PromptColor      string                            `json:"prompt_color,omitempty"`
+	PromptMarker     string                            `json:"prompt_marker,omitempty"`
+	PromptBackground string                            `json:"prompt_background,omitempty"`
+	Views            []RemoteAgentView                 `json:"views"`
+	Agents           []session.Summary                 `json:"agents"`
+	Interactions     []session.Interaction             `json:"interactions,omitempty"`
 }
 
 // RemoteCatalog contains the read-only selector data needed by the browser UI.
@@ -215,6 +220,7 @@ func (u *UI) RemotePresentation() RemotePresentation {
 	u.presentationMu.Unlock()
 	u.screenMu.Lock()
 	active := u.activeAgent
+	promptMarker := latestPromptMarker(u.unicode)
 	type viewSnapshot struct {
 		id, provider, model string
 		history             *historyWriter
@@ -226,6 +232,13 @@ func (u *UI) RemotePresentation() RemotePresentation {
 	u.screenMu.Unlock()
 	sort.Slice(views, func(i, j int) bool { return views[i].id < views[j].id })
 	result := RemotePresentation{PendingInputs: make(map[string][]session.QueuedPrompt), Sequence: sequence, Active: active, StatusBar: u.remoteStatusBar(), Agents: agents}
+	result.PromptMarker = promptMarker
+	palette := u.currentTheme()
+	result.PromptBackground = qtheme.PinnedPromptBackground(palette)
+	result.PromptColor = palette.Accent
+	if result.PromptColor == "" {
+		result.PromptColor = "#d58cff"
+	}
 	if source, ok := u.manager.(interface{ PendingInteractions() []session.Interaction }); ok {
 		result.Interactions = source.PendingInteractions()
 	}
@@ -253,9 +266,13 @@ func (u *UI) RemotePresentation() RemotePresentation {
 			}
 		}
 		result.PendingInputs[view.id] = queued
+		var latestPrompt string
+		if source, ok := u.manager.(latestPromptReader); ok {
+			latestPrompt = source.LatestPrompt(view.id)
+		}
 		result.Views = append(result.Views, RemoteAgentView{
 			ID: view.id, Name: name, Provider: view.provider, Model: view.model,
-			Status: string(summary.Status), Lines: lines, QueuedPrompts: queued,
+			Status: string(summary.Status), Lines: lines, QueuedPrompts: queued, LatestPrompt: latestPrompt,
 		})
 	}
 	result = redaction.Copy(u.redaction, redaction.Remote, result)

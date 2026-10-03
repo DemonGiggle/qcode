@@ -14,7 +14,10 @@ type layoutManager struct {
 	agentController
 	states map[string]session.Status
 	queued map[string][]session.QueuedPrompt
+	latest map[string]string
 }
+
+func (m *layoutManager) LatestPrompt(id string) string { return m.latest[id] }
 
 func (m *layoutManager) Summary(id string) (session.Summary, error) {
 	return session.Summary{ID: id, Name: id, Status: m.states[id], QueueDepth: len(m.queued[id])}, nil

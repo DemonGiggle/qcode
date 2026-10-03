@@ -57,6 +57,9 @@ func (m *AgentManager) steerStateLocked(req *promptRequest, index int, state ses
 	item.Updated = time.Now().UTC()
 	m.steeringEvents = append(m.steeringEvents, session.SteeringEvent{Sequence: uint64(len(m.steeringEvents) + 1), AgentID: req.targetID, Input: *item})
 	if s := m.sessions[req.targetID]; s != nil {
+		if state == session.InputDelivered && !strings.HasPrefix(item.Text, "/") {
+			s.latestPrompt = item.Text
+		}
 		m.emitLocked(s.summary, 0)
 	}
 }
