@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"qcode/internal/redaction"
 	"sort"
 	"strings"
 	"sync"
@@ -24,6 +25,8 @@ const (
 // Buffering by line keeps syntax correct when a provider splits a delimiter
 // such as ** or ``` across streamed chunks.
 type MarkdownWriter struct {
+	policy        *redaction.Policy
+	stream        *redaction.Stream
 	out           io.Writer
 	enabled       bool
 	width         int
@@ -85,6 +88,7 @@ func (w *MarkdownWriter) WriteDiff(diff string) {
 		return
 	}
 	w.diffMu.Lock()
+	diff = w.policy.Text(redaction.Terminal, diff)
 	w.diffList = append(w.diffList, diff)
 	number := len(w.diffList)
 	w.diffMu.Unlock()
@@ -406,6 +410,7 @@ func (w *MarkdownWriter) BeginResponse() {
 	w.stateMu.Lock()
 	defer w.stateMu.Unlock()
 	w.active = true
+	w.stream = w.policy.Stream(redaction.Terminal)
 	w.thinking = false
 	w.thinkingFence = false
 	w.inFence = false
@@ -415,6 +420,7 @@ func (w *MarkdownWriter) BeginResponse() {
 
 func (w *MarkdownWriter) BeginThinking() {
 	w.stateMu.Lock()
+	w.flushRedaction()
 	w.thinking = true
 	w.stateMu.Unlock()
 }
@@ -425,6 +431,7 @@ func (w *MarkdownWriter) EndThinking() {
 	if !w.thinking {
 		return
 	}
+	w.flushRedaction()
 	if w.buffer.Len() > 0 {
 		w.renderLine(strings.TrimSuffix(w.buffer.String(), "\r"))
 		w.buffer.Reset()
@@ -440,7 +447,8 @@ func (w *MarkdownWriter) EndResponse() {
 	if !w.active {
 		return
 	}
-	if w.buffer.Len() > 0 && (w.enabled || w.width > 0) {
+	w.flushRedaction()
+	if w.buffer.Len() > 0 {
 		w.consumeLine(strings.TrimSuffix(w.buffer.String(), "\r"), false)
 	}
 	w.flushTable()
@@ -455,25 +463,53 @@ func (w *MarkdownWriter) EndResponse() {
 	}
 }
 
+func (w *MarkdownWriter) SetRedaction(p *redaction.Policy) {
+	w.stateMu.Lock()
+	w.policy = p
+	w.stream = nil
+	w.stateMu.Unlock()
+}
+
 func (w *MarkdownWriter) Write(data []byte) (int, error) {
 	w.stateMu.Lock()
 	defer w.stateMu.Unlock()
-	if !w.active || (!w.enabled && w.width <= 0) {
-		return w.out.Write(data)
+	n := len(data)
+	if !w.active {
+		return w.out.Write([]byte(w.policy.Text(redaction.Terminal, string(data))))
 	}
-	written := len(data)
+	if w.stream == nil {
+		w.stream = w.policy.Stream(redaction.Terminal)
+	}
+	data = []byte(w.stream.Feed(string(data)))
+	if !w.enabled && w.width <= 0 {
+		_, err := w.out.Write(data)
+		return n, err
+	}
+	w.writeBuffered(data)
+	return n, nil
+}
+func (w *MarkdownWriter) writeBuffered(data []byte) {
 	for len(data) > 0 {
 		newline := bytes.IndexByte(data, '\n')
 		if newline < 0 {
-			_, _ = w.buffer.Write(data)
+			w.buffer.Write(data)
 			break
 		}
-		_, _ = w.buffer.Write(data[:newline])
+		w.buffer.Write(data[:newline])
 		w.consumeLine(strings.TrimSuffix(w.buffer.String(), "\r"), true)
 		w.buffer.Reset()
 		data = data[newline+1:]
 	}
-	return written, nil
+}
+func (w *MarkdownWriter) flushRedaction() {
+	if w.stream != nil {
+		data := []byte(w.stream.Flush())
+		if !w.enabled && w.width <= 0 {
+			_, _ = w.out.Write(data)
+		} else {
+			w.writeBuffered(data)
+		}
+	}
 }
 
 func (w *MarkdownWriter) renderCompleteLine(line string, newline bool) {

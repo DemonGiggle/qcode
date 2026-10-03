@@ -12,6 +12,7 @@ import (
 
 	"qcode/internal/prompt"
 	"qcode/internal/question"
+	"qcode/internal/redaction"
 	"qcode/internal/session"
 )
 
@@ -257,6 +258,14 @@ func (u *UI) RemotePresentation() RemotePresentation {
 			Status: string(summary.Status), Lines: lines, QueuedPrompts: queued,
 		})
 	}
+	result = redaction.Copy(u.redaction, redaction.Remote, result)
+	for i := range result.Agents {
+		result.Agents[i].Name = u.redaction.Text(redaction.Remote, result.Agents[i].Name)
+	}
+	for i := range result.Views {
+		result.Views[i].Name = u.redaction.Text(redaction.Remote, result.Views[i].Name)
+		result.Views[i].Lines = filterLines(u.redaction, redaction.Remote, result.Views[i].Lines)
+	}
 	return result
 }
 
@@ -314,7 +323,7 @@ func (u *UI) RemoteCatalog(ctx context.Context) RemoteCatalog {
 		}
 	}
 	result.Sessions = u.remoteSessions()
-	return result
+	return redaction.Copy(u.redaction, redaction.Remote, result)
 }
 
 func (u *UI) remoteSessions() []RemoteSessionState {
@@ -337,7 +346,7 @@ func (u *UI) remoteSessions() []RemoteSessionState {
 			continue
 		}
 		result = append(result, RemoteSessionState{
-			ID: entry.ID, Preview: remoteSessionPreview(entry.Preview),
+			ID: entry.ID, Preview: remoteSessionPreview(u.redaction.Text(redaction.Remote, entry.Preview)),
 			Created: entry.Created, Saved: entry.Saved, Left: entry.Left,
 			AgentCount: len(entry.Agents),
 		})
@@ -367,7 +376,7 @@ func (u *UI) remoteStatusBar() string {
 	u.screenMu.Lock()
 	hidden := append([]string(nil), u.statuslineHidden...)
 	u.screenMu.Unlock()
-	return statusBarWithStatuslineHidden(u.provider, u.model, displayRoot(u.root), u.width, u.unicode, true, remote, hidden, webStatusModelColor, webStatusWorkspaceColor, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+	return statusBarWithStatuslineHidden(u.provider, u.model, u.redaction.Text(redaction.Remote, displayRoot(u.root)), u.width, u.unicode, true, remote, hidden, webStatusModelColor, webStatusWorkspaceColor, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
 }
 
 func (u *UI) SubscribePresentation(ctx context.Context) <-chan struct{} {

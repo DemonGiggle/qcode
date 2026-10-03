@@ -37,7 +37,45 @@ type Entry struct {
 	Problem string
 }
 
-type Store struct{ dir, workspace string }
+type SnapshotFilter func(Snapshot) (Snapshot, error)
+
+// The filter is installed before the store is used concurrently.
+type Store struct {
+	dir, workspace string
+	filter         SnapshotFilter
+}
+
+func (s *Store) SetSnapshotFilter(filter SnapshotFilter) { s.filter = filter }
+func (s *Store) SetDefaultSnapshotFilter(filter SnapshotFilter) {
+	if s.filter == nil {
+		s.filter = filter
+	}
+}
+func (s *Store) Sanitize(snap Snapshot) (Snapshot, error) {
+	if s.filter != nil {
+		return s.filter(snap)
+	}
+	return snap, nil
+}
+
+// LoadForResume must be called while holding the session lock. Rewrite before
+// any restored state is exposed, with no backup containing the original text.
+func (s *Store) LoadForResume(id string) (Snapshot, error) {
+	snap, err := s.Load(id)
+	if err != nil {
+		return snap, err
+	}
+	snap, err = s.Sanitize(snap)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if s.filter != nil {
+		if err = s.Save(snap); err != nil {
+			return Snapshot{}, fmt.Errorf("rewrite sanitized session: %w", err)
+		}
+	}
+	return snap, nil
+}
 
 func DefaultDirectory() (string, error) {
 	if runtime.GOOS == "linux" {
@@ -113,6 +151,13 @@ func (s *Store) Save(snap Snapshot) error {
 	if !validID(snap.ID) || snap.Workspace != s.workspace || snap.Version != SnapshotVersion {
 		return fmt.Errorf("invalid session snapshot")
 	}
+	snap, err := s.Sanitize(snap)
+	if err != nil {
+		return err
+	}
+	if !validID(snap.ID) || snap.Workspace != s.workspace || snap.Version != SnapshotVersion {
+		return fmt.Errorf("invalid filtered session snapshot")
+	}
 	data, err := json.Marshal(snap)
 	if err != nil {
 		return err
@@ -180,8 +225,16 @@ func (s *Store) List() ([]Entry, error) {
 			if statErr != nil {
 				return nil, statErr
 			}
-			entries = append(entries, Entry{Snapshot: Snapshot{ID: id, Saved: info.ModTime()}, Problem: "Unreadable or incompatible snapshot: " + err.Error()})
+			problem, filterErr := s.Sanitize(Snapshot{ID: id, Workspace: s.workspace, Version: SnapshotVersion, Preview: "Unreadable or incompatible snapshot: " + err.Error()})
+			if filterErr != nil {
+				return nil, filterErr
+			}
+			entries = append(entries, Entry{Snapshot: Snapshot{ID: id, Saved: info.ModTime()}, Problem: problem.Preview})
 			continue
+		}
+		snap, err = s.Sanitize(snap)
+		if err != nil {
+			return nil, err
 		}
 		lock, lockErr := s.Lock(id)
 		Release(lock)

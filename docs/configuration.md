@@ -124,3 +124,42 @@ and model. No value is sent for unknown models or when the setting is omitted.
 ## Conversation compaction
 
 When the context capacity is known, qcode automatically compacts a conversation after 80% of that capacity is used. Set `auto_compact_threshold` to a value from 1 through 99 to change that point, or set `disable_auto_compact = true` (or pass `--disable-auto-compact`) to disable automatic compaction. `/compact` always remains available for manual compaction.
+
+## Local sensitive-data filtering
+
+All five `[redaction]` sinks default to `true`:
+
+```toml
+[redaction]
+terminal = true
+persistence = true
+exports = true
+json_events = true
+remote = true
+custom_patterns = ['INTERNAL-[A-Z0-9]+']
+sensitive_paths = ['~/.ssh/private-work-key', '$HOME/private-project']
+sensitive_fields = ['client_credential']
+```
+
+`terminal` covers response and thinking output, submitted prompt history, tool
+activity and output previews, diffs, questions, queues, and diagnostics.
+`persistence` filters saved conversations and presentation state. `exports`
+applies to both raw and pretty HTML exports, including browser downloads.
+`json_events` filters event fields before encoding, and `remote` filters browser
+snapshots, catalogs, interactions, queued prompts, steering, and errors.
+
+Explicit booleans override lower configuration layers. Each supplied custom
+list replaces its lower-layer list; `[]` clears it. Invalid regular expressions
+stop startup and report the setting and zero-based index without printing the
+pattern. Paths are literal matches, with both their configured and expanded
+forms registered. Custom field names extend the built-in credential and
+payment-card field names.
+
+Custom regexes use Go's regular-expression syntax and match individual logical
+lines, including when `(?s)` is supplied. Provider streams wait for complete
+lines before filtering and rendering, so output can appear less frequently.
+The final unterminated line is flushed on completion, cancellation, or error.
+Lines over 64 KiB are replaced in full through their terminator.
+
+See [Privacy and local redaction](privacy.md) for retained operational metadata,
+legacy-session behavior, and the limits of local filtering.

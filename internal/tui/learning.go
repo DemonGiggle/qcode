@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"qcode/internal/learning"
+	"qcode/internal/redaction"
 	"qcode/internal/session"
 )
 
@@ -37,7 +38,7 @@ func (u *UI) learn(ctx context.Context, arguments string) {
 			u.printSystemMessage(yellow + "Learning error: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 			return
 		}
-		u.printSystemMessage(formatLearningList(items, u.width, ColorEnabled(u.out)))
+		u.printSystemMessage(formatLearningList(redaction.Copy(u.redaction, redaction.Terminal, items), u.width, ColorEnabled(u.out)))
 		return
 	}
 	taskCtx, cancel := context.WithCancel(ctx)
@@ -59,7 +60,7 @@ func (u *UI) learn(ctx context.Context, arguments string) {
 		// and therefore rejects the proposal. Do not consume it as task input.
 		u.input.setCancel(nil)
 		defer u.input.setCancel(cancel)
-		u.printSystemMessage(formatLearningReview(review, u.width, ColorEnabled(u.out)))
+		u.printSystemMessage(formatLearningReview(redaction.Copy(u.redaction, redaction.Terminal, review), u.width, ColorEnabled(u.out)))
 		u.terminal.SetPrompt(yellow + "Apply these global learning changes? [y/N] " + reset)
 		answer, err := u.readLine()
 		u.terminal.SetPrompt(inputPrompt)

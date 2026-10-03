@@ -82,3 +82,19 @@ context_budget = 1200
 # [skills]
 # paths = ["~/.config/my-skills", ".team/skills"]
 # autoload_paths = [".team/always-on-skills"]
+
+# Local text filtering is enabled at every output boundary by default.
+# Saved sessions are permanently redacted; legacy sessions are rewritten on resume.
+# This does not filter provider requests or inspect images. See docs/privacy.md.
+[redaction]
+terminal = true
+persistence = true
+exports = true
+json_events = true
+remote = true
+# Each regular expression matches one logical line (Go/RE2 syntax).
+custom_patterns = []
+# Literal paths; both configured and environment/home-expanded forms are masked.
+sensitive_paths = []
+# Additional credential field names (case, underscores, spaces and hyphens ignored).
+sensitive_fields = []

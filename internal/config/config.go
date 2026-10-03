@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+	"qcode/internal/redaction"
 	"qcode/internal/theme"
 )
 
@@ -35,25 +36,26 @@ type Skills struct {
 
 // Config contains settings that may be supplied by a qcode config file.
 type Config struct {
-	Learning             Learning  `toml:"learning"`
-	Skills               Skills    `toml:"skills"`
-	WebSearch            WebSearch `toml:"web_search"`
-	Provider             string    `toml:"provider"`
-	BaseURL              string    `toml:"base_url"`
-	APIKey               string    `toml:"api_key"`
-	Model                string    `toml:"model"`
-	Thinking             string    `toml:"thinking"`
-	Interactive          *bool     `toml:"interactive"`
-	ContextWindow        *int      `toml:"context_window"`
-	AutoCompactThreshold *int      `toml:"auto_compact_threshold"`
-	DisableAutoCompact   *bool     `toml:"disable_auto_compact"`
-	MaxSteps             *int      `toml:"max_steps"`
-	AgentTimeout         *string   `toml:"agent_timeout"`
-	Sandbox              *bool     `toml:"sandbox"`
-	SandboxCommandPaths  []string  `toml:"sandbox_command_paths"`
-	DangerSkipTLSVerify  *bool     `toml:"danger_skip_tls_verify"`
-	StatuslineHidden     []string  `toml:"statusline_hidden"`
-	Theme                string    `toml:"theme"`
+	Redaction            redaction.Config `toml:"redaction"`
+	Learning             Learning         `toml:"learning"`
+	Skills               Skills           `toml:"skills"`
+	WebSearch            WebSearch        `toml:"web_search"`
+	Provider             string           `toml:"provider"`
+	BaseURL              string           `toml:"base_url"`
+	APIKey               string           `toml:"api_key"`
+	Model                string           `toml:"model"`
+	Thinking             string           `toml:"thinking"`
+	Interactive          *bool            `toml:"interactive"`
+	ContextWindow        *int             `toml:"context_window"`
+	AutoCompactThreshold *int             `toml:"auto_compact_threshold"`
+	DisableAutoCompact   *bool            `toml:"disable_auto_compact"`
+	MaxSteps             *int             `toml:"max_steps"`
+	AgentTimeout         *string          `toml:"agent_timeout"`
+	Sandbox              *bool            `toml:"sandbox"`
+	SandboxCommandPaths  []string         `toml:"sandbox_command_paths"`
+	DangerSkipTLSVerify  *bool            `toml:"danger_skip_tls_verify"`
+	StatuslineHidden     []string         `toml:"statusline_hidden"`
+	Theme                string           `toml:"theme"`
 }
 
 // Load returns the configuration assembled from every existing configuration
@@ -80,6 +82,12 @@ func Load() (Config, []string, []error, error) {
 		}
 	}
 	cfg, paths, diagnostics := load(candidatePaths(runtime.GOOS, executable, home, userConfigDir, os.Getenv("ProgramData")))
+	for _, diagnostic := range diagnostics {
+		var invalid *redaction.InvalidPatternError
+		if errors.As(diagnostic, &invalid) {
+			return Config{}, paths, diagnostics, diagnostic
+		}
+	}
 	return cfg, paths, diagnostics, nil
 }
 
@@ -145,6 +153,9 @@ func load(paths []string) (Config, []string, []error) {
 }
 
 func validate(path string, cfg Config) error {
+	if err := redaction.Validate(cfg.Redaction); err != nil {
+		return fmt.Errorf("parse config %s: %w", path, err)
+	}
 	if cfg.Learning.ContextBudget != nil && (*cfg.Learning.ContextBudget < 0 || *cfg.Learning.ContextBudget > 12000) {
 		return fmt.Errorf("parse config %s: learning.context_budget must be between 0 and 12000", path)
 	}
@@ -194,6 +205,7 @@ func validStatuslineSegment(segment string) bool {
 // user can narrow or clear system-wide defaults. Repeatable
 // --sandbox-command-path flags override the merged configuration entirely.
 func merge(dst *Config, incoming Config) {
+	mergeRedaction(&dst.Redaction, incoming.Redaction)
 	if incoming.Learning.ContextBudget != nil {
 		dst.Learning.ContextBudget = incoming.Learning.ContextBudget
 	}
@@ -269,4 +281,23 @@ func appendUniquePaths(existing, incoming []string) []string {
 		existing = append(existing, path)
 	}
 	return existing
+}
+
+func mergeRedaction(dst *redaction.Config, src redaction.Config) {
+	for _, pair := range []struct {
+		dst **bool
+		src *bool
+	}{{&dst.Terminal, src.Terminal}, {&dst.Persistence, src.Persistence}, {&dst.Exports, src.Exports}, {&dst.JSONEvents, src.JSONEvents}, {&dst.Remote, src.Remote}} {
+		if pair.src != nil {
+			*pair.dst = pair.src
+		}
+	}
+	for _, pair := range []struct {
+		dst *[]string
+		src []string
+	}{{&dst.CustomPatterns, src.CustomPatterns}, {&dst.SensitivePaths, src.SensitivePaths}, {&dst.SensitiveFields, src.SensitiveFields}} {
+		if pair.src != nil {
+			*pair.dst = append([]string{}, pair.src...)
+		}
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"qcode/internal/redaction"
 	"qcode/internal/session"
 )
 
@@ -318,14 +319,14 @@ func (u *UI) showHistory(ctx context.Context) {
 	agentID := u.activeAgent
 	width, height := u.width, u.height
 	u.screenMu.Unlock()
-	records := completedAgentHistory(reader.WorkRecords(), agentID)
+	records := completedAgentHistory(redaction.Copy(u.redaction, redaction.Terminal, reader.WorkRecords()), agentID)
 	if len(records) == 0 {
 		u.printSystemMessage(dim + "No completed prompts for the active agent." + reset)
 		return
 	}
 	agentName := agentID
 	if summary, err := u.manager.Summary(agentID); err == nil && summary.Name != "" {
-		agentName = summary.Name
+		agentName = u.redaction.Text(redaction.Terminal, summary.Name)
 	}
 
 	u.input.setRaw(true)

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"qcode/internal/redaction"
 	"qcode/internal/session"
 )
 
@@ -101,7 +102,7 @@ type agentKnowledgeReader interface {
 }
 
 func (u *UI) selectAgentList(ctx context.Context) {
-	list := u.manager.List()
+	list := u.displaySummaries()
 	if len(list) == 0 {
 		u.printSystemMessage(dim + "No agents are available." + reset)
 		return
@@ -111,7 +112,7 @@ func (u *UI) selectAgentList(ctx context.Context) {
 	for _, summary := range list {
 		entry := agentSelectorEntry{summary: summary, active: summary.ID == u.activeAgent}
 		if knowledge != nil {
-			entry.knowledge = knowledge.AgentKnowledge(summary.ID)
+			entry.knowledge = u.redaction.Text(redaction.Terminal, knowledge.AgentKnowledge(summary.ID))
 		}
 		entries = append(entries, entry)
 	}
@@ -289,20 +290,38 @@ func (d *agentDisplay) Write(data []byte) (int, error) {
 }
 
 func (d *agentDisplay) writeLocked(data []byte) (int, error) {
+	originalLength := len(data)
+	data = []byte(d.ui.redaction.Text(redaction.Terminal, string(data)))
+	_, err := d.writeFilteredLocked(data)
+	return originalLength, err
+}
+
+// Encoded JSON has already been filtered for its own sink. Applying terminal
+// regexes here would match escaped representations and could corrupt events.
+func (d *agentDisplay) WriteJSONEvent(data []byte) (int, error) {
+	d.ui.screenMu.Lock()
+	defer d.ui.screenMu.Unlock()
+	return d.writeFilteredLocked(data)
+}
+func (d *agentDisplay) writeFilteredLocked(data []byte) (int, error) {
+	originalLength := len(data)
 	_, _ = d.history.Write(data)
 	if d.ui.fixedInput {
 		if d.ui.activeAgent == d.id {
 			d.ui.paintFixedLocked(0)
 		}
-		return len(data), nil
+		return originalLength, nil
 	}
 	if d.ui.activeAgent == d.id && d.ui.terminal != nil && (!d.ui.statusActive || !d.ui.activeViewportLocked().browsing) {
-		return d.ui.terminal.Write([]byte(d.ui.themeOutput(string(data))))
+		_, err := d.ui.terminal.Write([]byte(d.ui.themeOutput(string(data))))
+		return originalLength, err
 	}
-	return len(data), nil
+	return originalLength, nil
 }
 
-func (d *agentDisplay) AddLine(line string)       { d.history.AddLine(line) }
+func (d *agentDisplay) AddLine(line string) {
+	d.history.AddLine(d.ui.redaction.Text(redaction.Terminal, line))
+}
 func (d *agentDisplay) Clear()                    { d.history.Clear() }
 func (d *agentDisplay) Lines() []string           { return d.history.Lines() }
 func (d *agentDisplay) Snapshot() historySnapshot { return d.history.Snapshot() }
@@ -666,7 +685,7 @@ func (u *UI) switchRelative(direction int) {
 	if u.manager == nil {
 		return
 	}
-	list := u.manager.List()
+	list := u.displaySummaries()
 	if len(list) < 2 {
 		return
 	}
@@ -796,7 +815,7 @@ func (u *UI) drawTabBarLocked() {
 	if !u.statusActive || u.manager == nil {
 		return
 	}
-	bar := tabBar(u.manager.List(), u.activeAgent, u.views, u.width, u.unicode, ColorEnabled(u.out))
+	bar := tabBar(u.displaySummaries(), u.activeAgent, u.views, u.width, u.unicode, ColorEnabled(u.out))
 	fmt.Fprint(u.out, fmt.Sprintf("\x1b[s\x1b[1;1H\x1b[2K%s\x1b[u", renderThemeStatusBarLine(bar, u.width, u.outputTheme(), true)))
 }
 
@@ -1084,4 +1103,12 @@ func (u *UI) replaySteeringEvents() {
 		u.signalPresentation()
 		u.requestSessionSave()
 	}
+}
+
+func (u *UI) displaySummaries() []session.Summary {
+	summaries := redaction.Copy(u.redaction, redaction.Terminal, u.manager.List())
+	for i := range summaries {
+		summaries[i].Name = u.redaction.Text(redaction.Terminal, summaries[i].Name)
+	}
+	return summaries
 }

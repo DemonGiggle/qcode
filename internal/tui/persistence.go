@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"qcode/internal/redaction"
 	"qcode/internal/session"
 )
 
@@ -68,6 +69,7 @@ func (u *UI) SetDetachedAgentManager(manager agentController) { u.manager = mana
 
 // EnableSessions installs persistence only for interactive, non-demo runs.
 func (u *UI) EnableSessions(store *session.Store, build func(session.Snapshot) (*UI, error)) error {
+	store.SetDefaultSnapshotFilter(func(snap session.Snapshot) (session.Snapshot, error) { return FilterSnapshot(u.redaction, snap) })
 	snap, lock, err := store.New()
 	if err != nil {
 		return err
@@ -100,7 +102,7 @@ func (u *UI) snapshotPresentation() savedPresentation {
 		}
 		sv := savedView{ID: v.id, Provider: v.provider, Model: v.model, Unseen: v.unseen,
 			Browsing: v.viewport.browsing, AnchorLine: v.viewport.anchor.line, AnchorColumn: v.viewport.anchor.column,
-			Diffs: append([]string(nil), v.response.diffList...), Buffer: v.response.buffer.String(), InFence: v.response.inFence, Thinking: v.response.thinking,
+			Diffs: append([]string(nil), v.response.diffList...), Buffer: "", InFence: v.response.inFence, Thinking: v.response.thinking,
 			History: savedHistory{Lines: append([]string(nil), h.lines...), Archive: append([]string(nil), h.archive...), Cursor: h.cursor, Pending: append([]byte(nil), h.pending...), Style: h.style, BaseID: h.baseID}}
 		for _, c := range h.current {
 			sv.History.Current = append(sv.History.Current, savedCell{c.char, c.style})
@@ -381,6 +383,8 @@ func (u *UI) resumeSessionID(requestedID string) {
 	p.mu.Unlock()
 	for _, e := range entries {
 		if e.ID != currentID {
+			e.Preview = u.redaction.Text(redaction.Terminal, e.Preview)
+			e.Problem = u.redaction.Text(redaction.Terminal, e.Problem)
 			choices = append(choices, e)
 		}
 	}
@@ -430,7 +434,7 @@ func (u *UI) resumeSessionID(requestedID string) {
 			session.Release(lock)
 		}
 	}()
-	snap, err := p.store.Load(id)
+	snap, err := p.store.LoadForResume(id)
 	if err != nil {
 		u.printSystemMessage(err.Error())
 		return

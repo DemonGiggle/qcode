@@ -17,6 +17,7 @@ import (
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
 	"qcode/internal/question"
+	"qcode/internal/redaction"
 	"qcode/internal/session"
 	"qcode/internal/tools"
 	"qcode/internal/trace"
@@ -32,6 +33,7 @@ const repeatedToolRecoveryTemplate = `Recovery notice: the tool %q has been requ
 const DefaultAutoCompactThreshold = 80
 
 type Agent struct {
+	redaction                *redaction.Policy
 	learningStore            learning.Store
 	learningBudget           int
 	learningContext          string
@@ -565,6 +567,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			input.delivered(item.ID)
 		}
 		replanning = nil
+		localStream := a.redaction.Stream(redaction.Terminal)
 		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Thinking: a.thinking, Messages: requestMessages, Tools: a.enabledSchemas()}, func(event llm.StreamEvent) {
 			if ctx.Err() != nil {
 				return
@@ -589,11 +592,13 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 				separatedActivity = true
 			}
 			if event.Kind == llm.StreamThinking && !thinking {
+				fmt.Fprint(a.out, localStream.Flush())
 				if stylesThinking {
 					thinkingOutput.BeginThinking()
 				}
 				thinking = true
 			} else if event.Kind == llm.StreamOutput && thinking {
+				fmt.Fprint(a.out, localStream.Flush())
 				if stylesThinking {
 					thinkingOutput.EndThinking()
 				} else {
@@ -602,7 +607,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 				thinking = false
 			}
 			wroteText = true
-			fmt.Fprint(a.out, event.Text)
+			fmt.Fprint(a.out, localStream.Feed(event.Text))
 			if willRenderLine {
 				task.Resume()
 			}
@@ -615,6 +620,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			a.trace.SeparateActivity()
 			separatedActivity = true
 		}
+		fmt.Fprint(a.out, localStream.Flush())
 		if thinking && stylesThinking {
 			thinkingOutput.EndThinking()
 		}
@@ -674,7 +680,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			fingerprint := toolFingerprint(call)
 			identicalToolCalls[fingerprint]++
 			if identicalToolCalls[fingerprint] >= maxIdenticalToolCalls {
-				return fmt.Errorf("agent stopped after tool %q was requested unchanged %d times; arguments=%s", call.Name, identicalToolCalls[fingerprint], compactJSON(call.Arguments))
+				return fmt.Errorf("agent stopped after tool %q was requested unchanged %d times; arguments=%s", call.Name, identicalToolCalls[fingerprint], compactJSON(a.redaction.JSON(redaction.Terminal, call.Arguments)))
 			}
 			if identicalToolCalls[fingerprint] == maxIdenticalToolCalls-1 {
 				recoveryInstruction = fmt.Sprintf(repeatedToolRecoveryTemplate, call.Name, identicalToolCalls[fingerprint])
@@ -682,8 +688,10 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			if call.ID == "" {
 				call.ID = fmt.Sprintf("call_%d_%d", step+1, index+1)
 			}
-			arguments := compactJSON(call.Arguments)
-			activityDetails := toolActivity(call)
+			arguments := compactJSON(a.trace.RedactArguments(call.Arguments))
+			displayCall := call
+			displayCall.Arguments = a.trace.RedactArguments(call.Arguments)
+			activityDetails := toolActivity(displayCall)
 			if injectionSeen {
 				activityDetails = trace.Activity{Action: call.Name, Start: "Reviewing tool action after prompt-injection warning", Completed: "Reviewed tool action after prompt-injection warning", Category: trace.ActivityOther}
 			}
@@ -733,7 +741,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			}
 			if renderer, ok := a.out.(diffWriter); ok && renderer.DiffEnabled() && execution.Diff != "" {
 				task.Suspend()
-				renderer.WriteDiff(execution.Diff)
+				renderer.WriteDiff(a.redaction.Text(redaction.Terminal, execution.Diff))
 				task.Resume()
 			}
 			result := execution.Output
@@ -822,3 +830,6 @@ func compactJSON(value json.RawMessage) string {
 	}
 	return string(value)
 }
+
+// SetRedaction affects output copies; conversation and execution remain raw.
+func (a *Agent) SetRedaction(p *redaction.Policy) { a.redaction = p; a.trace.SetRedaction(p) }

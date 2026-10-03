@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"qcode/internal/prompt"
+	"qcode/internal/redaction"
 )
 
 func (u *UI) chooseSkills() {
@@ -41,7 +42,7 @@ func (u *UI) chooseSkills() {
 		u.endRawSelector()
 	}()
 	visible := min(12, max(3, u.height-6))
-	names, summaries, accepted, err := selectSkills(u.input, u.themedSelectorWriter(), u.skills, initial, visible, u.width, ColorEnabled(u.out))
+	names, summaries, accepted, err := selectSkills(u.input, u.themedSelectorWriter(), redaction.Copy(u.redaction, redaction.Terminal, u.skills), initial, visible, u.width, ColorEnabled(u.out))
 	if err != nil {
 		return
 	}
@@ -51,6 +52,16 @@ func (u *UI) chooseSkills() {
 	}
 	if u.onSkills != nil {
 		u.onSkills(names)
+	}
+	// Resolve displayed selections against original skill metadata.
+	summaries = nil
+	for _, name := range names {
+		for _, skill := range u.skills {
+			if skill.Name == name {
+				summaries = append(summaries, skill)
+				break
+			}
+		}
 	}
 	runner.SetSkills(summaries)
 	u.printSystemMessage(formatSkillSelection("Skills enabled", names, u.width, u.unicode, ColorEnabled(u.out), green))
