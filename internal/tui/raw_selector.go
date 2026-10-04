@@ -16,11 +16,11 @@ func (u *UI) beginRawSelector() {
 	u.commandViewActive = true
 	lastOutputRow := u.statusScrollBottomLocked()
 	firstOutputRow := 2
-	fmt.Fprintf(u.out, "\x1b[%d;%dr\x1b[%d;1H", firstOutputRow, lastOutputRow, firstOutputRow)
+	fmt.Fprintf(u.out, "\x1b[%d;%dr\x1b[%d;1H\x1b[?7l", firstOutputRow, lastOutputRow, firstOutputRow)
 	for row := firstOutputRow; row <= u.statusTaskRowLocked(); row++ {
 		fmt.Fprintf(u.out, "\x1b[%d;1H\x1b[2K%s", row, (themeWriter{palette: u.outputTheme(), color: true, width: u.width}).paintRow(""))
 	}
-	fmt.Fprintf(u.out, "\x1b[%d;1H", firstOutputRow)
+	fmt.Fprintf(u.out, "\x1b[?7h\x1b[%d;1H", firstOutputRow)
 	u.statusBarText = ""
 	u.drawStatusBarLocked()
 	u.inputFrame = ""
@@ -33,7 +33,7 @@ func (u *UI) commandViewHeightLocked() int {
 func (u *UI) drawCommandViewHintLocked() {
 	hint := truncateDiffLine(commandViewHint, u.width, u.unicode)
 	hint = renderThemeStatusBarLine(hint, u.width, u.outputTheme(), ColorEnabled(u.out))
-	fmt.Fprintf(u.out, "\x1b[s\x1b[%d;1H\x1b[2K%s\x1b[u", u.statusTaskRowLocked(), hint)
+	fmt.Fprintf(u.out, "\x1b[s\x1b[?7l\x1b[%d;1H\x1b[2K%s\x1b[?7h\x1b[u", u.statusTaskRowLocked(), hint)
 }
 
 func selectorFirstOutputRow(out interface{}) int {

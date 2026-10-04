@@ -6,8 +6,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/mattn/go-runewidth"
 	"qcode/internal/session"
+	"qcode/internal/termtext"
 	qtheme "qcode/internal/theme"
 )
 
@@ -37,20 +37,22 @@ func queuePrompt(status session.Status) string {
 func inputRows(text string, cursor, width int) ([]string, int, int) {
 	width = max(1, width)
 	rows := []string{""}
-	x, cy, cx := 0, 0, 0
-	for i, r := range []rune(text) {
-		w := runewidth.RuneWidth(r)
+	x, cy, cx, i := 0, 0, 0, 0
+	for _, unit := range termtext.Units(text) {
+		w, raw := unit.Width, unit.Text
+		count := utf8.RuneCountInString(raw)
 		if w > width {
-			r, w = '?', 1
+			raw, w = "?", 1
 		}
 		if x+w > width {
 			rows = append(rows, "")
 			x = 0
 		}
-		if i == cursor {
+		if cursor >= i && cursor < i+count {
 			cy, cx = len(rows)-1, x
 		}
-		rows[len(rows)-1] += string(r)
+		rows[len(rows)-1] += raw
+		i += count
 		x += w
 		if x >= width {
 			rows = append(rows, "")
@@ -280,7 +282,10 @@ func (u *UI) writeFixedScreenLocked(screenRows []string, cursorRow, cursorColumn
 	}
 
 	var output strings.Builder
-	output.WriteString("\x1b[?25l")
+	// Fixed rows already have explicit cursor positions. Disable autowrap
+	// while painting so a terminal's glyph-width differences cannot spill
+	// padded rows into the following row, especially at the bottom margin.
+	output.WriteString("\x1b[?25l\x1b[?7l")
 	if full {
 		output.WriteString("\x1b[0m\x1b[r")
 	}
@@ -294,7 +299,7 @@ func (u *UI) writeFixedScreenLocked(screenRows []string, cursorRow, cursorColumn
 		}
 		fmt.Fprintf(&output, "\x1b[%d;1H\x1b[2K%s\x1b[0m", row, painted)
 	}
-	fmt.Fprintf(&output, "\x1b[%d;%dH\x1b[?25h", cursorRow, cursorColumn)
+	fmt.Fprintf(&output, "\x1b[?7h\x1b[%d;%dH\x1b[?25h", cursorRow, cursorColumn)
 	if _, err := u.out.WriteString(output.String()); err != nil {
 		return
 	}

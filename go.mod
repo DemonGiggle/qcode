@@ -15,4 +15,4 @@ require (
 	golang.org/x/sys v0.30.0
 )
 
-require github.com/rivo/uniseg v0.2.0 // indirect
+require github.com/rivo/uniseg v0.2.0

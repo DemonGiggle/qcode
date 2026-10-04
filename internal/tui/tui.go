@@ -1841,7 +1841,7 @@ func (u *UI) renderStatusBarLocked(force bool) {
 	start := u.height - len(lines) + 1
 	palette := u.currentTheme()
 	color := ColorEnabled(u.out)
-	fmt.Fprint(u.out, "\x1b[s")
+	fmt.Fprint(u.out, "\x1b[s\x1b[?7l")
 	for i, line := range lines {
 		line = renderThemeStatusBarLine(line, u.width, palette, color)
 		fmt.Fprintf(u.out, "\x1b[%d;1H\x1b[2K%s", start+i, line)
@@ -1853,7 +1853,7 @@ func (u *UI) renderStatusBarLocked(force bool) {
 			fmt.Fprintf(u.out, "\x1b[%d;1H\x1b[2K", row)
 		}
 	}
-	fmt.Fprint(u.out, "\x1b[u")
+	fmt.Fprint(u.out, "\x1b[?7h\x1b[u")
 	if u.commandViewActive {
 		u.drawCommandViewHintLocked()
 	}

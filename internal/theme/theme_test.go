@@ -69,3 +69,12 @@ func TestPaintRowUsesThemeSurfaceAndFillsWidth(t *testing.T) {
 		t.Fatalf("row was not padded and reset: %q", got)
 	}
 }
+
+func TestPaintRowPadsChineseAndEmojiByTerminalCells(t *testing.T) {
+	palette, _ := Lookup("gruvbox-dark")
+	for _, text := range []string{"甲🛡️", "甲👩‍💻", "甲👍🏽", "甲🇹🇼", "甲1️⃣"} {
+		if got := PaintRow(text, 8, palette); !strings.Contains(got, text+"    \x1b[0m") {
+			t.Errorf("row padding for %q = %q, want four cells", text, got)
+		}
+	}
+}

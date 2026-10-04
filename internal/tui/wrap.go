@@ -2,9 +2,8 @@ package tui
 
 import (
 	"strings"
-	"unicode/utf8"
 
-	"github.com/mattn/go-runewidth"
+	"qcode/internal/termtext"
 )
 
 type displayUnit struct {
@@ -65,38 +64,14 @@ func wrapANSI(text string, width int, continuation string) string {
 
 func displayUnits(text string) []displayUnit {
 	units := make([]displayUnit, 0, len(text))
-	for index := 0; index < len(text); {
-		if text[index] == '\x1b' {
-			end := index + 1
-			if end < len(text) && text[end] == '[' {
-				end++
-				for end < len(text) {
-					char := text[end]
-					end++
-					if char >= 0x40 && char <= 0x7e {
-						break
-					}
-				}
-			}
-			units = append(units, displayUnit{raw: text[index:end]})
-			index = end
-			continue
-		}
-		r, size := utf8.DecodeRuneInString(text[index:])
-		if size == 0 {
-			break
-		}
-		raw := text[index : index+size]
-		space := r == ' ' || r == '\t'
+	for _, unit := range termtext.Units(text) {
+		raw, columns := unit.Text, unit.Width
+		space := raw == " " || raw == "\t"
 		if space {
 			raw = " "
-		}
-		columns := runewidth.RuneWidth(r)
-		if space {
 			columns = 1
 		}
 		units = append(units, displayUnit{raw: raw, width: columns, space: space})
-		index += size
 	}
 	return units
 }

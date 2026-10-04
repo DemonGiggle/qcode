@@ -3,8 +3,10 @@ package tui
 import (
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"qcode/internal/lineedit"
 	"qcode/internal/session"
@@ -96,6 +98,96 @@ func TestInputRowsTracksWideCharactersAndWrapBoundary(t *testing.T) {
 	if strings.Join(rows, "|") != "> 界a|b" || y != 1 || x != 1 {
 		t.Fatalf("rows=%q cursor=%d,%d", rows, y, x)
 	}
+}
+
+func TestInputRowsTracksChineseAndEmojiCursor(t *testing.T) {
+	for _, cluster := range []string{"🛡️", "👩‍💻", "👍🏽", "🇹🇼", "1️⃣"} {
+		text := "> " + cluster + "甲"
+		rows, y, x := inputRows(text, len([]rune(text)), 5)
+		if got, want := strings.Join(rows, "|"), "> "+cluster+"|甲"; got != want || y != 1 || x != 2 {
+			t.Errorf("input %q: rows=%q, cursor=%d,%d; want %q, 1,2", text, got, y, x, want)
+		}
+	}
+}
+
+func TestFixedScreenPreventsRightMarginWrap(t *testing.T) {
+	for _, immediate := range []bool{false, true} {
+		for _, physicalWidth := range []int{12, 11} {
+			u, _ := layoutFixture(t)
+			u.width, u.height = 12, 4
+			u.writeFixedScreenLocked([]string{"", "Tabs        ", strings.Repeat("界", 6), ">           ", "Status      "}, 3, 3)
+			data, err := os.ReadFile(u.out.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+			scrolls, wrap, x, y := marginScreen(string(data), physicalWidth, u.height, immediate)
+			if scrolls != 0 || !wrap || x != 2 || y != 2 {
+				t.Errorf("width=%d immediate=%v: scrolls=%d wrap=%v cursor=%d,%d", physicalWidth, immediate, scrolls, wrap, x, y)
+			}
+			legacy := strings.NewReplacer("\x1b[?7l", "", "\x1b[?7h", "").Replace(string(data))
+			legacyScrolls, _, _, _ := marginScreen(legacy, physicalWidth, u.height, immediate)
+			if (immediate || physicalWidth < u.width) && legacyScrolls == 0 {
+				t.Fatal("terminal model did not reproduce unguarded row painting scrolling the screen")
+			}
+		}
+	}
+}
+
+// marginScreen models both delayed VT wrapping and Windows consoles that
+// advance immediately after the last cell. A width mismatch also exercises
+// the terminal's clipping behavior when its cells differ from the layout.
+func marginScreen(text string, width, height int, immediate bool) (scrolls int, wrap bool, x, y int) {
+	wrap = true
+	savedX, savedY := 0, 0
+	nextLine := func() {
+		x, y = 0, y+1
+		if y >= height {
+			scrolls++
+			y = height - 1
+		}
+	}
+	for len(text) > 0 {
+		if strings.HasPrefix(text, "\x1b[") {
+			end := 2
+			for text[end] < 0x40 || text[end] > 0x7e {
+				end++
+			}
+			params := text[2:end]
+			switch text[end] {
+			case 'H':
+				parts := strings.Split(params, ";")
+				y, _ = strconv.Atoi(parts[0])
+				x, _ = strconv.Atoi(parts[1])
+				x, y = x-1, y-1
+			case 's':
+				savedX, savedY = x, y
+			case 'u':
+				x, y = savedX, savedY
+			case 'h', 'l':
+				if params == "?7" {
+					wrap = text[end] == 'h'
+				}
+			}
+			text = text[end+1:]
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(text)
+		text = text[size:]
+		cells := 1
+		if r == '界' {
+			cells = 2
+		}
+		if wrap && x+cells > width {
+			nextLine()
+		}
+		x += cells
+		if wrap && immediate && x >= width {
+			nextLine()
+		} else if !wrap {
+			x = min(x, width-1)
+		}
+	}
+	return
 }
 
 func TestFixedLayoutSmallAndWrappedDraft(t *testing.T) {
