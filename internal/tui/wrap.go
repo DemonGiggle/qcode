@@ -15,6 +15,17 @@ type displayUnit struct {
 // wrapANSI word-wraps terminal text without counting ANSI control sequences
 // toward the available width. Words longer than the terminal are hard-wrapped.
 func wrapANSI(text string, width int, continuation string) string {
+	if !strings.Contains(text, "\n") {
+		return wrapANSILine(text, width, continuation)
+	}
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = wrapANSILine(line, width, continuation)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func wrapANSILine(text string, width int, continuation string) string {
 	if width <= 0 || visibleWidth(text) <= width {
 		return text
 	}

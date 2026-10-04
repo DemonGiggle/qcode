@@ -162,6 +162,61 @@ func TestFormatQuestion(t *testing.T) {
 	}
 }
 
+func TestQuestionPanelKeepsChineseOptionsOnTheirOwnLines(t *testing.T) {
+	item := question.Question{
+		Text: "三種陀螺外觀差異要到什麼程度？",
+		Options: []string{
+			"維持現有識別（紅/綠/紫 + 尖刺/圓盾/雙環），只做質感升級",
+			"每種全新造型（烈焰鋸齒+火焰紋、磐石鉚釘+石紋、旋風流線+風紋）",
+		},
+		AllowCustom: true,
+	}
+	panel := questionPanel{item: item, total: 1, footer: "Ctrl+C cancels this request."}
+	rows := panel.rows(80, 24, 0, true)
+	for _, want := range []string{item.Text, "   1) " + item.Options[0], "   2) " + item.Options[1]} {
+		found := false
+		for _, row := range rows {
+			if row == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing intact question row %q:\n%s", want, strings.Join(rows, "\n"))
+		}
+	}
+}
+
+func TestFormatQuestionWrapsOptionTextWithinNumberedIndent(t *testing.T) {
+	for _, label := range []string{strings.Repeat("全新陀螺造型", 4), strings.Repeat("x", 60)} {
+		item := question.Question{Text: "選擇造型？", Options: []string{label}}
+		formatted := formatQuestion(item, 0, 1, 20)
+		var recovered strings.Builder
+		inOption := false
+		for _, row := range strings.Split(formatted, "\n") {
+			if strings.HasPrefix(row, "   1) ") {
+				inOption = true
+				row = strings.TrimPrefix(row, "   1) ")
+				if row == "" {
+					t.Fatal("numbered option has no text on its first row")
+				}
+			} else if inOption && strings.HasPrefix(row, "      ") {
+				row = strings.TrimPrefix(row, "      ")
+			} else {
+				inOption = false
+				continue
+			}
+			if visibleWidth(row)+6 > 20 {
+				t.Errorf("numbered option row exceeds terminal width: %q", row)
+			}
+			recovered.WriteString(row)
+		}
+		if got := recovered.String(); got != label {
+			t.Errorf("wrapping changed option: %q, want %q", got, label)
+		}
+	}
+}
+
 func TestFormatQuestionWithOptionDescription(t *testing.T) {
 	item := question.Question{Text: "What fails?", Options: []string{"Colored lines are missed", "Cursor codes appear"}, OptionDescriptions: []string{"The gag count stays zero", ""}, AllowCustom: true}
 	got := formatQuestion(item, 0, 1, 80)

@@ -47,6 +47,21 @@ func TestWrapANSIUsesWordBoundaries(t *testing.T) {
 	}
 }
 
+func TestWrapANSIRespectsExistingLines(t *testing.T) {
+	for _, tc := range []struct {
+		text, continuation, want string
+		width                    int
+	}{
+		{"one two\nthree four", "", "one two\nthree four", 10},
+		{"\n\n甲乙\n\n丙丁\n", "", "\n\n甲乙\n\n丙丁\n", 4},
+		{"one two three\nfour five six", "  ", "one two\n  three\nfour\n  five\n  six", 7},
+	} {
+		if got := wrapANSI(tc.text, tc.width, tc.continuation); got != tc.want {
+			t.Errorf("wrap %q = %q, want %q", tc.text, got, tc.want)
+		}
+	}
+}
+
 func TestWrapANSIHardWrapsLongWords(t *testing.T) {
 	if got := wrapANSI("abcdefgh", 4, ""); got != "abcd\nefgh" {
 		t.Fatalf("wrapped word = %q", got)

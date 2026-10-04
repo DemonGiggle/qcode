@@ -398,7 +398,17 @@ func formatQuestionWithFooter(item question.Question, index, total, width int, f
 				option += interfaceGlyph(UnicodeEnabled(), " — ", " - ") + description
 			}
 		}
-		fmt.Fprintf(&output, "   %d) %s\n", optionIndex+1, wrapANSI(option, width, "      "))
+		prefix := fmt.Sprintf("   %d) ", optionIndex+1)
+		indent := visibleWidth(prefix)
+		optionWidth := width
+		if width > 0 {
+			optionWidth = max(1, width-indent)
+		}
+		// Wrap the label before adding its number, so a long unspaced label
+		// cannot move entirely to a new line and leave the number alone.
+		wrapped := wrapANSI(option, optionWidth, "")
+		wrapped = strings.ReplaceAll(wrapped, "\n", "\n"+strings.Repeat(" ", indent))
+		fmt.Fprintf(&output, "%s%s\n", prefix, wrapped)
 	}
 	if len(item.Options) == 0 || item.AllowCustom {
 		output.WriteString("\nChoose an option or type your own answer. ")
