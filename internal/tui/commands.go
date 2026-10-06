@@ -81,7 +81,7 @@ var slashCommands = []slashCommand{
 	},
 	{
 		name: "/interactive", usage: "/interactive [on|off]", description: "Toggle questions during normal agent work",
-		arguments: []helpArgument{{name: "on|off", description: "Enable or disable questions for this agent; omit to show the current setting."}},
+		arguments: []helpArgument{{name: "on|off", description: "Enable or disable questions for this agent and save the default for future sessions; omit to show the current setting."}},
 		examples:  []string{"/interactive", "/interactive on", "/interactive off"},
 	},
 	{

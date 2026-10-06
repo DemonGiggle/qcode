@@ -235,6 +235,65 @@ func TestPersistThemeCreatesUserPreference(t *testing.T) {
 	}
 }
 
+func TestPersistInteractiveCreatesExplicitUserPreference(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		path := filepath.Join(t.TempDir(), "nested", "config.toml")
+		if err := newRuntimePreferenceWriter(path).PersistInteractive(enabled); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var parsed Config
+		if err := loadAndDecodeForTest(data, &parsed); err != nil {
+			t.Fatal(err)
+		}
+		if parsed.Interactive == nil || *parsed.Interactive != enabled {
+			t.Fatalf("saved interactive = %v, want explicit %v", parsed.Interactive, enabled)
+		}
+	}
+}
+
+func TestPersistInteractivePreservesTOMLAndRoundTrips(t *testing.T) {
+	for _, original := range []string{
+		"# keep this comment\ninteractive = false # keep this note\n\n[skills]\npaths = [\"local\"]\n",
+		"# keep this comment\n\"interactive\" = false # keep this note\n\n[skills]\npaths = [\"local\"]\n",
+		"# keep this comment\n\n[skills]\npaths = [\"local\"]\ninteractive = false # keep this note\n",
+	} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, []byte(original), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		writer := newRuntimePreferenceWriter(path)
+		for _, enabled := range []bool{true, false, false} {
+			if err := writer.PersistInteractive(enabled); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var parsed Config
+			if err := loadAndDecodeForTest(data, &parsed); err != nil {
+				t.Fatal(err)
+			}
+			if parsed.Interactive == nil || *parsed.Interactive != enabled {
+				t.Fatalf("saved interactive = %v, want %v", parsed.Interactive, enabled)
+			}
+			for _, want := range []string{"# keep this comment", "# keep this note", "[skills]\npaths = [\"local\"]\n"} {
+				if !strings.Contains(string(data), want) {
+					t.Fatalf("config lost %q: %s", want, data)
+				}
+			}
+			if strings.HasPrefix(original, "# keep this comment\n\n[skills]") && !strings.HasSuffix(string(data), "interactive = false # keep this note\n") {
+				t.Fatalf("nested interactive setting changed: %s", data)
+			}
+			assertMode(t, path, 0o640)
+		}
+	}
+}
+
 func assertMode(t *testing.T, path string, want os.FileMode) {
 	t.Helper()
 	info, err := os.Stat(path)

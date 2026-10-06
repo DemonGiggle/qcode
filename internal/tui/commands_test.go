@@ -58,19 +58,22 @@ func (r *configurableMaxStepsRunner) MaxSteps() int                   { return r
 func (r *configurableMaxStepsRunner) SetMaxSteps(maxSteps int)        { r.maxSteps = maxSteps }
 
 type runtimePreferenceRecorder struct {
-	model       string
-	thinking    string
-	maxSteps    int
-	hidden      []string
-	modelCalls  int
-	stepsCalls  int
-	statusCalls int
-	theme       string
-	themeCalls  int
-	modelErr    error
-	maxStepsErr error
-	statusErr   error
-	themeErr    error
+	model            string
+	thinking         string
+	maxSteps         int
+	hidden           []string
+	modelCalls       int
+	stepsCalls       int
+	statusCalls      int
+	theme            string
+	themeCalls       int
+	modelErr         error
+	maxStepsErr      error
+	statusErr        error
+	themeErr         error
+	interactive      bool
+	interactiveCalls int
+	interactiveErr   error
 }
 
 func (r *runtimePreferenceRecorder) PersistModel(model, thinking string) error {
@@ -95,6 +98,59 @@ func (r *runtimePreferenceRecorder) PersistTheme(id string) error {
 	r.themeCalls++
 	r.theme = id
 	return r.themeErr
+}
+
+func (r *runtimePreferenceRecorder) PersistInteractive(enabled bool) error {
+	r.interactiveCalls++
+	r.interactive = enabled
+	return r.interactiveErr
+}
+
+func TestInteractiveCommandPersistsFromEveryTab(t *testing.T) {
+	for _, id := range []string{"main", "agent-1"} {
+		t.Run(id, func(t *testing.T) {
+			var output bytes.Buffer
+			runner := &interactiveTestRunner{}
+			recorder := &runtimePreferenceRecorder{}
+			u := &UI{
+				runner: runner, display: newHistoryWriter(&output),
+				manager:     &layoutManager{states: map[string]session.Status{id: session.StatusIdle}},
+				activeAgent: id, runtimePreferences: recorder,
+			}
+			u.handleInteractiveCommand([]string{"/interactive", "on"})
+			if !runner.enabled || recorder.interactiveCalls != 1 || !recorder.interactive {
+				t.Fatalf("on runtime/persistence = %v, %+v", runner.enabled, recorder)
+			}
+			u.handleInteractiveCommand([]string{"/interactive", "off"})
+			if runner.enabled || recorder.interactiveCalls != 2 || recorder.interactive {
+				t.Fatalf("off runtime/persistence = %v, %+v", runner.enabled, recorder)
+			}
+			u.handleInteractiveCommand([]string{"/interactive"})
+			u.handleInteractiveCommand([]string{"/interactive", "invalid"})
+			if recorder.interactiveCalls != 2 || runner.enabled {
+				t.Fatal("query or invalid command changed the interactive preference")
+			}
+			u.manager.(*layoutManager).states[id] = session.StatusRunning
+			u.handleInteractiveCommand([]string{"/interactive", "on"})
+			if recorder.interactiveCalls != 2 || runner.enabled {
+				t.Fatal("busy agent changed or persisted the interactive preference")
+			}
+		})
+	}
+}
+
+func TestInteractiveCommandRetainsToggleWhenPersistenceFails(t *testing.T) {
+	var output bytes.Buffer
+	runner := &interactiveTestRunner{}
+	recorder := &runtimePreferenceRecorder{interactiveErr: errors.New("disk full")}
+	u := &UI{runner: runner, display: newHistoryWriter(&output), runtimePreferences: recorder}
+	u.handleInteractiveCommand([]string{"/interactive", "on"})
+	if !runner.enabled || recorder.interactiveCalls != 1 {
+		t.Fatal("save failure reverted the interactive toggle")
+	}
+	if !strings.Contains(output.String(), "Warning: unable to persist interactive preference: disk full") {
+		t.Fatalf("save failure was not reported: %q", output.String())
+	}
 }
 
 type configurableModelRunner struct {

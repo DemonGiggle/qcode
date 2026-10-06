@@ -39,6 +39,8 @@ unrelated settings, including nested tables such as `[redaction]` and `[skills]`
 are preserved. `/statusline` saves the hidden segment list as the top-level
 `statusline_hidden` setting. `/theme` is terminal-wide and saves its
 choice from any agent tab, including when the selection is Default (Auto).
+`/interactive on|off` also saves from any agent tab, setting `interactive` to
+`true` or `false` as the default for new sessions.
 Other preference changes in worker tabs, demo mode, one-shot mode, and piped
 execution remain session-only. `theme` accepts
 `default`, `catppuccin-mocha`, `dracula`, `gruvbox-dark`, `solarized-dark`,
@@ -67,9 +69,9 @@ skills; a discovery error produces a startup warning.
 
 `interactive` defaults to `false`. When enabled in a terminal session, normal
 mode may ask up to three distinct, focused questions per submitted prompt.
-`/interactive on|off` changes the active agent's setting for the session;
-restored agents keep their saved setting. One-shot, piped, non-TTY, and
-`--json-events` runs never ask blocking questions.
+`/interactive on|off` changes the active agent's setting and saves the default
+for new sessions to the user config; restored agents keep their saved setting.
+One-shot, piped, non-TTY, and `--json-events` runs never ask blocking questions.
 
 The qcode repository also contains optional official release skills in
 [`docs/skills/`](skills/). Browse that collection and decide whether any of
