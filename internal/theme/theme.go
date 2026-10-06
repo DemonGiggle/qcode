@@ -315,6 +315,9 @@ func PaintRow(row string, width int, palette Palette) string {
 	if palette.ID == "" || palette.ID == "default" || palette.Background == "" {
 		return row
 	}
+	// Match the UI's single-cell tab width with painted spaces. Terminal tab
+	// stops skip cells without coloring them and can exceed the measured width.
+	row = strings.ReplaceAll(row, "\t", " ")
 	row = TransformANSI(row, palette)
 	background := background(palette.Background)
 	foreground := foreground(palette.Text)

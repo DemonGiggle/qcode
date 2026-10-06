@@ -1,6 +1,7 @@
 package theme
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -68,4 +69,60 @@ func TestPaintRowUsesThemeSurfaceAndFillsWidth(t *testing.T) {
 	if !strings.Contains(got, "title   \x1b[0m") {
 		t.Fatalf("row was not padded and reset: %q", got)
 	}
+}
+
+func TestPaintRowColorsTabGapsAndPadding(t *testing.T) {
+	const width = 32
+	for _, id := range []string{"dracula", "catppuccin-latte"} {
+		palette, _ := Lookup(id)
+		for _, row := range []string{
+			"\t\tthinking",
+			"\x1b[90mthinking\ttext\x1b[0m",
+			"thinking\x1b[0m\t\t",
+		} {
+			cells := rowCellBackgrounds(PaintRow(row, width, palette), width)
+			for column, color := range cells {
+				if color != background(palette.Background) {
+					t.Fatalf("%s row %q column %d has background %q, want theme background", id, row, column+1, color)
+				}
+			}
+		}
+	}
+}
+
+// Replay SGR colors and horizontal tabs. A terminal tab advances the cursor
+// without painting the skipped cells, even when a background color is set.
+func rowCellBackgrounds(row string, width int) []string {
+	cells := make([]string, width)
+	column, color := 0, ""
+	for len(row) > 0 {
+		if strings.HasPrefix(row, "\x1b[") {
+			end := strings.IndexByte(row, 'm')
+			parts := strings.Split(row[2:end], ";")
+			for index := 0; index < len(parts); index++ {
+				code, _ := strconv.Atoi(parts[index])
+				switch {
+				case code == 0 || code == 49:
+					color = ""
+				case (code == 38 || code == 48) && index+4 < len(parts) && parts[index+1] == "2":
+					if code == 48 {
+						color = "\x1b[" + strings.Join(parts[index:index+5], ";") + "m"
+					}
+					index += 4
+				}
+			}
+			row = row[end+1:]
+			continue
+		}
+		if row[0] == '\t' {
+			column = min(width-1, (column/8+1)*8)
+		} else {
+			if column < width {
+				cells[column] = color
+			}
+			column++
+		}
+		row = row[1:]
+	}
+	return cells
 }
