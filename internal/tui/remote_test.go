@@ -92,6 +92,11 @@ func TestRemoteCatalogIncludesSelectorStateAndResumableSessions(t *testing.T) {
 	}
 	defer session.Release(currentLock)
 	u.persistence = &sessionPersistence{store: store, current: current}
+	current.Preview = "Current work"
+	current.Saved = time.Now().UTC().Add(-time.Hour)
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
 
 	resumable, resumableLock, err := store.New()
 	if err != nil {
@@ -129,8 +134,14 @@ func TestRemoteCatalogIncludesSelectorStateAndResumableSessions(t *testing.T) {
 	if len(catalog.Skills) != 2 || !catalog.Skills[0].Selected || catalog.Skills[1].Selected {
 		t.Fatalf("skills = %#v", catalog.Skills)
 	}
-	if len(catalog.Sessions) != 1 || catalog.Sessions[0].ID != resumable.ID || catalog.Sessions[0].Preview != "Review the release" {
-		t.Fatalf("sessions = %#v, want only resumable saved session", catalog.Sessions)
+	if len(catalog.Sessions) != 3 || catalog.Sessions[0].ID != busy.ID || catalog.Sessions[1].ID != resumable.ID || catalog.Sessions[2].ID != current.ID {
+		t.Fatalf("sessions = %#v, want every saved session in order", catalog.Sessions)
+	}
+	if !catalog.Sessions[0].Busy || catalog.Sessions[1].Preview != "Review the release" || !catalog.Sessions[2].Current || catalog.Sessions[2].Busy {
+		t.Fatalf("session labels = %#v", catalog.Sessions)
+	}
+	if !catalog.Sessions[2].Recency.Equal(current.Saved) {
+		t.Fatalf("current recency = %v, want %v", catalog.Sessions[2].Recency, current.Saved)
 	}
 }
 

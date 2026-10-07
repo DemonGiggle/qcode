@@ -76,15 +76,17 @@ type RemoteSkillState struct {
 	Selected    bool   `json:"selected"`
 }
 
-// RemoteSessionState is the resumable subset of a saved session entry. The
-// current session, busy sessions, and unreadable snapshots are intentionally
-// omitted by RemoteCatalog.
+// RemoteSessionState exposes every saved session in the same order as the TUI.
 type RemoteSessionState struct {
 	ID         string    `json:"id"`
 	Preview    string    `json:"preview"`
 	Created    time.Time `json:"created,omitempty"`
 	Saved      time.Time `json:"saved,omitempty"`
 	Left       time.Time `json:"left,omitempty"`
+	Recency    time.Time `json:"recency,omitempty"`
+	Current    bool      `json:"current,omitempty"`
+	Busy       bool      `json:"busy,omitempty"`
+	Problem    string    `json:"problem,omitempty"`
 	AgentCount int       `json:"agent_count"`
 }
 
@@ -353,18 +355,17 @@ func (u *UI) remoteSessions() []RemoteSessionState {
 	if p.store == nil {
 		return []RemoteSessionState{}
 	}
-	entries, err := p.store.List()
+	entries, err := p.listSessionsLocked()
 	if err != nil {
 		return []RemoteSessionState{}
 	}
 	result := make([]RemoteSessionState, 0, len(entries))
 	for _, entry := range entries {
-		if entry.ID == p.current.ID || entry.Busy || entry.Problem != "" {
-			continue
-		}
 		result = append(result, RemoteSessionState{
 			ID: entry.ID, Preview: remoteSessionPreview(u.redaction.Text(redaction.Remote, entry.Preview)),
 			Created: entry.Created, Saved: entry.Saved, Left: entry.Left,
+			Recency: session.ResumeTime(entry.Snapshot), Current: entry.Current,
+			Busy: entry.Busy, Problem: entry.Problem,
 			AgentCount: len(entry.Agents),
 		})
 	}
@@ -575,6 +576,9 @@ func (u *UI) SubmitRemotePrompt(actor string, input session.PromptSubmission) (s
 	input.Source = "browser"
 	input.Actor = actor
 	sub, err := host.SubmitPrompt(input)
+	if err == nil {
+		u.recordSessionPrompt()
+	}
 	u.signalPresentation()
 	return sub, err
 }

@@ -33,10 +33,13 @@ type Snapshot struct {
 	NextID                 int
 	Presentation           json.RawMessage
 	Work                   *WorkHistory `json:",omitempty"`
+	// Recency preserves resume ordering across saves and advances on user prompts.
+	Recency time.Time `json:",omitempty"`
 }
 
 type Entry struct {
 	Snapshot
+	Current bool
 	Busy    bool
 	Problem string
 }
@@ -209,6 +212,18 @@ func Departure(s Snapshot) time.Time {
 	return s.Saved
 }
 
+// ResumeTime retains the existing order for snapshots saved before Recency was
+// introduced. A new session without a prompt starts at its creation time.
+func ResumeTime(s Snapshot) time.Time {
+	if !s.Recency.IsZero() {
+		return s.Recency
+	}
+	if when := Departure(s); !when.IsZero() {
+		return when
+	}
+	return s.Created
+}
+
 func (s *Store) List() ([]Entry, error) {
 	files, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -252,6 +267,6 @@ func (s *Store) List() ([]Entry, error) {
 		}
 		entries = append(entries, entry)
 	}
-	sort.Slice(entries, func(i, j int) bool { return Departure(entries[i].Snapshot).After(Departure(entries[j].Snapshot)) })
+	sort.SliceStable(entries, func(i, j int) bool { return ResumeTime(entries[i].Snapshot).After(ResumeTime(entries[j].Snapshot)) })
 	return entries, nil
 }

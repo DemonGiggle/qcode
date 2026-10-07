@@ -1072,6 +1072,7 @@ func (u *UI) runActiveTask(ctx context.Context, line string) error {
 		}
 		return err
 	}
+	u.recordSessionPrompt()
 	if u.deferredInteractions != nil {
 		u.deferredInteractions[u.activeAgent] = false
 	}

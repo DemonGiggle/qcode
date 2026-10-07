@@ -925,7 +925,7 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             "Sessions autosave about every two seconds, after agent work and commands, and on clean exit or session switch. Each launch starts its own session.",
-            "Type /resume to reopen a session for this folder. Entries show a preview and age, newest first. Finish or cancel running work before switching. Sessions open in another qcode process cannot be restored; Enter retries the selected session after a lock or snapshot error.",
+            "Type /resume to reopen a session for this folder. All saved entries stay in the list. A separate marker identifies the current session without changing its preview; selecting that session keeps it open. Entries show a preview and activity time. Their order stays the same until an accepted user prompt moves its session to the top, including queued prompts and steering from the terminal or browser. Finish or cancel running work before switching. Sessions open in another qcode process cannot be restored; Enter retries the selected session after a lock or snapshot error.",
             "Resume restores tabs, models, the pinned latest prompt, conversation and styled output, diffs, drafts, reading positions, tool and skill settings, and token totals. Provider credentials come from current configuration.",
             "Empty and demo/one-shot runs are not saved. `/new` resets only the current tab inside its session.",
             "After a crash, start qcode in the same folder and use /resume. The last good checkpoint marks unfinished work interrupted; pending tasks and steering are never resubmitted automatically. Inspect current files before continuing, since completed tool changes are not rolled back.",

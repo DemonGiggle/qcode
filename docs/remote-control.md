@@ -170,8 +170,10 @@ The browser also provides catalog-backed selectors for `/model`, `/tool`,
 Selectors can be filtered, and model selection opens a second selector when the
 chosen model supports adjustable thinking levels. Skill/tool selectors preserve
 the current multi-selection until Apply. Cancel or Escape leaves the qcode
-session unchanged. Saved-session choices exclude the current session and
-snapshots that are busy or unreadable.
+session unchanged. Saved-session choices keep every saved session in order,
+including the current session. A separate Current badge identifies it without changing
+the preview text. Selecting that session keeps it open.
+Sessions open elsewhere or unreadable remain visible with an explanatory label.
 
 ### Steering and pending work
 

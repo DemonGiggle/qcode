@@ -277,6 +277,7 @@ func (u *UI) saveSessionLocked(left bool) error {
 	snap.Presentation = data
 	snap.Work = work
 	snap.Preview = preview
+	snap.Recency = session.ResumeTime(snap)
 	snap.Saved = time.Time{}
 	snap.Left = time.Time{}
 	content, err := json.Marshal(snap)
@@ -348,6 +349,17 @@ func (u *UI) requestSessionSave() {
 	}
 }
 
+func (u *UI) recordSessionPrompt() {
+	p := u.persistence
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.current.Recency = time.Now().UTC()
+	p.mu.Unlock()
+	u.requestSessionSave()
+}
+
 func (u *UI) closeSession() {
 	if u.persistence == nil {
 		return
@@ -360,10 +372,32 @@ func (u *UI) resumeSession() {
 	u.resumeSessionID("")
 }
 
+// listSessionsLocked keeps every saved session in the store's order and marks
+// the locally owned session separately from sessions open in other processes.
+func (p *sessionPersistence) listSessionsLocked() ([]session.Entry, error) {
+	entries, err := p.store.List()
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		if entries[i].ID == p.current.ID {
+			entries[i].Current = true
+			entries[i].Busy = false
+		}
+	}
+	return entries, nil
+}
+
 func (u *UI) resumeSessionID(requestedID string) {
 	p := u.persistence
 	if p == nil {
 		u.printSystemMessage("Session resume is unavailable.")
+		return
+	}
+	p.mu.Lock()
+	currentID := p.current.ID
+	p.mu.Unlock()
+	if requestedID == currentID {
 		return
 	}
 	for _, a := range u.manager.List() {
@@ -372,21 +406,16 @@ func (u *UI) resumeSessionID(requestedID string) {
 			return
 		}
 	}
-	entries, err := p.store.List()
+	p.mu.Lock()
+	choices, err := p.listSessionsLocked()
+	p.mu.Unlock()
 	if err != nil {
 		u.printSystemMessage("Cannot list sessions: " + err.Error())
 		return
 	}
-	var choices []session.Entry
-	p.mu.Lock()
-	currentID := p.current.ID
-	p.mu.Unlock()
-	for _, e := range entries {
-		if e.ID != currentID {
-			e.Preview = u.redaction.Text(redaction.Terminal, e.Preview)
-			e.Problem = u.redaction.Text(redaction.Terminal, e.Problem)
-			choices = append(choices, e)
-		}
+	for i := range choices {
+		choices[i].Preview = u.redaction.Text(redaction.Terminal, choices[i].Preview)
+		choices[i].Problem = u.redaction.Text(redaction.Terminal, choices[i].Problem)
 	}
 	if len(choices) == 0 {
 		u.printSystemMessage("No saved sessions for this workspace.")
@@ -417,12 +446,15 @@ func (u *UI) resumeSessionID(requestedID string) {
 			}
 		}
 		if !found {
-			u.printSystemMessage("Unknown or current session: " + id)
+			u.printSystemMessage("Unknown session: " + id)
 			return
 		}
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if id == p.current.ID {
+		return
+	}
 	lock, err := p.store.Lock(id)
 	if err != nil {
 		u.printSystemMessage("Cannot resume: " + err.Error())
@@ -475,6 +507,7 @@ func (u *UI) resumeSessionID(requestedID string) {
 	session.Release(p.lock)
 	p.lock = lock
 	p.current = snap
+	p.current.Recency = session.ResumeTime(snap)
 	p.current.Left = time.Time{}
 	p.lastContent = ""
 	committed = true
@@ -599,7 +632,8 @@ func matchingSessionIndices(entries []session.Entry, query string) []int {
 }
 
 func renderSessionSelector(out io.Writer, entries []session.Entry, matches []int, selected, start, visible, width int, query string, color bool) {
-	header := selectorHeader(fmt.Sprintf("Resume session (%d/%d) | Filter: %s", len(matches), len(entries), query), width)
+	legend := interfaceGlyph(UnicodeEnabled(), "● current", "* current")
+	header := selectorHeader(fmt.Sprintf("Resume session (%d/%d) | %s | Filter: %s", len(matches), len(entries), legend, query), width)
 	printSelectorRow(out, header)
 	for row := 0; row < visible; row++ {
 		matchIndex := start + row
@@ -620,7 +654,11 @@ func renderSessionLine(entry session.Entry, selected bool, width int, color bool
 	if selected {
 		marker = "> "
 	}
-	line := marker + sessionEntryLabel(entry)
+	current := "  "
+	if entry.Current {
+		current = interfaceGlyph(UnicodeEnabled(), "● ", "* ")
+	}
+	line := marker + current + sessionEntryLabel(entry)
 	if width > 0 {
 		line = truncateDiffLine(line, width, false)
 	}
@@ -640,7 +678,7 @@ func renderSessionLine(entry session.Entry, selected bool, width int, color bool
 }
 
 func sessionEntryLabel(entry session.Entry) string {
-	when := session.Departure(entry.Snapshot).In(time.Local).Format("Jan 02 15:04")
+	when := session.ResumeTime(entry.Snapshot).In(time.Local).Format("Jan 02 15:04")
 	agents := "1 agent"
 	if len(entry.Agents) != 1 {
 		agents = fmt.Sprintf("%d agents", len(entry.Agents))
