@@ -68,6 +68,13 @@ func (t *managedToolset) RestoreTools(data json.RawMessage) error {
 	return nil
 }
 
+func (t *managedToolset) RestoreToolSelections(data json.RawMessage) error {
+	if base, ok := t.base.(interface{ RestoreToolSelections(json.RawMessage) error }); ok {
+		return base.RestoreToolSelections(data)
+	}
+	return nil
+}
+
 func (t *managedToolset) RestoreWarnings() []string {
 	if base, ok := t.base.(interface{ RestoreWarnings() []string }); ok {
 		return base.RestoreWarnings()
@@ -157,6 +164,43 @@ func (a *Agent) updateCheckpointMaxSteps(maxSteps int) {
 }
 
 func (a *Agent) SetEndpoint(endpoint string) { a.endpoint = endpoint; a.publishCheckpoint() }
+
+// RestoreFreshState applies a checkpoint's settings to a detached new agent.
+// Conversation state and provider identity are never imported. Tool selections
+// are reapplied after the normal reset, which clears directory grants.
+func (a *Agent) RestoreFreshState(data json.RawMessage) error {
+	var saved SavedState
+	if err := json.Unmarshal(data, &saved); err != nil {
+		return err
+	}
+	fresh := SavedState{
+		Provider: saved.Provider, Model: saved.Model, Thinking: saved.Thinking, Endpoint: saved.Endpoint,
+		Messages:      []SavedMessage{{Message: llm.Message{Role: "system"}}},
+		ContextWindow: saved.ContextWindow, ContextOverride: saved.ContextOverride,
+		AutoCompact: saved.AutoCompact, AutoCompactThreshold: saved.AutoCompactThreshold,
+		MaxSteps: saved.MaxSteps, LearningBudget: saved.LearningBudget,
+		Skills: saved.Skills, InteractiveMode: saved.InteractiveMode,
+	}
+	settings, err := json.Marshal(fresh)
+	if err != nil {
+		return err
+	}
+	if err := a.RestoreState(settings); err != nil {
+		return err
+	}
+	// An empty level explicitly clears a factory's startup thinking preference.
+	if err := a.SetThinking(saved.Thinking); err != nil {
+		return err
+	}
+	a.ResetSession()
+	if t, ok := a.tools.(interface{ RestoreToolSelections(json.RawMessage) error }); ok && len(saved.Tools) > 0 {
+		if err := t.RestoreToolSelections(saved.Tools); err != nil {
+			return err
+		}
+	}
+	a.invalidateContextUsage()
+	return nil
+}
 
 func (a *Agent) RestoreState(data json.RawMessage) error {
 	var s SavedState

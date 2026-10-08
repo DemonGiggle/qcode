@@ -566,7 +566,17 @@ type promptController interface {
 }
 
 func (u *UI) SubmitRemotePrompt(actor string, input session.PromptSubmission) (session.Submission, error) {
-	host, ok := u.manager.(promptController)
+	// A prompt cannot start on a manager being replaced by resume or deletion.
+	// Keep its recency update in the same persistence transaction.
+	p := u.persistence
+	if p != nil {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+	}
+	u.screenMu.Lock()
+	manager := u.manager
+	u.screenMu.Unlock()
+	host, ok := manager.(promptController)
 	if !ok {
 		return session.Submission{}, fmt.Errorf("structured prompts unavailable")
 	}
@@ -576,8 +586,9 @@ func (u *UI) SubmitRemotePrompt(actor string, input session.PromptSubmission) (s
 	input.Source = "browser"
 	input.Actor = actor
 	sub, err := host.SubmitPrompt(input)
-	if err == nil {
-		u.recordSessionPrompt()
+	if err == nil && p != nil {
+		p.current.Recency = time.Now().UTC()
+		u.requestSessionSave()
 	}
 	u.signalPresentation()
 	return sub, err

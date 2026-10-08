@@ -149,6 +149,82 @@ func (s *Store) Save(snap Snapshot) error {
 	return s.save(snap)
 }
 
+// Delete removes metadata before the snapshot without reading either. Like
+// Save, it is serialized within this store; a later save may recreate the ID.
+func (s *Store) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.delete(id)
+}
+
+func (s *Store) delete(id string) error {
+	if !validID(id) {
+		return fmt.Errorf("invalid session ID")
+	}
+	for _, path := range []string{
+		filepath.Join(s.dir, "metadata", id+".name.json"),
+		filepath.Join(s.dir, "metadata", id+".pin.json"),
+		filepath.Join(s.dir, id+".json"),
+	} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// DeleteAll removes every snapshot and metadata entry in this workspace. An
+// optional excluded ID lets a caller retain its current session until a fresh
+// replacement is prepared and every other deletion has succeeded.
+func (s *Store) DeleteAll(excluded ...string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	skip := make(map[string]bool, len(excluded))
+	for _, id := range excluded {
+		if !validID(id) {
+			return fmt.Errorf("invalid session ID")
+		}
+		skip[id] = true
+	}
+	ids := map[string]bool{}
+	for _, directory := range []string{s.dir, filepath.Join(s.dir, "metadata")} {
+		files, err := os.ReadDir(directory)
+		if os.IsNotExist(err) && directory != s.dir {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		for _, file := range files {
+			id := strings.TrimSuffix(file.Name(), ".json")
+			if directory != s.dir {
+				switch {
+				case strings.HasSuffix(file.Name(), ".name.json"):
+					id = strings.TrimSuffix(file.Name(), ".name.json")
+				case strings.HasSuffix(file.Name(), ".pin.json"):
+					id = strings.TrimSuffix(file.Name(), ".pin.json")
+				default:
+					continue
+				}
+			}
+			if strings.HasSuffix(file.Name(), ".json") && validID(id) && !skip[id] {
+				ids[id] = true
+			}
+		}
+	}
+	ordered := make([]string, 0, len(ids))
+	for id := range ids {
+		ordered = append(ordered, id)
+	}
+	sort.Strings(ordered)
+	for _, id := range ordered {
+		if err := s.delete(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) save(snap Snapshot) error {
 	if !validID(snap.ID) || snap.Workspace != s.workspace || snap.Version != SnapshotVersion {
 		return fmt.Errorf("invalid session snapshot")

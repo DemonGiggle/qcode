@@ -62,7 +62,8 @@ func sessionPickerFixture(t *testing.T) (*session.Store, []session.Entry, sessio
 		t.Fatal(err)
 	}
 	return s, entries, sessionPickerOptions{visible: 12, width: 120, height: 18, unicode: true,
-		rename: s.Rename, setPinned: s.SetPinned, refresh: s.List}
+		rename: s.Rename, setPinned: s.SetPinned, refresh: s.List,
+		deleteSession: func(id string) (bool, error) { return false, s.Delete(id) }}
 }
 
 func TestSessionPickerRenameClearAndUTF8Editing(t *testing.T) {
@@ -405,7 +406,7 @@ func TestSessionPickerFitsShortAndNarrowViewports(t *testing.T) {
 	_, entries, options := sessionPickerFixture(t)
 	p := sessionPicker{entries: entries, matches: []int{0, 1, 2}}
 	for height := 1; height <= 18; height++ {
-		for _, mode := range []sessionPickerMode{sessionPickerList, sessionPickerActions, sessionPickerRename} {
+		for _, mode := range []sessionPickerMode{sessionPickerList, sessionPickerActions, sessionPickerRename, sessionPickerDelete, sessionPickerDeleteAll} {
 			p.mode = mode
 			for _, message := range []string{"", "failed edit"} {
 				p.message = message
@@ -435,6 +436,181 @@ func TestSessionPickerFitsShortAndNarrowViewports(t *testing.T) {
 	_, visible := p.render(options, 120, 4)
 	if visible != 2 {
 		t.Fatal("list rows did not shrink after preview", visible)
+	}
+}
+
+func TestSessionPickerDeleteConfirmationDefaultsAndCancellation(t *testing.T) {
+	for _, cancel := range []string{"\r", "\x1b", "\x03"} {
+		t.Run(fmt.Sprintf("key=%q", cancel), func(t *testing.T) {
+			_, entries, options := sessionPickerFixture(t)
+			entries[0].Name, entries[0].Current = "named session", true
+			options.deleteSession = func(string) (bool, error) { t.Fatal("deleted without confirmation"); return false, nil }
+			keys := []string{"\t", arrowDownSequence, arrowDownSequence, "\r", cancel}
+			if cancel != "\x03" {
+				// Cancel and Esc return to Delete in the actions menu.
+				keys = append(keys, "\r", "\x03")
+			}
+			var output strings.Builder
+			_, accepted, err := runSessionPicker(&sessionPickerKeys{keys: keys}, &output, entries, options)
+			text := output.String()
+			if err != nil || accepted || !strings.Contains(text, "> Cancel") || !strings.Contains(text, "Delete session | named session") || !strings.Contains(text, "All tabs, drafts, and conversation history will be cleared.") {
+				t.Fatal("confirmation", accepted, err, text)
+			}
+			if cancel != "\x03" && strings.Count(text, "Delete session | named session") != 2 {
+				t.Fatal("cancel did not return to Delete action", text)
+			}
+		})
+	}
+}
+
+func TestSessionPickerThreeActionsNavigateAndScroll(t *testing.T) {
+	_, entries, options := sessionPickerFixture(t)
+	for height := 1; height <= 6; height++ {
+		p := sessionPicker{entries: entries, matches: []int{0}, mode: sessionPickerActions}
+		for action, want := range []string{"Rename", "Pin", "Delete"} {
+			p.action = action
+			lines, _ := p.render(options, 80, height)
+			if !strings.Contains(strings.Join(lines, "\n"), "> "+want) {
+				t.Fatalf("height %d lost selected action %s: %v", height, want, lines)
+			}
+		}
+		p.mode = sessionPickerDelete
+		for choice, want := range []string{"Cancel", "Delete"} {
+			p.confirmation = choice
+			lines, _ := p.render(options, 80, height)
+			if !strings.Contains(strings.Join(lines, "\n"), "> "+want) {
+				t.Fatalf("height %d lost selected choice %s: %v", height, want, lines)
+			}
+		}
+	}
+	for _, navigation := range [][]string{{arrowUpSequence}, {arrowDownSequence, arrowDownSequence}, {arrowDownSequence, arrowDownSequence, arrowDownSequence, arrowUpSequence}} {
+		calls := 0
+		options.height = 3
+		options.deleteSession = func(id string) (bool, error) {
+			calls++
+			if id != entries[0].ID {
+				t.Fatal("wrong entry", id)
+			}
+			return true, nil
+		}
+		keys := append([]string{"\t"}, navigation...)
+		keys = append(keys, "\r", arrowDownSequence, "\r")
+		_, accepted, err := runSessionPicker(&sessionPickerKeys{keys: keys}, io.Discard, entries, options)
+		if err != nil || !accepted || calls != 1 {
+			t.Fatal("navigation did not reach Delete", accepted, err, calls)
+		}
+	}
+}
+
+func TestSessionPickerDeleteRetainsFilterAndSelectsAdjacentMatch(t *testing.T) {
+	for deleted := 0; deleted < 3; deleted++ {
+		t.Run(fmt.Sprint(deleted), func(t *testing.T) {
+			s, entries, options := sessionPickerFixture(t)
+			for i, entry := range entries {
+				if err := s.Rename(entry.ID, fmt.Sprintf("match %d", i)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			extra, _ := s.New()
+			if err := s.Save(extra); err != nil {
+				t.Fatal(err)
+			}
+			entries, _ = s.List()
+			matches := matchingSessionIndices(entries, "match")
+			adjacent := deleted + 1
+			if adjacent == len(matches) {
+				adjacent = deleted - 1
+			}
+			want := entries[matches[adjacent]].ID
+			id := entries[matches[deleted]].ID
+			keys := []string{"match"}
+			for i := 0; i < deleted; i++ {
+				keys = append(keys, arrowDownSequence)
+			}
+			keys = append(keys, "\t", arrowUpSequence, "\r", arrowDownSequence, "\r", "\r")
+			var output strings.Builder
+			got, accepted, err := runSessionPicker(&sessionPickerKeys{keys: keys}, &output, entries, options)
+			if err != nil || !accepted || got != want || !strings.Contains(output.String(), "Resume (2/3)") || !strings.Contains(output.String(), "Filter: match") {
+				t.Fatal("selection or filter changed", got, want, accepted, err)
+			}
+			if _, err := s.Load(id); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("snapshot remains", err)
+			}
+		})
+	}
+}
+
+func TestSessionPickerDeleteLastMatchAndLastEntryRemainUsable(t *testing.T) {
+	for _, filtered := range []bool{false, true} {
+		t.Run(fmt.Sprint(filtered), func(t *testing.T) {
+			s, entries, options := sessionPickerFixture(t)
+			for _, entry := range entries[1:] {
+				if !filtered {
+					if err := s.Delete(entry.ID); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := s.Rename(entries[0].ID, "only-match"); err != nil {
+				t.Fatal(err)
+			}
+			entries, _ = s.List()
+			keys := []string{}
+			if filtered {
+				keys = append(keys, "only-match")
+			}
+			keys = append(keys, "\t", arrowUpSequence, "\r", arrowDownSequence, "\r", "\r", arrowDownSequence)
+			if filtered {
+				keys = append(keys, "\x15", "\r")
+			} else {
+				keys = append(keys, "\x03")
+			}
+			var output strings.Builder
+			_, accepted, err := runSessionPicker(&sessionPickerKeys{keys: keys}, &output, entries, options)
+			if err != nil || accepted != filtered || !strings.Contains(output.String(), "No matching sessions") {
+				t.Fatal("empty picker unusable", accepted, err, output.String())
+			}
+		})
+	}
+}
+
+func TestSessionPickerDeleteFailureRefreshesPartialMetadataInline(t *testing.T) {
+	s, entries, options := sessionPickerFixture(t)
+	id := entries[0].ID
+	if err := s.Rename(id, "before"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPinned(id, true); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ = s.List()
+	options.deleteSession = func(id string) (bool, error) {
+		// Simulate removal of the name followed by an error removing the pin.
+		if err := s.Rename(id, ""); err != nil {
+			t.Fatal(err)
+		}
+		return false, errors.New("pin removal failed")
+	}
+	var output strings.Builder
+	_, accepted, err := runSessionPicker(&sessionPickerKeys{keys: []string{"\t", arrowUpSequence, "\r", arrowDownSequence, "\r", "\x03"}}, &output, entries, options)
+	if err != nil || accepted || !strings.Contains(output.String(), "Cannot delete: pin removal failed") {
+		t.Fatal("failure did not remain inline", accepted, err, output.String())
+	}
+	frames := strings.Split(output.String(), "\x1b[2;1H")
+	failedFrame := frames[len(frames)-2]
+	if strings.Contains(failedFrame, "before") || !strings.Contains(failedFrame, entries[0].Preview) || !strings.Contains(failedFrame, "◆") || !strings.Contains(failedFrame, "Preview") {
+		t.Fatal("partial metadata removal was not refreshed", failedFrame)
+	}
+}
+
+func TestSessionPickerDeleteConfirmationUsesNameOfCorruptSession(t *testing.T) {
+	_, entries, options := sessionPickerFixture(t)
+	entries[0].Name, entries[0].Problem = "corrupt named session", "invalid snapshot"
+	options.deleteSession = func(string) (bool, error) { return true, nil }
+	var output strings.Builder
+	_, accepted, err := runSessionPicker(&sessionPickerKeys{keys: []string{"\t", arrowUpSequence, "\r", arrowUpSequence, "\r"}}, &output, entries, options)
+	if err != nil || !accepted || !strings.Contains(output.String(), "Delete session | corrupt named session") {
+		t.Fatal("confirmation hid custom name behind error", accepted, err, output.String())
 	}
 }
 

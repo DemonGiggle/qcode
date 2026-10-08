@@ -120,8 +120,8 @@ var slashCommands = []slashCommand{
 		examples: []string{"/plan", "/plan show", "/plan act"},
 	},
 	{
-		name: "/resume", usage: "/resume [session-id]", description: "Browse, rename, pin, and continue saved sessions",
-		arguments: []helpArgument{{name: "session-id", description: "Session to restore; omit for the picker with a transcript preview. Tab opens Rename and Pin/Unpin."}},
+		name: "/resume", usage: "/resume [session-id]", description: "Browse, rename, pin, delete, and continue saved sessions",
+		arguments: []helpArgument{{name: "session-id", description: "Session to restore; omit for the picker with a transcript preview. Tab opens Rename, Pin/Unpin, and Delete; Ctrl+D opens Delete all for this workspace, including entries hidden by the filter. Deletion requires confirmation; deleting the current session starts fresh with the main agent's settings."}},
 		examples:  []string{"/resume", "/resume fead69f5000000000000000000000000"},
 	},
 	{

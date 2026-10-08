@@ -453,7 +453,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			return err
 		}
 		store.SetSnapshotFilter(func(snap session.Snapshot) (session.Snapshot, error) { return filterSessionSnapshot(policy, snap) })
-		if err := ui.EnableSessions(store, func(snap session.Snapshot) (*tui.UI, error) {
+		newDetachedUI := func() (*tui.UI, error) {
 			staged := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
 			staged.SetRedaction(policy)
 			staged.SetStatuslineHidden(configuredStatuslineHidden)
@@ -465,11 +465,19 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			staged.SetRuntimePreferenceWriter(runtimePreferences)
 			staged.SetSkillCatalogLoader(loadSkills)
 			staged.SetSkillLocations(skillLocations)
+			return staged, nil
+		}
+		if err := ui.EnableSessions(store, func(snap session.Snapshot) (*tui.UI, error) {
+			staged, err := newDetachedUI()
+			if err != nil {
+				return nil, err
+			}
 			restored := control.NewHost(context.Background(), agent.DefaultMaxAgents)
 			saved := map[string]agent.SavedState{}
 			for _, item := range snap.Agents {
 				var state agent.SavedState
 				if err := json.Unmarshal(item.State, &state); err != nil {
+					restored.Shutdown()
 					return nil, err
 				}
 				saved[item.Summary.ID] = state
@@ -488,6 +496,28 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 				restored.Shutdown()
 				return nil, err
 			}
+			return staged, nil
+		}, func(main session.SavedAgent) (*tui.UI, error) {
+			var state agent.SavedState
+			if err := json.Unmarshal(main.State, &state); err != nil {
+				return nil, err
+			}
+			staged, err := newDetachedUI()
+			if err != nil {
+				return nil, err
+			}
+			fresh := control.NewHost(context.Background(), agent.DefaultMaxAgents)
+			configureFactory(staged, fresh, map[string]agent.SavedState{"main": state})
+			if _, err := fresh.CreateMain(state.Model); err != nil {
+				fresh.Shutdown()
+				return nil, err
+			}
+			runner, _ := fresh.Agent("main")
+			if err := runner.RestoreFreshState(main.State); err != nil {
+				fresh.Shutdown()
+				return nil, err
+			}
+			staged.SetDetachedAgentManager(fresh)
 			return staged, nil
 		}); err != nil {
 			return err

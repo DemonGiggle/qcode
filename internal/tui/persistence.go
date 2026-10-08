@@ -56,6 +56,7 @@ type sessionPersistence struct {
 	lastContent string
 	lastError   string
 	build       func(session.Snapshot) (*UI, error)
+	buildFresh  func(session.SavedAgent) (*UI, error)
 	requests    chan struct{}
 }
 type savedAgentController interface {
@@ -65,7 +66,8 @@ type savedAgentController interface {
 func (u *UI) SetDetachedAgentManager(manager agentController) { u.manager = manager }
 
 // EnableSessions installs persistence only for interactive, non-demo runs.
-func (u *UI) EnableSessions(store *session.Store, build func(session.Snapshot) (*UI, error)) error {
+// The optional builder prepares a detached fresh UI from the main checkpoint.
+func (u *UI) EnableSessions(store *session.Store, build func(session.Snapshot) (*UI, error), fresh ...func(session.SavedAgent) (*UI, error)) error {
 	store.SetDefaultSnapshotFilter(func(snap session.Snapshot) (session.Snapshot, error) { return FilterSnapshot(u.redaction, snap) })
 	store.SetDefaultNameFilter(func(name string) string { return u.redaction.Text(redaction.Persistence, name) })
 	snap, err := store.New()
@@ -73,6 +75,9 @@ func (u *UI) EnableSessions(store *session.Store, build func(session.Snapshot) (
 		return err
 	}
 	u.persistence = &sessionPersistence{store: store, current: snap, build: build, requests: make(chan struct{}, 1)}
+	if len(fresh) > 0 {
+		u.persistence.buildFresh = fresh[0]
+	}
 	return nil
 }
 
@@ -420,7 +425,13 @@ func (u *UI) resumeSessionID(requestedID string) {
 			u.printSystemMessage(err.Error())
 			return
 		}
-		if !accepted || id == currentID {
+		if !accepted {
+			return
+		}
+		p.mu.Lock()
+		id = p.current.ID
+		p.mu.Unlock()
+		if id == currentID {
 			return
 		}
 	} else {
@@ -453,6 +464,9 @@ func (u *UI) restoreSession(id string) error {
 	if err != nil {
 		return err
 	}
+	if p.build == nil {
+		return fmt.Errorf("session restore is unavailable")
+	}
 	staged, err := p.build(snap)
 	if err != nil {
 		return err
@@ -469,6 +483,111 @@ func (u *UI) restoreSession(id string) error {
 	if err = u.saveSessionLocked(true); err != nil {
 		return fmt.Errorf("cannot save current session: %w", err)
 	}
+	u.installSessionLocked(staged, snap)
+	committed = true
+	return nil
+}
+
+// deleteSession serializes autosaves with deletion and the current UI handoff.
+// It reports whether the picker should close on a new, empty conversation.
+func (u *UI) deleteSession(id string) (bool, error) {
+	p := u.persistence
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if id != p.current.ID {
+		return false, p.store.Delete(id)
+	}
+	return u.deleteCurrentSessionLocked(func() error { return p.store.Delete(id) })
+}
+
+// deleteAllSessions ignores the picker filter and keeps the current snapshot
+// until every other deletion succeeds, so a partial failure retains its UI.
+func (u *UI) deleteAllSessions() (bool, error) {
+	p := u.persistence
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	entries, err := p.listSessionsLocked()
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if entry.Current {
+			return u.deleteCurrentSessionLocked(func() error {
+				if err := p.store.DeleteAll(p.current.ID); err != nil {
+					return err
+				}
+				return p.store.Delete(p.current.ID)
+			})
+		}
+	}
+	return false, p.store.DeleteAll()
+}
+
+// deleteCurrentSessionLocked prepares a fresh conversation before deleting
+// saved files. Callers hold the persistence mutex throughout the transaction.
+func (u *UI) deleteCurrentSessionLocked(remove func() error) (bool, error) {
+	p := u.persistence
+	for _, a := range u.manager.List() {
+		if a.Status == session.StatusRunning || a.Status == session.StatusWaitingForApproval {
+			return false, fmt.Errorf("finish or cancel busy agent %s before deleting the current session", a.ID)
+		}
+	}
+	if p.buildFresh == nil {
+		return false, fmt.Errorf("fresh session creation is unavailable")
+	}
+	manager, ok := u.manager.(savedAgentController)
+	if !ok {
+		return false, fmt.Errorf("main agent checkpoint is unavailable")
+	}
+	agents, _ := manager.SaveAgents()
+	var main session.SavedAgent
+	for _, a := range agents {
+		if a.Summary.ID == "main" {
+			main = a
+			break
+		}
+	}
+	if len(main.State) == 0 {
+		return false, fmt.Errorf("main agent checkpoint is unavailable")
+	}
+	snap, err := p.store.New()
+	if err != nil {
+		return false, err
+	}
+	staged, err := p.buildFresh(main)
+	committed := false
+	defer func() {
+		if !committed && staged != nil && staged.manager != nil {
+			staged.manager.Shutdown()
+		}
+	}()
+	if err != nil {
+		return false, fmt.Errorf("cannot prepare fresh session: %w", err)
+	}
+	if staged == nil || staged.manager == nil || len(staged.views) != 1 || staged.views["main"] == nil || staged.activeAgent != "main" {
+		return false, fmt.Errorf("invalid fresh session interface")
+	}
+	if err := remove(); err != nil {
+		return false, err
+	}
+	staged.verbose = u.VerboseEnabled()
+	u.installSessionLocked(staged, snap)
+	u.screenMu.Lock()
+	u.queue = queuePanel{}
+	u.deferredInteractions = make(map[string]bool)
+	u.observedTaskID = ""
+	u.screenMu.Unlock()
+	u.tabMu.Lock()
+	u.pendingTab = 0
+	u.tabMu.Unlock()
+	committed = true
+	return true, nil
+}
+
+// installSessionLocked shares the validated detached-manager handoff. Callers
+// hold the persistence mutex and decide whether to save the departing session.
+func (u *UI) installSessionLocked(staged *UI, snap session.Snapshot) {
+	p := u.persistence
 	u.shutdownAgentManager()
 	u.screenMu.Lock()
 	staged.sessionHost = u
@@ -489,8 +608,7 @@ func (u *UI) restoreSession(id string) error {
 	p.current.Recency = session.ResumeTime(snap)
 	p.current.Left = time.Time{}
 	p.lastContent = ""
-	committed = true
-	return nil
+	p.lastError = ""
 }
 
 func (u *UI) activateRestoredTab() {
@@ -502,8 +620,8 @@ func (u *UI) activateRestoredTab() {
 	u.model = v.model
 	u.onSkills = v.onSkills
 	runner, _ := u.manager.Runner(u.activeAgent)
-	u.runner = runner.(Runner)
 	u.screenMu.Unlock()
+	u.SetRunner(runner.(Runner))
 	u.updateActiveCancellation()
 	u.repaintActive()
 	if draft := u.drafts[u.activeAgent]; draft != "" {
