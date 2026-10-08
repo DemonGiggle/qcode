@@ -6,7 +6,10 @@ reads. The agent should inspect facts that are cheap to find directly.
 
 Interactive questions are off by default. Use `/interactive on` for the active
 agent, `/interactive off` to disable them, or `/interactive` to show the current
-setting. To enable them for new terminal sessions, add this to `config.toml`:
+setting. In normal terminal sessions, `/interactive on|off` also saves the
+startup default to your user config from any agent tab. On Linux this is
+`~/.local/etc/qcode/config.toml`. Demo mode keeps changes session-only. You can
+also enable questions for new terminal sessions directly in `config.toml`:
 
 ```toml
 interactive = true

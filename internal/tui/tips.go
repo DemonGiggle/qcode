@@ -70,7 +70,10 @@ var tipTexts = []string{
 	// Saved sessions and exports.
 	"Run `/resume` to browse this workspace's saved sessions, or `/resume <session-id>` to restore one directly.",
 	"Sessions autosave during interactive work; `/resume` restores tabs, drafts, models, settings, and retained output.",
-	"Finish or cancel running agents before `/resume`; a session already open in another process cannot be restored.",
+	"In `/resume`, Tab opens Rename, Pin/Unpin, and Delete; Ctrl+D opens Delete all with confirmation.",
+	"Delete all removes every saved session in this workspace, including sessions hidden by the filter.",
+	"Deleting a session in `/resume` requires confirmation; deleting the current session clears all tabs and drafts while keeping the main agent's settings.",
+	"Finish or cancel running agents before switching sessions with `/resume`; concurrent processes can restore the same session, with the last save winning.",
 	"After a crash, `/resume` restores the latest checkpoint; unfinished requests are interrupted and need your direction.",
 	"Run `/new` to reset the active agent's conversation, token totals, plan, web tools, and added directory grants.",
 	"Run `/export` or `/export pretty` for an HTML timeline of completed prompts and responses, with a tab for each agent.",

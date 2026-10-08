@@ -10,14 +10,14 @@ import (
 	"qcode/internal/redaction"
 )
 
-func TestSanitizedListingAndLockedLegacyRewrite(t *testing.T) {
+func TestSanitizedListingAndLegacyRewrite(t *testing.T) {
 	store, _ := Open(t.TempDir(), t.TempDir())
-	snap, lock, _ := store.New()
+	snap, _ := store.New()
 	snap.Preview = "password=legacy-secret"
 	if err := store.Save(snap); err != nil {
 		t.Fatal(err)
 	}
-	Release(lock)
+
 	path := filepath.Join(store.dir, snap.ID+".json")
 	original, _ := os.ReadFile(path)
 	store.SetSnapshotFilter(func(s Snapshot) (Snapshot, error) {
@@ -31,15 +31,6 @@ func TestSanitizedListingAndLockedLegacyRewrite(t *testing.T) {
 	untouched, _ := os.ReadFile(path)
 	if !bytes.Equal(untouched, original) {
 		t.Fatal("listing rewrote legacy file")
-	}
-	lock, err = store.Lock(snap.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer Release(lock)
-	if other, err := store.Lock(snap.ID); err == nil {
-		Release(other)
-		t.Fatal("resume bypassed lock")
 	}
 	filtered, err := store.LoadForResume(snap.ID)
 	if err != nil || filtered.Preview != "password= "+redaction.Marker {
@@ -55,15 +46,15 @@ func TestSanitizedListingAndLockedLegacyRewrite(t *testing.T) {
 	}
 	files, _ := os.ReadDir(store.dir)
 	for _, file := range files {
-		if file.Name() != snap.ID+".json" && file.Name() != snap.ID+".lock" {
+		if file.Name() != snap.ID+".json" {
 			t.Fatal("unexpected backup")
 		}
 	}
 }
 func TestResumeRewriteFailureAndSaveFailureDoNotExposeSnapshot(t *testing.T) {
 	store, _ := Open(t.TempDir(), t.TempDir())
-	snap, lock, _ := store.New()
-	defer Release(lock)
+	snap, _ := store.New()
+
 	snap.Preview = "password=legacy-secret"
 	store.Save(snap)
 	path := filepath.Join(store.dir, snap.ID+".json")

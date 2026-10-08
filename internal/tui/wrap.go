@@ -15,6 +15,9 @@ type displayUnit struct {
 // wrapANSI word-wraps terminal text without counting ANSI control sequences
 // toward the available width. Words longer than the terminal are hard-wrapped.
 func wrapANSI(text string, width int, continuation string) string {
+	// displayUnits treats tabs as single spaces. Normalize even on the
+	// no-wrap path so terminal tab stops cannot make a row wider than measured.
+	text = strings.ReplaceAll(text, "\t", " ")
 	if !strings.Contains(text, "\n") {
 		return wrapANSILine(text, width, continuation)
 	}

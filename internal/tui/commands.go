@@ -81,7 +81,7 @@ var slashCommands = []slashCommand{
 	},
 	{
 		name: "/interactive", usage: "/interactive [on|off]", description: "Toggle questions during normal agent work",
-		arguments: []helpArgument{{name: "on|off", description: "Enable or disable questions for this agent; omit to show the current setting."}},
+		arguments: []helpArgument{{name: "on|off", description: "Enable or disable questions for this agent and save the default for future sessions; omit to show the current setting."}},
 		examples:  []string{"/interactive", "/interactive on", "/interactive off"},
 	},
 	{
@@ -120,9 +120,9 @@ var slashCommands = []slashCommand{
 		examples: []string{"/plan", "/plan show", "/plan act"},
 	},
 	{
-		name: "/resume", usage: "/resume [session-id]", description: "Continue a saved session",
-		arguments: []helpArgument{{name: "session-id", description: "Session to restore; omit it to open the session picker."}},
-		examples:  []string{"/resume", "/resume 20260917-abc123"},
+		name: "/resume", usage: "/resume [session-id]", description: "Browse, rename, pin, delete, and continue saved sessions",
+		arguments: []helpArgument{{name: "session-id", description: "Session to restore; omit for the picker with a transcript preview. Tab opens Rename, Pin/Unpin, and Delete; Ctrl+D opens Delete all for this workspace, including entries hidden by the filter. Deletion requires confirmation; deleting the current session starts fresh with the main agent's settings."}},
+		examples:  []string{"/resume", "/resume fead69f5000000000000000000000000"},
 	},
 	{
 		name: "/remote", usage: "/remote", description: "Control qcode from a web browser",

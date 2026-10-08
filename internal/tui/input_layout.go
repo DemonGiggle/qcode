@@ -282,9 +282,8 @@ func (u *UI) writeFixedScreenLocked(screenRows []string, cursorRow, cursorColumn
 	}
 
 	var output strings.Builder
-	// Fixed rows already have explicit cursor positions. Disable autowrap
-	// while painting so a terminal's glyph-width differences cannot spill
-	// padded rows into the following row, especially at the bottom margin.
+	// Each row is positioned explicitly. Disable terminal autowrap while
+	// painting so a width mismatch cannot overwrite another cached row.
 	output.WriteString("\x1b[?25l\x1b[?7l")
 	if full {
 		output.WriteString("\x1b[0m\x1b[r")
@@ -299,7 +298,7 @@ func (u *UI) writeFixedScreenLocked(screenRows []string, cursorRow, cursorColumn
 		}
 		fmt.Fprintf(&output, "\x1b[%d;1H\x1b[2K%s\x1b[0m", row, painted)
 	}
-	fmt.Fprintf(&output, "\x1b[?7h\x1b[%d;%dH\x1b[?25h", cursorRow, cursorColumn)
+	fmt.Fprintf(&output, "\x1b[%d;%dH\x1b[?7h\x1b[?25h", cursorRow, cursorColumn)
 	if _, err := u.out.WriteString(output.String()); err != nil {
 		return
 	}

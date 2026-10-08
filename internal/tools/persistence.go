@@ -29,6 +29,20 @@ func (r *Registry) RestoreTools(data json.RawMessage) error {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return err
 	}
+	return r.restoreTools(s)
+}
+
+// RestoreToolSelections restores toggles and skills without directory grants.
+func (r *Registry) RestoreToolSelections(data json.RawMessage) error {
+	var s savedTools
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	s.Grants = nil
+	return r.restoreTools(s)
+}
+
+func (r *Registry) restoreTools(s savedTools) error {
 	r.disabled = map[string]bool{}
 	for name, disabled := range s.Disabled {
 		if _, ok := r.handlers[name]; ok {

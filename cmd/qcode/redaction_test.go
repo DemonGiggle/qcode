@@ -74,8 +74,8 @@ func TestSnapshotStorageFiltersAllOwnedPayloads(t *testing.T) {
 	data, _ := json.Marshal(state)
 	dir, root := t.TempDir(), t.TempDir()
 	store, _ := session.Open(dir, root)
-	snap, lock, _ := store.New()
-	defer session.Release(lock)
+	snap, _ := store.New()
+
 	snap.Preview = cliRedactionSecret
 	snap.Agents = []session.SavedAgent{{Summary: session.Summary{ID: "main", Name: "Main", CurrentTask: cliRedactionSecret, Error: cliRedactionSecret}, State: data}}
 	snap.Presentation = json.RawMessage(`{"Active":"main","Drafts":{"main":"` + cliRedactionSecret + `"},"Views":[{"ID":"main","History":{"Lines":["` + cliRedactionSecret + `"],"Archive":["` + cliRedactionSecret + `"]},"Buffer":"` + cliRedactionSecret + `","Diffs":["` + cliRedactionSecret + `"]}]}`)

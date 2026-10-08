@@ -5,19 +5,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 const SnapshotVersion = 1
-
-var ErrSessionBusy = errors.New("session is open in another process")
 
 type SavedAgent struct {
 	Summary      Summary
@@ -33,12 +31,21 @@ type Snapshot struct {
 	NextID                 int
 	Presentation           json.RawMessage
 	Work                   *WorkHistory `json:",omitempty"`
+	// Recency preserves resume ordering across saves and advances on user prompts.
+	Recency time.Time `json:",omitempty"`
 }
 
 type Entry struct {
 	Snapshot
-	Busy    bool
-	Problem string
+	Metadata
+	Current         bool
+	Problem         string
+	MetadataProblem string
+}
+
+type Metadata struct {
+	Name   string
+	Pinned bool
 }
 
 type SnapshotFilter func(Snapshot) (Snapshot, error)
@@ -47,12 +54,22 @@ type SnapshotFilter func(Snapshot) (Snapshot, error)
 type Store struct {
 	dir, workspace string
 	filter         SnapshotFilter
+	nameFilter     func(string) string
+	mu             sync.Mutex
 }
 
 func (s *Store) SetSnapshotFilter(filter SnapshotFilter) { s.filter = filter }
 func (s *Store) SetDefaultSnapshotFilter(filter SnapshotFilter) {
 	if s.filter == nil {
 		s.filter = filter
+	}
+}
+
+// SetDefaultNameFilter installs the persistence text policy before concurrent
+// use, independently of conversation validation and rewriting.
+func (s *Store) SetDefaultNameFilter(filter func(string) string) {
+	if s.nameFilter == nil {
+		s.nameFilter = filter
 	}
 }
 func (s *Store) Sanitize(snap Snapshot) (Snapshot, error) {
@@ -62,9 +79,11 @@ func (s *Store) Sanitize(snap Snapshot) (Snapshot, error) {
 	return snap, nil
 }
 
-// LoadForResume must be called while holding the session lock. Rewrite before
-// any restored state is exposed, with no backup containing the original text.
+// LoadForResume rewrites sanitized state before exposing it. Concurrent saves
+// replace complete snapshots; the last successful atomic replacement wins.
 func (s *Store) LoadForResume(id string) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	snap, err := s.Load(id)
 	if err != nil {
 		return snap, err
@@ -74,7 +93,7 @@ func (s *Store) LoadForResume(id string) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	if s.filter != nil {
-		if err = s.Save(snap); err != nil {
+		if err = s.save(snap); err != nil {
 			return Snapshot{}, fmt.Errorf("rewrite sanitized session: %w", err)
 		}
 	}
@@ -115,43 +134,98 @@ func validID(id string) bool {
 	return err == nil && len(b) == 16
 }
 
-func (s *Store) New() (Snapshot, *os.File, error) {
+func (s *Store) New() (Snapshot, error) {
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {
-		return Snapshot{}, nil, err
+		return Snapshot{}, err
 	}
 	snap := Snapshot{Version: SnapshotVersion, ID: hex.EncodeToString(id[:]), Workspace: s.workspace, Created: time.Now().UTC()}
-	lock, err := s.Lock(snap.ID)
-	return snap, lock, err
-}
-
-func (s *Store) Lock(id string) (*os.File, error) {
-	if !validID(id) {
-		return nil, fmt.Errorf("invalid session ID")
-	}
-	f, err := os.OpenFile(filepath.Join(s.dir, id+".lock"), os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, err
-	}
-	ok, err := tryLock(f)
-	if err != nil || !ok {
-		f.Close()
-		if err == nil {
-			err = ErrSessionBusy
-		}
-		return nil, err
-	}
-	return f, nil
-}
-
-func Release(f *os.File) {
-	if f != nil {
-		unlock(f)
-		f.Close()
-	}
+	return snap, nil
 }
 
 func (s *Store) Save(snap Snapshot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.save(snap)
+}
+
+// Delete removes metadata before the snapshot without reading either. Like
+// Save, it is serialized within this store; a later save may recreate the ID.
+func (s *Store) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.delete(id)
+}
+
+func (s *Store) delete(id string) error {
+	if !validID(id) {
+		return fmt.Errorf("invalid session ID")
+	}
+	for _, path := range []string{
+		filepath.Join(s.dir, "metadata", id+".name.json"),
+		filepath.Join(s.dir, "metadata", id+".pin.json"),
+		filepath.Join(s.dir, id+".json"),
+	} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// DeleteAll removes every snapshot and metadata entry in this workspace. An
+// optional excluded ID lets a caller retain its current session until a fresh
+// replacement is prepared and every other deletion has succeeded.
+func (s *Store) DeleteAll(excluded ...string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	skip := make(map[string]bool, len(excluded))
+	for _, id := range excluded {
+		if !validID(id) {
+			return fmt.Errorf("invalid session ID")
+		}
+		skip[id] = true
+	}
+	ids := map[string]bool{}
+	for _, directory := range []string{s.dir, filepath.Join(s.dir, "metadata")} {
+		files, err := os.ReadDir(directory)
+		if os.IsNotExist(err) && directory != s.dir {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		for _, file := range files {
+			id := strings.TrimSuffix(file.Name(), ".json")
+			if directory != s.dir {
+				switch {
+				case strings.HasSuffix(file.Name(), ".name.json"):
+					id = strings.TrimSuffix(file.Name(), ".name.json")
+				case strings.HasSuffix(file.Name(), ".pin.json"):
+					id = strings.TrimSuffix(file.Name(), ".pin.json")
+				default:
+					continue
+				}
+			}
+			if strings.HasSuffix(file.Name(), ".json") && validID(id) && !skip[id] {
+				ids[id] = true
+			}
+		}
+	}
+	ordered := make([]string, 0, len(ids))
+	for id := range ids {
+		ordered = append(ordered, id)
+	}
+	sort.Strings(ordered)
+	for _, id := range ordered {
+		if err := s.delete(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) save(snap Snapshot) error {
 	if !validID(snap.ID) || snap.Workspace != s.workspace || snap.Version != SnapshotVersion {
 		return fmt.Errorf("invalid session snapshot")
 	}
@@ -166,7 +240,13 @@ func (s *Store) Save(snap Snapshot) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(s.dir, ".snapshot-")
+	return atomicWrite(s.dir, snap.ID+".json", data)
+}
+
+// atomicWrite creates a private temporary file and replaces only its target.
+// Snapshot saves and individual metadata fields never overwrite one another.
+func atomicWrite(dir, name string, data []byte) error {
+	f, err := os.CreateTemp(dir, ".session-")
 	if err != nil {
 		return err
 	}
@@ -181,7 +261,7 @@ func (s *Store) Save(snap Snapshot) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	return replaceSnapshot(f.Name(), filepath.Join(s.dir, snap.ID+".json"))
+	return replaceFile(f.Name(), filepath.Join(dir, name))
 }
 
 func (s *Store) Load(id string) (Snapshot, error) {
@@ -209,6 +289,18 @@ func Departure(s Snapshot) time.Time {
 	return s.Saved
 }
 
+// ResumeTime retains the existing order for snapshots saved before Recency was
+// introduced. A new session without a prompt starts at its creation time.
+func ResumeTime(s Snapshot) time.Time {
+	if !s.Recency.IsZero() {
+		return s.Recency
+	}
+	if when := Departure(s); !when.IsZero() {
+		return when
+	}
+	return s.Created
+}
+
 func (s *Store) List() ([]Entry, error) {
 	files, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -223,6 +315,11 @@ func (s *Store) List() ([]Entry, error) {
 		if !validID(id) {
 			continue
 		}
+		metadata, metadataErr := s.LoadMetadata(id)
+		entry := Entry{Metadata: metadata}
+		if metadataErr != nil {
+			entry.MetadataProblem = metadataErr.Error()
+		}
 		snap, err := s.Load(id)
 		if err != nil {
 			info, statErr := file.Info()
@@ -233,25 +330,23 @@ func (s *Store) List() ([]Entry, error) {
 			if filterErr != nil {
 				return nil, filterErr
 			}
-			entries = append(entries, Entry{Snapshot: Snapshot{ID: id, Saved: info.ModTime()}, Problem: problem.Preview})
+			entry.Snapshot = Snapshot{ID: id, Saved: info.ModTime()}
+			entry.Problem = problem.Preview
+			entries = append(entries, entry)
 			continue
 		}
 		snap, err = s.Sanitize(snap)
 		if err != nil {
 			return nil, err
 		}
-		lock, lockErr := s.Lock(id)
-		Release(lock)
-		entry := Entry{Snapshot: snap, Busy: errors.Is(lockErr, ErrSessionBusy)}
-		if lockErr != nil && !entry.Busy {
-			problem, filterErr := s.Sanitize(Snapshot{ID: id, Workspace: s.workspace, Version: SnapshotVersion, Preview: "Cannot lock session: " + lockErr.Error()})
-			if filterErr != nil {
-				return nil, filterErr
-			}
-			entry.Problem = problem.Preview
-		}
+		entry.Snapshot = snap
 		entries = append(entries, entry)
 	}
-	sort.Slice(entries, func(i, j int) bool { return Departure(entries[i].Snapshot).After(Departure(entries[j].Snapshot)) })
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Pinned != entries[j].Pinned {
+			return entries[i].Pinned
+		}
+		return ResumeTime(entries[i].Snapshot).After(ResumeTime(entries[j].Snapshot))
+	})
 	return entries, nil
 }

@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -15,11 +17,24 @@ import (
 
 type persistenceManager struct {
 	agentController
-	agents []session.SavedAgent
-	events chan session.Event
-	once   sync.Once
-	work   *session.WorkHistory
+	agents    []session.SavedAgent
+	events    chan session.Event
+	once      sync.Once
+	work      *session.WorkHistory
+	submitErr error
 }
+
+func (m *persistenceManager) Submit(string, string) (session.Submission, error) {
+	return session.Submission{}, m.submitErr
+}
+
+type persistencePromptManager struct{ *persistenceManager }
+
+func (m *persistencePromptManager) SubmitPrompt(input session.PromptSubmission) (session.Submission, error) {
+	return m.Submit(input.AgentID, input.Prompt)
+}
+func (*persistencePromptManager) PendingInputs(string) []session.QueuedPrompt { return nil }
+func (*persistencePromptManager) CancelInput(string, string) error            { return nil }
 
 func (m *persistenceManager) SaveWorkHistory() *session.WorkHistory { return m.work }
 func (m *persistenceManager) ConsultationEvents(after uint64) []session.ConsultationEvent {
@@ -164,18 +179,19 @@ func TestResumeSwapsSavedTabsAndPreservesCurrentSession(t *testing.T) {
 	target.steeringCursor = 2
 	u.steeringCursor = 9
 	target.views["main"].display.AddLine("saved event and error")
-	snap, lock, err := store.New()
+	snap, err := store.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	snap.Agents, _ = target.manager.(savedAgentController).SaveAgents()
 	snap.Presentation, _ = json.Marshal(target.snapshotPresentation())
-	snap.Saved = time.Now()
+	snap.Saved = time.Now().Add(-time.Hour)
+	snap.Left = snap.Saved.Add(time.Minute)
 	snap.Preview = "saved preview"
 	if err := store.Save(snap); err != nil {
 		t.Fatal(err)
 	}
-	session.Release(lock)
+
 	if err := u.EnableSessions(store, func(s session.Snapshot) (*UI, error) {
 		v, _ := persistenceUI(t)
 		return v, v.RestorePresentation(s.Presentation)
@@ -189,6 +205,15 @@ func TestResumeSwapsSavedTabsAndPreservesCurrentSession(t *testing.T) {
 	if u.persistence.current.ID != snap.ID || u.activeAgent != "agent-1" {
 		t.Fatal("session was not switched")
 	}
+	if !u.persistence.current.Recency.Equal(snap.Left) {
+		t.Fatalf("resume recency = %v, want legacy departure %v", u.persistence.current.Recency, snap.Left)
+	}
+	if err := u.saveSession(false); err != nil {
+		t.Fatal(err)
+	}
+	if saved, err := store.Load(snap.ID); err != nil || !saved.Recency.Equal(snap.Left) {
+		t.Fatalf("resume checkpoint changed legacy recency: %+v, %v", saved, err)
+	}
 	if u.steeringCursor != target.steeringCursor {
 		t.Fatalf("steering cursor = %d, want restored cursor %d", u.steeringCursor, target.steeringCursor)
 	}
@@ -198,11 +223,123 @@ func TestResumeSwapsSavedTabsAndPreservesCurrentSession(t *testing.T) {
 	if saved, err := store.Load(oldID); err != nil || saved.Left.IsZero() {
 		t.Fatalf("previous session not archived: %v", err)
 	}
+	assertSessions := func(currentID string) {
+		t.Helper()
+		u.persistence.mu.Lock()
+		entries, err := u.persistence.listSessionsLocked()
+		u.persistence.mu.Unlock()
+		if err != nil || len(entries) != 2 || entries[0].ID != oldID || entries[1].ID != snap.ID {
+			t.Fatalf("session switch changed list: %+v, %v", entries, err)
+		}
+		for _, entry := range entries {
+			if entry.Current != (entry.ID == currentID) {
+				t.Fatalf("incorrect current session marker: %+v", entry)
+			}
+		}
+	}
+	assertSessions(snap.ID)
+	u.resumeSessionID(oldID)
+	assertSessions(oldID)
+	manager := u.manager
+	u.resumeSessionID(oldID)
+	u.input.data <- '\r'
+	u.resumeSession()
+	if u.manager != manager {
+		t.Fatal("selecting the current session reloaded it")
+	}
+	assertSessions(oldID)
+}
+
+func TestSessionOrderChangesOnlyAfterAcceptedUserPrompt(t *testing.T) {
+	for _, source := range []string{"terminal", "terminal-fallback", "browser"} {
+		for _, intent := range []session.SubmissionIntent{session.IntentAutomatic, session.IntentQueue, session.IntentSteer} {
+			if source == "terminal-fallback" && intent != session.IntentAutomatic {
+				continue
+			}
+			for _, rejected := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/rejected=%v", source, intent, rejected), func(t *testing.T) {
+					u, m := persistenceUI(t)
+					if source != "terminal-fallback" {
+						u.SetDetachedAgentManager(&persistencePromptManager{m})
+					}
+					store, err := session.Open(t.TempDir(), u.root)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := u.EnableSessions(store, nil); err != nil {
+						t.Fatal(err)
+					}
+					defer u.closeSession()
+					currentID := u.persistence.current.ID
+					legacyTime := time.Now().UTC().Add(-2 * time.Hour)
+					u.persistence.current.Saved = legacyTime
+					newer, err := store.New()
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					newer.Saved = legacyTime.Add(time.Hour)
+					if err := store.Save(newer); err != nil {
+						t.Fatal(err)
+					}
+					assertOrder := func(first, second string) {
+						t.Helper()
+						entries, err := store.List()
+						if err != nil || len(entries) != 2 {
+							t.Fatalf("list = %+v, %v", entries, err)
+						}
+						if entries[0].ID != first || entries[1].ID != second {
+							t.Fatalf("order = [%s, %s], want [%s, %s]", entries[0].ID, entries[1].ID, first, second)
+						}
+					}
+					if err := u.saveSession(false); err != nil {
+						t.Fatal(err)
+					}
+					assertOrder(newer.ID, currentID)
+					// Drafts, output, settings, and departure still checkpoint without
+					// moving the session ahead of more recently prompted sessions.
+					u.drafts["main"] = "unfinished draft"
+					u.views["main"].display.AddLine("passive output")
+					u.verbose = true
+					m.work = &session.WorkHistory{Records: []session.WorkRecord{{
+						AgentID: "agent-1", Source: "delegation", Created: time.Now().UTC(),
+					}}}
+					if err := u.saveSession(true); err != nil {
+						t.Fatal(err)
+					}
+					assertOrder(newer.ID, currentID)
+					if rejected {
+						m.submitErr = errors.New("prompt rejected")
+					}
+					if intent == session.IntentQueue {
+						u.activeAgent = "agent-1"
+					}
+					if source == "browser" {
+						_, err = u.SubmitRemotePrompt("test-browser", session.PromptSubmission{AgentID: u.activeAgent, Prompt: "continue the task", Intent: intent})
+					} else {
+						u.submissionIntent = intent
+						err = u.runActiveTask(context.Background(), "continue the task")
+					}
+					if !errors.Is(err, m.submitErr) {
+						t.Fatalf("submission error = %v, want %v", err, m.submitErr)
+					}
+					if err := u.saveSession(false); err != nil {
+						t.Fatal(err)
+					}
+					if rejected {
+						assertOrder(newer.ID, currentID)
+					} else {
+						assertOrder(currentID, newer.ID)
+					}
+				})
+			}
+		}
+	}
 }
 
 func TestSessionPickerRetriesUnavailableEntries(t *testing.T) {
 	for _, entry := range []session.Entry{
-		{Snapshot: session.Snapshot{ID: strings.Repeat("a", 32), Preview: "preview", Saved: time.Now()}, Busy: true},
+		{Snapshot: session.Snapshot{ID: strings.Repeat("a", 32), Preview: "preview", Saved: time.Now()}},
 		{Snapshot: session.Snapshot{ID: strings.Repeat("b", 32)}, Problem: "unreadable snapshot"},
 	} {
 		u, _ := persistenceUI(t)
@@ -215,24 +352,22 @@ func TestSessionPickerRetriesUnavailableEntries(t *testing.T) {
 	}
 }
 
-func TestResumeBusySessionReportsErrorAndPreservesCurrentSession(t *testing.T) {
+func TestResumeBuildFailureKeepsPickerAndCurrentSession(t *testing.T) {
 	u, _ := persistenceUI(t)
 	store, err := session.Open(t.TempDir(), u.root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, lock, err := store.New()
+	snap, err := store.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Release(lock)
-	snap.Preview = "session still open elsewhere"
+	snap.Preview = "another process may use this session"
 	if err := store.Save(snap); err != nil {
 		t.Fatal(err)
 	}
 	if err := u.EnableSessions(store, func(session.Snapshot) (*UI, error) {
-		t.Fatal("attempted to build a session without acquiring its lock")
-		return nil, nil
+		return nil, fmt.Errorf("invalid restored state")
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -242,10 +377,11 @@ func TestResumeBusySessionReportsErrorAndPreservesCurrentSession(t *testing.T) {
 	u.input.data <- ctrlC
 	u.resumeSession()
 	if u.persistence.current.ID != currentID {
-		t.Fatal("busy session replaced the current session")
+		t.Fatal("failed restore replaced current session")
 	}
-	if !strings.Contains(strings.Join(u.display.Lines(), "\n"), "session is open in another process") {
-		t.Fatal("Enter silently ignored the busy session")
+	output, _ := os.ReadFile(u.out.Name())
+	if !strings.Contains(string(output), "invalid restored state") {
+		t.Fatal("restore error not shown inside picker")
 	}
 }
 
@@ -265,10 +401,11 @@ func TestMatchingSessionIndicesFiltersUsefulSessionDetails(t *testing.T) {
 func TestSessionSelectorLineUsesTimeAgentsAndPreviewWithoutID(t *testing.T) {
 	entry := session.Entry{Snapshot: session.Snapshot{
 		ID:      "fead69f5000000000000000000000000",
-		Saved:   time.Date(2026, time.September, 9, 14, 32, 0, 0, time.Local),
+		Saved:   time.Now(),
+		Recency: time.Date(2026, time.September, 9, 14, 32, 0, 0, time.Local),
 		Preview: "Fix terminal input flicker",
 		Agents:  []session.SavedAgent{{}, {}},
-	}}
+	}, Current: true}
 	line := renderSessionLine(entry, true, 120, false)
 	for _, want := range []string{"> ", "Sep 09 14:32", "2 agents", "Fix terminal input flicker"} {
 		if !strings.Contains(line, want) {
@@ -283,7 +420,10 @@ func TestSessionSelectorLineUsesTimeAgentsAndPreviewWithoutID(t *testing.T) {
 func TestSessionSelectorHeaderShowsCtrlCLeaveHint(t *testing.T) {
 	entries := []session.Entry{{Snapshot: session.Snapshot{ID: strings.Repeat("a", 32), Preview: "Saved work"}}}
 	var output strings.Builder
-	renderSessionSelector(&output, entries, []int{0}, 0, 0, 1, 80, "", false)
+	_, _, err := runSessionPicker(strings.NewReader("\x03"), &output, entries, sessionPickerOptions{visible: 1, width: 80, height: 9})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(output.String(), selectorLeaveHint) {
 		t.Fatalf("selector header = %q", output.String())
 	}

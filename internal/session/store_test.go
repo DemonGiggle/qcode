@@ -7,32 +7,28 @@ import (
 	"time"
 )
 
-func TestStoreWorkspaceRoundTripAndLocks(t *testing.T) {
+func TestStoreWorkspaceRoundTrip(t *testing.T) {
 	dir, workspace := t.TempDir(), t.TempDir()
 	s, err := Open(dir, workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, lock, err := s.New()
+	a, err := s.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer Release(lock)
+
 	a.Preview = "latest response"
 	a.Saved = time.Now()
 	a.Left = a.Saved
 	if err := s.Save(a); err != nil {
 		t.Fatal(err)
 	}
-	if other, err := s.Lock(a.ID); err == nil {
-		Release(other)
-		t.Fatal("double ownership allowed")
-	}
-	b, other, err := s.New()
+	b, err := s.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer Release(other)
+
 	b.Saved = a.Saved.Add(time.Minute)
 	if err := s.Save(b); err != nil {
 		t.Fatal(err)
@@ -41,7 +37,7 @@ func TestStoreWorkspaceRoundTripAndLocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 || entries[0].ID != b.ID || !entries[0].Busy || entries[1].Preview != a.Preview {
+	if len(entries) != 2 || entries[0].ID != b.ID || entries[1].Preview != a.Preview {
 		t.Fatalf("entries: %+v", entries)
 	}
 	separate, err := Open(dir, t.TempDir())
@@ -63,8 +59,8 @@ func TestStoreWorkspaceRoundTripAndLocks(t *testing.T) {
 
 func TestStoreRejectsInvalidAndPreservesPreviousSnapshot(t *testing.T) {
 	s, _ := Open(t.TempDir(), t.TempDir())
-	snap, lock, _ := s.New()
-	defer Release(lock)
+	snap, _ := s.New()
+
 	snap.Preview = "original"
 	if err := s.Save(snap); err != nil {
 		t.Fatal(err)
@@ -93,32 +89,26 @@ func TestStoreRejectsInvalidAndPreservesPreviousSnapshot(t *testing.T) {
 	}
 }
 
-func TestStoreListDoesNotReportLockIOErrorsAsBusy(t *testing.T) {
+func TestStoreIgnoresOldLocks(t *testing.T) {
 	s, err := Open(t.TempDir(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, lock, err := s.New()
+	snap, err := s.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Save(snap); err != nil {
-		Release(lock)
 		t.Fatal(err)
 	}
-	Release(lock)
-	lockPath := filepath.Join(s.dir, snap.ID+".lock")
-	if err := os.Remove(lockPath); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(lockPath, 0700); err != nil {
+	if err := os.Mkdir(filepath.Join(s.dir, snap.ID+".lock"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := s.List()
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("list = %+v, %v", entries, err)
+	if err != nil || len(entries) != 1 || entries[0].Problem != "" {
+		t.Fatalf("old lock affected list: %+v, %v", entries, err)
 	}
-	if entries[0].Busy || entries[0].Problem == "" {
-		t.Fatalf("lock I/O error misreported as another process: %+v", entries[0])
+	if _, err := s.LoadForResume(snap.ID); err != nil {
+		t.Fatal(err)
 	}
 }

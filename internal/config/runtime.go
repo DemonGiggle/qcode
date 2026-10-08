@@ -119,6 +119,18 @@ func (w *RuntimePreferenceWriter) PersistMaxSteps(maxSteps int) error {
 	return w.persist(map[string]*string{"max_steps": &value})
 }
 
+// PersistInteractive records the default question mode for future sessions.
+func (w *RuntimePreferenceWriter) PersistInteractive(enabled bool) error {
+	if w == nil {
+		return errors.New("runtime preference writer is nil")
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	value := strconv.FormatBool(enabled)
+	return w.persist(map[string]*string{"interactive": &value})
+}
+
 // statuslineHiddenOrder is the canonical order used when persisting the
 // statusline_hidden denylist. It follows status bar priority from highest to
 // lowest so the stored list stays deterministic.
@@ -370,7 +382,7 @@ func runtimeConfigEntries(data []byte) (map[string]runtimeConfigEntry, int, erro
 				continue
 			}
 			name := string(key.Data)
-			if name != "model" && name != "thinking" && name != "max_steps" && name != "statusline_hidden" && name != "theme" {
+			if name != "model" && name != "thinking" && name != "max_steps" && name != "interactive" && name != "statusline_hidden" && name != "theme" {
 				continue
 			}
 			// Array nodes do not carry a Raw range. Derive the value span
@@ -398,7 +410,7 @@ func runtimeConfigEntries(data []byte) (map[string]runtimeConfigEntry, int, erro
 
 func renderRuntimeKeys(changes map[string]*string, newline string) []byte {
 	var output bytes.Buffer
-	for _, key := range []string{"model", "thinking", "max_steps", "statusline_hidden", "theme"} {
+	for _, key := range []string{"model", "thinking", "max_steps", "interactive", "statusline_hidden", "theme"} {
 		value, ok := changes[key]
 		if !ok || value == nil {
 			continue

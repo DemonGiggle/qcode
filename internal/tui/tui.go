@@ -134,11 +134,12 @@ type maxStepsReader interface {
 }
 
 // RuntimePreferenceWriter persists preferences changed by the TUI. Model,
-// step-limit, and statusline controls are main-tab settings; themes apply to
-// the whole terminal and can be saved from any tab.
+// step-limit, and statusline controls save from main; theme and interactive
+// preferences can be saved from any tab.
 type RuntimePreferenceWriter interface {
 	PersistModel(model, thinking string) error
 	PersistMaxSteps(maxSteps int) error
+	PersistInteractive(enabled bool) error
 	PersistStatuslineHidden(hidden []string) error
 	PersistTheme(id string) error
 }
@@ -1399,6 +1400,16 @@ func (u *UI) persistMaxStepsPreference(maxSteps int) {
 	}
 }
 
+func (u *UI) persistInteractivePreference(enabled bool) {
+	writer, _ := u.runtimePreferenceTarget()
+	if writer == nil {
+		return
+	}
+	if err := writer.PersistInteractive(enabled); err != nil {
+		u.printSystemMessage(yellow + "Warning: unable to persist interactive preference: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+	}
+}
+
 func (u *UI) runtimePreferenceTarget() (RuntimePreferenceWriter, bool) {
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
@@ -1496,7 +1507,9 @@ func (u *UI) handleInteractiveCommand(fields []string) {
 	if !u.activeAgentConfigurable() {
 		return
 	}
-	controller.SetInteractiveMode(fields[1] == "on")
+	enabled := fields[1] == "on"
+	controller.SetInteractiveMode(enabled)
+	u.persistInteractivePreference(enabled)
 	u.drawStatusBar()
 	message := "Interactive questions " + fields[1] + "."
 	if fields[1] == "on" && !controller.InteractiveAvailable() {

@@ -62,6 +62,22 @@ func TestWrapANSIRespectsExistingLines(t *testing.T) {
 	}
 }
 
+func TestWrapANSINormalizesTabsOnEveryLine(t *testing.T) {
+	for _, tc := range []struct {
+		text, want string
+		width      int
+	}{
+		{"\tone\t two", " one  two", 20},
+		{"\tone\t two\n\t甲\t🛡️\t乙", " one  two\n 甲 🛡️ 乙", 20},
+		{"\t甲🛡️\t乙\n\ta\tb", " 甲🛡️\n乙\n a b", 5},
+		{"\ta\tb\n\t甲🛡️\t乙", " a b\n 甲🛡️ 乙", 0},
+	} {
+		if got := wrapANSI(tc.text, tc.width, ""); got != tc.want {
+			t.Errorf("wrap %q at width %d = %q, want %q", tc.text, tc.width, got, tc.want)
+		}
+	}
+}
+
 func TestWrapANSIHardWrapsLongWords(t *testing.T) {
 	if got := wrapANSI("abcdefgh", 4, ""); got != "abcd\nefgh" {
 		t.Fatalf("wrapped word = %q", got)
