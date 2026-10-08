@@ -170,16 +170,15 @@ func (r *interruptReader) readSelectorEscapeTail() []byte {
 	if first != '[' {
 		return tail
 	}
-	second, ok := read()
-	if !ok {
-		return tail
-	}
-	tail = append(tail, second)
-	if second != '5' && second != '6' {
-		return tail
-	}
-	if terminator, ok := read(); ok {
-		tail = append(tail, terminator)
+	for len(tail) < 31 {
+		next, ok := read()
+		if !ok {
+			break
+		}
+		tail = append(tail, next)
+		if next >= 0x40 && next <= 0x7e {
+			break
+		}
 	}
 	return tail
 }

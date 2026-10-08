@@ -3,8 +3,6 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -55,7 +53,6 @@ type sessionPersistence struct {
 	mu          sync.Mutex
 	store       *session.Store
 	current     session.Snapshot
-	lock        *os.File
 	lastContent string
 	lastError   string
 	build       func(session.Snapshot) (*UI, error)
@@ -70,11 +67,12 @@ func (u *UI) SetDetachedAgentManager(manager agentController) { u.manager = mana
 // EnableSessions installs persistence only for interactive, non-demo runs.
 func (u *UI) EnableSessions(store *session.Store, build func(session.Snapshot) (*UI, error)) error {
 	store.SetDefaultSnapshotFilter(func(snap session.Snapshot) (session.Snapshot, error) { return FilterSnapshot(u.redaction, snap) })
-	snap, lock, err := store.New()
+	store.SetDefaultNameFilter(func(name string) string { return u.redaction.Text(redaction.Persistence, name) })
+	snap, err := store.New()
 	if err != nil {
 		return err
 	}
-	u.persistence = &sessionPersistence{store: store, current: snap, lock: lock, build: build, requests: make(chan struct{}, 1)}
+	u.persistence = &sessionPersistence{store: store, current: snap, build: build, requests: make(chan struct{}, 1)}
 	return nil
 }
 
@@ -365,7 +363,6 @@ func (u *UI) closeSession() {
 		return
 	}
 	u.reportSave(u.saveSession(true))
-	session.Release(u.persistence.lock)
 }
 
 func (u *UI) resumeSession() {
@@ -373,7 +370,7 @@ func (u *UI) resumeSession() {
 }
 
 // listSessionsLocked keeps every saved session in the store's order and marks
-// the locally owned session separately from sessions open in other processes.
+// the session currently displayed in this process.
 func (p *sessionPersistence) listSessionsLocked() ([]session.Entry, error) {
 	entries, err := p.store.List()
 	if err != nil {
@@ -382,7 +379,6 @@ func (p *sessionPersistence) listSessionsLocked() ([]session.Entry, error) {
 	for i := range entries {
 		if entries[i].ID == p.current.ID {
 			entries[i].Current = true
-			entries[i].Busy = false
 		}
 	}
 	return entries, nil
@@ -400,22 +396,12 @@ func (u *UI) resumeSessionID(requestedID string) {
 	if requestedID == currentID {
 		return
 	}
-	for _, a := range u.manager.List() {
-		if a.Status == session.StatusRunning || a.Status == session.StatusWaitingForApproval {
-			u.printSystemMessage("Finish or cancel busy agent " + a.ID + " before resuming.")
-			return
-		}
-	}
 	p.mu.Lock()
 	choices, err := p.listSessionsLocked()
 	p.mu.Unlock()
 	if err != nil {
 		u.printSystemMessage("Cannot list sessions: " + err.Error())
 		return
-	}
-	for i := range choices {
-		choices[i].Preview = u.redaction.Text(redaction.Terminal, choices[i].Preview)
-		choices[i].Problem = u.redaction.Text(redaction.Terminal, choices[i].Problem)
 	}
 	if len(choices) == 0 {
 		u.printSystemMessage("No saved sessions for this workspace.")
@@ -426,7 +412,7 @@ func (u *UI) resumeSessionID(requestedID string) {
 		u.input.setRaw(true)
 		u.beginRawSelector()
 		var accepted bool
-		id, accepted, err = u.selectSession(choices)
+		id, accepted, err = u.pickSession(choices, u.restoreSession)
 		u.input.setRaw(false)
 		u.endRawSelector()
 		u.repaintActive()
@@ -434,48 +420,44 @@ func (u *UI) resumeSessionID(requestedID string) {
 			u.printSystemMessage(err.Error())
 			return
 		}
-		if !accepted {
+		if !accepted || id == currentID {
 			return
 		}
 	} else {
-		found := false
-		for _, choice := range choices {
-			if choice.ID == id {
-				found = true
-				break
-			}
-		}
-		if !found {
-			u.printSystemMessage("Unknown session: " + id)
+		if err := u.restoreSession(id); err != nil {
+			u.printSystemMessage("Cannot resume: " + err.Error())
 			return
 		}
 	}
+	u.activateRestoredTab()
+	if _, err := p.store.LoadMetadata(id); err != nil {
+		u.printSystemMessage("Session metadata: " + err.Error())
+	}
+}
+
+// restoreSession stages and validates before replacing the current interface.
+// Picker callers can report any failure inline and leave the selection open.
+func (u *UI) restoreSession(id string) error {
+	p := u.persistence
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if id == p.current.ID {
-		return
+		return nil
 	}
-	lock, err := p.store.Lock(id)
-	if err != nil {
-		u.printSystemMessage("Cannot resume: " + err.Error())
-		return
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			session.Release(lock)
+	for _, a := range u.manager.List() {
+		if a.Status == session.StatusRunning || a.Status == session.StatusWaitingForApproval {
+			return fmt.Errorf("finish or cancel busy agent %s before resuming", a.ID)
 		}
-	}()
+	}
 	snap, err := p.store.LoadForResume(id)
 	if err != nil {
-		u.printSystemMessage("Cannot resume: " + err.Error())
-		return
+		return err
 	}
 	staged, err := p.build(snap)
 	if err != nil {
-		u.printSystemMessage("Cannot resume: " + err.Error())
-		return
+		return err
 	}
+	committed := false
 	defer func() {
 		if !committed {
 			staged.manager.Shutdown()
@@ -485,8 +467,7 @@ func (u *UI) resumeSessionID(requestedID string) {
 		flusher.FlushEvents()
 	}
 	if err = u.saveSessionLocked(true); err != nil {
-		u.printSystemMessage("Cannot save current session: " + err.Error())
-		return
+		return fmt.Errorf("cannot save current session: %w", err)
 	}
 	u.shutdownAgentManager()
 	u.screenMu.Lock()
@@ -504,14 +485,12 @@ func (u *UI) resumeSessionID(requestedID string) {
 	u.screenMu.Unlock()
 	u.SetAgentManager(staged.manager)
 	u.signalPresentation()
-	session.Release(p.lock)
-	p.lock = lock
 	p.current = snap
 	p.current.Recency = session.ResumeTime(snap)
 	p.current.Left = time.Time{}
 	p.lastContent = ""
 	committed = true
-	u.activateRestoredTab()
+	return nil
 }
 
 func (u *UI) activateRestoredTab() {
@@ -530,168 +509,4 @@ func (u *UI) activateRestoredTab() {
 	if draft := u.drafts[u.activeAgent]; draft != "" {
 		u.input.inject([]byte(draft))
 	}
-}
-
-func (u *UI) selectSession(entries []session.Entry) (string, bool, error) {
-	if u.height < 7 || u.width < 20 {
-		return "", false, fmt.Errorf("enlarge the terminal to at least 20 columns and 7 rows to select a session")
-	}
-	visible := min(12, max(3, u.height-6))
-	return selectSession(u.input, u.themedSelectorWriter(), entries, visible, u.width, ColorEnabled(u.out))
-}
-
-func selectSession(in io.Reader, out io.Writer, entries []session.Entry, visible, width int, color bool) (string, bool, error) {
-	if len(entries) == 0 {
-		return "", false, nil
-	}
-	visible = selectorVisible(len(entries), visible)
-	rows := visible + 1
-	query := ""
-	matches := matchingSessionIndices(entries, query)
-	selected, start := 0, 0
-	renderSessionSelector(out, entries, matches, selected, start, visible, width, query, color)
-	for {
-		key, err := readSelectorKey(in)
-		if err != nil {
-			clearSelector(out, rows)
-			return "", false, err
-		}
-		switch key {
-		case "\r", "\n":
-			if len(matches) == 0 {
-				continue
-			}
-			entry := entries[matches[selected]]
-			// Availability may change while the picker is open. The caller
-			// acquires the lock and validates the snapshot before restoring it,
-			// reporting any failure instead of silently ignoring Enter.
-			clearSelector(out, rows)
-			return entry.ID, true, nil
-		case string([]byte{ctrlC}), "\x1b":
-			clearSelector(out, rows)
-			return "", false, nil
-		case arrowUpSequence, arrowDownSequence, selectorPageUp, selectorPageDown:
-			if len(matches) == 0 {
-				continue
-			}
-			oldSelected, oldStart := selected, start
-			switch key {
-			case arrowUpSequence:
-				selected = (selected + len(matches) - 1) % len(matches)
-				start = selectorStart(selected, len(matches), visible, start)
-			case arrowDownSequence:
-				selected = (selected + 1) % len(matches)
-				start = selectorStart(selected, len(matches), visible, start)
-			case selectorPageUp:
-				selected, start = selectorPage(selected, start, len(matches), visible, -1)
-			case selectorPageDown:
-				selected, start = selectorPage(selected, start, len(matches), visible, 1)
-			}
-			if start != oldStart {
-				clearSelector(out, rows)
-				renderSessionSelector(out, entries, matches, selected, start, visible, width, query, color)
-			} else if selected != oldSelected {
-				replaceSelectorRow(out, rows, 1+oldSelected-start, renderSessionLine(entries[matches[oldSelected]], false, width, color))
-				replaceSelectorRow(out, rows, 1+selected-start, renderSessionLine(entries[matches[selected]], true, width, color))
-			}
-			continue
-		case string([]byte{8}), string([]byte{127}):
-			if query == "" {
-				continue
-			}
-			query = query[:len(query)-1]
-			matches = matchingSessionIndices(entries, query)
-			selected, start = 0, 0
-		case string([]byte{ctrlU}):
-			query = ""
-			matches = matchingSessionIndices(entries, query)
-			selected, start = 0, 0
-		default:
-			if len(key) != 1 || key[0] < 32 || key[0] > 126 {
-				continue
-			}
-			query += key
-			matches = matchingSessionIndices(entries, query)
-			selected, start = 0, 0
-		}
-		clearSelector(out, rows)
-		renderSessionSelector(out, entries, matches, selected, start, visible, width, query, color)
-	}
-}
-
-func matchingSessionIndices(entries []session.Entry, query string) []int {
-	query = strings.ToLower(query)
-	matches := make([]int, 0, len(entries))
-	for i, entry := range entries {
-		text := sessionEntryLabel(entry)
-		if strings.Contains(strings.ToLower(text), query) {
-			matches = append(matches, i)
-		}
-	}
-	return matches
-}
-
-func renderSessionSelector(out io.Writer, entries []session.Entry, matches []int, selected, start, visible, width int, query string, color bool) {
-	legend := interfaceGlyph(UnicodeEnabled(), "● current", "* current")
-	header := selectorHeader(fmt.Sprintf("Resume session (%d/%d) | %s | Filter: %s", len(matches), len(entries), legend, query), width)
-	printSelectorRow(out, header)
-	for row := 0; row < visible; row++ {
-		matchIndex := start + row
-		if matchIndex >= len(matches) {
-			if row == 0 && len(matches) == 0 {
-				printSelectorRow(out, "  No matching sessions")
-			} else {
-				printSelectorRow(out, "")
-			}
-			continue
-		}
-		printSelectorRow(out, renderSessionLine(entries[matches[matchIndex]], matchIndex == selected, width, color))
-	}
-}
-
-func renderSessionLine(entry session.Entry, selected bool, width int, color bool) string {
-	marker := "  "
-	if selected {
-		marker = "> "
-	}
-	current := "  "
-	if entry.Current {
-		current = interfaceGlyph(UnicodeEnabled(), "● ", "* ")
-	}
-	line := marker + current + sessionEntryLabel(entry)
-	if width > 0 {
-		line = truncateDiffLine(line, width, false)
-	}
-	if !color {
-		return line
-	}
-	if entry.Busy {
-		return dim + line + reset
-	}
-	if entry.Problem != "" {
-		return yellow + line + reset
-	}
-	if selected {
-		return cyan + bold + line + reset
-	}
-	return line
-}
-
-func sessionEntryLabel(entry session.Entry) string {
-	when := session.ResumeTime(entry.Snapshot).In(time.Local).Format("Jan 02 15:04")
-	agents := "1 agent"
-	if len(entry.Agents) != 1 {
-		agents = fmt.Sprintf("%d agents", len(entry.Agents))
-	}
-	preview := strings.Join(strings.Fields(plainHistoryText(entry.Preview)), " ")
-	if preview == "" {
-		preview = "Untitled session"
-	}
-	if entry.Problem != "" {
-		preview = "Unavailable: " + entry.Problem
-	} else if entry.Busy {
-		preview = "Open elsewhere: " + preview
-	}
-	separator := interfaceGlyph(UnicodeEnabled(), " · ", " | ")
-	return sanitizeDiffLine(when+separator+agents+separator+preview, "<ESC>")
 }

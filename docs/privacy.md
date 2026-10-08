@@ -41,10 +41,10 @@ Filtering decodes tool arguments stored as bytes and reconstructs styled
 history cells before matching. Unfinished response and terminal parser buffers
 are omitted. Work history, reasoning text, inspectable provider replay text,
 plans, skill draft contents, learning context, previews, diffs, and persisted
-composer drafts are filtered too. Session files keep private permissions.
+composer drafts and custom session names are filtered too. Session files keep private permissions.
 
 Older files stay unchanged until resumed. Session lists and browser catalogs
-filter their display copies in memory. Resume acquires the session lock, loads
+filter their display copies in memory. Resume loads
 and sanitizes the snapshot, and atomically rewrites it before building the
 restored interface. A failed rewrite aborts resume; no unredacted backup is
 created. The snapshot version remains compatible. Resumed tasks receive the

@@ -120,9 +120,9 @@ var slashCommands = []slashCommand{
 		examples: []string{"/plan", "/plan show", "/plan act"},
 	},
 	{
-		name: "/resume", usage: "/resume [session-id]", description: "Continue a saved session",
-		arguments: []helpArgument{{name: "session-id", description: "Session to restore; omit it to open the session picker."}},
-		examples:  []string{"/resume", "/resume 20260917-abc123"},
+		name: "/resume", usage: "/resume [session-id]", description: "Browse, rename, pin, and continue saved sessions",
+		arguments: []helpArgument{{name: "session-id", description: "Session to restore; omit for the picker with a transcript preview. Tab opens Rename and Pin/Unpin."}},
+		examples:  []string{"/resume", "/resume fead69f5000000000000000000000000"},
 	},
 	{
 		name: "/remote", usage: "/remote", description: "Control qcode from a web browser",

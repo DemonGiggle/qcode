@@ -179,7 +179,7 @@ func TestResumeSwapsSavedTabsAndPreservesCurrentSession(t *testing.T) {
 	target.steeringCursor = 2
 	u.steeringCursor = 9
 	target.views["main"].display.AddLine("saved event and error")
-	snap, lock, err := store.New()
+	snap, err := store.New()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestResumeSwapsSavedTabsAndPreservesCurrentSession(t *testing.T) {
 	if err := store.Save(snap); err != nil {
 		t.Fatal(err)
 	}
-	session.Release(lock)
+
 	if err := u.EnableSessions(store, func(s session.Snapshot) (*UI, error) {
 		v, _ := persistenceUI(t)
 		return v, v.RestorePresentation(s.Presentation)
@@ -232,7 +232,7 @@ func TestResumeSwapsSavedTabsAndPreservesCurrentSession(t *testing.T) {
 			t.Fatalf("session switch changed list: %+v, %v", entries, err)
 		}
 		for _, entry := range entries {
-			if entry.Current != (entry.ID == currentID) || entry.Busy {
+			if entry.Current != (entry.ID == currentID) {
 				t.Fatalf("incorrect current session marker: %+v", entry)
 			}
 		}
@@ -240,11 +240,11 @@ func TestResumeSwapsSavedTabsAndPreservesCurrentSession(t *testing.T) {
 	assertSessions(snap.ID)
 	u.resumeSessionID(oldID)
 	assertSessions(oldID)
-	manager, ownedLock := u.manager, u.persistence.lock
+	manager := u.manager
 	u.resumeSessionID(oldID)
 	u.input.data <- '\r'
 	u.resumeSession()
-	if u.manager != manager || u.persistence.lock != ownedLock {
+	if u.manager != manager {
 		t.Fatal("selecting the current session reloaded it")
 	}
 	assertSessions(oldID)
@@ -273,11 +273,11 @@ func TestSessionOrderChangesOnlyAfterAcceptedUserPrompt(t *testing.T) {
 					currentID := u.persistence.current.ID
 					legacyTime := time.Now().UTC().Add(-2 * time.Hour)
 					u.persistence.current.Saved = legacyTime
-					newer, lock, err := store.New()
+					newer, err := store.New()
 					if err != nil {
 						t.Fatal(err)
 					}
-					defer session.Release(lock)
+
 					newer.Saved = legacyTime.Add(time.Hour)
 					if err := store.Save(newer); err != nil {
 						t.Fatal(err)
@@ -339,7 +339,7 @@ func TestSessionOrderChangesOnlyAfterAcceptedUserPrompt(t *testing.T) {
 
 func TestSessionPickerRetriesUnavailableEntries(t *testing.T) {
 	for _, entry := range []session.Entry{
-		{Snapshot: session.Snapshot{ID: strings.Repeat("a", 32), Preview: "preview", Saved: time.Now()}, Busy: true},
+		{Snapshot: session.Snapshot{ID: strings.Repeat("a", 32), Preview: "preview", Saved: time.Now()}},
 		{Snapshot: session.Snapshot{ID: strings.Repeat("b", 32)}, Problem: "unreadable snapshot"},
 	} {
 		u, _ := persistenceUI(t)
@@ -352,24 +352,22 @@ func TestSessionPickerRetriesUnavailableEntries(t *testing.T) {
 	}
 }
 
-func TestResumeBusySessionReportsErrorAndPreservesCurrentSession(t *testing.T) {
+func TestResumeBuildFailureKeepsPickerAndCurrentSession(t *testing.T) {
 	u, _ := persistenceUI(t)
 	store, err := session.Open(t.TempDir(), u.root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, lock, err := store.New()
+	snap, err := store.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Release(lock)
-	snap.Preview = "session still open elsewhere"
+	snap.Preview = "another process may use this session"
 	if err := store.Save(snap); err != nil {
 		t.Fatal(err)
 	}
 	if err := u.EnableSessions(store, func(session.Snapshot) (*UI, error) {
-		t.Fatal("attempted to build a session without acquiring its lock")
-		return nil, nil
+		return nil, fmt.Errorf("invalid restored state")
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -379,10 +377,11 @@ func TestResumeBusySessionReportsErrorAndPreservesCurrentSession(t *testing.T) {
 	u.input.data <- ctrlC
 	u.resumeSession()
 	if u.persistence.current.ID != currentID {
-		t.Fatal("busy session replaced the current session")
+		t.Fatal("failed restore replaced current session")
 	}
-	if !strings.Contains(strings.Join(u.display.Lines(), "\n"), "session is open in another process") {
-		t.Fatal("Enter silently ignored the busy session")
+	output, _ := os.ReadFile(u.out.Name())
+	if !strings.Contains(string(output), "invalid restored state") {
+		t.Fatal("restore error not shown inside picker")
 	}
 }
 
@@ -421,7 +420,10 @@ func TestSessionSelectorLineUsesTimeAgentsAndPreviewWithoutID(t *testing.T) {
 func TestSessionSelectorHeaderShowsCtrlCLeaveHint(t *testing.T) {
 	entries := []session.Entry{{Snapshot: session.Snapshot{ID: strings.Repeat("a", 32), Preview: "Saved work"}}}
 	var output strings.Builder
-	renderSessionSelector(&output, entries, []int{0}, 0, 0, 1, 80, "", false)
+	_, _, err := runSessionPicker(strings.NewReader("\x03"), &output, entries, sessionPickerOptions{visible: 1, width: 80, height: 9})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(output.String(), selectorLeaveHint) {
 		t.Fatalf("selector header = %q", output.String())
 	}

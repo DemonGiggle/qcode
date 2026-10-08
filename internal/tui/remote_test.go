@@ -86,11 +86,11 @@ func TestRemoteCatalogIncludesSelectorStateAndResumableSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	current, currentLock, err := store.New()
+	current, err := store.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Release(currentLock)
+
 	u.persistence = &sessionPersistence{store: store, current: current}
 	current.Preview = "Current work"
 	current.Saved = time.Now().UTC().Add(-time.Hour)
@@ -98,7 +98,7 @@ func TestRemoteCatalogIncludesSelectorStateAndResumableSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resumable, resumableLock, err := store.New()
+	resumable, err := store.New()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,16 +108,15 @@ func TestRemoteCatalogIncludesSelectorStateAndResumableSessions(t *testing.T) {
 	if err := store.Save(resumable); err != nil {
 		t.Fatal(err)
 	}
-	session.Release(resumableLock)
 
-	busy, busyLock, err := store.New()
+	concurrent, err := store.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Release(busyLock)
-	busy.Preview = "busy"
-	busy.Saved = time.Now().UTC()
-	if err := store.Save(busy); err != nil {
+
+	concurrent.Preview = "open in another process"
+	concurrent.Saved = time.Now().UTC()
+	if err := store.Save(concurrent); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,10 +133,10 @@ func TestRemoteCatalogIncludesSelectorStateAndResumableSessions(t *testing.T) {
 	if len(catalog.Skills) != 2 || !catalog.Skills[0].Selected || catalog.Skills[1].Selected {
 		t.Fatalf("skills = %#v", catalog.Skills)
 	}
-	if len(catalog.Sessions) != 3 || catalog.Sessions[0].ID != busy.ID || catalog.Sessions[1].ID != resumable.ID || catalog.Sessions[2].ID != current.ID {
+	if len(catalog.Sessions) != 3 || catalog.Sessions[0].ID != concurrent.ID || catalog.Sessions[1].ID != resumable.ID || catalog.Sessions[2].ID != current.ID {
 		t.Fatalf("sessions = %#v, want every saved session in order", catalog.Sessions)
 	}
-	if !catalog.Sessions[0].Busy || catalog.Sessions[1].Preview != "Review the release" || !catalog.Sessions[2].Current || catalog.Sessions[2].Busy {
+	if catalog.Sessions[0].Busy || catalog.Sessions[1].Preview != "Review the release" || !catalog.Sessions[2].Current || catalog.Sessions[2].Busy {
 		t.Fatalf("session labels = %#v", catalog.Sessions)
 	}
 	if !catalog.Sessions[2].Recency.Equal(current.Saved) {

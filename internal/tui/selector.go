@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"io"
+	"unicode/utf8"
 )
 
 const (
@@ -29,6 +30,17 @@ func readSelectorKey(in io.Reader) (string, error) {
 		return "", err
 	}
 	if first[0] != 27 {
+		if first[0] >= utf8.RuneSelf {
+			key := first[:]
+			for !utf8.FullRune(key) && len(key) < utf8.UTFMax {
+				var next [1]byte
+				if _, err := io.ReadFull(in, next[:]); err != nil {
+					return "", err
+				}
+				key = append(key, next[0])
+			}
+			return string(key), nil
+		}
 		return string(first[:]), nil
 	}
 	// A terminal does not delimit a standalone Escape key. Interactive input
@@ -42,14 +54,20 @@ func readSelectorKey(in io.Reader) (string, error) {
 		return string(first[:]), nil
 	}
 	key := string(append(first[:], tail[:]...))
-	if tail[0] != '[' || (tail[1] != '5' && tail[1] != '6') {
+	if tail[0] != '[' || (tail[1] >= 0x40 && tail[1] <= 0x7e) {
 		return key, nil
 	}
-	var terminator [1]byte
-	if _, err := io.ReadFull(in, terminator[:]); err != nil {
-		return key, nil
+	for len(key) < 32 {
+		var next [1]byte
+		if _, err := io.ReadFull(in, next[:]); err != nil {
+			break
+		}
+		key += string(next[:])
+		if next[0] >= 0x40 && next[0] <= 0x7e {
+			break
+		}
 	}
-	return key + string(terminator[:]), nil
+	return key, nil
 }
 
 func selectorVisible(total, requested int) int {

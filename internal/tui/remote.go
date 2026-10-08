@@ -365,7 +365,7 @@ func (u *UI) remoteSessions() []RemoteSessionState {
 			ID: entry.ID, Preview: remoteSessionPreview(u.redaction.Text(redaction.Remote, entry.Preview)),
 			Created: entry.Created, Saved: entry.Saved, Left: entry.Left,
 			Recency: session.ResumeTime(entry.Snapshot), Current: entry.Current,
-			Busy: entry.Busy, Problem: entry.Problem,
+			Busy: false, Problem: entry.Problem,
 			AgentCount: len(entry.Agents),
 		})
 	}
