@@ -6,6 +6,7 @@ model = "qwen2.5-coder:7b"
 
 # Terminal palette. Omit this field or choose "default" to keep the terminal's
 # current ANSI colors and background. /theme opens a live-preview picker.
+# See docs/configuration.md for all dark and light theme IDs.
 # theme = "catppuccin-mocha"
 
 # Optional thinking level for a model with an explicit capability entry. qcode

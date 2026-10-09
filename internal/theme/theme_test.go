@@ -18,7 +18,12 @@ func TestTransformANSIPreservesUnknownRGBChannels(t *testing.T) {
 }
 
 func TestPresetRoster(t *testing.T) {
-	want := []string{"default", "catppuccin-mocha", "dracula", "gruvbox-dark", "solarized-dark", "nord-dark", "catppuccin-latte", "alucard", "gruvbox-light", "solarized-light", "nord-light"}
+	want := []string{
+		"default", "catppuccin-mocha", "dracula", "gruvbox-dark", "solarized-dark", "nord-dark",
+		"tokyo-night", "one-dark", "rose-pine", "everforest-dark", "kanagawa-wave", "ayu-dark",
+		"catppuccin-latte", "alucard", "gruvbox-light", "solarized-light", "nord-light",
+		"tokyo-night-day", "one-light", "rose-pine-dawn", "everforest-light", "kanagawa-lotus", "ayu-light",
+	}
 	got := All()
 	if len(got) != len(want) {
 		t.Fatalf("got %d palettes, want %d", len(got), len(want))
@@ -30,6 +35,40 @@ func TestPresetRoster(t *testing.T) {
 		if _, ok := Lookup(id); !ok {
 			t.Errorf("Lookup(%q) failed", id)
 		}
+	}
+}
+
+func TestPresetsHaveUniqueNamesIDsAndColors(t *testing.T) {
+	ids, names, colors := map[string]bool{}, map[string]bool{}, map[Palette]string{}
+	for _, palette := range All() {
+		id, name := strings.ToLower(strings.TrimSpace(palette.ID)), strings.ToLower(strings.TrimSpace(palette.Name))
+		if id == "" || ids[id] {
+			t.Errorf("empty or duplicate theme ID %q", palette.ID)
+		}
+		if name == "" || names[name] {
+			t.Errorf("empty or duplicate theme name %q", palette.Name)
+		}
+		ids[id], names[name] = true, true
+		if palette.ID == "default" {
+			continue
+		}
+		if palette.Appearance != "Dark" && palette.Appearance != "Light" {
+			t.Errorf("%s has invalid appearance %q", palette.ID, palette.Appearance)
+		}
+		for _, hex := range []string{palette.Background, palette.Text, palette.Prompt, palette.Markdown, palette.Status, palette.Diff, palette.Success, palette.Warning, palette.Error, palette.Accent, palette.Muted, palette.Link} {
+			if _, ok := colorParams(38, hex); !ok {
+				t.Errorf("%s has invalid color %q", palette.ID, hex)
+			}
+		}
+		if palette.Background == palette.Text || palette.Success == palette.Error {
+			t.Errorf("%s has indistinguishable text or diff colors", palette.ID)
+		}
+		signature := palette
+		signature.ID, signature.Name, signature.Appearance = "", "", ""
+		if earlier, ok := colors[signature]; ok {
+			t.Errorf("%s duplicates the colors of %s", palette.ID, earlier)
+		}
+		colors[signature] = palette.ID
 	}
 }
 

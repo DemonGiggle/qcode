@@ -182,7 +182,11 @@ func validate(path string, cfg Config) error {
 		}
 	}
 	if cfg.Theme != "" && !theme.ValidID(cfg.Theme) {
-		return fmt.Errorf("parse config %s: theme must be one of default, catppuccin-mocha, dracula, gruvbox-dark, solarized-dark, nord-dark, catppuccin-latte, alucard, gruvbox-light, solarized-light, nord-light", path)
+		var ids []string
+		for _, palette := range theme.All() {
+			ids = append(ids, palette.ID)
+		}
+		return fmt.Errorf("parse config %s: theme must be one of %s", path, strings.Join(ids, ", "))
 	}
 	return nil
 }

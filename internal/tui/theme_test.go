@@ -60,7 +60,7 @@ func TestThemePickerPlacesPreviewBelowOptionsAndUsesStandardOptionColors(t *test
 	lastOption := -1
 	preview := -1
 	for index, line := range lines {
-		if strings.Contains(line, "Nord Light · Light") {
+		if strings.Contains(line, options[len(options)-1].Name+" · "+options[len(options)-1].Appearance) {
 			lastOption = index
 		}
 		if strings.Contains(line, "Preview Output") {

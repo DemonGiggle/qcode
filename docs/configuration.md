@@ -42,12 +42,27 @@ choice from any agent tab, including when the selection is Default (Auto).
 `/interactive on|off` also saves from any agent tab, setting `interactive` to
 `true` or `false` as the default for new sessions.
 Other preference changes in worker tabs, demo mode, one-shot mode, and piped
-execution remain session-only. `theme` accepts
-`default`, `catppuccin-mocha`, `dracula`, `gruvbox-dark`, `solarized-dark`,
-`nord-dark`, `catppuccin-latte`, `alucard`, `gruvbox-light`,
-`solarized-light`, or `nord-light`. `default` keeps the terminal's ANSI palette
-and background. Command-line flags, environment variables, and higher-priority
-configuration files retain their usual precedence.
+execution remain session-only. `theme = "default"` keeps the terminal's ANSI
+palette and background. The named palettes below are available in `/theme`,
+with dark choices followed by light choices. Colors from the linked theme
+families are adapted to qcode's prompt, Markdown, status, and diff roles.
+
+| Theme family | Dark ID | Light ID |
+| --- | --- | --- |
+| Catppuccin | `catppuccin-mocha` | `catppuccin-latte` |
+| Dracula | `dracula` | `alucard` |
+| Gruvbox | `gruvbox-dark` | `gruvbox-light` |
+| Solarized | `solarized-dark` | `solarized-light` |
+| Nord | `nord-dark` | `nord-light` |
+| [Tokyo Night](https://github.com/folke/tokyonight.nvim) | `tokyo-night` | `tokyo-night-day` |
+| [One Dark](https://github.com/atom/one-dark-syntax) / [One Light](https://github.com/atom/one-light-syntax) | `one-dark` | `one-light` |
+| [Rosé Pine](https://rosepinetheme.com/palette/) | `rose-pine` | `rose-pine-dawn` |
+| [Everforest](https://github.com/sainnhe/everforest) | `everforest-dark` | `everforest-light` |
+| [Kanagawa](https://github.com/rebelot/kanagawa.nvim) | `kanagawa-wave` | `kanagawa-lotus` |
+| [Ayu](https://github.com/ayu-theme/ayu-colors) | `ayu-dark` | `ayu-light` |
+
+Command-line flags, environment variables, and higher-priority configuration
+files retain their usual precedence.
 
 `skills.paths` adds directories to the built-in skill locations. Paths from all
 configuration layers are appended from lowest to highest priority. Blank paths
