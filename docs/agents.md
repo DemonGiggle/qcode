@@ -2,7 +2,15 @@
 
 Interactive mode supports up to 20 concurrent agent tabs, including permanent `main`. Use multiple agents to parallelize independent tasks—for example, one agent writing code while another runs tests, or separate agents exploring different parts of a large codebase.
 
-Use `/agent` to create one, `/agent list`, `/agent switch <id>`, `/agent rename <id> <name>`, `/agent cancel <id>`, and `/agent close <id>`. `/agent list` is an interactive selector: use Up/Down or PgUp/PgDn to move, Enter to switch to the highlighted agent, and Ctrl+C to leave it. Each row retains the agent ID, name, model, status, and queue information, followed by the latest recorded knowledge preview truncated to at most five lines.
+Use `/agent` or `/agent new` to choose a model for a new tab, or `/agent new <model-id>` to create it directly. The argument is a model ID from the current provider. New tabs receive IDs and initial names such as `agent-1`; use `/agent rename <id> <name>` to set a display name:
+
+```text
+/agent new qwen2.5-coder:7b
+/agent rename agent-1 review
+/agent switch main
+```
+
+Use `/agent list`, `/agent switch <id>`, `/agent cancel <id>`, and `/agent close <id>` to manage tabs. Closing asks for confirmation; `/agent close <id> --yes` skips it. Main cannot be closed. `/agent list` is an interactive selector: use Up/Down or PgUp/PgDn to move, Enter to switch to the highlighted agent, and Esc or Ctrl+C to leave it. Each row retains the agent ID, name, model, status, and queue information, followed by the latest recorded knowledge preview truncated to at most five lines.
 
 The tab bar shows the available switch shortcuts when the row has room: Ctrl+PageUp/PageDown or the Alt+, and Alt+. fallbacks. When all agents do not fit, `main` stays pinned while a moving window keeps the active agent and nearby tabs visible; counters at each edge show how many tabs are hidden in that direction. Each agent keeps independent context, model, output, tool settings, and sandbox grants while workspace mutations are serialized.
 
@@ -18,7 +26,7 @@ uses magenta; `NO_COLOR` keeps the terminal region plain.
 
 ## Prompt queues
 
-Each agent has an independent FIFO prompt queue. While an agent is running, terminal Enter steers its current task and Tab queues a separate task; slash-command Tab completion still takes priority. In the browser, Enter or **Steer** updates the busy task and **Queue** adds a separate task. The tab and task indicator show the queued task count, and the transcript marks a newly accepted queued task as `Queued #N`.
+Each agent has an independent FIFO prompt queue. While an agent is running, terminal Enter steers its current task and Tab queues a separate task; slash-command Tab completion still takes priority. In the browser, Enter or **Steer** updates the busy task and **Queue** adds a separate task. The tab and task indicator show the queued task count, and the pending area above the composer shows the queued prompts in order.
 
 A reserved multi-row area above the input groups pending input under **Steer** and **Queued** headings with tree connectors. The newest pending steer replaces the previous one; queued tasks retain their FIFO order. Alt+Q expands the panel: Up/Down selects an item, Page Up/Page Down scrolls, Delete removes pending input, and Esc or Alt+Q returns to the composer. The browser has an expansion control and **Remove** buttons. Input remains editable while work runs, so prompts can be added without waiting or blocking tab navigation. See [steering and pending work](interface.md#steering-and-pending-work) for delivery and cancellation behavior.
 
@@ -47,15 +55,16 @@ maximum step setting; their conversation and main-only orchestration tools stay
 separate. The interactive `/agent` command remains available when the user wants to
 create or switch agent tabs directly.
 
-Both creation and delegation are fire-and-forget: they return the accepted
+Creation with a task and delegation are fire-and-forget: they return the accepted
 request ID and queue position without waiting for the child to finish, then
-end the current main-agent model turn so it cannot begin polling. If an
+end the current main-agent run so it cannot begin polling. Creating an idle
+agent without a task allows the current run to continue. If an
 optional `create_agent.task` cannot be queued, the agent remains available and
 idle so the main agent can retry with `delegate_task`.
 
 ### Previous work and consultations
 
-Before each new main-agent request, qcode searches every task in the session's
+Before each new main-agent task, qcode searches non-main agents' tasks in the session's
 work journal and adds relevant excerpts to temporary request context. The main
 agent is instructed to choose related available agents and call `consult_agents`
 with a focused question for each before continuing. Selection is made by the
@@ -117,12 +126,12 @@ On every model request, qcode builds a bounded summary of every non-main agent�
 
 ### Handoff knowledge transfer
 
-When a sub-agent completes, its final text outcome is stored (capped at **4 KB**) in the work journal. The main agent can search those findings or ask for fresh information through `consult_agents`, which waits for the selected agents' replies. Sub-agent conversation histories are never copied into the main agent's context—only bounded findings cross the boundary.
+When a sub-agent completes, its full final answer is stored in the work journal. The agent's latest handoff summary is capped at **4 KB**, and the roster includes at most **100 bytes** of that summary. Search results provide bounded excerpts (up to 768 bytes of findings per match); consultation replies are capped at **4 KB**. The main agent can search those findings or ask for fresh information through `consult_agents`, which waits for the selected agents' replies. Sub-agent conversation histories are never copied into the main agent's context—only bounded findings cross the boundary.
 
 The knowledge flow is:
 
 ```
-Sub-agent completes → outcome stored (≤4 KB)
+Sub-agent completes → full answer journaled; latest handoff capped (≤4 KB)
          ↓
 Main agent's next request → roster injected into system prompt (≤2 KB preview)
          ↓
@@ -140,11 +149,15 @@ The system prompt instructs the model:
 ### Design boundaries
 
 - **No history leakage**: Sub-agent messages never enter main context.
-- **Bounded transfer**: 4 KB outcome cap, 2 KB roster cap, 100-byte preview in roster.
+- **Bounded transfer**: Full answers remain in the journal; model-visible handoffs, search excerpts, consultations, and the roster are bounded.
 - **Reference, not instruction**: Both roster and handoffs are explicitly framed as untrusted reference data that must not override user instructions.
 - **On-demand information**: The main agent can search recorded findings or request fresh answers with waiting `consult_agents`.
-- **Async delegation**: `create_agent` with `task` and `delegate_task` return immediately with the accepted request ID and queue position. The main agent continues its work without polling; use `list_agents` for status and `consult_agents` for a coordinated wait.
+- **Async delegation**: `create_agent` with `task` and `delegate_task` return immediately with the accepted request ID and queue position and end main's current run. The helper continues in its own tab; use a follow-up prompt for status or consultation.
 
 ## Startup and session context
 
-The interactive banner lists enabled and disabled tools for the active agent. `/clear` redraws this summary, including changes made with `/tool`. `/new`, `/model`, `/skill`, `/tool`, and `/learn` affect only the active tab.
+The interactive banner lists enabled and disabled tools for the active agent.
+`/clear` redraws this summary, including changes made with `/tool`. `/new`,
+`/model`, `/skill`, and `/tool` change the active tab; `/model` on main also
+saves its startup default. `/learn` proposes records from the active tab's
+conversation, but approved learning is shared across workspaces and sessions.

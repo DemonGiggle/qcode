@@ -1,4 +1,11 @@
-# Remote control architecture
+# Browser remote control
+
+Run `/remote` in the terminal to control the same live agents, prompts, queues,
+and approvals from a phone or browser. Closing a browser view leaves the host
+session running; use the terminal's **Close Connection** action or exit qcode
+to stop remote access.
+
+## Shared runtime
 
 qcode has one in-process control plane shared by every user interface:
 
@@ -15,8 +22,6 @@ start a second runtime when remote access is enabled, and a remote adapter must
 not create its own `AgentManager`. Local and remote commands therefore operate
 on the same agents, queues, session state, and workspace locks.
 
-## Phase 1: control-plane foundation
-
 - Interactive, restored, demo, and one-shot runtimes are created as a
   `control.Host`.
 - Existing TUI behavior is preserved through its current presentation event
@@ -26,33 +31,25 @@ on the same agents, queues, session state, and workspace locks.
   numbers for reconnect detection and bounded replay.
 - Human-input requests have a shared `InteractionBroker`. The first controller
   to resolve a request wins; later resolutions fail deterministically.
-- No network listener or `/remote` command is enabled in this phase.
 
-The first event types cover agent state, consultation notifications, and the
-interaction lifecycle. Streaming response, thinking, tool activity, usage, and
-diff events can be added to the same envelope as their current writer-based
-presentation paths are separated from the TUI.
-
-## Phase 2: browser remote adapter
-
-The initial network adapter uses JSON for commands and snapshots, plus SSE for
+The network adapter uses JSON for commands and snapshots, plus SSE for
 change notifications. `/remote` dynamically starts or stops that adapter on
 the existing Host; it does not put the TUI into a separate server mode.
 
-Tailscale support should initially expose the loopback HTTP listener through
-`tailscale serve`. An embedded `tsnet` listener can remain a later option when
-qcode needs its own tailnet node or programmatic Tailscale identity.
+Tailscale mode exposes the loopback HTTP listener through a foreground
+`tailscale serve` process using the host's existing Tailscale installation.
 
-Remote control has two terminal-selected modes and serializes human approvals
+Remote control has three terminal-selected modes and serializes human approvals
 through the interaction broker. Tailscale binds a browser session to a named
 tailnet identity. Pure Web is a trusted-LAN HTTP option whose terminal-issued
-login link is its sole authorization gate. A viewer role can be added later
-with Tailscale application capabilities.
+login link is its authorization gate. Pure Web (No auth, danger!) provides
+open control to anyone with its URL.
 
-### Using it
+## Connecting
 
 Run `/remote` in an interactive qcode session. When remote control is off, a
-terminal selector offers **Pure Web** first and **Tailscale** second. Pure Web
+terminal selector offers **Pure Web**, **Tailscale**, and
+**Pure Web (No auth, danger!)**, in that order. Pure Web
 binds an HTTP server to a random port on all interfaces and puts the host's
 primary LAN IPv4 address in the terminal-only QR link. It is unencrypted and
 must be used only on a trusted LAN. Tailscale starts a loopback server and its
@@ -72,11 +69,12 @@ link, token, or browser session is required. Anyone who knows that URL can read
 and control the qcode session until it is closed. Use it only for deliberately
 open, short-lived trusted-network sessions.
 
-When remote control is already on, `/remote` creates a fresh one-time QR login
-link for another browser and shows the mode, address, and current number of
-active browser sessions. The screen selects **Keep connection open** by default
-and exposes **Close Connection** as a secondary action. Closing requires an
-explicit confirmation and revokes every browser session.
+When authenticated remote control is already on, `/remote` creates a fresh
+one-time QR login link for another browser. In No auth mode it shows the bare
+service URL again. The screen shows the mode, address, and current number of
+active browser sessions, selects **Accept** by default to keep the connection
+open, and also offers **Save QR as PNG** and **Close Connection**. Closing
+requires an explicit confirmation and revokes every browser session.
 
 On Linux, the user running qcode must be allowed to manage the local Tailscale
 daemon. If `/remote` reports an operator-permission error, run this once as an
@@ -118,9 +116,9 @@ remain available while tool activity appears in the transcript. Pending approval
 questions show `Waiting for input`. A Cancel button replaces the TUI's
 `Ctrl+C` hint so a queued or running prompt can be stopped without the keyboard.
 
-Each `/remote` invocation issues a new single-use login link, valid for three
-minutes. Issuing another link invalidates the previous unredeemed link and
-leaves existing browser sessions connected.
+In the authenticated modes, each `/remote` invocation issues a new single-use
+login link, valid for three minutes. Issuing another link invalidates the
+previous unredeemed link and leaves existing browser sessions connected.
 
 The login link and QR appear in a local panel, outside the shared transcript,
 saved sessions, exports, and logs. The panel is dismissed by the next command.
@@ -144,10 +142,11 @@ path. Reloading the same tab resumes access. A fresh browser session needs a
 new login link. Session storage must be available; qcode does not fall back to
 cookies or persistent browser storage.
 
-Every API request, including transcript reads and the live event stream, sends
-`Authorization: Bearer <session_key>`. qcode checks the key against hashes held
-in server memory and, in Tailscale mode, requires the same named identity that
-redeemed the link. Invalid sessions receive HTTP 401 and the browser disables
+In authenticated modes, every API request, including transcript reads and the
+live event stream, sends `Authorization: Bearer <session_key>`. qcode checks
+the key against hashes held in server memory and, in Tailscale mode, requires
+the same named identity that redeemed the link. Invalid sessions receive HTTP
+401 and the browser disables
 controls and clears its stored key. Login tokens cannot be used as session keys.
 
 The three-minute limit only applies to login links. Browser sessions last until
@@ -177,15 +176,18 @@ the current multi-selection until Apply. Cancel or Escape leaves the qcode
 session unchanged. Saved-session choices keep every saved session in order,
 including the current session. A separate Current badge identifies it without changing
 the preview text. Selecting that session keeps it open.
-Sessions open elsewhere or unreadable remain visible with an explanatory label.
+Concurrent processes can restore the same session; the last successful save
+wins. Unreadable sessions remain visible with an explanatory label. The
+terminal `/resume` picker additionally provides transcript previews, rename,
+pin, and confirmed deletion; the browser selector restores sessions.
 
-### Steering and pending work
+## Steering and pending work
 
 Busy-agent prompts use structured submissions addressed to the browser's selected agent and observed task ID. Enter/**Steer** updates that task; **Queue** starts a separate FIFO task later. Tab navigates controls normally. A rejected submission retains the draft and refreshes state. **Remove** cancels pending input; **Cancel active work** cancels the running task. Steering waits for a streaming response or running tool, replaces the previous pending steer, and withdraws unanswered interactions. See [interface behavior](interface.md).
 
 Authenticated controllers can POST `/api/v1/prompts` with `agent_id`, `observed_task_id`, `prompt`, and `intent` (`automatic`, `steer`, or `queue`). The response includes `request_id`, accepted `intent`, `state`, `parent_task_id`, and `queue_position`. POST `/api/v1/prompts/{id}/cancel` with `agent_id` removes only pending input. Conflicts return HTTP 409. Runtime snapshots expose pending inputs and durable steering lifecycle events with sequence cursors.
 
-### Exporting from the browser
+## Exporting from the browser
 
 `/export` and `/export pretty` download a standalone HTML document with one tab
 per agent and completed prompt/response pairs in chronological order. `/export raw`

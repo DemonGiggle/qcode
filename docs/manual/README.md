@@ -6,21 +6,23 @@ implementation and architecture details and shows how to use each feature.
 The **Use cases** pages after chapter 3 walk through repository onboarding,
 bug fixes with queued checks, planning, independent agent tabs, reusable skills,
 and resuming or sharing work. The guide also covers pinned latest prompts,
-steering and pending-work removal, local redaction, terminal themes, transcript
-boundary navigation, token totals, and workspace path shortening.
+steering and pending-work removal, model-operation progress and elapsed time,
+local redaction, terminal themes, transcript boundary navigation, token totals,
+workspace path shortening, skill autoloading, and sandbox command directories.
 
 - **PDF:** [`qcode-user-manual.pdf`](qcode-user-manual.pdf)
 - **Screenshots:** [`assets/`](assets/) — illustrative terminal screens
   rendered for print clarity (TUI layout, `/help`, `/model` names only,
-  agents, Plan mode, `/remote` QR, diff/export, `/interactive` question).
+  agents, Plan mode, `/remote` QR, diff/export, `/interactive` question,
+  `/theme` live preview, and `/resume` with pins and transcript preview).
 
 ## Regenerate
 
-Requires Python 3 with `fpdf2`, `Pillow`, and DejaVu fonts (the generator uses
+Requires Python 3.10+ with `fpdf2` 2.8+ (table support), `Pillow`, and DejaVu fonts (the generator uses
 `/usr/share/fonts/truetype/dejavu/`):
 
 ```sh
-pip install fpdf2 Pillow
+python3 -m pip install 'fpdf2>=2.8' Pillow
 make manual
 # or:
 python3 docs/manual/generate_manual.py
@@ -36,6 +38,26 @@ overlapping text, and screenshot legibility. For example, with Poppler:
 ```sh
 pdftoppm -scale-to 1400 -png docs/manual/qcode-user-manual.pdf /tmp/qcode-manual
 ```
+
+If Poppler is unavailable, render with PyMuPDF (`python3 -m pip install PyMuPDF`):
+
+```sh
+python3 - <<'PY'
+from pathlib import Path
+import pymupdf
+
+output = Path('/tmp/qcode-manual-pages')
+output.mkdir(exist_ok=True)
+with pymupdf.open('docs/manual/qcode-user-manual.pdf') as document:
+    for number, page in enumerate(document, 1):
+        page.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5)).save(output / f'{number:02d}.png')
+PY
+```
+
+Check command table wrapping and repeated headings, figure order, and page
+footers. Command-view examples hide the pinned prompt, composer, and running
+indicator, and show `Ctrl+C closes view | Esc back` instead. Ctrl+C there
+leaves agents working; Ctrl+C in the composer cancels active work.
 
 ## Refresh the README demo
 

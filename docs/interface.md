@@ -27,7 +27,7 @@ Closing the view restores the pinned prompt, draft, and conversation reading
 position. Ctrl+C in the normal composer cancels the active agent task.
 
 - `/model` fetches the provider's models. Search a large catalog by typing, move through matches with Up/Down, and select with Enter.
-- `/new` discards the current conversation context and resets session token totals without restarting qcode or changing the provider, model, or workspace.
+- `/new` clears the active tab's conversation, latest prompt, token totals, plans, and added directory grants, and restores tool defaults with web tools disabled. It keeps the provider, model, workspace, selected skills, and interactive-question preference. Other tabs and recorded agent work remain available.
 - `/resume` opens this workspace's saved sessions with filtering and transcript previews. Up/Down and Page Up/Down navigate; Enter restores; Tab opens Rename, Pin/Unpin, and Delete; Ctrl+D opens Delete all; Esc or Ctrl+C returns to the composer. Selecting the current session keeps it open. Finish or cancel running agents before switching or deleting the current session. See [Saved sessions](#saved-sessions).
 - `/clear` redraws the interactive banner, which lists enabled and disabled tools for the active agent.
 - `/verbose` adds detailed timestamped telemetry, including raw tool arguments, without disabling concise activity events.
@@ -36,7 +36,7 @@ position. Ctrl+C in the normal composer cancels the active agent task.
 - `/theme` opens a terminal-only picker with a live Markdown and status preview. Use Up/Down and Enter to apply, or Esc/Ctrl+C to cancel. It includes Default (Auto) and 22 dark/light palettes from Catppuccin, Dracula/Alucard, Gruvbox, Solarized, Nord, Tokyo Night, One, Rosé Pine, Everforest, Kanagawa, and Ayu. See [Configuration](configuration.md) for theme IDs and source palettes. The choice recolors retained and future terminal output, updates the browser's pinned-prompt accent and background, and saves to the user config from any agent tab.
 - `/diff` and `/diff N` expand the latest write/edit diff preview (see below).
 - `/history` opens a searchable, newest-first list of completed prompts for the active agent. Select a prompt to read only that prompt and its final response; leaving the browser restores the conversation view without changing its reading position.
-- `/tool` enables or disables the web tools independently; see [Web tools](web-tools.md).
+- `/tool` opens the active agent's tool list. Type to filter, Space toggles, and Enter applies; `/tool <name> on|off` changes a tool directly, for example `/tool shell off`. File, shell, image, and skill tools can be toggled as well as the initially disabled web tools. Plan and Skill Plan modes restrict the available list; use `/interactive` to control normal-mode questions. See [Web tools](web-tools.md) for web access.
 - `/plan` enters read-only planning mode; `/plan show` opens the latest plan in a scrollable view; `/plan off` leaves it; `/plan act` implements the latest submitted plan. See [Plan mode](plan-mode.md).
 - `/interactive on|off` controls normal-mode questions for the active agent and saves the default for future sessions to the user config; `/interactive` reports the setting. See [Interactive questions](interactive-mode.md).
 - `/skillplan [rough intention]` starts guided, review-first skill creation; use `/skillplan show`, `/skillplan create`, or `/skillplan off` to manage the draft. See [Skill Plan mode](skillplan.md).

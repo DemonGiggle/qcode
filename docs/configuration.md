@@ -130,7 +130,7 @@ startup warning, skips that file, and continues loading the remaining layers.
 
 Explicit command-line flags take precedence over environment variables, which take precedence over the merged configuration, which takes precedence over built-in defaults. Within the configuration, non-empty scalar settings and supplied numeric, duration, and boolean settings override lower-priority values. Empty string settings remain unset and inherit a lower-priority value.
 
-When a flag or environment variable selects a provider different from the configured provider, the configured `model`, `base_url`, and `api_key` are not inherited; set any of them explicitly if they should apply to the selected provider.
+When a flag or environment variable selects a provider different from the configured provider, the configured `model`, `thinking`, `base_url`, `api_key`, and `context_window` are not inherited; set any of them explicitly if they should apply to the selected provider. A configured `context_window` also applies only when the configured model is unset or matches the selected model.
 
 API keys can be set with `api_key` in this file, though `QCODE_API_KEY` or `OPENAI_API_KEY` is preferable on shared systems. `--api-key` takes precedence over both environment variables and the configuration file. Keep configuration files containing a key private (for example, mode `0600` on Unix-like systems).
 
@@ -142,7 +142,7 @@ and model. No value is sent for unknown models or when the setting is omitted.
 
 ## Conversation compaction
 
-When the context capacity is known, qcode automatically compacts a conversation after 80% of that capacity is used. Set `auto_compact_threshold` to a value from 1 through 99 to change that point, or set `disable_auto_compact = true` (or pass `--disable-auto-compact`) to disable automatic compaction. `/compact` always remains available for manual compaction.
+When the context capacity is known, qcode automatically compacts a conversation after 80% of that capacity is used. In terminal sessions, set `auto_compact_threshold` to a value from 1 through 99 to change that point, or set `disable_auto_compact = true` (or pass `--disable-auto-compact`) to disable automatic compaction. `/compact` always remains available for manual compaction. Current one-shot runs use provider-discovered capacity and the built-in threshold; context overrides and compaction preferences are applied only to terminal agents.
 
 ## Local sensitive-data filtering
 

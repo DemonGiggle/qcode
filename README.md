@@ -25,6 +25,9 @@ qcode is a lightweight, keyboard-driven AI coding assistant that runs entirely i
 - 🔒 **Sandbox mode** for isolated tool execution on Linux
 - 🛡️ **Local redaction** for detected credentials and payment-card data in output, saved sessions, and exports
 - 📊 **Context tracking** with real-time token usage display
+- 🎨 **Terminal themes** with Default (Auto), 22 dark/light palettes, and live previews
+- 💾 **Saved sessions** with transcript previews, rename, pin, and confirmed deletion
+- 🌐 **Browser control** for the same live agents, steering, queues, and approvals
 
 ## 🚀 Quick Start
 
@@ -35,6 +38,9 @@ qcode is a lightweight, keyboard-driven AI coding assistant that runs entirely i
 make build
 ./bin/qcode
 ```
+
+The examples below assume `qcode` is on your `PATH`. From a source checkout,
+use `./bin/qcode` instead.
 
 ### Usage
 
@@ -63,12 +69,14 @@ qcode update --arch arm64
 ## 📖 Documentation
 
 - [User Manual (PDF)](docs/manual/qcode-user-manual.pdf) - How to use qcode, with example screens for common commands
+- [Command line](docs/cli.md) - Startup flags, piped prompts, environment variables, and updates
 - [Interface](docs/interface.md) - Terminal UI, slash commands, and navigation
 - [Plan mode](docs/plan-mode.md) - Read-only planning and explicit execution handoff
 - [Interactive questions](docs/interactive-mode.md) - Per-agent question toggle and terminal workflow
 - [Browser control](docs/remote-control.md) - Use the same live session from a phone or browser
 - [Skill Plan mode](docs/skillplan.md) - Guided, review-first qcode skill creation
 - [Token usage](docs/token-usage.md) - Per-session totals and structured usage events
+- [Context usage](docs/context.md) - Remaining capacity, estimates, and automatic compaction
 - [Providers](docs/providers.md) - Ollama, OpenAI, and OpenCode Go setup
 - [Multi-agent](docs/agents.md) - Concurrent agent tabs and orchestration
 - [Skills](docs/skills.md) - Workspace-local instruction bundles, [official release skills](docs/skills/), and authoring guidance

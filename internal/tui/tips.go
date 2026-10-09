@@ -21,7 +21,7 @@ var tipTexts = []string{
 	"Run `/model` to search the provider catalog with Up/Down + Enter, or `/model <id> [thinking]` to set it directly.",
 	"Run `/tool` to toggle tools with Space + Enter, or `/tool <name> on|off`; web tools start disabled until you enable them.",
 	"Run `/skill` to pick reusable instruction bundles; only selected skills reach the model and its `skill` tool.",
-	"Run `/agent new review` to create a named agent; qcode supports up to 20 tabs, including main.",
+	"Run `/agent new` to choose a helper's model, then `/agent rename agent-1 review` to name it; up to 20 tabs include main.",
 	"Switch agent tabs with Ctrl+PgUp/PgDn or Alt+,/.; each tab keeps its own draft, history, model, and tool settings.",
 	"At the bottom of output, Home/End edit the prompt. While viewing older output, Home jumps to the beginning and End jumps to the latest output.",
 	"Press Ctrl+C to cancel the running prompt, a picker, or a `/bash` command without exiting qcode.",
@@ -37,8 +37,11 @@ var tipTexts = []string{
 	"Use Ctrl/Alt+Left/Right or Alt+B/F to move by word; Ctrl+W deletes the previous word.",
 	"Press Up/Down at the prompt to recall earlier input and return to your unfinished draft.",
 	"In pickers type to filter, move with Up/Down or PgUp/PgDn, Enter to apply, Esc to go back, Ctrl+C to cancel all.",
-	"Run `/compact` to summarize old context; watch STEP, CONTEXT % left, and MODE PLAN in the status bar.",
+	"Run `/compact` to summarize old context; watch STEP, CTX % left, and MODE PLAN in the status bar.",
 	"Run `/theme` to preview terminal color palettes; Enter applies and saves your choice for future sessions.",
+	"The theme picker has Default (Auto) plus 22 dark/light palettes; use Up/Down to preview and Enter to save from any tab.",
+	"Model work shows Waiting, Receiving model thinking, or Receiving model response with elapsed time above the status bar.",
+	"In a command view, Ctrl+C closes the view while agents keep working; return to the composer to cancel active work.",
 	"Set `NO_COLOR=1` before launch to disable styling, or `QCODE_ASCII=1` for ASCII interface glyphs.",
 
 	// Agents and queued work.
@@ -55,27 +58,28 @@ var tipTexts = []string{
 
 	// Models, context, and usage.
 	"The `/model` picker offers supported thinking levels after model selection; Esc returns to the model list.",
-	"Thinking choices are cached from Models.dev; run `qcode --provider openai --update-model-meta` to refresh them.",
+	"OpenAI and OpenCode Go cache thinking choices from Models.dev; use `--update-model-meta` to refresh. Ollama uses local metadata.",
 	"In normal interactive mode, `/model` and `/maxsteps` on main save user defaults; changes in other tabs stay local.",
 	"Run `/maxsteps` to see the model-turn limit, or `/maxsteps 64` to allow more turns per request.",
 	"Run `/statusline` to choose status bar segments; narrow terminals keep remote, mode, and model first.",
-	"`CONTEXT` shows remaining model capacity; a `~` marks estimated usage and `unknown` means the limit is unavailable.",
+	"`CTX` shows remaining model capacity; a `~` marks estimated usage and `unknown` means the limit is unavailable.",
 	"Use `--context-window 32768` for an unknown context limit; it sets accounting capacity, not the provider's actual limit.",
-	"Changing models clears a custom context-window override; check the CONTEXT display after switching.",
+	"Changing models clears a custom context-window override; check the CTX display after switching.",
 	"Automatic compaction starts at 80% context use when capacity is known; set `auto_compact_threshold` to change it.",
 	"Use `--disable-auto-compact` to turn off automatic summaries; `/compact` remains available.",
 	"`TOK I` and `O` count input and output tokens across requests for the active agent; `?` marks incomplete totals.",
-	"Widen the terminal to 100 columns to see the combined token total; changing models retains session totals.",
+	"The TOK total appears when it fits one or two status rows; widen the terminal or hide segments with `/statusline` for more room.",
 
 	// Saved sessions and exports.
 	"Run `/resume` to browse this workspace's saved sessions, or `/resume <session-id>` to restore one directly.",
 	"Sessions autosave during interactive work; `/resume` restores tabs, drafts, models, settings, and retained output.",
 	"In `/resume`, Tab opens Rename, Pin/Unpin, and Delete; Ctrl+D opens Delete all with confirmation.",
+	"The `/resume` picker previews the saved active tab. Pins sort first; renaming or pinning preserves prompt-recency order.",
 	"Delete all removes every saved session in this workspace, including sessions hidden by the filter.",
-	"Deleting a session in `/resume` requires confirmation; deleting the current session clears all tabs and drafts while keeping the main agent's settings.",
+	"Deleting the current session clears all tabs and drafts while keeping main's settings; the confirmation defaults to Cancel.",
 	"Finish or cancel running agents before switching sessions with `/resume`; concurrent processes can restore the same session, with the last save winning.",
 	"After a crash, `/resume` restores the latest checkpoint; unfinished requests are interrupted and need your direction.",
-	"Run `/new` to reset the active agent's conversation, token totals, plan, web tools, and added directory grants.",
+	"Run `/new` to clear the active tab's context, usage, plans, and directory grants; it restores tool defaults with web tools off.",
 	"Run `/export` or `/export pretty` for an HTML timeline of completed prompts and responses, with a tab for each agent.",
 	"Run `/export raw` for the full styled transcript, including tool activity, thinking, and diffs.",
 	"Export filenames are generated automatically; the terminal saves in your workspace and the browser downloads the file.",
@@ -85,7 +89,7 @@ var tipTexts = []string{
 	// Planning and skills.
 	"Enter `/plan` while idle to investigate safely: Plan mode blocks file changes, shell commands, and delegation.",
 	"Plan and skill-design questions accept a listed choice or a custom answer; Ctrl+C cancels the request.",
-	"Run `/interactive on` to let normal work ask up to three clarifying questions per prompt; `/interactive` shows the setting.",
+	"Run `/interactive on` for up to three questions per prompt; it saves the startup default from any tab. `/interactive` shows it.",
 	"Use `/plan show` to scroll through the latest submitted plan, then `/plan act` to start implementation.",
 	"Run `/plan off` to leave planning without executing the plan; `/new` clears the saved plan.",
 	"Create `.qcode/skills/<name>/SKILL.md` for workspace instructions, then run `/skill` to discover and select them.",
@@ -126,6 +130,7 @@ var tipTexts = []string{
 	"Remote login links are single-use and expire after three minutes; run `/remote` again for another browser.",
 	"If a remote QR code does not fit, choose Save QR as PNG on the `/remote` screen or use its clickable login heading.",
 	"Use `/remote` in the terminal and confirm Close Connection to revoke all browser access.",
+	"In the browser, Enter or Steer updates busy work, Queue adds a task, and Tab moves focus; Cancel active work stops the task.",
 	"Reloading the same browser tab keeps remote access; a fresh browser session needs a new login link.",
 
 	// Command-line usage and configuration.

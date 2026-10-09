@@ -74,8 +74,9 @@ mounted read-only at its original path, only its empty ancestors are created
 under the hidden home, and it is prepended to the sandbox `PATH` ahead of the
 safe system path. Siblings and the rest of home stay hidden. Unlike
 `request_directory_access`, these mounts survive `/new`, are never read/write,
-and never prompt. Invalid, missing, root, duplicate, symlinked, and protected
-overlaps are skipped with a warning.
+and never prompt. Symlinks resolve to their target directories before validation
+and deduplication. Invalid or missing directories, the filesystem root,
+duplicates, and protected-path overlaps are skipped with a warning.
 
 ## Fallback behavior
 

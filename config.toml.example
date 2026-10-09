@@ -45,9 +45,10 @@ max_steps = 32
 # commands receive opt-out settings for common clients but may need their own flags.
 # danger_skip_tls_verify = true
 
-# Context capacity in tokens for the status bar (0 = automatic).
+# Context capacity in tokens for terminal agents (0 = automatic).
 # Set this for custom endpoints or models missing from the bundled catalog.
-# This is a display setting; it does not change the server's context allocation.
+# Used for the status bar and automatic compaction; the server's actual
+# context allocation is unchanged.
 # context_window = 32768
 
 # Compact the conversation automatically after this percentage of a known
@@ -61,9 +62,10 @@ max_steps = 32
 
 # Status bar segments to hide. Valid names: remote, mode, model, think, ws,
 # ctx, step, tok (model controls the combined provider prefix and MODEL unit).
-# Narrow terminals additionally drop low-priority segments first in the order
-# tok, step, ctx, ws, think, model, mode, remote. Use /statusline to toggle
-# without editing this file; /statusline on main persists here.
+# Narrow terminals shorten the workspace, then wrap to two status rows before
+# dropping segments in the order tok, step, ctx, ws, think, model, mode, remote.
+# Use /statusline to toggle without editing this file; changes on main save
+# to the user-level config file.
 # statusline_hidden = ["tok"]
 
 # Web tools start disabled; enable them with /tool in each interactive session.

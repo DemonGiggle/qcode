@@ -193,7 +193,8 @@ def make_screenshots() -> dict[str, Path]:
             ("Queued | Alt+Q expand", DIM, None, False),
             (" ╰─ 1. run the login tests after the fix", FG, None, False),
             ("(Steer)> also check the timeout handling", WHITE, None, True),
-            ("Waiting (⠋) · 1 queued  Ctrl+C to cancel", DIM, None, False),
+            ("Waiting (⠋) · 12s · Receiving model response · 1 queued", DIM, None, False),
+            ("Ctrl+C to cancel | Enter steer | Tab queue", DIM, None, False),
             ("ollama [MODEL qwen2.5-coder:7b] [WS ~/demo] [CTX 12% left]", DIM, STATUS_BG, False),
             ("[STEP 3/32] [TOK I:1.2K O:340 Σ:1.5K]", DIM, STATUS_BG, False),
         ],
@@ -209,7 +210,7 @@ def make_screenshots() -> dict[str, Path]:
             ("> refactor the login handler", DIM, None, False),
             ("Completed in 00:42 (09/27 10:15)", GREEN, None, False),
             ("", FG, None, False),
-            ("/agent [new [name]|list|switch <id>|rename <id> <name>|...]", CYAN, None, True),
+            ("/agent [new [model]|list|switch <id>|rename <id> <name>|...]", CYAN, None, True),
             ("/bash <cmd>  Run a shell command", FG, None, False),
             ("/clear       Clear the visible conversation", FG, None, False),
             ("/compact     Summarize old context", FG, None, False),
@@ -227,7 +228,6 @@ def make_screenshots() -> dict[str, Path]:
         "qcode — /model picker",
         [
             ("[main ○]    Ctrl+PgUp/PgDn · Alt+,/.", CYAN, None, True),
-            ("✦ refactor the login handler", MAGENTA, PROMPT_BG, True),
             ("Select model (4/4) | Up/Down, PgUp/PgDn | Search: ", CYAN, None, True),
             ("", FG, None, False),
             ("> qwen2.5-coder:7b", WHITE, SELECT_BG, True),
@@ -235,7 +235,7 @@ def make_screenshots() -> dict[str, Path]:
             ("  gemma3", FG, None, False),
             ("  gpt-oss:20b", FG, None, False),
             ("", FG, None, False),
-            ("> ", WHITE, None, True),
+            ("Ctrl+C closes view | Esc back", DIM, None, False),
             ("ollama [MODEL qwen2.5-coder:7b] [WS ~/demo] [CTX 73% left]", DIM, STATUS_BG, False),
         ],
     )
@@ -245,16 +245,15 @@ def make_screenshots() -> dict[str, Path]:
         out["agents"],
         "qcode — /agent list",
         [
-            ("[main ○]  [agent-1 ●]  [agent-2 ● +1]", CYAN, None, True),
-            ("✦ summarize the authentication findings", MAGENTA, PROMPT_BG, True),
+            ("[main ○]  [implementation ●]  [review ● +1]", CYAN, None, True),
             ("Select agent (1/3) | Up/Down, PgUp/PgDn, Enter to switch", CYAN, None, True),
             ("", FG, None, False),
             ("> main      main               qwen2.5-coder:7b     idle", WHITE, SELECT_BG, True),
             ("    Login handler and test locations identified.", DIM, None, False),
-            ("  agent-1   implementation     gpt-5                running", FG, None, False),
-            ("  agent-2   review             kimi-k3              running (1 queued)", YELLOW, None, False),
+            ("  agent-1   implementation     qwen3:8b             running", FG, None, False),
+            ("  agent-2   review             qwen2.5-coder:7b     running (1 queued)", YELLOW, None, False),
             ("", FG, None, False),
-            ("> ", WHITE, None, True),
+            ("Ctrl+C closes view | Esc back", DIM, None, False),
             ("ollama [MODEL qwen2.5-coder:7b] [WS ~/demo] [CTX 73% left]", DIM, STATUS_BG, False),
         ],
     )
@@ -285,7 +284,6 @@ def make_screenshots() -> dict[str, Path]:
         "qcode — /remote (browser control)",
         [
             ("[main ○]    Ctrl+PgUp/PgDn · Alt+,/.", CYAN, None, True),
-            ("✦ summarize the authentication findings", MAGENTA, PROMPT_BG, True),
             ("Remote control active | Pure Web · trusted LAN HTTP", CYAN, None, True),
             ("Address: http://192.168.1.10:42351", FG, None, False),
             ("Connections: 2 active browser sessions", FG, None, False),
@@ -302,6 +300,7 @@ def make_screenshots() -> dict[str, Path]:
             ("  Save QR as PNG", FG, None, False),
             ("  Close Connection", FG, None, False),
             ("QR PNG: /tmp/qcode-remote-XXXX.png (file is kept on disk)", GREEN, None, False),
+            ("Ctrl+C closes view | Esc back", DIM, None, False),
         ],
     )
     # Overlay illustrative QR in the blank area.
@@ -358,8 +357,56 @@ def make_screenshots() -> dict[str, Path]:
             ("Choose an option or type your own answer.", DIM, None, False),
             ("Esc defers; Ctrl+C cancels active work.", DIM, None, False),
             ("Answer 1/1> 1", WHITE, None, True),
-            ("Waiting (⠋) · Ctrl+C to cancel", DIM, None, False),
+            ("Waiting for input | Ctrl+C to cancel | Esc review", DIM, None, False),
             ("[MODE INTERACTIVE] ollama [MODEL qwen2.5-coder:7b]", DIM, STATUS_BG, False),
+        ],
+    )
+
+    out["theme"] = ASSETS / "09-theme-picker.png"
+    draw_terminal(
+        out["theme"],
+        "qcode — /theme live preview",
+        [
+            ("[main ○]    Ctrl+PgUp/PgDn · Alt+,/.", CYAN, None, True),
+            ("Terminal theme 2/23 | live preview", CYAN, None, True),
+            ("  Default (Auto)", FG, None, False),
+            ("> Catppuccin Mocha · Dark", WHITE, SELECT_BG, True),
+            ("  Dracula · Dark", FG, None, False),
+            ("  Gruvbox Dark · Dark", FG, None, False),
+            ("  Solarized Dark · Dark", FG, None, False),
+            ("  Nord Dark · Dark", FG, None, False),
+            ("", FG, None, False),
+            ("Preview Output", CYAN, None, True),
+            ("A response with **bold text** and a link.", (205, 214, 244), (30, 30, 46), False),
+            ("> A quoted passage from the answer.", (137, 180, 250), (30, 30, 46), False),
+            ("~ modified line", (249, 226, 175), (30, 30, 46), False),
+            ("+ added line", (166, 227, 161), (30, 30, 46), False),
+            ("[MODE PLAN]  [CTX 73% left]", (203, 166, 247), (30, 30, 46), False),
+            ("Ctrl+C closes view | Esc back", DIM, None, False),
+            ("ollama [MODEL qwen2.5-coder:7b] [WS ~/demo]", DIM, STATUS_BG, False),
+        ],
+    )
+
+    out["resume"] = ASSETS / "10-resume-picker.png"
+    draw_terminal(
+        out["resume"],
+        "qcode — /resume saved sessions",
+        [
+            ("[main ○]    Ctrl+PgUp/PgDn · Alt+,/.", CYAN, None, True),
+            ("Resume (3/3) | ● current | ◆ pinned | Filter: ", CYAN, None, True),
+            (">   ◆ Oct 09 10:15 | 2 agents | Login timeout fix", WHITE, SELECT_BG, True),
+            ("  ●   Oct 09 10:20 | 1 agent | Explain this repository", FG, None, False),
+            ("      Oct 08 16:30 | 1 agent | Migration review", FG, None, False),
+            ("", FG, None, False),
+            ("── Preview ──────────────────────────────────────────────", DIM, None, False),
+            ("> Run the login tests after the fix.", MAGENTA, None, False),
+            ("The login tests pass. The handler retries transient failures once.", FG, None, False),
+            ("Completed in 00:18 (10/09 10:15)", GREEN, None, False),
+            ("─────────────────────────────────────────────────────────", DIM, None, False),
+            ("", FG, None, False),
+            ("Up/Down | Enter | Tab actions | Ctrl+D delete all | Esc/Ctrl+C", DIM, None, False),
+            ("Ctrl+C closes view | Esc back", DIM, None, False),
+            ("ollama [MODEL qwen2.5-coder:7b] [WS ~/demo]", DIM, STATUS_BG, False),
         ],
     )
 
@@ -510,27 +557,28 @@ def figure(pdf: Manual, img: Path, caption: str, w: int = 170):
 
 
 def cmd_table(pdf: Manual, rows: list[tuple[str, str]]):
-    pdf.set_font("Sans", "B", 10)
-    pdf.set_fill_color(30, 60, 110)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(42, 7, "Command", fill=True)
-    pdf.cell(0, 7, "What it does for you", fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    # Tables wrap both columns, keep each row together, and repeat their
+    # heading across page breaks, including long agent command names.
+    from fpdf.fonts import FontFace
+
     pdf.set_font("Sans", "", 9.5)
     pdf.set_text_color(35, 35, 35)
-    fill = False
-    for cmd, desc in rows:
-        if fill:
-            pdf.set_fill_color(242, 245, 250)
-        else:
-            pdf.set_fill_color(255, 255, 255)
-        x0 = pdf.l_margin
-        y0 = pdf.get_y()
-        # Command cell on the left.
-        pdf.set_xy(x0, y0)
-        pdf.cell(42, 6.5, cmd, fill=True)
-        # Description takes remaining width and may wrap.
-        pdf.multi_cell(0, 6.5, desc, fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        fill = not fill
+    with pdf.table(
+        col_widths=(57, 123),
+        line_height=6,
+        padding=0.6,
+        borders_layout="NONE",
+        headings_style=FontFace(emphasis="B", color=(255, 255, 255), fill_color=(30, 60, 110)),
+        cell_fill_color=(242, 245, 250),
+        cell_fill_mode="ROWS",
+    ) as table:
+        heading = table.row()
+        heading.cell("Command")
+        heading.cell("What it does for you")
+        for cmd, desc in rows:
+            row = table.row()
+            row.cell(cmd)
+            row.cell(desc)
     pdf.ln(3)
 
 
@@ -595,7 +643,7 @@ def build_pdf(images: dict[str, Path]):
             "Words in `code style` are things you type, for example `/model` or `qcode --demo`.",
             "Figures are illustrative example screens. Your colors and sizes may differ slightly.",
             "The prompt line shows `>` when idle, `(Plan)>` in Plan mode, `(Skill plan)>` in Skill Plan mode, and `(Steer)>` while busy.",
-            "Esc goes back one level. Ctrl+C cancels without applying changes.",
+            "Esc goes back one level. Ctrl+C closes a command view; agents continue working. In the composer, Ctrl+C cancels active work.",
         ],
     )
     tip(pdf, "Run qcode --demo for the interactive tour with automatic queued prompts. Add a quoted prompt for a one-shot text demo. Both use mocked tools and leave your workspace untouched.")
@@ -605,6 +653,7 @@ def build_pdf(images: dict[str, Path]):
     h2(pdf, "Install and first run")
     body(pdf, "qcode is one program you run in your terminal. Build it once, then start it in any project folder.")
     code(pdf, "# Build from source (needs Go 1.22+)\nmake build\n./bin/qcode")
+    body(pdf, "The remaining shell examples assume qcode is on your PATH. From this source checkout, use ./bin/qcode instead. make build creates the binary but does not install it.")
     body(pdf, "Pick the assistant you want to use. The two common choices are a local model (Ollama) or a hosted model (OpenAI or OpenCode Go).")
     code(
         pdf,
@@ -632,6 +681,7 @@ def build_pdf(images: dict[str, Path]):
             "Tabs: `main` is always there. Extra agents appear as new tabs (up to 20 total).",
             "Latest prompt: a star marks up to three highlighted lines beneath the tabs. It changes when a task starts or steering is delivered. Pending input does not change it; /clear and completion keep it, /new clears it, and /resume restores it. Small windows show fewer lines.",
             "Transcript: streamed answers with Markdown, tables, and tool activity like `Reading ...` or `Writing ...`.",
+            "Task indicator: Waiting for model response, Receiving model thinking, or Receiving model response, with elapsed time for that operation. The timer resets when the phase changes. Tools appear in the transcript; questions show Waiting for input.",
             "Pending area: shows the current steer separately from FIFO tasks.",
             "Prompt: `>` idle, `(Plan)>` planning, `(Skill plan)>` skill design, `(Steer)>` working. You can keep typing while work runs.",
             "Status bar: provider, MODEL, WS folder, CTX percent left, STEP n/max, and TOK input/output plus total when it fits. THINK appears when set, MODE for planning or interactive questions, and REMOTE while browser control runs. Hide parts with /statusline.",
@@ -648,7 +698,7 @@ def build_pdf(images: dict[str, Path]):
             "PageUp/PageDown scrolls history with two overlapping rows of context, even while the agent works. Scrolling pauses the live view; PageDown to the bottom resumes it.",
             "When the view is above the bottom, Home/End jump to oldest/latest output. At the bottom they edit the prompt again. Browser text fields keep editing keys.",
             "Alt+Q opens pending work. Up/Down selects, PgUp/PgDn scrolls, Delete removes, and Esc closes.",
-            "Ctrl+C cancels the running prompt. Queued prompts wait their turn.",
+            "Ctrl+C in the composer cancels the running prompt; the next queued prompt can start. In a command view, it closes the view while agents keep working.",
         ],
     )
     bullets(
@@ -670,8 +720,8 @@ def build_pdf(images: dict[str, Path]):
             "The newest pending steer replaces earlier pending steering. If the task ends before your steer is accepted, qcode rejects it and keeps the draft. Cancellation or failure drops undelivered steers; queued tasks still continue.",
             "Tab still completes matching slash commands. During manual /compact, Enter cannot steer and keeps your draft; Tab can queue a separate task.",
             "Use `/history` to find an old prompt. Pick one to re-read its final answer.",
-            "Use `/new` to clear the current conversation without restarting qcode.",
-            "Use `/compact` when a long session feels slow. It shortens stored context.",
+            "Use `/new` to clear the active tab's conversation, latest prompt, usage, and plans; it restores tool defaults with web tools off and removes added directory grants. Models, selected skills, and the questions toggle stay.",
+            "Use `/compact` to summarize old context. Automatic compaction starts at 80% use when capacity is known; change auto_compact_threshold or disable_auto_compact in config.toml.",
         ],
     )
     tip(pdf, "Example: submit `fix the login timeout` with Enter. While it runs, submit `preserve the existing API` with Enter to steer it, or `run the login tests after the fix` with Tab to queue a separate task.")
@@ -692,6 +742,7 @@ def build_pdf(images: dict[str, Path]):
             "One question at a time, with suggested choices or your own custom answer. At most 3 distinct questions per submitted prompt.",
             "Your answer becomes context for that agent and is included in saved sessions. It is not added to global learning automatically; use /learn to retain a reusable preference.",
             "The status bar shows [MODE INTERACTIVE] while enabled ([MODE INT] when narrow). Your half-typed draft is saved and restored around the question.",
+            "/interactive on|off saves the default for future terminal sessions from any agent tab. Each existing or resumed tab keeps its own setting; demo changes stay session-only.",
             "Esc defers a question and opens the composer; Esc returns to it. A steer withdraws unanswered interactions. Ctrl+C cancels active work. The browser can also answer.",
             "One-shot prompts, piped input, non-terminal runs, and --json-events never wait; qcode just proceeds with available context.",
         ],
@@ -773,7 +824,7 @@ def build_pdf(images: dict[str, Path]):
             ("/help", "List commands or explain one command."),
             ("/bash <cmd>", "Run a shell command in the workspace."),
             ("/new", "Start a fresh conversation for the active agent."),
-            ("/resume", "Continue a saved session (picker or session-id)."),
+            ("/resume", "Preview, rename, pin, delete, or continue saved sessions."),
             ("/clear", "Clear the visible conversation and redraw the header."),
             ("/history", "Browse completed prompts and responses."),
             ("/diff [N]", "View more lines of saved diff N; omit N for latest."),
@@ -795,7 +846,9 @@ def build_pdf(images: dict[str, Path]):
         [
             "`/export` or `/export pretty`: one tab per agent, prompt cards that reveal answers. Best for sharing and reading.",
             "`/export raw`: full styled transcript including tool activity, thinking, errors, and diffs.",
+            "In a pretty export, Show detailed tool events reveals concise activity beside each exchange; it starts unchecked.",
             "Files are saved as `qcode-session-<mode>-<timestamp>.html` with subsecond precision. Custom output paths are not accepted.",
+            "Terminal exports write in the workspace; browser exports download the same HTML without writing a host file.",
         ],
     )
 
@@ -816,8 +869,8 @@ def build_pdf(images: dict[str, Path]):
     code(pdf, "qcode --provider ollama --model qwen3:8b --thinking high \"reply with OK\"\nqcode --provider opencode-go --model deepseek-v4-flash --thinking high \"reply with OK\"")
     tip(pdf, "On `main`, /model and /maxsteps remember your choice. Other tabs, demo, one-shot, and piped runs keep changes for that session only.")
     h2(pdf, "One-shot and demo")
-    code(pdf, "qcode \"explain this repository\"\nqcode --json-events \"run the tests\" 2>events.jsonl\nqcode --demo \"show me how qcode works\"")
-    body(pdf, "Pass a prompt to run once without the interactive screen. Assistant text goes to stdout and short progress events go to stderr. Demo mode needs no model and touches no files.")
+    code(pdf, "qcode \"explain this repository\"\nqcode --json-events \"run the tests\" 2>events.jsonl\nprintf '%s\\n' 'explain this repository' | qcode\nqcode --demo \"show me how qcode works\"")
+    body(pdf, "Put flags before one-shot prompts or piped text. Empty stdin fails. Answers use stdout; activity uses stderr. Demo tools are mocked; /export still writes a file.")
 
     # 6 Agents
     h1(pdf, "6. Working with multiple agents")
@@ -840,7 +893,9 @@ def build_pdf(images: dict[str, Path]):
         [
             "Switch with Ctrl+PageUp/PageDown (Alt+, and Alt+. also work).",
             "Ask the main agent to split work and it can coordinate helpers; you can also create tabs yourself with /agent.",
+            "/agent and /agent new open the current provider's model picker. /agent new <model> takes a model ID, then /agent rename <id> <name> sets its display name.",
             "Queues are per agent (up to 16 waiting each). A slow helper never blocks `main`.",
+            "When main delegates a task, its current run ends after accepting the assignment and the helper continues in its tab. Send a follow-up to main to ask for findings or a consultation. Full recorded findings remain searchable after closing a helper or using /new.",
         ],
     )
 
@@ -869,7 +924,8 @@ def build_pdf(images: dict[str, Path]):
             "Type `/skill` to see names plus one-line summaries. Type to filter, Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, Esc to leave, Ctrl+C to cancel.",
             "Your account, workspace, and configured folders can each provide skills.",
             "New files appear in `/skill` without restarting.",
-            "A ready-made collection ships with qcode under docs/skills. Enable only what helps.",
+            "The source repository's docs/skills collection is optional. Add its absolute directory to [skills] paths in config.toml, or copy a chosen folder into a built-in root; release binaries do not bundle these files.",
+            "Use [skills] autoload_paths to select every valid skill in a directory for new runs, including one-shot and piped prompts. Resumed tabs retain their saved selection.",
         ],
     )
     h2(pdf, "Creating a skill safely")
@@ -907,13 +963,16 @@ def build_pdf(images: dict[str, Path]):
     )
 
     # 10 Web
-    h1(pdf, "10. Web fetch and search")
+    h1(pdf, "10. Tools, web fetch, and search")
+    h2(pdf, "Choosing tools")
+    body(pdf, "Use /tool to filter and toggle the active tab's file, shell, image, skill, and web tools. Space toggles; Enter applies. Or use /tool <name> on|off, for example /tool shell off. New conversations restore tool defaults. Plan and Skill Plan show only their allowed tools; /interactive controls questions.")
+    h2(pdf, "Enabling web access")
     body(pdf, "Web tools read public pages and search results as text. They start OFF. Turn them on for the current session with `/tool`. The backend setting alone does not enable them.")
     bullets(
         pdf,
         [
             "Type `/tool` and enable `web_fetch` and/or `web_search` independently.",
-            "`/new` or restarting turns them off again. One-shot runs keep them off.",
+            "`/new` or a fresh launch starts with web tools off. Resume restores saved selections, and helpers created by main inherit its tools. One-shot runs keep web tools off.",
             "Use them for docs and public references. They do not run page scripts and do not open a browser.",
         ],
     )
@@ -921,6 +980,7 @@ def build_pdf(images: dict[str, Path]):
 
     # 11 Sessions
     h1(pdf, "11. Sessions: autosave, resume, and export")
+    figure(pdf, images["resume"], "Figure 8: /resume previews the saved active tab. Pinned sessions sort first; Tab opens Rename, Pin/Unpin, and Delete, while Ctrl+D opens Delete all.")
     bullets(
         pdf,
         [
@@ -942,7 +1002,7 @@ def build_pdf(images: dict[str, Path]):
     # 12 Remote
     h1(pdf, "12. Controlling qcode from a browser")
     body(pdf, "Type /remote to control the same session from a phone or browser. Choose Pure Web for a trusted LAN or Tailscale for your tailnet. No auth gives anyone with the URL access; reserve it for open, short-lived demos.")
-    figure(pdf, images["remote"], "Figure 8: /remote screen. Scan or open the link, then Accept. Save QR as PNG if it does not fit.", w=160)
+    figure(pdf, images["remote"], "Figure 9: /remote screen. Scan or open the link, then Accept. Save QR as PNG if it does not fit.", w=160)
     numbered(
         pdf,
         [
@@ -970,6 +1030,7 @@ def build_pdf(images: dict[str, Path]):
     body(pdf, "Most daily choices live in the terminal (`/model`, `/maxsteps`, `/statusline`, `/theme`, `/tool`). Use a config file only for defaults you always want.")
     h2(pdf, "Terminal colors and workspace visibility")
     body(pdf, "Use /theme to preview terminal palettes with Up/Down. Enter applies and saves the choice; Esc or Ctrl+C cancels. Default (Auto) follows your terminal. The 22 dark and light choices include Catppuccin, Dracula/Alucard, Gruvbox, Solarized, Nord, Tokyo Night, One, Rosé Pine, Everforest, Kanagawa, and Ayu. The setting is terminal-wide and saves from any agent tab. The browser's pinned prompt follows the theme's accent color and background.")
+    figure(pdf, images["theme"], "Figure 10: /theme previews colors for responses, diffs, and status. Enter applies and saves; Esc or Ctrl+C leaves the current choice.")
     body(pdf, "WS uses available status bar space and keeps the final two complete folders when possible, using a second row as needed. Home-relative paths retain ~/; omitted parents appear as an ellipsis folder, for example ~/.../work/foo. If the final folder name must be clipped, its ending gets an ellipsis: ~/workspace/this-folder-is... (the final dots shorten the name).")
     body(pdf, "TOK shows provider-reported session input/output counts. The combined total uses a sigma marker, or T: in ASCII mode, whenever it fits one or two status rows. If usage is missing, unknown or a question mark indicates incomplete counts. /new resets the active agent's totals; changing models keeps them.")
     body(pdf, "Open /statusline, move with Up/Down, toggle with Space, and apply with Enter. Or type /statusline tok off, /statusline show, or /statusline reset. Changes on main save statusline_hidden in your user config while preserving comments and unrelated tables, including redaction and skills settings.")
@@ -987,6 +1048,12 @@ def build_pdf(images: dict[str, Path]):
             "Restart after changing the web backend. /model, /maxsteps, and /statusline on main save automatically; worker-tab changes to these settings stay within the session.",
         ],
     )
+    h2(pdf, "Sandbox and trusted commands")
+    body(pdf, "On Linux, use --sandbox with bubblewrap installed and check the startup notice to confirm isolation is active. Tools can change only approved directories; home is hidden and networking is blocked until either web tool is enabled. If sandbox setup fails, the terminal offers to continue without it or leave; one-shot runs warn and continue without it.")
+    code(pdf, "qcode --sandbox --sandbox-command-path ~/.local/bin\n\n# Persistent defaults in config.toml:\nsandbox = true\nsandbox_command_paths = [\"~/.local/bin\", \"~/go/bin\"]")
+    body(pdf, "Trusted command directories are mounted read-only and kept across /new. Missing, invalid, duplicate, root, or protected directories produce warnings. Additional writable directories require your approval and are cleared by /new. Temporary shell files do not survive separate sandbox calls; use workspace files for results you need later.")
+    h2(pdf, "Context capacity")
+    body(pdf, "CTX shows remaining capacity, with ~ for an estimate or unknown when no limit is available. Use --context-window 32768 or context_window = 32768 for an unlisted model; this sets terminal-agent accounting and compaction capacity without changing the provider's allocation. Switching models clears the override. --disable-auto-compact disables automatic summaries in terminal sessions; /compact remains available. One-shot runs use provider capacity and the built-in 80% threshold.")
 
     # 14 Troubleshooting
     h1(pdf, "14. Troubleshooting and tips")
@@ -998,7 +1065,8 @@ def build_pdf(images: dict[str, Path]):
             ("Slow session?", "Try /compact, then /new for a fresh tab context."),
             ("Need detail?", "Try /verbose. For step limits use /maxsteps N."),
             ("Lost output?", "Scroll with PageUp/PageDown. /history finds old answers. /export saves HTML."),
-            ("Resume failed?", "Close another process using that session, then press Enter to retry. Snapshot or save errors must be resolved before switching."),
+            ("Resume failed?", "Read the inline error; finish or cancel local running agents before switching. Fix snapshot, redaction-rewrite, or save errors, then retry. Other processes do not lock the session."),
+            ("Waiting a long time?", "Read the model operation and elapsed timer above the status bar. Use Ctrl+C from the composer to cancel; tool activity appears in the transcript."),
             ("Text is redacted?", "Detected sensitive text is replaced locally by [REDACTED]. Saved redactions are permanent; review docs/privacy.md for scope."),
             ("Remote blocked?", "On Linux run once: sudo tailscale set --operator=$USER. Then retry /remote."),
         ],
@@ -1019,7 +1087,7 @@ def build_pdf(images: dict[str, Path]):
             ("/skillplan ...", "Draft, show, create, or leave skill design."),
             ("/interactive", "Let normal work ask up to 3 questions per prompt."),
             ("/learn ...", "Save/list/forget/compact preferences."),
-            ("/tool", "Toggle web fetch/search."),
+            ("/tool", "Choose file, shell, image, skill, and web tools."),
             ("/resume, /new", "Reopen session / reset tab."),
             ("/history", "Find and re-read answers."),
             ("/diff", "Expand saved diffs."),
@@ -1071,7 +1139,7 @@ def build_pdf(images: dict[str, Path]):
             "7. Planning before coding",
             "8. Skills and SkillPlan",
             "9. Remembering preferences with /learn",
-            "10. Web fetch and search",
+            "10. Tools, web fetch, and search",
             "11. Sessions: autosave, resume, and export",
             "12. Controlling qcode from a browser",
             "13. Settings you actually change",

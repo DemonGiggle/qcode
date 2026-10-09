@@ -117,7 +117,11 @@ Vision-capable models can inspect PNG, JPEG, WEBP, and GIF files inside the work
 qcode --provider ollama --model gemma3 "describe assets/screenshot.png"
 ```
 
-Images are limited to 20 MiB each. Ollama receives native `images` data; OpenAI and `opencode-go` receive standard Chat Completions image content parts. The selected model and endpoint must support image input.
+Images are limited to 20 MiB each. Ollama receives native `images` data; OpenAI
+uses Chat Completions image content parts. OpenCode Go encodes images for the
+selected model's route: Chat Completions image parts, Messages base64 image
+blocks, or Responses `input_image` parts. The selected model and endpoint must
+support image input.
 
 ## One-shot mode
 
@@ -126,7 +130,11 @@ Pass a prompt for non-interactive use. Assistant text goes to stdout and concise
 ```sh
 qcode "explain this repository"
 qcode --json-events "run the tests" 2>events.jsonl
+printf '%s\n' 'explain this repository' | qcode
 ```
+
+Flags must appear before the prompt. Stdin is read when no positional prompt
+was supplied. See the [command-line reference](cli.md) for all startup options.
 
 ## Demo mode
 
@@ -136,7 +144,26 @@ Demo mode runs the full agent loop without configuring or connecting to an LLM:
 qcode --demo "show me how qcode works"
 ```
 
-It deliberately pauses during both mocked LLM requests and every mocked tool call, making Ctrl+C cancellation easy to demonstrate. Run `qcode --demo` without a prompt to start an automatic interactive showcase: it submits one full tool tour, then two follow-up prompts while that work is running, so the TUI visibly shows `Queued #1`, `Queued #2`, and its queued count while remaining editable. The follow-ups complete in FIFO order without repeating the full tour. You can continue entering prompts after the scripted showcase. Enter steers a busy task and Tab queues a separate task; Alt+Q opens the pending-work panel. The latest received prompt stays highlighted below the tabs and changes when a task starts or steering is delivered. Interactive demo runs also show realistic `write` and `edit` code-diff previews, a rendered Markdown feature table, and enough colored output to try Page Up and Page Down; `/diff` expansion works normally. `/model` exposes a large fake catalog for trying search and keyboard navigation. The status bar shows a real context percentage: token counts are measured from the scripted conversation and divided by a fake 8192-token window for `scripted-demo`, so the value drops as the demo session grows. The demo runs through all available tool schemas, but does not read or change the workspace and does not execute shell commands. Provider, URL, API key, and model settings are ignored.
+Run `qcode --demo` without a prompt to start an automatic interactive showcase.
+It submits one full tool tour and two follow-up prompts while work is running.
+The pending area displays the queued prompts in FIFO order, and the tabs and
+task indicator show their count. Mocked model and tool calls pause long enough
+to try Ctrl+C, typing, scrolling, and tab navigation. You can continue entering
+prompts after the showcase.
+
+Enter steers a busy task and Tab queues a separate task; Alt+Q opens the pending
+panel. The latest received prompt stays highlighted below the tabs and changes
+when a task starts or steering is delivered. The task indicator shows waiting,
+streaming thinking or responses, and elapsed operation time. Demo runs also
+show numbered write/edit diffs, a Markdown feature table, `/diff` expansion,
+and a large fake `/model` catalog for search and keyboard navigation.
+
+The status bar divides estimated scripted token counts by a fake 8192-token
+window for `scripted-demo`. Tools are mocked: the agent's tour does not read or
+change workspace files or execute shell commands. Configuration files,
+provider credentials, and saved sessions are skipped; model and provider flags
+do not select a real model. Interactive commands remain usable, including
+`/export`, which writes an HTML file when explicitly invoked.
 
 ## Environment variables
 

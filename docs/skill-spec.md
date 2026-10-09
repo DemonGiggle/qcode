@@ -32,6 +32,8 @@ For the built-in locations and their runtime behavior, see
 Additional roots can be configured with `skills.paths` in `config.toml`.
 Relative configured paths are resolved from the selected workspace and `~`
 expands to the current user's home directory.
+`skills.autoload_paths` adds roots whose valid skills are also selected at
+startup, including in one-shot and piped runs.
 
 ## Naming and file requirements
 
@@ -157,7 +159,15 @@ agent. Removing a skill from the selection therefore prevents its instructions
 from being loaded, even if the skill is still present on disk.
 
 One-shot and piped invocations do not provide the interactive `/skill`
-selection step, so a skill is not enabled automatically in those modes.
+selection step. Use `skills.autoload_paths` to enable skills in those runs:
+
+```toml
+[skills]
+autoload_paths = [".team/skills"]
+```
+
+New interactive runs also start with these skills selected. Resumed sessions
+retain their saved selection, and `/skill` can change the active tab's selection.
 
 ## Precedence and overrides
 
@@ -168,6 +178,7 @@ contain the same skill name, the later root replaces the earlier one in full:
 2. `<workspace>/.agents/skills/`
 3. `<workspace>/.qcode/skills/`
 4. configured `skills.paths`, in the order listed
+5. configured `skills.autoload_paths`, in the order listed
 
 Use `<workspace>/.qcode/skills/<name>/SKILL.md` when the workspace must
 override a user-level or `.agents` skill. qcode does not merge the documents

@@ -7,6 +7,27 @@ make build
 ./bin/qcode
 ```
 
+`make build` writes `bin/qcode`; it does not install the executable on `PATH`.
+Use `./bin/qcode` from the checkout or install the binary in a directory on
+your shell's `PATH`.
+
+## Checks and documentation artifacts
+
+```sh
+make test
+cd tools/qcode-tester && go test ./...
+```
+
+`make test` runs the root Go module's tests. The evaluator has a separate Go
+module; its tests do not launch a real provider. `make eval` builds qcode,
+runs those tests, and performs live evaluations using your current provider
+configuration. See [qcode-tester](../tools/qcode-tester/README.md).
+
+`make manual` regenerates the user manual PDF and illustrative PNG screens;
+see the [manual build guide](manual/README.md) for Python dependencies and
+visual checks. `make demo-record` refreshes the offline terminal recording,
+and `make demo-gif` converts it with `agg`.
+
 ## Versioning
 
 When the current commit has a Git tag, builds use that tag for `qcode --version`. Untagged builds report `dev`. Set `VERSION=...` explicitly to override automatic detection.

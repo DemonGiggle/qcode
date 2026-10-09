@@ -1,7 +1,9 @@
 # Scroll history during agent runs
 
-Status: implemented in PR #16. The sections below record the design and validation
-criteria used for the implementation.
+Status: implemented in PR #16. This is a historical design record; the problem
+and implementation steps below describe the earlier behavior and proposed
+changes. For current keys, pinned regions, and reading-position behavior, see
+[Interface](interface.md#scrolling).
 
 ## Problem and intended behavior
 
@@ -103,4 +105,3 @@ anchor against current history. Handle terminals too short for reserved rows.
 
 No new UI framework, provider changes, unbounded output buffers, or terminal
 scrollback dependency. This PR concerns application history paging only.
-Keep the PR draft until implementation and validation are complete.

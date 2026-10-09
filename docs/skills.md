@@ -13,9 +13,19 @@ The repository maintains a collection of ready-to-use skills in
 that helps with their task; skill selection is optional, and qcode loads a
 selected skill's full instructions only when the agent requests them.
 
-The release collection is optional and is not automatically enabled by qcode.
-Browse the [release skill collection](skills/) to see what is available, then
-decide whether a skill is useful for your work.
+The release collection is optional and is not in the built-in discovery roots.
+From a qcode source checkout, add it to your user configuration before launch,
+then select a skill with `/skill`:
+
+```toml
+[skills]
+paths = ["/absolute/path/to/qcode/docs/skills"]
+```
+
+Alternatively, copy a chosen skill directory into `.qcode/skills/` or
+`~/.qcode/skills/`. Use `autoload_paths` instead of `paths` only when you want
+every skill in that directory selected at startup. Release executables do not
+bundle these Markdown files.
 
 ## Discovery and precedence
 

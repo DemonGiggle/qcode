@@ -6,11 +6,19 @@ The status bar shows `CTX 73% left`, using the latest completion's input and out
 
 OpenAI and OpenCode Go limits come from a bundled [Models.dev catalog](https://models.dev/) (snapshot: 2026-09-06). Ollama discovers the loaded model's allocated window through [`/api/ps`](https://docs.ollama.com/api/ps), which may be unavailable before the first completion. Unknown limits show `CTX unknown`.
 
-For custom endpoints or unlisted models, supply `--context-window 32768` or `context_window = 32768` in `config.toml`. The flag takes precedence. This only sets the display denominator; it does not change provider limits. Switching models clears the override. Demo mode reports a fake 8192-token window for its scripted model, so `--demo` always shows a percentage from real token counts.
+For custom endpoints or unlisted models in terminal sessions, supply
+`--context-window 32768` or `context_window = 32768` in `config.toml`. The flag
+takes precedence. This sets qcode's capacity for context accounting and
+automatic compaction; it does not change provider limits. Switching models
+clears the override. One-shot runs use provider-discovered capacity.
+
+Demo mode reports a fake 8192-token window for its scripted model and estimates
+token use from the serialized conversation. It shows an estimated percentage
+even though the mocked provider does not report token usage.
 
 ## Estimates
 
-A `~` prefix marks an estimate when usage is unavailable, the session is new, or messages/tool definitions changed since the last measured response. Estimates use serialized text size and may be inaccurate for images and model-specific tokenization. Percentages are clamped to 0–100%; this indicator does not compact history or reserve room for the next response.
+A `~` prefix marks an estimate when usage is unavailable, the session is new, or messages/tool definitions changed since the last measured response. Estimates use serialized text size and may be inaccurate for images and model-specific tokenization. Percentages are clamped to 0–100%. The display does not reserve room for the next response; the agent separately uses context accounting to trigger [automatic compaction](configuration.md#conversation-compaction), enabled at 80% use by default when capacity is known. `/compact` remains available manually.
 
 ## References
 

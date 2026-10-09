@@ -28,17 +28,17 @@ type shellCommandRunner interface {
 
 var slashCommands = []slashCommand{
 	{
-		name: "/agent", usage: "/agent [new [name]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]]",
+		name: "/agent", usage: "/agent [new [model]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]]",
 		description: "Create and manage extra agents",
 		arguments: []helpArgument{
-			{name: "new [name]", description: "Create an agent, optionally with a name."},
+			{name: "new [model]", description: "Create an agent with a model ID, or open the model picker when omitted. Use rename to set its display name."},
 			{name: "list", description: "Show agents and their current status."},
 			{name: "switch <id>", description: "Make another agent active."},
 			{name: "rename <id> <name>", description: "Give an agent a new display name."},
 			{name: "cancel <id>", description: "Stop the agent's current work."},
 			{name: "close <id> [--yes]", description: "Close an agent; --yes skips confirmation."},
 		},
-		examples: []string{"/agent new review", "/agent switch agent-2"},
+		examples: []string{"/agent new qwen2.5-coder:7b", "/agent rename agent-1 review", "/agent switch agent-1"},
 	},
 	{
 		name: "/bash", usage: "/bash <cmd>", description: "Run a shell command in the active agent's environment",
