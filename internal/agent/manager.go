@@ -194,6 +194,7 @@ func (m *AgentManager) create(id, name, model string, main bool) (AgentSummary, 
 		return AgentSummary{}, err
 	}
 	runner.SetActivityRecorder(func(event session.WorkActivity) { m.RecordActivity(id, event) })
+	runner.progressRecorder = func(progress *session.Progress) { m.setProgress(id, progress) }
 	summary := AgentSummary{ID: id, Name: name, Model: model, Status: StatusIdle}
 	m.mu.Lock()
 	if m.shutdown {
@@ -462,6 +463,7 @@ func (m *AgentManager) startRequestLocked(id string, s *managedSession, req *pro
 	m.work[req.journalIndex].Status = "running"
 	m.work[req.journalIndex].Started = s.started.UTC()
 	s.summary.Status = StatusRunning
+	s.summary.Progress = nil
 	s.summary.QueueDepth = len(s.queue)
 	s.summary.CurrentTask = truncateUTF8(req.prompt, 512)
 	if !req.compact && !strings.HasPrefix(req.prompt, "/") {
@@ -512,6 +514,7 @@ func (m *AgentManager) finish(id string, req *promptRequest, err error, outcome 
 	m.cancelSteersLocked(req)
 	s.active = nil
 	s.summary.ActiveTaskID = ""
+	s.summary.Progress = nil
 	s.cancel = nil
 	duration := time.Since(s.started)
 	if err == nil {
@@ -934,6 +937,10 @@ func managerSchemas() []llm.Tool {
 
 func cloneSummary(summary AgentSummary) AgentSummary {
 	summary.ChangedFiles = append([]string(nil), summary.ChangedFiles...)
+	if summary.Progress != nil {
+		progress := *summary.Progress
+		summary.Progress = &progress
+	}
 	return summary
 }
 

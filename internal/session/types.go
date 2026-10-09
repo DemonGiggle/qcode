@@ -55,16 +55,32 @@ const (
 )
 
 type Summary struct {
-	ActiveTaskID string   `json:"active_task_id,omitempty"`
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Model        string   `json:"model"`
-	Status       Status   `json:"status"`
-	QueueDepth   int      `json:"queue_depth,omitempty"`
-	CurrentTask  string   `json:"current_task,omitempty"`
-	LastOutcome  string   `json:"last_outcome,omitempty"`
-	ChangedFiles []string `json:"changed_files,omitempty"`
-	Error        string   `json:"error,omitempty"`
+	ActiveTaskID string    `json:"active_task_id,omitempty"`
+	Progress     *Progress `json:"progress,omitempty"`
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Model        string    `json:"model"`
+	Status       Status    `json:"status"`
+	QueueDepth   int       `json:"queue_depth,omitempty"`
+	CurrentTask  string    `json:"current_task,omitempty"`
+	LastOutcome  string    `json:"last_outcome,omitempty"`
+	ChangedFiles []string  `json:"changed_files,omitempty"`
+	Error        string    `json:"error,omitempty"`
+}
+
+// Progress describes the current model operation, independently of task status.
+// Summary contains safe presentation text, never tool arguments or output.
+type Progress struct {
+	Summary   string    `json:"summary"`
+	StartedAt time.Time `json:"started_at"`
+}
+
+// Elapsed measures time in the current operation, rounded down to seconds.
+func (p Progress) Elapsed(now time.Time) time.Duration {
+	if p.StartedAt.IsZero() || now.Before(p.StartedAt) {
+		return 0
+	}
+	return now.Sub(p.StartedAt).Truncate(time.Second)
 }
 
 // Submission identifies an accepted prompt and its position behind the

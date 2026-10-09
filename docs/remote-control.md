@@ -110,8 +110,12 @@ authorization is lost. The text follows the same redaction policies as other
 terminal, remote, and saved-session content.
 
 The browser mirrors the terminal task indicator: while the active tab's agent is
-running, a dim `Waiting (⠋) · N queued` line with the same animated spinner
-frames appears above the status bar, and a Cancel button replaces the TUI's
+running, a dim line such as `Waiting (⠋) · 12s · Waiting for model response · N queued`
+shows the current model operation, its elapsed time, and
+the same animated spinner frames above the status bar. The spinner and model
+details clear during tool execution; the Cancel button and queued prompt count
+remain available while tool activity appears in the transcript. Pending approvals or
+questions show `Waiting for input`. A Cancel button replaces the TUI's
 `Ctrl+C` hint so a queued or running prompt can be stopped without the keyboard.
 
 Each `/remote` invocation issues a new single-use login link, valid for three

@@ -239,7 +239,7 @@ func (u *UI) paintFixedLocked(direction int) {
 	}
 	taskRow := u.height - statusN
 	if footer == 1+statusN {
-		message := taskIndicatorMessage(summary.Status, summary.QueueDepth, u.unicode, time.Now())
+		message := taskIndicatorMessage(summary, u.unicode, time.Now())
 		if question != nil {
 			message = "PgUp/PgDn scroll question | Ctrl+C cancel"
 		} else if u.activeViewportLocked().browsing {

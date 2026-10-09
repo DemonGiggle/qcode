@@ -78,6 +78,9 @@ type Agent struct {
 	planDecisionPending      bool
 	skillPlanDecisionPending bool
 	activityRecorder         func(session.WorkActivity)
+	progressRecorder         func(*session.Progress)
+	progress                 *session.Progress
+	progressTask             *trace.Task
 	checkpoint               atomic.Pointer[[]byte]
 	restored                 bool
 }
@@ -445,6 +448,8 @@ func (a *Agent) Run(ctx context.Context, userText string) error {
 }
 
 func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskInput) error {
+	stopProgress := a.trackProgress("")
+	defer stopProgress()
 	if validator, ok := a.provider.(llm.ModelValidator); ok {
 		if err := validator.ValidateModel(a.model); err != nil {
 			return err
@@ -469,8 +474,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		a.currentStep.Store(0)
 		a.publishContext()
 	}()
-	task := a.trace.BeginTask()
-	defer task.End()
+	task := a.progressTask
 	a.autoCompactIfNeeded(ctx)
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userText})
 	a.publishContext()
@@ -568,6 +572,9 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		}
 		replanning = nil
 		localStream := a.redaction.Stream(redaction.Terminal)
+		a.reportProgress("Waiting for model response")
+		task.Resume()
+		streamPhase := ""
 		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Thinking: a.thinking, Messages: requestMessages, Tools: a.enabledSchemas()}, func(event llm.StreamEvent) {
 			if ctx.Err() != nil {
 				return
@@ -582,6 +589,14 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 				return
 			}
 			visibleText = true
+			phase := "Receiving model response"
+			if event.Kind == llm.StreamThinking {
+				phase = "Receiving model thinking"
+			}
+			if streamPhase != phase {
+				a.reportProgress(phase)
+				streamPhase = phase
+			}
 			willRenderLine := keepsWaiting && (lineStreamer.StreamChunkCompletesLine(event.Text) || (event.Kind == llm.StreamOutput && thinking))
 			if willRenderLine || !keepsWaiting && !wroteText {
 				task.Suspend()
@@ -612,6 +627,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 				task.Resume()
 			}
 		})
+		a.reportProgress("")
 		if keepsWaiting && wroteText {
 			task.Suspend()
 			span.Suspend()
@@ -676,7 +692,6 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 				return err
 			}
 			input.setToolCall(call.ID)
-			task.Resume()
 			fingerprint := toolFingerprint(call)
 			identicalToolCalls[fingerprint]++
 			if identicalToolCalls[fingerprint] >= maxIdenticalToolCalls {
@@ -695,6 +710,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			if injectionSeen {
 				activityDetails = trace.Activity{Action: call.Name, Start: "Reviewing tool action after prompt-injection warning", Completed: "Reviewed tool action after prompt-injection warning", Category: trace.ActivityOther}
 			}
+			task.Suspend()
 			activity := a.trace.StartActivity(activityDetails)
 			traceArguments := arguments
 			if injectionSeen {
@@ -742,7 +758,6 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			if renderer, ok := a.out.(diffWriter); ok && renderer.DiffEnabled() && execution.Diff != "" {
 				task.Suspend()
 				renderer.WriteDiff(a.redaction.Text(redaction.Terminal, execution.Diff))
-				task.Resume()
 			}
 			result := execution.Output
 			if toolErr != nil {

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"qcode/internal/session"
 )
 
 var clockPattern = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}$`)
@@ -132,6 +134,18 @@ func TestASCIIWaitingSpinner(t *testing.T) {
 	task.End()
 	if got := output.String(); !strings.Contains(got, "Waiting (|)") || strings.Contains(got, "⠋") {
 		t.Fatalf("ASCII task indicator = %q", got)
+	}
+}
+
+func TestTaskIndicatorIncludesCurrentOperation(t *testing.T) {
+	var output bytes.Buffer
+	logger := NewAnimated(&output, false)
+	logger.SetVerbose(false)
+	task := logger.BeginTask()
+	task.SetProgress(&session.Progress{Summary: "Waiting for model response", StartedAt: time.Now().Add(-12 * time.Second)})
+	task.End()
+	if got := output.String(); !strings.Contains(got, "Waiting for model response") || !strings.Contains(got, "12s") {
+		t.Fatalf("task progress = %q", got)
 	}
 }
 

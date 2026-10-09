@@ -292,7 +292,7 @@ func (p *Policy) value(s Sink, value any, transport, opaque bool) any {
 // Routing, images and opaque replay material are outside the text guarantee.
 func preserved(key string) bool {
 	switch normalize(key) {
-	case "id", "agentid", "requestid", "taskid", "parenttaskid", "activetaskid", "targetid", "interactionid", "toolcallid", "callid", "replaces", "replacedby", "active", "role", "name", "model", "models", "provider", "status", "state", "kind", "intent", "source", "type", "created", "createdat", "saved", "left", "time", "started", "finished", "updated":
+	case "id", "agentid", "requestid", "taskid", "parenttaskid", "activetaskid", "targetid", "interactionid", "toolcallid", "callid", "replaces", "replacedby", "active", "role", "name", "model", "models", "provider", "status", "state", "kind", "intent", "source", "type", "created", "createdat", "saved", "left", "time", "started", "startedat", "finished", "updated":
 		return true
 	}
 	return false

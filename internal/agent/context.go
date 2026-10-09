@@ -15,6 +15,8 @@ import (
 // Compact replaces older conversation turns with a model-produced continuation
 // summary while retaining the system prompt and a recent, tool-consistent tail.
 func (a *Agent) Compact(ctx context.Context) (string, error) {
+	stopProgress := a.trackProgress("Compacting conversation")
+	defer stopProgress()
 	defer a.publishCheckpoint()
 	if len(a.messages) <= 1 {
 		return "Conversation is already compact.", nil

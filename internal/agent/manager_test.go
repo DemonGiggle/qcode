@@ -191,6 +191,10 @@ func TestManagerCompactKeepsOtherAgentAvailableAndSerializesNextPrompt(t *testin
 	case <-time.After(2 * time.Second):
 		t.Fatal("compaction did not reach provider")
 	}
+	compacting, _ := manager.Summary("main")
+	if compacting.Progress == nil || compacting.Progress.Summary != "Compacting conversation" {
+		t.Fatalf("compaction progress = %+v", compacting.Progress)
+	}
 	if err := manager.Start(worker.ID, "other agent prompt"); err != nil {
 		t.Fatal(err)
 	}

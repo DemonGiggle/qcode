@@ -85,7 +85,7 @@ func (u *UI) drawTaskIndicator() {
 	if err != nil {
 		return
 	}
-	message := taskIndicatorMessage(summary.Status, summary.QueueDepth, u.unicode, time.Now())
+	message := taskIndicatorMessage(summary, u.unicode, time.Now())
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
 	if u.manager != manager || u.activeAgent != id || !u.statusActive || u.height < 4 {
@@ -104,21 +104,34 @@ func (u *UI) drawTaskIndicator() {
 	fmt.Fprintf(u.out, "\x1b[s\x1b[?7l\x1b[%d;1H\x1b[2K%s\x1b[?7h\x1b[u", u.statusTaskRowLocked(), renderThemeStatusBarLine(message, u.width, u.outputTheme(), true))
 }
 
-func taskIndicatorMessage(status session.Status, queueDepth int, unicodeEnabled bool, now time.Time) string {
-	if status == session.StatusWaitingForApproval {
+func taskIndicatorMessage(summary session.Summary, unicodeEnabled bool, now time.Time) string {
+	if summary.Status == session.StatusWaitingForApproval {
 		return dim + "Waiting for input | Ctrl+C to cancel | Enter steer | Tab queue | Esc review" + reset
 	}
-	if status != session.StatusRunning {
+	if summary.Status != session.StatusRunning {
 		return ""
+	}
+	hints := "Ctrl+C to cancel | Enter steer | Tab queue"
+	queued := ""
+	if summary.QueueDepth > 0 {
+		queued = fmt.Sprintf("%d queued", summary.QueueDepth)
+	}
+	progress := summary.Progress
+	if progress == nil || progress.Summary == "" {
+		if queued != "" {
+			hints = queued + "  " + hints
+		}
+		return dim + hints + reset
 	}
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	if !unicodeEnabled {
 		frames = []string{"|", "/", "-", "\\"}
 	}
 	frame := frames[int(now.UnixMilli()/100)%len(frames)]
-	queued := ""
-	if queueDepth > 0 {
-		queued = fmt.Sprintf("%s%d queued", interfaceGlyph(unicodeEnabled, " · ", " | "), queueDepth)
+	separator := interfaceGlyph(unicodeEnabled, " · ", " | ")
+	operation := separator + progress.Elapsed(now).String() + separator + sanitizeDiffLine(progress.Summary, "<ESC>")
+	if queued != "" {
+		queued = separator + queued
 	}
-	return dim + "Waiting (" + frame + ")" + queued + "  Ctrl+C to cancel | Enter steer | Tab queue" + reset
+	return dim + "Waiting (" + frame + ")" + operation + queued + "  " + hints + reset
 }

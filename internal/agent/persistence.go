@@ -310,6 +310,7 @@ func (m *AgentManager) saveAgentsLocked() ([]session.SavedAgent, int) {
 		s := m.sessions[id]
 		if data := s.runner.checkpoint.Load(); data != nil {
 			summary := cloneSummary(s.summary)
+			summary.Progress = nil
 			var identity struct{ Model string }
 			_ = json.Unmarshal(*data, &identity)
 			summary.Model = identity.Model
@@ -364,6 +365,7 @@ func (m *AgentManager) RestoreAgents(saved []session.SavedAgent, nextID int) err
 		}
 		s.summary.QueueDepth = 0
 		s.summary.ActiveTaskID = ""
+		s.summary.Progress = nil
 	}
 	m.nextID = nextID
 	return nil

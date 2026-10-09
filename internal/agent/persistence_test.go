@@ -81,7 +81,7 @@ func TestManagerRestoresAllTabsAndInterruptsUnfinishedWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	summary, _ := restored.Summary(sub.ID)
-	if summary.Status != StatusCancelled || summary.Model != "other-model" || summary.Error == "" {
+	if summary.Status != StatusCancelled || summary.Model != "other-model" || summary.Error == "" || summary.Progress != nil {
 		t.Fatal(summary)
 	}
 	created, err := restored.Create("third-model")

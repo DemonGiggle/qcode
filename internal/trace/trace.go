@@ -13,6 +13,7 @@ import (
 
 	"qcode/internal/llm"
 	"qcode/internal/redaction"
+	"qcode/internal/session"
 )
 
 const timestampLayout = "15:04:05"
@@ -53,14 +54,15 @@ type Span struct {
 }
 
 type Task struct {
-	logger  *Logger
-	enabled bool
-	frames  []string
-	mu      sync.Mutex
-	stop    chan struct{}
-	done    chan struct{}
-	running bool
-	ended   bool
+	logger   *Logger
+	enabled  bool
+	frames   []string
+	mu       sync.Mutex
+	stop     chan struct{}
+	done     chan struct{}
+	running  bool
+	ended    bool
+	progress *session.Progress
 }
 
 // ActivityCategory controls the accent used for a concise activity event.
@@ -397,6 +399,19 @@ func (l *Logger) writeActivityProgress(s *ActivitySpan, frame string) {
 	fmt.Fprintf(l.out, "\r%s%s", message, spinner)
 }
 
+// SetProgress updates the current operation without restarting its animation.
+func (t *Task) SetProgress(progress *session.Progress) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.progress = progress
+	if t.running && !t.ended {
+		t.logger.writeWaiting(t.frames[0], t.progress)
+	}
+}
+
 func (t *Task) Resume() {
 	if t == nil || t.logger == nil || !t.enabled {
 		return
@@ -410,13 +425,13 @@ func (t *Task) Resume() {
 		// Another terminal writer may have displaced the status line while
 		// the task remained active. Repaint it at phase boundaries such as
 		// the start of a local tool call.
-		t.logger.writeWaiting(t.frames[0])
+		t.logger.writeWaiting(t.frames[0], t.progress)
 		return
 	}
 	t.stop = make(chan struct{})
 	t.done = make(chan struct{})
 	t.running = true
-	t.logger.writeWaiting(t.frames[0])
+	t.logger.writeWaiting(t.frames[0], t.progress)
 	go t.animate(t.stop, t.done)
 }
 
@@ -472,7 +487,9 @@ func (t *Task) animate(stop, done chan struct{}) {
 	for {
 		select {
 		case <-ticker.C:
-			t.logger.writeWaiting(t.frames[frame%len(t.frames)])
+			t.mu.Lock()
+			t.logger.writeWaiting(t.frames[frame%len(t.frames)], t.progress)
+			t.mu.Unlock()
 			frame++
 		case <-stop:
 			return
@@ -480,10 +497,23 @@ func (t *Task) animate(stop, done chan struct{}) {
 	}
 }
 
-func (l *Logger) writeWaiting(frame string) {
+func (l *Logger) writeWaiting(frame string, progress *session.Progress) {
 	l.mu.Lock()
-	fmt.Fprintf(l.out, "\rWaiting (%s)", frame)
-	l.mu.Unlock()
+	defer l.mu.Unlock()
+	message := fmt.Sprintf("Waiting (%s)", frame)
+	if progress != nil && progress.Summary != "" {
+		separator := " · "
+		if !l.unicode {
+			separator = " | "
+		}
+		elapsed := separator + progress.Elapsed(time.Now()).String()
+		width := l.width
+		if width <= 0 {
+			width = activityOutputDefaultWidth
+		}
+		message = truncateActivityLine(message+separator+l.policy.Text(redaction.Terminal, progress.Summary), max(1, width-runewidth.StringWidth(elapsed)), l.unicode, false) + elapsed
+	}
+	fmt.Fprintf(l.out, "\r\x1b[2K%s", message)
 }
 
 // spinnerFrames must be called while l.mu is held.
