@@ -131,6 +131,181 @@ func TestRunDownloadsAndReplacesExecutable(t *testing.T) {
 	}
 }
 
+func TestParseArgsPreFlag(t *testing.T) {
+	parsed, err := parseArgs(nil, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.pre {
+		t.Fatal("pre defaults to false")
+	}
+	parsed, err = parseArgs([]string{"--pre"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !parsed.pre {
+		t.Fatal("pre = false, want true")
+	}
+	parsed, err = parseArgs([]string{"--arch", "arm64", "--pre"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !parsed.pre || parsed.arch != "arm64" {
+		t.Fatalf("parsed = %+v, want arch arm64 with pre", parsed)
+	}
+}
+
+func TestRunStableIgnoresPrerelease(t *testing.T) {
+	targetDir := t.TempDir()
+	target := filepath.Join(targetDir, "qcode")
+	if err := os.WriteFile(target, []byte("old binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	stable := `{"tag_name":"v1.3.3","prerelease":false,"assets":[{"name":"qcode_linux_amd64","browser_download_url":"https://api.test/download/stable"}]}`
+	list := `[{"tag_name":"v1.3.4-rc.1","draft":false,"prerelease":true,"assets":[{"name":"qcode_linux_amd64","browser_download_url":"https://api.test/download/rc"}]},` + stable + `]`
+	var downloads atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/latest":
+			return fakeResponse(http.StatusOK, stable), nil
+		case "/releases":
+			return fakeResponse(http.StatusOK, list), nil
+		case "/download/rc":
+			downloads.Add(1)
+			return fakeResponse(http.StatusOK, "rc binary"), nil
+		default:
+			downloads.Add(1)
+			return fakeResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	// Default channel tracks the stable endpoint: already up to date.
+	var output strings.Builder
+	err := Run(context.Background(), nil, Options{
+		CurrentVersion:       "v1.3.3",
+		GOOS:                 "linux",
+		GOARCH:               "amd64",
+		ExecutablePath:       target,
+		ReleaseURL:           "https://api.test/latest",
+		ReleasesURL:          "https://api.test/releases",
+		Client:               client,
+		Stdout:               &output,
+		DownloadURLValidator: func(string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if downloads.Load() != 0 || !strings.Contains(output.String(), "already up to date (v1.3.3)") {
+		t.Fatalf("downloads = %d, output = %q", downloads.Load(), output.String())
+	}
+
+	// Opt-in pre-release channel upgrades to the release candidate.
+	output.Reset()
+	err = Run(context.Background(), []string{"--pre"}, Options{
+		CurrentVersion:       "v1.3.3",
+		GOOS:                 "linux",
+		GOARCH:               "amd64",
+		ExecutablePath:       target,
+		ReleaseURL:           "https://api.test/latest",
+		ReleasesURL:          "https://api.test/releases",
+		Client:               client,
+		Stdout:               &output,
+		DownloadURLValidator: func(string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "rc binary" || downloads.Load() != 1 {
+		t.Fatalf("content = %q, downloads = %d", content, downloads.Load())
+	}
+	if !strings.Contains(output.String(), "from v1.3.3 to v1.3.4-rc.1") {
+		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestRunPreSkipsDraftsAndPrefersNewestStable(t *testing.T) {
+	targetDir := t.TempDir()
+	target := filepath.Join(targetDir, "qcode")
+	if err := os.WriteFile(target, []byte("old binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	list := `[
+		{"tag_name":"v9.9.9","draft":true,"prerelease":false,"assets":[{"name":"qcode_linux_amd64","browser_download_url":"https://api.test/download/draft"}]},
+		{"tag_name":"v1.3.4-rc.1","draft":false,"prerelease":true,"assets":[{"name":"qcode_linux_amd64","browser_download_url":"https://api.test/download/rc"}]},
+		{"tag_name":"v1.3.4","draft":false,"prerelease":false,"assets":[{"name":"qcode_linux_amd64","browser_download_url":"https://api.test/download/stable"}]},
+		{"tag_name":"v1.3.5-rc.1","draft":false,"prerelease":true,"assets":[{"name":"qcode_darwin_amd64","browser_download_url":"https://api.test/download/other-platform"}]}
+	]`
+	var downloads atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.URL.Path {
+		case "/releases":
+			return fakeResponse(http.StatusOK, list), nil
+		case "/download/stable":
+			downloads.Add(1)
+			return fakeResponse(http.StatusOK, "stable binary"), nil
+		default:
+			downloads.Add(1)
+			return fakeResponse(http.StatusNotFound, "not found"), nil
+		}
+	})}
+
+	var output strings.Builder
+	err := Run(context.Background(), []string{"--pre"}, Options{
+		CurrentVersion:       "v1.3.3",
+		GOOS:                 "linux",
+		GOARCH:               "amd64",
+		ExecutablePath:       target,
+		ReleasesURL:          "https://api.test/releases",
+		Client:               client,
+		Stdout:               &output,
+		DownloadURLValidator: func(string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "stable binary" || downloads.Load() != 1 {
+		t.Fatalf("content = %q, downloads = %d", content, downloads.Load())
+	}
+	if !strings.Contains(output.String(), "from v1.3.3 to v1.3.4") {
+		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestRunPreReportsWhenNothingSuitable(t *testing.T) {
+	targetDir := t.TempDir()
+	target := filepath.Join(targetDir, "qcode")
+	if err := os.WriteFile(target, []byte("old binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return fakeResponse(http.StatusOK, `[]`), nil
+	})}
+
+	err := Run(context.Background(), []string{"--pre"}, Options{
+		CurrentVersion:       "v1.3.3",
+		GOOS:                 "linux",
+		GOARCH:               "amd64",
+		ExecutablePath:       target,
+		ReleasesURL:          "https://api.test/releases",
+		Client:               client,
+		Stdout:               io.Discard,
+		DownloadURLValidator: func(string) error { return nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "no releases found") {
+		t.Fatalf("error = %v, want no-releases error", err)
+	}
+}
 func TestRunSkipsDownloadWhenCurrentVersionMatches(t *testing.T) {
 	var downloads atomic.Int32
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {

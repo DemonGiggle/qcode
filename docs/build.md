@@ -37,12 +37,18 @@ Installed release binaries can update themselves from the latest GitHub release:
 ```sh
 qcode update
 qcode update --arch arm64
+qcode update --pre
 ```
 
 The updater compares the installed version with the latest release, selects the
 `qcode_<os>_<arch>` asset for the current operating system, downloads it beside
 the executable, and atomically replaces the executable. On Windows, replacement
 is completed by a short-lived helper after qcode exits.
+
+Without `--pre` only stable releases are considered (GitHub's latest stable
+release, which excludes pre-releases). Pass `--pre` to also consider
+pre-releases such as `v1.3.4-rc.1`; the highest version with a matching asset
+is installed, whether stable or pre-release.
 
 ## Release builds
 

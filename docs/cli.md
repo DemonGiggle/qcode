@@ -83,13 +83,16 @@ interface decorations; user text and model output keep their characters.
 ```sh
 qcode update
 qcode update --arch arm64
+qcode update --pre
 qcode update --help
 qcode --provider openai --update-model-meta
 qcode --provider opencode-go --update-model-meta
 ```
 
-`update` is a CLI subcommand with its own `--arch` flag. It installs the latest
-release for the current operating system and chosen architecture. See
+`update` is a CLI subcommand with its own `--arch` and `--pre` flags. It installs
+the latest release for the current operating system and chosen architecture.
+Without `--pre` only stable releases are considered; `--pre` also considers
+pre-releases such as release candidates. See
 [Building](build.md) for replacement behavior and release targets.
 
 Model metadata refresh updates cached thinking choices. It does not update the

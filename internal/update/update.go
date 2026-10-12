@@ -21,9 +21,11 @@ import (
 
 const (
 	latestReleaseURL   = "https://api.github.com/repos/DemonGiggle/qcode/releases/latest"
+	releasesURL        = "https://api.github.com/repos/DemonGiggle/qcode/releases"
 	replacementCommand = "--qcode-update-replace"
 	maxReleaseMetadata = 1 << 20
 	maxUpdateSize      = 128 << 20
+	maxReleasePages    = 10
 )
 
 // Options controls an update run. The platform and executable fields are
@@ -34,9 +36,13 @@ type Options struct {
 	GOARCH         string
 	ExecutablePath string
 	ReleaseURL     string
-	Client         *http.Client
-	Stdout         io.Writer
-	Stderr         io.Writer
+	// ReleasesURL is the GitHub list-releases endpoint consulted when
+	// --pre is passed. It defaults to releasesURL; ReleaseURL remains the
+	// stable-only endpoint used otherwise.
+	ReleasesURL string
+	Client      *http.Client
+	Stdout      io.Writer
+	Stderr      io.Writer
 
 	// DownloadURLValidator overrides the production GitHub URL validation for
 	// tests. A nil validator requires an HTTPS github.com release URL.
@@ -44,8 +50,10 @@ type Options struct {
 }
 
 type release struct {
-	TagName string  `json:"tag_name"`
-	Assets  []asset `json:"assets"`
+	TagName    string  `json:"tag_name"`
+	Draft      bool    `json:"draft"`
+	Prerelease bool    `json:"prerelease"`
+	Assets     []asset `json:"assets"`
 }
 
 type asset struct {
@@ -55,6 +63,7 @@ type asset struct {
 
 type updateArgs struct {
 	arch string
+	pre  bool
 }
 
 // IsReplacementCommand reports whether arguments are an internal helper
@@ -83,6 +92,9 @@ func Run(ctx context.Context, arguments []string, options Options) error {
 	if options.ReleaseURL == "" {
 		options.ReleaseURL = latestReleaseURL
 	}
+	if options.ReleasesURL == "" {
+		options.ReleasesURL = releasesURL
+	}
 	if options.Client == nil {
 		options.Client = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -97,7 +109,12 @@ func Run(ctx context.Context, arguments []string, options Options) error {
 		return err
 	}
 
-	latest, err := fetchLatestRelease(ctx, options.Client, options.ReleaseURL)
+	var latest release
+	if parsed.pre {
+		latest, err = fetchLatestIncludingPrerelease(ctx, options.Client, options.ReleasesURL, targetOS, targetArch)
+	} else {
+		latest, err = fetchLatestRelease(ctx, options.Client, options.ReleaseURL)
+	}
 	if err != nil {
 		return err
 	}
@@ -168,10 +185,12 @@ func parseArgs(arguments []string, stderr io.Writer) (updateArgs, error) {
 	flags := flag.NewFlagSet("qcode update", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.StringVar(&result.arch, "arch", "", "target architecture (default: current architecture; e.g. arm64)")
+	flags.BoolVar(&result.pre, "pre", false, "include pre-release versions when checking for updates")
 	flags.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: qcode update [--arch architecture]")
+		fmt.Fprintln(stderr, "Usage: qcode update [--arch architecture] [--pre]")
 		fmt.Fprintln(stderr, "\nDownload and install the latest release for the current operating system.")
 		fmt.Fprintln(stderr, "Supported architectures: amd64 and arm64; FreeBSD also supports amd64.")
+		fmt.Fprintln(stderr, "Without --pre only stable releases are considered; --pre also considers pre-releases.")
 	}
 	if err := flags.Parse(arguments); err != nil {
 		return updateArgs{}, err
@@ -252,6 +271,86 @@ func fetchLatestRelease(ctx context.Context, client *http.Client, endpoint strin
 		return release{}, errors.New("latest release response did not contain a tag")
 	}
 	return result, nil
+}
+
+// fetchLatestIncludingPrerelease returns the highest-versioned release,
+// stable or pre-release, that ships an asset for the target platform.
+// Drafts, untagged releases, unparseable tags, and releases without a
+// matching asset are skipped. Stable releases are included so --pre still
+// offers a newer stable release when it outranks any pre-release.
+func fetchLatestIncludingPrerelease(ctx context.Context, client *http.Client, endpoint, goos, goarch string) (release, error) {
+	var best release
+	var bestVersion semanticVersion
+	found := false
+	next := endpoint
+	for pages := 0; pages < maxReleasePages && next != ""; pages++ {
+		batch, link, err := fetchReleasePage(ctx, client, next)
+		if err != nil {
+			return release{}, err
+		}
+		for _, candidate := range batch {
+			if candidate.Draft || strings.TrimSpace(candidate.TagName) == "" {
+				continue
+			}
+			version, ok := parseVersion(candidate.TagName)
+			if !ok {
+				continue
+			}
+			if _, ok := findAsset(candidate.Assets, goos, goarch); !ok {
+				continue
+			}
+			if !found || compareVersions(bestVersion, version) < 0 {
+				best, bestVersion, found = candidate, version, true
+			}
+		}
+		next = link
+	}
+	if !found {
+		return release{}, fmt.Errorf("no releases found with an asset for %s/%s", goos, goarch)
+	}
+	return best, nil
+}
+
+func fetchReleasePage(ctx context.Context, client *http.Client, endpoint string) (batch []release, next string, err error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("create release request: %w", err)
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	request.Header.Set("User-Agent", "qcode-update")
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, "", fmt.Errorf("check releases: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return nil, "", fmt.Errorf("check releases: GitHub returned %s: %s", response.Status, strings.TrimSpace(string(message)))
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxReleaseMetadata)).Decode(&batch); err != nil {
+		return nil, "", fmt.Errorf("decode releases: %w", err)
+	}
+	return batch, nextPageURL(response.Header.Get("Link")), nil
+}
+
+// nextPageURL extracts the rel="next" URL from a GitHub paginated Link
+// header, or returns "" when there is no further page.
+func nextPageURL(header string) string {
+	for _, part := range strings.Split(header, ",") {
+		segments := strings.Split(part, ";")
+		if len(segments) != 2 {
+			continue
+		}
+		if strings.TrimSpace(segments[1]) != `rel="next"` {
+			continue
+		}
+		url := strings.TrimSpace(segments[0])
+		url = strings.TrimPrefix(url, "<")
+		url = strings.TrimSuffix(url, ">")
+		return strings.TrimSpace(url)
+	}
+	return ""
 }
 
 func findAsset(assets []asset, goos, goarch string) (asset, bool) {
