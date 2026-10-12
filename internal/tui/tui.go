@@ -229,6 +229,7 @@ type UI struct {
 	inputScreenRows      []string
 	inputCursorRow       int
 	inputCursorColumn    int
+	inputTaskRow         int
 	terminal             *lineedit.Terminal
 	display              historyDisplay
 	responseWriter       *MarkdownWriter
@@ -1686,7 +1687,10 @@ func (u *UI) rememberDraft(line string) {
 		return
 	}
 	u.screenMu.Lock()
-	u.drafts[u.activeAgent] = line
+	if u.drafts[u.activeAgent] != line {
+		u.drafts[u.activeAgent] = line
+		u.signalPresentation()
+	}
 	u.screenMu.Unlock()
 }
 
@@ -1814,7 +1818,7 @@ func (u *UI) refreshStatusBar() {
 }
 
 func (u *UI) renderStatusBarLocked(force bool) {
-	if !u.statusActive && !u.commandViewActive {
+	if !u.statusActive && !u.commandViewActive && !u.fixedInput {
 		return
 	}
 	bar := u.statusBar()
@@ -1839,6 +1843,27 @@ func (u *UI) renderStatusBarLocked(force bool) {
 	}
 	oldCount := statusBarLineCount(u.statusBarText)
 	newCount := statusBarLineCount(bar)
+	if u.fixedInput && !u.commandViewActive {
+		if u.input != nil {
+			u.input.mu.Lock()
+			raw := u.input.raw
+			u.input.mu.Unlock()
+			if raw {
+				return
+			}
+		}
+		if u.inputFrame == "" || len(u.inputScreenRows) != u.height+1 || newCount != oldCount || u.height < 3 {
+			u.paintFixedLocked(0)
+			return
+		}
+		rows := append([]string(nil), u.inputScreenRows...)
+		for i, line := range strings.Split(bar, "\n") {
+			rows[u.height-newCount+1+i] = line
+		}
+		u.writeFixedScreenLocked(rows, u.inputCursorRow, u.inputCursorColumn)
+		u.statusBarText = bar
+		return
+	}
 	if u.statusBarText != "" && newCount != oldCount {
 		// The footer grew or shrank: move the scroll region so history
 		// never scrolls under the status lines.
@@ -2210,6 +2235,7 @@ func (u *UI) resetPage() {
 	if v.browsing {
 		v.browsing = false
 		u.repaintActiveLocked(0)
+		u.signalPresentation()
 	}
 }
 
@@ -2221,7 +2247,11 @@ func (u *UI) showPage(direction int) {
 		u.paintFixedLocked(direction)
 		return
 	}
+	previous := *u.activeViewportLocked()
 	u.repaintActiveLocked(direction)
+	if *u.activeViewportLocked() != previous {
+		u.signalPresentation()
+	}
 }
 
 func (u *UI) showHistoryBoundary(beginning bool) bool {
@@ -2239,6 +2269,7 @@ func (u *UI) showHistoryBoundary(beginning bool) bool {
 		if v.browsing {
 			v.browsing = false
 			u.repaintActiveLocked(0)
+			u.signalPresentation()
 		}
 		return false
 	}
@@ -2248,6 +2279,7 @@ func (u *UI) showHistoryBoundary(beginning bool) bool {
 		v.anchor = rows[0].position
 	}
 	u.repaintActiveLocked(0)
+	u.signalPresentation()
 	return true
 }
 

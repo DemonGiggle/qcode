@@ -70,7 +70,7 @@ func (u *UI) activeAgentRunning() bool {
 func (u *UI) drawTaskIndicator() {
 	if u.fixedInput {
 		u.screenMu.Lock()
-		u.paintFixedLocked(0)
+		u.drawFixedTaskIndicatorLocked(time.Now())
 		u.screenMu.Unlock()
 		return
 	}
@@ -102,6 +102,50 @@ func (u *UI) drawTaskIndicator() {
 	}
 	u.taskIndicatorText = message
 	fmt.Fprintf(u.out, "\x1b[s\x1b[?7l\x1b[%d;1H\x1b[2K%s\x1b[?7h\x1b[u", u.statusTaskRowLocked(), renderThemeStatusBarLine(message, u.width, u.outputTheme(), true))
+}
+
+func (u *UI) fixedTaskIndicatorMessageLocked(summary session.Summary, now time.Time) string {
+	message := taskIndicatorMessage(summary, u.unicode, now)
+	if u.activeQuestionPanelLocked() != nil {
+		message = "PgUp/PgDn scroll question | Ctrl+C cancel"
+	} else if u.activeViewportLocked().browsing {
+		message = "History paused | PgUp/PgDn | PgDn to bottom resumes"
+	}
+	return truncateDiffLine(message, u.width, u.unicode)
+}
+
+// Timer ticks update only the indicator row. Rebuilding the transcript here
+// makes idle CPU and every spinner frame grow with the conversation history.
+func (u *UI) drawFixedTaskIndicatorLocked(now time.Time) {
+	if u.commandViewActive {
+		return
+	}
+	if u.input != nil {
+		u.input.mu.Lock()
+		raw := u.input.raw
+		u.input.mu.Unlock()
+		if raw {
+			return
+		}
+	}
+	if u.inputFrame == "" || len(u.inputScreenRows) != u.height+1 {
+		u.paintFixedLocked(0)
+		return
+	}
+	if u.inputTaskRow <= 0 {
+		return
+	}
+	var summary session.Summary
+	if u.manager != nil {
+		summary, _ = u.manager.Summary(u.activeAgent)
+	}
+	message := u.fixedTaskIndicatorMessageLocked(summary, now)
+	if message == u.inputScreenRows[u.inputTaskRow] {
+		return
+	}
+	rows := append([]string(nil), u.inputScreenRows...)
+	rows[u.inputTaskRow] = message
+	u.writeFixedScreenLocked(rows, u.inputCursorRow, u.inputCursorColumn)
 }
 
 func taskIndicatorMessage(summary session.Summary, unicodeEnabled bool, now time.Time) string {

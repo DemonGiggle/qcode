@@ -502,6 +502,7 @@ func (u *UI) switchAgent(id string) error {
 	u.onSkills = view.onSkills
 	u.screenMu.Unlock()
 	u.SetRunner(runner)
+	u.signalPresentation()
 	u.updateActiveCancellation()
 	u.repaintActive()
 	return nil
@@ -826,6 +827,19 @@ func (u *UI) drawTabBarLocked() {
 		return
 	}
 	bar := tabBar(u.displaySummaries(), u.activeAgent, u.views, u.width, u.unicode, ColorEnabled(u.out))
+	if u.fixedInput && !u.commandViewActive {
+		if u.height <= 3 {
+			return
+		}
+		if u.inputFrame == "" || len(u.inputScreenRows) != u.height+1 {
+			u.paintFixedLocked(0)
+			return
+		}
+		rows := append([]string(nil), u.inputScreenRows...)
+		rows[1] = bar
+		u.writeFixedScreenLocked(rows, u.inputCursorRow, u.inputCursorColumn)
+		return
+	}
 	fmt.Fprint(u.out, fmt.Sprintf("\x1b[s\x1b[?7l\x1b[1;1H\x1b[2K%s\x1b[?7h\x1b[u", renderThemeStatusBarLine(bar, u.width, u.outputTheme(), true)))
 }
 

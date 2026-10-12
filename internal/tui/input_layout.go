@@ -21,7 +21,10 @@ func (u *UI) renderInput(prompt, line string, pos int) {
 	pending := u.pendingTab != 0
 	u.tabMu.Unlock()
 	if !pending && (prompt == inputPrompt || prompt == planInputPrompt || prompt == skillPlanInputPrompt) {
-		u.drafts[u.activeAgent] = line
+		if u.drafts[u.activeAgent] != line {
+			u.drafts[u.activeAgent] = line
+			u.signalPresentation()
+		}
 	}
 	u.paintFixedLocked(0)
 }
@@ -110,7 +113,8 @@ func (u *UI) paintFixedLocked(direction int) {
 		}
 		queueRows = queueDisplayRows(queued, queueWidth, u.unicode)
 	}
-	statusN := statusBarLineCount(u.statusBar())
+	bar := u.statusBar()
+	statusN := statusBarLineCount(bar)
 	if u.height < 5 {
 		statusN = 1
 	}
@@ -238,17 +242,12 @@ func (u *UI) paintFixedLocked(direction int) {
 		screenRows[promptRow+i] = row
 	}
 	taskRow := u.height - statusN
+	u.inputTaskRow = 0
 	if footer == 1+statusN {
-		message := taskIndicatorMessage(summary, u.unicode, time.Now())
-		if question != nil {
-			message = "PgUp/PgDn scroll question | Ctrl+C cancel"
-		} else if u.activeViewportLocked().browsing {
-			message = "History paused | PgUp/PgDn | PgDn to bottom resumes"
-		}
-		screenRows[taskRow] = truncateDiffLine(message, u.width, u.unicode)
+		u.inputTaskRow = taskRow
+		screenRows[taskRow] = u.fixedTaskIndicatorMessageLocked(summary, time.Now())
 	}
 	if footer > 0 {
-		bar := u.statusBar()
 		lines := strings.Split(bar, "\n")
 		if u.height < 5 && len(lines) > 1 {
 			lines = lines[:1]
@@ -259,6 +258,7 @@ func (u *UI) paintFixedLocked(direction int) {
 		for i, line := range lines {
 			screenRows[start+i] = line
 		}
+		u.statusBarText = strings.Join(lines, "\n")
 	}
 	u.writeFixedScreenLocked(screenRows, promptRow+cy, cx+1)
 }

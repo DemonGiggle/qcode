@@ -30,6 +30,141 @@ func (m *persistenceManager) Submit(string, string) (session.Submission, error) 
 
 type persistencePromptManager struct{ *persistenceManager }
 
+type pollingPersistenceManager struct {
+	*persistenceManager
+	captures  int
+	onCapture func()
+}
+
+func (m *pollingPersistenceManager) SaveAgents() ([]session.SavedAgent, int) {
+	m.captures++
+	if m.onCapture != nil {
+		m.onCapture()
+	}
+	return m.persistenceManager.SaveAgents()
+}
+
+func pollingPersistenceUI(t *testing.T) (*UI, *pollingPersistenceManager) {
+	t.Helper()
+	u, base := persistenceUI(t)
+	manager := &pollingPersistenceManager{persistenceManager: base}
+	u.SetDetachedAgentManager(manager)
+	store, err := session.Open(t.TempDir(), u.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := u.EnableSessions(store, nil); err != nil {
+		t.Fatal(err)
+	}
+	return u, manager
+}
+
+func TestSessionPollingSkipsUnchangedIdleConversation(t *testing.T) {
+	u, manager := pollingPersistenceUI(t)
+	if err := u.pollSessionSave(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		if err := u.pollSessionSave(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if manager.captures != 1 {
+		t.Fatalf("idle polls captured the conversation %d times", manager.captures)
+	}
+	for _, change := range []func(){
+		func() { u.views["main"].display.AddLine("new transcript output") },
+		func() { u.renderInput(inputPrompt, "unfinished draft", 3) },
+		func() { u.rememberDraft("") },
+	} {
+		before := manager.captures
+		change()
+		if err := u.pollSessionSave(); err != nil {
+			t.Fatal(err)
+		}
+		if err := u.pollSessionSave(); err != nil {
+			t.Fatal(err)
+		}
+		if manager.captures != before+1 {
+			t.Fatalf("change triggered %d captures", manager.captures-before)
+		}
+	}
+	saved, err := u.persistence.store.Load(u.persistence.current.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var presentation savedPresentation
+	if err := json.Unmarshal(saved.Presentation, &presentation); err != nil {
+		t.Fatal(err)
+	}
+	if presentation.Drafts["main"] != "" || !strings.Contains(string(saved.Presentation), "new transcript output") {
+		t.Fatal("autosave lost draft or transcript changes")
+	}
+	before := manager.captures
+	u.closeSession()
+	if manager.captures != before+1 || u.persistence.current.Left.IsZero() {
+		t.Fatal("clean exit did not save the final checkpoint")
+	}
+}
+
+func TestSessionPollingContinuesForBusyBackgroundAgents(t *testing.T) {
+	u, manager := pollingPersistenceUI(t)
+	if err := u.pollSessionSave(); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []session.Status{session.StatusRunning, session.StatusWaitingForApproval} {
+		manager.agents[1].Summary.Status = status
+		before := manager.captures
+		for i := 0; i < 2; i++ {
+			if err := u.pollSessionSave(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if manager.captures != before+2 {
+			t.Fatalf("background %s agent did not checkpoint", status)
+		}
+	}
+	manager.agents[1].Summary.Status = session.StatusCompleted
+	u.signalPresentation() // Completion notification from the manager.
+	if err := u.pollSessionSave(); err != nil {
+		t.Fatal(err)
+	}
+	before := manager.captures
+	if err := u.pollSessionSave(); err != nil || manager.captures != before {
+		t.Fatal("completed background agent kept checkpointing", err)
+	}
+}
+
+func TestSessionPollingRetainsChangesDuringSaveAndRetriesErrors(t *testing.T) {
+	u, manager := pollingPersistenceUI(t)
+	manager.onCapture = u.signalPresentation
+	if err := u.pollSessionSave(); err != nil {
+		t.Fatal(err)
+	}
+	manager.onCapture = nil
+	if err := u.pollSessionSave(); err != nil || manager.captures != 2 {
+		t.Fatal("change during capture was lost", err)
+	}
+	valid := manager.agents[0].State
+	manager.agents[0].State = json.RawMessage(`invalid checkpoint`)
+	u.signalPresentation()
+	for i := 0; i < 2; i++ {
+		if err := u.pollSessionSave(); err == nil {
+			t.Fatal("invalid checkpoint did not return an error")
+		}
+	}
+	if manager.captures != 4 {
+		t.Fatal("failed checkpoint was not retried")
+	}
+	manager.agents[0].State = valid
+	if err := u.pollSessionSave(); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.pollSessionSave(); err != nil || manager.captures != 5 {
+		t.Fatal("successful retry kept checkpointing", err)
+	}
+}
+
 func (m *persistencePromptManager) SubmitPrompt(input session.PromptSubmission) (session.Submission, error) {
 	return m.Submit(input.AgentID, input.Prompt)
 }

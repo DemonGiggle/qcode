@@ -50,14 +50,16 @@ type savedPresentation struct {
 	SteeringCursor     uint64
 }
 type sessionPersistence struct {
-	mu          sync.Mutex
-	store       *session.Store
-	current     session.Snapshot
-	lastContent string
-	lastError   string
-	build       func(session.Snapshot) (*UI, error)
-	buildFresh  func(session.SavedAgent) (*UI, error)
-	requests    chan struct{}
+	mu            sync.Mutex
+	store         *session.Store
+	current       session.Snapshot
+	lastContent   string
+	lastSequence  uint64
+	sequenceSaved bool
+	lastError     string
+	build         func(session.Snapshot) (*UI, error)
+	buildFresh    func(session.SavedAgent) (*UI, error)
+	requests      chan struct{}
 }
 type savedAgentController interface {
 	SaveAgents() ([]session.SavedAgent, int)
@@ -197,12 +199,51 @@ func (u *UI) saveSession(left bool) error {
 	defer p.mu.Unlock()
 	return u.saveSessionLocked(left)
 }
+
+// pollSessionSave avoids copying and serializing an unchanged conversation.
+// Active agents still checkpoint periodically, including background tabs and
+// approval waits where tool state may change without transcript output.
+func (u *UI) pollSessionSave() error {
+	p := u.persistence
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	u.presentationMu.Lock()
+	sequence := u.presentationSequence
+	u.presentationMu.Unlock()
+	if p.sequenceSaved && sequence == p.lastSequence {
+		u.screenMu.Lock()
+		manager := u.manager
+		u.screenMu.Unlock()
+		busy := false
+		if manager != nil {
+			for _, summary := range manager.List() {
+				if summary.Status == session.StatusRunning || summary.Status == session.StatusWaitingForApproval {
+					busy = true
+					break
+				}
+			}
+		}
+		if !busy {
+			return nil
+		}
+	}
+	return u.saveSessionLocked(false)
+}
+
 func (u *UI) saveSessionLocked(left bool) error {
 	p := u.persistence
 	manager, ok := u.manager.(savedAgentController)
 	if !ok {
 		return nil
 	}
+	// Read the revision before capture so a concurrent change always leaves
+	// another checkpoint pending, even if it happened during serialization.
+	u.presentationMu.Lock()
+	sequence := u.presentationSequence
+	u.presentationMu.Unlock()
 	// Capture presentation first so its event cursor cannot be newer than the
 	// journal. Manager identities and work must then be captured atomically.
 	presentation := u.snapshotPresentation()
@@ -254,6 +295,7 @@ func (u *UI) saveSessionLocked(left bool) error {
 		}
 	}
 	if !hasContent {
+		p.lastSequence, p.sequenceSaved = sequence, true
 		return nil
 	}
 	// Stable tab ordering also prevents spurious saves from map iteration order.
@@ -288,6 +330,7 @@ func (u *UI) saveSessionLocked(left bool) error {
 		return err
 	}
 	if !left && string(content) == p.lastContent {
+		p.lastSequence, p.sequenceSaved = sequence, true
 		return nil
 	}
 	snap.Saved = time.Now().UTC()
@@ -299,6 +342,7 @@ func (u *UI) saveSessionLocked(left bool) error {
 	}
 	p.current = snap
 	p.lastContent = string(content)
+	p.lastSequence, p.sequenceSaved = sequence, true
 	return nil
 }
 
@@ -332,7 +376,7 @@ func (u *UI) watchSessions() func() {
 		for {
 			select {
 			case <-ticker.C:
-				u.reportSave(u.saveSession(false))
+				u.reportSave(u.pollSessionSave())
 			case <-u.persistence.requests:
 				u.reportSave(u.saveSession(false))
 			case <-done:
@@ -608,6 +652,7 @@ func (u *UI) installSessionLocked(staged *UI, snap session.Snapshot) {
 	p.current.Recency = session.ResumeTime(snap)
 	p.current.Left = time.Time{}
 	p.lastContent = ""
+	p.sequenceSaved = false
 	p.lastError = ""
 }
 

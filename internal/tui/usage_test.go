@@ -40,6 +40,43 @@ func TestStatusBarRefreshesWhileIdleWithoutManager(t *testing.T) {
 	}
 }
 
+func TestFixedStatusRefreshUpdatesFooterWithoutRebuildingHistory(t *testing.T) {
+	u, _ := layoutFixture(t)
+	u.runner = tokenRunner{}
+	history := &countedHistory{historyDisplay: u.display}
+	u.display = history
+	u.renderInput(inputPrompt, "draft", 2)
+	previous := append([]string(nil), u.inputScreenRows...)
+	history.snapshots = 0
+	u.runner = tokenRunner{usage: llm.SessionUsage{InputTokens: 1200, OutputTokens: 340, TotalTokens: 1540}}
+	u.refreshStatusBar()
+	if history.snapshots != 0 {
+		t.Fatal("status refresh rebuilt history")
+	}
+	if !strings.Contains(u.statusBarText, "I:1.2K O:340") || !strings.Contains(strings.Join(u.inputScreenRows, "\n"), "I:1.2K O:340") {
+		t.Fatal("status update missing from the screen cache")
+	}
+	for row := 1; row <= u.height-statusBarLineCount(u.statusBarText); row++ {
+		if previous[row] != u.inputScreenRows[row] {
+			t.Fatalf("status update changed row %d above the footer", row)
+		}
+	}
+	data, err := os.ReadFile(u.out.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	screen := newFixedScreen(u.width, u.height)
+	screen.feed(string(data))
+	var rendered strings.Builder
+	for _, row := range screen.rows {
+		rendered.WriteString(string(row))
+		rendered.WriteByte('\n')
+	}
+	if !strings.Contains(rendered.String(), "I:1.2K O:340") {
+		t.Fatal("status update missing from the terminal")
+	}
+}
+
 type tokenRunner struct {
 	statusRunner
 	usage llm.SessionUsage
