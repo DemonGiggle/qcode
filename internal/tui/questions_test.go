@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -225,6 +226,76 @@ func TestFormatQuestionWithOptionDescription(t *testing.T) {
 	}
 	if answer, valid := normalizeQuestionAnswer("1", item.Options); !valid || answer != "Colored lines are missed" {
 		t.Fatalf("selected answer = %q, %v", answer, valid)
+	}
+}
+
+func TestQuestionnaireHistoryReflowsNumberedChoices(t *testing.T) {
+	u, _ := layoutFixture(t)
+	u.width = 40
+	item := question.Question{
+		Text: "Should the skill instruct qcode to search the docs directory first, or does it know specific file paths/structure to navigate directly?",
+		Options: []string{
+			"Search/grep the docs directory for relevant content",
+			"Navigate a known directory structure (I'll describe it)",
+			"Both: try known structure first, fall back to search",
+			strings.Repeat("docs/", 10),
+		},
+		AllowCustom: true,
+	}
+	result, frames := startQuestionnaire(t, u, []question.Question{item})
+	waitQuestionnaireFrame(t, frames, "Answer 1/1>")
+	u.input.route([]byte("2\r"))
+	select {
+	case got := <-result:
+		if got.err != nil || len(got.answers) != 1 || got.answers[0] != item.Options[1] {
+			t.Fatalf("answer = %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("questionnaire did not accept answer")
+	}
+	for _, width := range []int{20, 60, 96} {
+		var rows []string
+		for _, row := range historyRows(u.display.Snapshot(), width) {
+			rows = append(rows, plainHistoryText(row.text))
+		}
+		transcript := strings.Join(rows, "\n")
+		for index, option := range item.Options {
+			prefix := fmt.Sprintf("   %d) ", index+1)
+			wrapped := wrapANSI(option, width-visibleWidth(prefix), "")
+			want := prefix + strings.ReplaceAll(wrapped, "\n", "\n      ")
+			if !strings.Contains(transcript, want+"\n") {
+				t.Errorf("width %d lost option alignment or retained old line breaks; want %q:\n%s", width, want, transcript)
+			}
+		}
+	}
+}
+
+func TestQuestionPanelWrapsDocumentationChoices(t *testing.T) {
+	panel := questionPanel{
+		index: 1, total: 4, footer: "Ctrl+C cancels these questions.",
+		item: question.Question{
+			Text: "Should the skill instruct qcode to search the docs directory first, or does it know specific file paths/structure to navigate directly?",
+			Options: []string{
+				"Search/grep the docs directory for relevant content",
+				"Navigate a known directory structure (I'll describe it)",
+				"Both: try known structure first, fall back to search",
+			},
+			AllowCustom: true,
+		},
+	}
+	const want = `Question 2/4:
+Should the skill instruct qcode to search the docs directory
+   first, or does it know specific file paths/structure to
+   navigate directly?
+   1) Search/grep the docs directory for relevant content
+   2) Navigate a known directory structure (I'll describe
+      it)
+   3) Both: try known structure first, fall back to search
+
+Choose an option or type your own answer. Ctrl+C cancels
+these questions.`
+	if got := strings.Join(panel.rows(60, 24, 0, true), "\n"); got != want {
+		t.Fatalf("documentation question layout:\n%s\nwant:\n%s", got, want)
 	}
 }
 

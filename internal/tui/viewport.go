@@ -34,13 +34,48 @@ func plainHistoryText(text string) string {
 	return result.String()
 }
 
+// Question options are retained as logical numbered lines. Reserve the marker
+// before wrapping so resizing keeps the same layout as the question panel.
+func wrapHistoryLine(text, plain string, width int) (wrapped, continuation string) {
+	if strings.HasPrefix(plain, "   ") {
+		end := 3
+		for end < len(plain) && plain[end] >= '0' && plain[end] <= '9' {
+			end++
+		}
+		if end > 3 && strings.HasPrefix(plain[end:], ") ") {
+			end += 2
+			// Map the plain marker back to its styled bytes so ANSI sequences
+			// remain intact when the label is wrapped separately.
+			offset, consumed := 0, 0
+			for _, unit := range displayUnits(text) {
+				offset += len(unit.raw)
+				if !strings.HasPrefix(unit.raw, "\x1b") {
+					consumed += len(unit.raw)
+				}
+				if consumed >= end {
+					break
+				}
+			}
+			prefix := text[:offset]
+			return wrapANSIWithPrefix(prefix, text[offset:], width), strings.Repeat(" ", visibleWidth(prefix))
+		}
+	}
+	return wrapANSI(text, width, ""), ""
+}
+
 func historyRows(snapshot historySnapshot, width int) []historyRow {
 	var rows []historyRow
 	for _, line := range snapshot.lines {
 		plain := plainHistoryText(line.text)
 		consumed, style := 0, ""
-		for _, part := range strings.Split(wrapANSI(line.text, width, ""), "\n") {
+		wrapped, continuation := wrapHistoryLine(line.text, plain, width)
+		for index, part := range strings.Split(wrapped, "\n") {
 			text := plainHistoryText(part)
+			if index > 0 {
+				// Added indentation occupies display cells but is not part of
+				// the source line used to anchor a paused reading position.
+				text = strings.TrimPrefix(text, continuation)
+			}
 			start := consumed
 			if found := strings.Index(plain[consumed:], text); found >= 0 {
 				start += found

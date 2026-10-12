@@ -28,6 +28,18 @@ func wrapANSI(text string, width int, continuation string) string {
 	return strings.Join(lines, "\n")
 }
 
+// wrapANSIWithPrefix reserves the prefix's columns before wrapping the text,
+// keeping a list marker with its label and aligning continuation rows.
+func wrapANSIWithPrefix(prefix, text string, width int) string {
+	indent := visibleWidth(prefix)
+	contentWidth := width
+	if width > 0 {
+		contentWidth = max(1, width-indent)
+	}
+	wrapped := wrapANSI(text, contentWidth, "")
+	return prefix + strings.ReplaceAll(wrapped, "\n", "\n"+strings.Repeat(" ", indent))
+}
+
 func wrapANSILine(text string, width int, continuation string) string {
 	if width <= 0 || visibleWidth(text) <= width {
 		return text

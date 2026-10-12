@@ -50,6 +50,28 @@ func TestViewportPagesOverlapTwoRenderedRows(t *testing.T) {
 	}
 }
 
+func TestHistoryQuestionChoiceKeepsStylesAndSourceAnchors(t *testing.T) {
+	const source = "   2) Navigate a known directory structure (I'll describe it)"
+	snapshot := historySnapshot{lines: []historyLine{{id: 7, text: cyan + source + reset}}}
+	rows := historyRows(snapshot, 20)
+	want := []string{"   2) Navigate a", "      known", "      directory", "      structure", "      (I'll describe", "      it)"}
+	if len(rows) != len(want) {
+		t.Fatalf("choice rows = %d, want %d: %+v", len(rows), len(want), rows)
+	}
+	for index, row := range rows {
+		if got := plainHistoryText(row.text); got != want[index] || !strings.Contains(row.text, cyan) {
+			t.Errorf("row %d lost alignment or style: %q", index, row.text)
+		}
+		content := want[index]
+		if index > 0 {
+			content = strings.TrimPrefix(content, "      ")
+		}
+		if row.position.line != 7 || row.position.column != strings.Index(source, content) {
+			t.Errorf("row %d anchor = %+v, want original position of %q", index, row.position, content)
+		}
+	}
+}
+
 func TestViewportPagingSmallViewsAndBoundaries(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

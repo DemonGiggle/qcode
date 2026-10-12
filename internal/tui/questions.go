@@ -330,6 +330,11 @@ func (u *UI) runQuestionnaireProgress(ctx context.Context, questions []question.
 		u.questionPanel = panel
 		width := u.width
 		u.screenMu.Unlock()
+		// The fixed panel formats the question at the current width. Retain
+		// logical lines in history so resizing does not wrap old breaks again.
+		if u.fixedInput {
+			width = 0
+		}
 		u.printSystemMessage(formatQuestionWithFooter(displayed, i, len(questions), width, footer))
 		for {
 			if err := questionCtx.Err(); err != nil {
@@ -399,23 +404,16 @@ func formatQuestionWithFooter(item question.Question, index, total, width int, f
 			}
 		}
 		prefix := fmt.Sprintf("   %d) ", optionIndex+1)
-		indent := visibleWidth(prefix)
-		optionWidth := width
-		if width > 0 {
-			optionWidth = max(1, width-indent)
-		}
-		// Wrap the label before adding its number, so a long unspaced label
-		// cannot move entirely to a new line and leave the number alone.
-		wrapped := wrapANSI(option, optionWidth, "")
-		wrapped = strings.ReplaceAll(wrapped, "\n", "\n"+strings.Repeat(" ", indent))
-		fmt.Fprintf(&output, "%s%s\n", prefix, wrapped)
+		fmt.Fprintln(&output, wrapANSIWithPrefix(prefix, option, width))
 	}
+	var hint string
 	if len(item.Options) == 0 || item.AllowCustom {
-		output.WriteString("\nChoose an option or type your own answer. ")
+		hint = "Choose an option or type your own answer. "
 	} else {
-		output.WriteString("\nChoose one of the listed options. ")
+		hint = "Choose one of the listed options. "
 	}
-	output.WriteString(footer)
+	output.WriteByte('\n')
+	output.WriteString(wrapANSI(hint+footer, width, ""))
 	return output.String()
 }
 

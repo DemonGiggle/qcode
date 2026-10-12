@@ -31,12 +31,13 @@ func (p *questionPanel) rows(width, height, direction int, unicode bool) []strin
 	if height <= 0 {
 		return nil
 	}
+	width = max(1, width)
 	formatted := formatQuestionWithFooter(p.item, p.index, p.total, width, p.footer)
 	heading, body, _ := strings.Cut(formatted, "\n")
 	if p.feedback != "" {
-		body = p.feedback + "\n\n" + body
+		body = wrapANSI(p.feedback, width, "") + "\n\n" + body
 	}
-	lines := strings.Split(wrapANSI(body, max(1, width), ""), "\n")
+	lines := strings.Split(body, "\n")
 	visible := max(1, height-1)
 	// Match transcript paging: Page Up is positive, Page Down is negative.
 	p.top = max(0, min(p.top-direction*max(1, visible-2), max(0, len(lines)-visible)))
