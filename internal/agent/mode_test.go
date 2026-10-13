@@ -144,11 +144,72 @@ func TestInteractiveQuestionsAcceptOptionObjects(t *testing.T) {
 	}
 }
 
-func TestInteractiveQuestionsRejectOptionWithoutLabel(t *testing.T) {
+func TestQuestionsKeepOptionsAcrossModes(t *testing.T) {
+	for _, mode := range []ExecutionMode{ModeAct, ModePlan, ModeSkillPlan} {
+		for _, test := range []struct {
+			name, arguments string
+			options         []string
+			descriptions    []string
+			answer          string
+		}{
+			{
+				name:         "description-only choices",
+				arguments:    `{"questions":[{"question":"How should the skill resolve which tag to release?","options":[{"description":"Skill takes explicit tag, falls back to latest git tag"},{"description":"Always use most recent reachable tag"},{"description":"Support both stable and -rc pre-release tags"}]}]}`,
+				options:      []string{"Skill takes explicit tag, falls back to latest git tag", "Always use most recent reachable tag", "Support both stable and -rc pre-release tags"},
+				descriptions: []string{"", "", ""},
+				answer:       "Support both stable and -rc pre-release tags",
+			},
+			{
+				name:         "mixed choices",
+				arguments:    `{"questions":[{"question":"Which store?","options":["SQLite",{"label":"Postgres","description":"Shared database"},{"label":" ","description":"  Another database  "}]}]}`,
+				options:      []string{"SQLite", "Postgres", "Another database"},
+				descriptions: []string{"", "Shared database", ""},
+				answer:       "Another database",
+			},
+			{
+				name:      "free text",
+				arguments: `{"questions":[{"question":"What directory should the skill use?"}]}`,
+				answer:    "docs/releases",
+			},
+		} {
+			t.Run(string(mode)+"/"+test.name, func(t *testing.T) {
+				a := New(&modePlanProvider{}, "model", &modeTestToolset{}, trace.New(io.Discard, false), io.Discard, 2)
+				switch mode {
+				case ModePlan:
+					a.SetPlanMode(true)
+				case ModeSkillPlan:
+					a.SetSkillPlanMode(true)
+				default:
+					a.SetInteractiveAvailable(true)
+					a.SetInteractiveMode(true)
+				}
+				asked := false
+				a.SetQuestioner(func(_ context.Context, questions []Question) ([]string, error) {
+					asked = true
+					if len(questions) != 1 || len(questions[0].Options) != len(test.options) || !questions[0].AllowCustom {
+						t.Fatalf("question options or custom answer lost: %+v", questions)
+					}
+					for i, option := range test.options {
+						if questions[0].Options[i] != option || questions[0].OptionDescriptions[i] != test.descriptions[i] {
+							t.Fatalf("choice %d changed: %+v", i+1, questions[0])
+						}
+					}
+					return []string{test.answer}, nil
+				})
+				result, err := a.executeDetailed(context.Background(), llm.ToolCall{Name: "ask_questions", Arguments: json.RawMessage(test.arguments)})
+				if err != nil || !asked || !strings.Contains(result.Output+result.UserAnswer, test.answer) {
+					t.Fatalf("question choices did not reach the user: asked=%v result=%+v err=%v", asked, result, err)
+				}
+			})
+		}
+	}
+}
+
+func TestInteractiveQuestionsRejectEmptyOptionObject(t *testing.T) {
 	a := New(&modePlanProvider{}, "model", &modeTestToolset{}, trace.New(io.Discard, false), io.Discard, 2)
 	a.SetInteractiveAvailable(true)
 	a.SetInteractiveMode(true)
-	call := llm.ToolCall{Name: "ask_questions", Arguments: json.RawMessage(`{"questions":[{"question":"What fails?","options":[{"description":"No label"},"Other"]}]}`)}
+	call := llm.ToolCall{Name: "ask_questions", Arguments: json.RawMessage(`{"questions":[{"question":"What fails?","options":[{"description":" "},"Other"]}]}`)}
 	if _, err := a.executeDetailed(context.Background(), call); err == nil || !strings.Contains(err.Error(), "empty option") {
 		t.Fatalf("missing option label error = %v", err)
 	}

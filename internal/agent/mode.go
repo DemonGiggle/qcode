@@ -420,7 +420,9 @@ func (a *Agent) askQuestions(ctx context.Context, arguments json.RawMessage) (ll
 }
 
 // Some models return choice objects even when the schema requests strings.
-// The label remains the answer; the description is shown beside it.
+// The label remains the answer; the description is shown beside it. A
+// description-only object uses its text as the label rather than losing choices
+// when a model retries the rejected question without options.
 func parseQuestionOption(raw json.RawMessage) (string, string, error) {
 	var label string
 	if err := json.Unmarshal(raw, &label); err == nil {
@@ -433,7 +435,12 @@ func parseQuestionOption(raw json.RawMessage) (string, string, error) {
 	if err := json.Unmarshal(raw, &option); err != nil {
 		return "", "", fmt.Errorf("option must be a string or an object with a label: %w", err)
 	}
-	return strings.TrimSpace(option.Label), strings.TrimSpace(option.Description), nil
+	label = strings.TrimSpace(option.Label)
+	description := strings.TrimSpace(option.Description)
+	if label == "" {
+		return description, "", nil
+	}
+	return label, description, nil
 }
 
 func planAllowedTool(name string) bool {

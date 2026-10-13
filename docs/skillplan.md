@@ -16,6 +16,12 @@ follow-up questions when an answer leaves an important decision unresolved.
 The mode can inspect workspace context but cannot run shell commands or change
 files.
 
+Questions with concrete alternatives offer numbered choices and accept a custom
+answer. Open-ended questions, such as a skill name or directory path, accept
+free text. If a model supplies descriptions without separate choice labels,
+qcode displays those descriptions as the choices. Plan mode and normal
+interactive questions use the same handling.
+
 Once the design is coherent, qcode saves a complete `SKILL.md` draft and asks
 whether to create it or stay in Skill Plan mode. Staying lets you review the
 draft or request refinements; each complete revision replaces the previous

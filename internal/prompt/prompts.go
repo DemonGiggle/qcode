@@ -181,7 +181,7 @@ const (
 	SkillLocationParameter   = "Supported skill root where the skill should be created"
 	SkillContentParameter    = "Complete UTF-8 SKILL.md content, including a concise description near the top and all required instructions"
 	QuestionTextParameter    = "A focused design question for the user"
-	QuestionOptionsParameter = "Optional mutually exclusive choices; omit for a free-text answer"
+	QuestionOptionsParameter = "Provide 2-6 mutually exclusive choices as plain strings when there are concrete alternatives, including yes/no decisions. Keep choices in this options array rather than only in the question text. Omit only for an open-ended answer such as a path, name, or detailed description; users can always type a custom answer."
 	AgentIDParameter         = "Exact agent ID from list_agents, work history, or the injected roster"
 	AgentModelParameter      = "Model name for the new agent; omit to use the main agent's current model"
 	AgentPromptParameter     = "Focused task or follow-up to send to the target agent"
