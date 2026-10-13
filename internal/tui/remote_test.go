@@ -142,6 +142,14 @@ func TestRemoteCatalogIncludesSelectorStateAndResumableSessions(t *testing.T) {
 	if !catalog.Sessions[2].Recency.Equal(current.Saved) {
 		t.Fatalf("current recency = %v, want %v", catalog.Sessions[2].Recency, current.Saved)
 	}
+	current.Preview = ""
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	catalog = u.RemoteCatalog(context.Background())
+	if catalog.Sessions[2].Preview != "<<CURRENT>>" || !catalog.Sessions[2].Current {
+		t.Fatalf("current untitled session = %+v", catalog.Sessions[2])
+	}
 }
 
 func TestRemotePresentationIncludesQueuedPromptsPerAgent(t *testing.T) {

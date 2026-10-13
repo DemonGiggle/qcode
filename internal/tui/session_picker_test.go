@@ -23,6 +23,33 @@ type sessionPickerKeys struct {
 	pending string
 }
 
+func TestCurrentSessionLabel(t *testing.T) {
+	entry := session.Entry{Snapshot: session.Snapshot{
+		Created: time.Now(), Agents: []session.SavedAgent{{}},
+	}, Current: true}
+	for _, unicodeEnabled := range []bool{false, true} {
+		for _, color := range []bool{false, true} {
+			line := renderSessionLineWithUnicode(entry, true, 80, color, unicodeEnabled)
+			if strings.Count(line, "<<CURRENT>>") != 1 || strings.Contains(line, "Untitled session") {
+				t.Fatalf("current empty session label = %q", line)
+			}
+			entry.Preview = "Current conversation"
+			line = renderSessionLineWithUnicode(entry, true, 80, color, unicodeEnabled)
+			if !strings.Contains(line, "<<CURRENT>>") || !strings.Contains(line, entry.Preview) {
+				t.Fatalf("current conversation label = %q", line)
+			}
+			entry.Preview = ""
+		}
+	}
+	if got := sessionName(entry); got != "<<CURRENT>>" {
+		t.Fatalf("current session name = %q", got)
+	}
+	entry.Current = false
+	if got := sessionName(entry); got != "Untitled session" {
+		t.Fatalf("saved session name = %q", got)
+	}
+}
+
 func (r *sessionPickerKeys) Read(data []byte) (int, error) {
 	if r.pending == "" {
 		if len(r.keys) == 0 {

@@ -260,37 +260,26 @@ func (u *UI) saveSessionLocked(left bool) error {
 			work = history.SaveWorkHistory()
 		}
 	}
-	// A launch containing only banners and commands is not a conversation.
-	hasContent := work != nil && (len(work.Records) > 0 || len(work.Events) > 0)
+	// Drafts, settings, commands, and idle tabs do not start a conversation.
+	// The work journal also covers queued prompts and reset/compacted agents.
+	hasContent := work != nil && (len(work.Records) > 0 || len(work.Events) > 0 || len(work.SteeringEvents) > 0)
 	preview := p.current.Preview
 	for _, a := range agents {
 		var state struct {
-			Messages []struct{ Role, Content string }
+			Messages []struct {
+				Role, Content string
+				Images        []json.RawMessage
+			}
 		}
 		if err := json.Unmarshal(a.State, &state); err != nil {
 			return err
 		}
 		for _, m := range state.Messages {
-			if m.Role != "system" {
+			if m.Role == "user" && (strings.TrimSpace(m.Content) != "" || len(m.Images) > 0) {
 				hasContent = true
 			}
 			if a.Summary.ID == "main" && (m.Role == "user" || m.Role == "assistant") && strings.TrimSpace(m.Content) != "" {
 				preview = m.Content
-			}
-		}
-	}
-	if len(agents) > 1 {
-		hasContent = true
-	}
-	for _, draft := range presentation.Drafts {
-		if strings.TrimSpace(draft) != "" {
-			hasContent = true
-		}
-	}
-	for _, view := range presentation.Views {
-		for _, line := range view.History.Lines {
-			if strings.HasPrefix(line, "> ") && line != "> /quit" && line != "> /exit" {
-				hasContent = true
 			}
 		}
 	}

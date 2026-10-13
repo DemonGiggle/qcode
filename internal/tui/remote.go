@@ -361,8 +361,12 @@ func (u *UI) remoteSessions() []RemoteSessionState {
 	}
 	result := make([]RemoteSessionState, 0, len(entries))
 	for _, entry := range entries {
+		preview := remoteSessionPreview(u.redaction.Text(redaction.Remote, entry.Preview))
+		if entry.Current && singleSessionLine(entry.Preview) == "" {
+			preview = currentSessionMarker
+		}
 		result = append(result, RemoteSessionState{
-			ID: entry.ID, Preview: remoteSessionPreview(u.redaction.Text(redaction.Remote, entry.Preview)),
+			ID: entry.ID, Preview: preview,
 			Created: entry.Created, Saved: entry.Saved, Left: entry.Left,
 			Recency: session.ResumeTime(entry.Snapshot), Current: entry.Current,
 			Busy: false, Problem: entry.Problem,

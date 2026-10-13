@@ -542,7 +542,7 @@ func TestSessionSelectorLineUsesTimeAgentsAndPreviewWithoutID(t *testing.T) {
 		Agents:  []session.SavedAgent{{}, {}},
 	}, Current: true}
 	line := renderSessionLine(entry, true, 120, false)
-	for _, want := range []string{"> ", "Sep 09 14:32", "2 agents", "Fix terminal input flicker"} {
+	for _, want := range []string{"> ", "<<CURRENT>>", "Sep 09 14:32", "2 agents", "Fix terminal input flicker"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("session line missing %q: %q", want, line)
 		}
@@ -582,6 +582,116 @@ func TestEmptyLaunchNotSaved(t *testing.T) {
 	entries, err := store.List()
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("saved empty launch: %v %v", entries, err)
+	}
+}
+
+func TestSessionWithoutUserPromptNotSaved(t *testing.T) {
+	for _, scenario := range []struct {
+		name  string
+		setup func(*UI, *persistenceManager)
+	}{
+		{"slash commands", func(u *UI, _ *persistenceManager) {
+			u.views["main"].display.AddLine("> /help")
+			u.views["main"].display.AddLine("> /model other-model")
+			u.views["main"].display.AddLine("> /resume")
+		}},
+		{"unsent draft", func(u *UI, _ *persistenceManager) {
+			u.drafts["main"] = "unfinished prompt"
+		}},
+		{"idle agent tabs", func(_ *UI, _ *persistenceManager) {}},
+		{"settings", func(u *UI, _ *persistenceManager) {
+			u.verbose = true
+		}},
+		{"rejected prompt", func(u *UI, m *persistenceManager) {
+			m.submitErr = errors.New("prompt rejected")
+			u.views["main"].display.AddLine("> rejected prompt")
+			if err := u.runActiveTask(context.Background(), "rejected prompt"); !errors.Is(err, m.submitErr) {
+				t.Fatal(err)
+			}
+		}},
+		{"empty user message", func(_ *UI, m *persistenceManager) {
+			m.agents[0].State = json.RawMessage(`{"Messages":[{"Role":"user","Content":"  "}]}`)
+		}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			u, m := persistenceUI(t)
+			for i := range m.agents {
+				m.agents[i].State = json.RawMessage(`{"Messages":[{"Role":"system","Content":"system"}]}`)
+			}
+			store, err := session.Open(t.TempDir(), u.root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := u.EnableSessions(store, nil); err != nil {
+				t.Fatal(err)
+			}
+			scenario.setup(u, m)
+			if err := u.saveSession(false); err != nil {
+				t.Fatal(err)
+			}
+			u.closeSession()
+			entries, err := store.List()
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("saved session without user prompt: %+v, %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestSessionConversationAndWorkSaved(t *testing.T) {
+	for _, scenario := range []struct {
+		name  string
+		setup func(*UI, *persistenceManager)
+	}{
+		{"main prompt", func(_ *UI, m *persistenceManager) {
+			m.agents[0].State = json.RawMessage(`{"Messages":[{"Role":"user","Content":"question"}]}`)
+		}},
+		{"other tab prompt", func(_ *UI, m *persistenceManager) {
+			m.agents[1].State = json.RawMessage(`{"Messages":[{"Role":"user","Content":"question"}]}`)
+		}},
+		{"image prompt", func(_ *UI, m *persistenceManager) {
+			m.agents[0].State = json.RawMessage(`{"Messages":[{"Role":"user","Images":[{"MIMEType":"image/png","Data":"image"}]}]}`)
+		}},
+		{"queued prompt", func(_ *UI, m *persistenceManager) {
+			m.work = &session.WorkHistory{Records: []session.WorkRecord{{Prompt: "queued question", Status: "queued"}}}
+		}},
+		{"work after reset", func(_ *UI, m *persistenceManager) {
+			m.work = &session.WorkHistory{Records: []session.WorkRecord{{Prompt: "question", Status: "completed"}}}
+		}},
+		{"steering history", func(_ *UI, m *persistenceManager) {
+			m.work = &session.WorkHistory{SteeringEvents: []session.SteeringEvent{{Input: session.SteeringInput{Text: "follow-up"}}}}
+		}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			u, m := persistenceUI(t)
+			for i := range m.agents {
+				m.agents[i].State = json.RawMessage(`{"Messages":[{"Role":"system","Content":"system"}]}`)
+			}
+			store, err := session.Open(t.TempDir(), u.root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := u.EnableSessions(store, nil); err != nil {
+				t.Fatal(err)
+			}
+			scenario.setup(u, m)
+			u.drafts["main"] = "next draft"
+			if err := u.saveSession(false); err != nil {
+				t.Fatal(err)
+			}
+			u.closeSession()
+			entries, err := store.List()
+			if err != nil || len(entries) != 1 || entries[0].Left.IsZero() {
+				t.Fatalf("conversation or work not saved: %+v, %v", entries, err)
+			}
+			var presentation savedPresentation
+			if err := json.Unmarshal(entries[0].Presentation, &presentation); err != nil {
+				t.Fatal(err)
+			}
+			if presentation.Drafts["main"] != "next draft" || len(entries[0].Agents) != 2 {
+				t.Fatal("started conversation lost draft or tabs")
+			}
+		})
 	}
 }
 

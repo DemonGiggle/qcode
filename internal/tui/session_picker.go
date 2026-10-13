@@ -13,7 +13,10 @@ import (
 	"qcode/internal/session"
 )
 
-const maxSessionListRows = 8
+const (
+	maxSessionListRows   = 8
+	currentSessionMarker = "<<CURRENT>>"
+)
 
 type sessionPickerOptions struct {
 	visible, width, height int
@@ -557,12 +560,12 @@ func renderSessionLine(entry session.Entry, selected bool, width int, color bool
 }
 
 func renderSessionLineWithUnicode(entry session.Entry, selected bool, width int, color, unicodeEnabled bool) string {
-	marker, current, pin := "  ", "  ", "  "
+	marker, current, pin := "  ", "", "  "
 	if selected {
 		marker = "> "
 	}
 	if entry.Current {
-		current = interfaceGlyph(unicodeEnabled, "● ", "* ")
+		current = currentSessionMarker + " "
 	}
 	if entry.Pinned {
 		pin = interfaceGlyph(unicodeEnabled, "◆ ", "^ ")
@@ -585,7 +588,11 @@ func sessionEntryLabel(entry session.Entry) string {
 	if len(entry.Agents) != 1 {
 		agents = fmt.Sprintf("%d agents", len(entry.Agents))
 	}
-	return when + " | " + agents + " | " + sessionName(entry)
+	label := when + " | " + agents
+	if !entry.Current || singleSessionLine(entry.Name) != "" || singleSessionLine(entry.Preview) != "" || entry.Problem != "" {
+		label += " | " + sessionName(entry)
+	}
+	return label
 }
 
 func sessionName(entry session.Entry) string {
@@ -595,6 +602,9 @@ func sessionName(entry session.Entry) string {
 	}
 	if label == "" {
 		label = "Untitled session"
+		if entry.Current {
+			label = currentSessionMarker
+		}
 	}
 	if entry.Problem != "" {
 		label = "Unavailable: " + singleSessionLine(entry.Problem)
