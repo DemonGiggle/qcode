@@ -384,6 +384,7 @@ func (m *AgentManager) RestoreAgents(saved []session.SavedAgent, nextID int) err
 			return err
 		}
 		s.summary = item.Summary
+		s.summary.Cwd = s.runner.WorkingDirectory()
 		s.summary.LastOutcome, _ = trust.UnwrapRestored("assistant", s.summary.LastOutcome)
 		s.latestPrompt = item.LatestPrompt
 		if s.summary.Status == StatusRunning || s.summary.Status == StatusWaitingForApproval {

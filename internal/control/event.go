@@ -27,14 +27,15 @@ const (
 // Event is the transport-neutral envelope used by local and future remote
 // clients. Sequence numbers let a reconnecting client ask for missed events.
 type Event struct {
-	Sequence     uint64           `json:"sequence"`
-	Type         EventType        `json:"type"`
-	Time         time.Time        `json:"time"`
-	Agent        *session.Summary `json:"agent,omitempty"`
-	Duration     time.Duration    `json:"duration_ns,omitempty"`
-	Consultation bool             `json:"consultation,omitempty"`
-	Interaction  *Interaction     `json:"interaction,omitempty"`
-	Resolution   *Resolution      `json:"resolution,omitempty"`
+	Sequence         uint64           `json:"sequence"`
+	Type             EventType        `json:"type"`
+	Time             time.Time        `json:"time"`
+	Agent            *session.Summary `json:"agent,omitempty"`
+	Duration         time.Duration    `json:"duration_ns,omitempty"`
+	Consultation     bool             `json:"consultation,omitempty"`
+	DirectoryChanged bool             `json:"directory_changed,omitempty"`
+	Interaction      *Interaction     `json:"interaction,omitempty"`
+	Resolution       *Resolution      `json:"resolution,omitempty"`
 }
 
 // Subscription is an independent event cursor. A slow subscriber can miss

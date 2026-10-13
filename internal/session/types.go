@@ -55,6 +55,7 @@ const (
 )
 
 type Summary struct {
+	Cwd          string    `json:"cwd,omitempty"`
 	ActiveTaskID string    `json:"active_task_id,omitempty"`
 	Progress     *Progress `json:"progress,omitempty"`
 	ID           string    `json:"id"`
@@ -123,8 +124,10 @@ type WorkActivity struct {
 const MaxWorkActivities = 256
 
 type Event struct {
-	Agent    Summary
-	Duration time.Duration
+	// DirectoryChanged refreshes presentation without reporting task completion.
+	DirectoryChanged bool
+	Agent            Summary
+	Duration         time.Duration
 	// Consultation wakes consumers to read the durable consultation event log.
 	Consultation bool
 	// Barrier is acknowledged after earlier presentation events are drained.

@@ -51,7 +51,7 @@ request additional directories, or delegate work to other agents.
 
 ## Without the sandbox
 
-Without `--sandbox`, file tools reject paths that lexically leave the selected workspace (`--cwd`), but symbolic links and the `shell` tool can still reach anything allowed by the operating-system account.
+Without `--sandbox`, file tools reject paths that lexically leave the agent's current directory (initially `--cwd`), but symbolic links and the `shell` tool can still reach anything allowed by the operating-system account. The `change_directory` tool can select an existing directory outside the launch workspace; subsequent file-tool confinement follows that selected directory.
 
 ## With the sandbox (`--sandbox`, Linux)
 
@@ -62,6 +62,13 @@ Each shell call receives a fresh namespace with no network by default, a hidden 
 ## Requesting more directories
 
 The model can call `request_directory_access` when work requires another directory. qcode asks the interactive user to approve an editable directory path, grants it read/write for the current session, and clears added grants on `/new`. The filesystem root cannot be granted. Non-interactive directory requests are denied.
+
+`change_directory` and `create_agent.cwd` use the same authorization rules.
+Switching to an already approved directory needs no prompt; an unapproved
+destination requires user approval before the switch or creation proceeds.
+`/resume` restores saved grants before validating directories and falls back to
+the launch workspace with a warning when access is unavailable. `/new` also
+resets the active directory to launch.
 
 ## Persistent command directories
 

@@ -78,6 +78,8 @@ type Agent struct {
 	planDecisionPending      bool
 	skillPlanDecisionPending bool
 	activityRecorder         func(session.WorkActivity)
+	directoryRecorder        func(string)
+	creationRollback         func()
 	progressRecorder         func(*session.Progress)
 	progress                 *session.Progress
 	progressTask             *trace.Task
@@ -340,12 +342,12 @@ func (a *Agent) ResetSession() {
 	a.latestPlan = nil
 	a.latestSkillDraft = nil
 	a.stateMu.Unlock()
-	defer a.invalidateContextUsage()
 	a.system = a.modeSystem(a.selectedSkills)
 	a.messages = []llm.Message{{Role: "system", Content: a.system}}
 	if resetter, ok := a.tools.(interface{ ResetSession() }); ok {
 		resetter.ResetSession()
 	}
+	a.directoryChanged()
 }
 
 // ToolNames returns the names of all registered tools.
@@ -690,7 +692,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 				return err
 			}
 			input.setToolCall(call.ID)
-			fingerprint := toolFingerprint(call)
+			fingerprint := a.WorkingDirectory() + "\x00" + toolFingerprint(call)
 			identicalToolCalls[fingerprint]++
 			if identicalToolCalls[fingerprint] >= maxIdenticalToolCalls {
 				return fmt.Errorf("agent stopped after tool %q was requested unchanged %d times; arguments=%s", call.Name, identicalToolCalls[fingerprint], compactJSON(a.redaction.JSON(redaction.Terminal, call.Arguments)))

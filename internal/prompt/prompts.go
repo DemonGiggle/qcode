@@ -148,8 +148,13 @@ const (
 	ListAgentsTool           = "List the other agent sessions and their current task status. Available only to the main agent."
 	SearchAgentWorkTool      = "Search all recorded agent tasks and findings in this session, including earlier work and closed agents. Results are excerpts of reference data. Use an empty query to browse, agent_id to filter, and next_offset for further pages. Available only to the main agent."
 	ConsultAgentsTool        = "Ask several distinct agents focused questions about their previous work. All requests are submitted asynchronously before waiting for their specific replies. The configured agent timeout includes queue time. Returns individual completed, timed_out, failed, or cancelled outcomes; use successful replies and continue despite other failures. Available only to the main agent."
-	CreateAgentTool          = "Create a new agent session and optionally start a focused task in it. The model and task are optional; when model is omitted, use the main agent's current model. Creation and task assignment return immediately and never wait for completion. After successful background assignment, finish the current response; do not call list_agents to poll. If a task is provided and assignment fails, the new agent remains idle. Available only to the main agent."
+	CreateAgentTool          = "Create a new agent session and optionally start a focused task in it. The model, task, and cwd are optional; when model is omitted, use the main agent's current model. Omitted cwd inherits the caller's working directory; relative cwd resolves against it. The destination must be an existing authorized directory and is applied before the first task starts. Creation and task assignment return immediately and never wait for completion. After successful background assignment, finish the current response; do not call list_agents to poll. If a task is provided and assignment fails, the new agent remains idle. Available only to the main agent."
 	DelegateTaskTool         = "Start a focused task in another available agent session. The task runs asynchronously and retains that agent's conversation. After successful assignment, finish the current response; do not wait or poll for its result. Use consult_agents when information from an agent is needed before continuing. Available only to the main agent."
+)
+
+const (
+	ChangeDirectoryTool       = "Change this agent's working directory to an existing directory. Relative paths resolve against its current directory; returns the canonical absolute path. Sandboxed destinations require directory access approval. Other agents, session storage, and workspace skills keep their own directories."
+	WorkingDirectoryParameter = "Existing directory, absolute or relative to this agent's current working directory; omitted create_agent.cwd inherits the caller's directory"
 )
 
 // Tool parameter descriptions are model-visible prompts too, so they live here.
@@ -157,13 +162,13 @@ const (
 	WebURLParameter          = "Public HTTP(S) URL to fetch"
 	WebQueryParameter        = "Web search query"
 	WebResultsParameter      = "Maximum search results (default 5, range 1–10)"
-	PathParameter            = "File path relative to the workspace"
+	PathParameter            = "File path relative to the agent's current working directory, or an absolute path"
 	OffsetParameter          = "One-based line number to start reading from (default 1)"
 	LimitParameter           = "Maximum lines to read (default 200)"
 	ContentParameter         = "Complete new file content"
 	OldTextParameter         = "Exact text to replace"
 	NewTextParameter         = "Replacement text"
-	DirectoryParameter       = "Directory path relative to the workspace; defaults to ."
+	DirectoryParameter       = "Directory path relative to the agent's current working directory; defaults to ."
 	PatternParameter         = "Go regular expression"
 	SearchPathParameter      = "Directory or file to search; defaults to ."
 	MaxResultsParameter      = "Maximum matches (default 100)"

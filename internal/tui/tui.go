@@ -1013,7 +1013,10 @@ func (u *UI) ApproveDirectory(ctx context.Context, requested, proposed string) (
 		selected = proposed
 	}
 	if !filepath.IsAbs(selected) {
-		selected = filepath.Join(u.root, selected)
+		u.screenMu.Lock()
+		cwd := u.workingDirectory()
+		u.screenMu.Unlock()
+		selected = filepath.Join(cwd, selected)
 	}
 	sensitive := false
 	if home, homeErr := os.UserHomeDir(); homeErr == nil && pathContainsForUI(selected, home) {
@@ -1955,7 +1958,17 @@ func (u *UI) statusBar() string {
 	if u.remoteService != nil {
 		remote = u.remoteService.Status().Running
 	}
-	return statusBarWithStatuslineHidden(u.provider, u.model, u.redaction.Text(redaction.Terminal, displayRoot(u.root)), u.width, u.unicode, ColorEnabled(u.out), remote, u.statuslineHidden, magenta, blue, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+	return statusBarWithStatuslineHidden(u.provider, u.model, u.redaction.Text(redaction.Terminal, displayRoot(u.workingDirectory())), u.width, u.unicode, ColorEnabled(u.out), remote, u.statuslineHidden, magenta, blue, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+}
+
+// Called with screenMu held, just like the status bar's other runner accessors.
+func (u *UI) workingDirectory() string {
+	if runner, ok := u.runner.(interface{ WorkingDirectory() string }); ok {
+		if cwd := runner.WorkingDirectory(); cwd != "" {
+			return cwd
+		}
+	}
+	return u.root
 }
 
 func (u *UI) teardownStatusBar() {
@@ -2307,7 +2320,11 @@ func OutputWidth(out *os.File) int {
 }
 
 func (u *UI) contextLabel() string {
-	if runner, ok := u.runner.(contextRunner); ok {
+	return contextLabelFor(u.runner)
+}
+
+func contextLabelFor(value Runner) string {
+	if runner, ok := value.(contextRunner); ok {
 		remaining, known, estimated := runner.ContextRemaining()
 		if known {
 			prefix := ""
@@ -2321,13 +2338,17 @@ func (u *UI) contextLabel() string {
 }
 
 func (u *UI) modeLabel() string {
-	if controller, ok := u.runner.(skillPlanController); ok && controller.SkillPlanMode() {
+	return modeLabelFor(u.runner)
+}
+
+func modeLabelFor(value Runner) string {
+	if controller, ok := value.(skillPlanController); ok && controller.SkillPlanMode() {
 		return "SKILL PLAN"
 	}
-	if controller, ok := u.runner.(planController); ok && controller.PlanMode() {
+	if controller, ok := value.(planController); ok && controller.PlanMode() {
 		return "PLAN"
 	}
-	if controller, ok := u.runner.(interactiveController); ok && controller.InteractiveMode() && controller.InteractiveAvailable() {
+	if controller, ok := value.(interactiveController); ok && controller.InteractiveMode() && controller.InteractiveAvailable() {
 		return "INTERACTIVE"
 	}
 	return ""

@@ -12,7 +12,67 @@ Use `/agent` or `/agent new` to choose a model for a new tab, or `/agent new <mo
 
 Use `/agent list`, `/agent switch <id>`, `/agent cancel <id>`, and `/agent close <id>` to manage tabs. Closing asks for confirmation; `/agent close <id> --yes` skips it. Main cannot be closed. `/agent list` is an interactive selector: use Up/Down or PgUp/PgDn to move, Enter to switch to the highlighted agent, and Esc or Ctrl+C to leave it. Each row retains the agent ID, name, model, status, and queue information, followed by the latest recorded knowledge preview truncated to at most five lines.
 
-The tab bar shows the available switch shortcuts when the row has room: Ctrl+PageUp/PageDown or the Alt+, and Alt+. fallbacks. When all agents do not fit, `main` stays pinned while a moving window keeps the active agent and nearby tabs visible; counters at each edge show how many tabs are hidden in that direction. Each agent keeps independent context, model, output, tool settings, and sandbox grants while workspace mutations are serialized.
+The tab bar shows the available switch shortcuts when the row has room: Ctrl+PageUp/PageDown or the Alt+, and Alt+. fallbacks. When all agents do not fit, `main` stays pinned while a moving window keeps the active agent and nearby tabs visible; counters at each edge show how many tabs are hidden in that direction. Each agent keeps independent context, model, output, tool settings, working directory, and sandbox grants while filesystem mutations remain serialized across all agents.
+
+## Working directories
+
+Every agent starts in the launch workspace (`--cwd`) and has the
+`change_directory` tool enabled by default:
+
+```json
+{"path":"packages/server"}
+```
+
+The path must identify an existing directory. Absolute paths are accepted;
+relative paths resolve against that agent's current directory. Symlinks resolve
+to their canonical absolute destination, which the tool returns. Invalid paths,
+denied access, and cancelled switches leave the agent's directory unchanged.
+Use `/tool` to disable the tool; Plan and Skill Plan modes exclude it.
+
+Relative read, write, edit, list, search, image, and shell operations use this
+directory. A shell command's `cd` affects only that command, so use
+`change_directory` to select a directory for later calls. Other agents and the
+qcode process keep their own directories. The terminal and browser status lines
+update during the task and show the selected tab's directory; `list_agents` and
+the bounded roster also include each agent's `cwd`.
+
+With sandboxing, switching outside an agent's approved directories uses the
+existing directory approval flow. An existing grant needs no new approval, and
+a switch never silently grants access. Without sandboxing, agents can switch
+outside the launch workspace; file tools then apply their existing lexical
+confinement rule to the selected directory.
+
+`create_agent` accepts optional `cwd`. Omitting it inherits the caller's current
+directory; relative values resolve against the caller's directory. qcode validates
+and authorizes the destination before creating the child, then applies inherited
+capabilities and the directory before queuing its first task. Failed validation
+or approval creates no child. Interactive `/agent new` retains its defaults and
+starts in the launch workspace.
+
+For example, prepare a Git worktree with the shell tool:
+
+```sh
+git worktree add ../qcode-fix -b fix/example
+```
+
+Then give a helper its own directory and task:
+
+```json
+{"cwd":"../qcode-fix","task":"Implement the fix and run its focused tests."}
+```
+
+In sandbox mode, creating the sibling worktree requires approving its containing
+directory with `request_directory_access` first. The helper can also select an
+existing worktree with `change_directory`. Changed files are recorded relative
+to the launch workspace when contained there, and as absolute paths otherwise,
+so matching filenames in different worktrees stay distinguishable.
+
+`/resume` restores each saved directory after its grants. Legacy snapshots start
+in the launch workspace. Missing, invalid, or unauthorized saved directories
+fall back to launch with a warning; resume never asks for additional access.
+`/new` resets the active agent to launch and clears its additional grants. Session
+storage, skill discovery, and selected workspace skills stay tied to the launch
+workspace through all directory changes.
 
 The active agent's latest received prompt stays directly beneath the tabs in both
 the terminal and remote browser. A bold `✦`
@@ -50,7 +110,7 @@ The main agent can create and assign work in one asynchronous call by passing
 an optional `task` to `create_agent`, or can call `create_agent` first and use
 the returned agent ID in a subsequent `delegate_task` call. If `model` is
 omitted, the new agent uses the main agent's current model. Agents created this way inherit the main agent's
-current tool enablement, selected skills, approved directory grants, and
+current tool enablement, selected skills, approved directory grants, working directory, and
 maximum step setting; their conversation and main-only orchestration tools stay
 separate. The interactive `/agent` command remains available when the user wants to
 create or switch agent tabs directly.
@@ -122,7 +182,7 @@ pending requests are never silently resubmitted.
 
 ### Roster injection
 
-On every model request, qcode builds a bounded summary of every non-main agent—ID, name, model, status, current task, last outcome (truncated to 100 bytes), changed files, and errors. This roster is capped at **2 KB** and appended to the system message for that single request only. It is never stored in conversation history; it is recomputed fresh each turn.
+On every model request, qcode supplies the active agent's current directory and builds a bounded summary of every non-main agent—ID, name, model, status, working directory, current task, last outcome (truncated to 100 bytes), changed files, and errors. This roster is capped at **2 KB** and appended to the system message for that single request only. It is never stored in conversation history; it is recomputed fresh each turn.
 
 ### Handoff knowledge transfer
 

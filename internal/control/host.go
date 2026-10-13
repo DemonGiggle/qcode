@@ -74,6 +74,7 @@ func (h *Host) forwardEvents() {
 		h.events.publish(Event{
 			Type: eventType, Agent: &summary, Duration: event.Duration,
 			Consultation: event.Consultation, Time: time.Now().UTC(),
+			DirectoryChanged: event.DirectoryChanged,
 		})
 		select {
 		case h.legacyEvents <- event:

@@ -24,6 +24,8 @@ const (
 
 // RemoteAgentView is a transport-safe snapshot of one agent tab.
 type RemoteAgentView struct {
+	Cwd           string                 `json:"cwd,omitempty"`
+	StatusBar     string                 `json:"status_bar,omitempty"`
 	ID            string                 `json:"id"`
 	Name          string                 `json:"name"`
 	Provider      string                 `json:"provider,omitempty"`
@@ -274,6 +276,7 @@ func (u *UI) RemotePresentation() RemotePresentation {
 		}
 		result.Views = append(result.Views, RemoteAgentView{
 			ID: view.id, Name: name, Provider: view.provider, Model: view.model,
+			Cwd: summary.Cwd, StatusBar: u.remoteAgentStatusBar(view.id, view.provider, summary.Model, summary.Cwd),
 			Status: string(summary.Status), Lines: lines, QueuedPrompts: queued, LatestPrompt: latestPrompt,
 		})
 	}
@@ -396,9 +399,24 @@ func (u *UI) remoteStatusBar() string {
 		remote = u.remoteService.Status().Running
 	}
 	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
 	hidden := append([]string(nil), u.statuslineHidden...)
-	u.screenMu.Unlock()
-	return statusBarWithStatuslineHidden(u.provider, u.model, u.redaction.Text(redaction.Remote, displayRoot(u.root)), u.width, u.unicode, true, remote, hidden, webStatusModelColor, webStatusWorkspaceColor, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+	return statusBarWithStatuslineHidden(u.provider, u.model, u.redaction.Text(redaction.Remote, displayRoot(u.workingDirectory())), u.width, u.unicode, true, remote, hidden, webStatusModelColor, webStatusWorkspaceColor, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+}
+
+func (u *UI) remoteAgentStatusBar(id, provider, model, cwd string) string {
+	if u.manager == nil || cwd == "" {
+		return u.remoteStatusBar()
+	}
+	value, _ := u.manager.Runner(id)
+	runner, _ := value.(Runner)
+	remote := false
+	if u.remoteService != nil {
+		remote = u.remoteService.Status().Running
+	}
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	return statusBarWithStatuslineHidden(provider, model, u.redaction.Text(redaction.Remote, displayRoot(cwd)), u.width, u.unicode, true, remote, u.statuslineHidden, webStatusModelColor, webStatusWorkspaceColor, contextLabelFor(runner), usageLabelFor(runner, u.unicode), stepsLabelFor(runner), modeLabelFor(runner), thinkingLabelFor(runner))
 }
 
 func (u *UI) SubscribePresentation(ctx context.Context) <-chan struct{} {

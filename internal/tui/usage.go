@@ -7,7 +7,11 @@ import (
 )
 
 func (u *UI) usageLabel() string {
-	runner, ok := u.runner.(interface{ SessionUsage() llm.SessionUsage })
+	return usageLabelFor(u.runner, u.unicode)
+}
+
+func usageLabelFor(value Runner, unicode bool) string {
+	runner, ok := value.(interface{ SessionUsage() llm.SessionUsage })
 	if !ok {
 		return "unknown"
 	}
@@ -20,12 +24,16 @@ func (u *UI) usageLabel() string {
 		suffix = "?"
 	}
 	label := fmt.Sprintf("I:%s O:%s%s", compactTokenCount(s.InputTokens), compactTokenCount(s.OutputTokens), suffix)
-	label += interfaceGlyph(u.unicode, " Σ:", " T:") + compactTokenCount(s.TotalTokens)
+	label += interfaceGlyph(unicode, " Σ:", " T:") + compactTokenCount(s.TotalTokens)
 	return label
 }
 
 func (u *UI) stepsLabel() string {
-	runner, ok := u.runner.(stepRunner)
+	return stepsLabelFor(u.runner)
+}
+
+func stepsLabelFor(value Runner) string {
+	runner, ok := value.(stepRunner)
 	if !ok {
 		return ""
 	}

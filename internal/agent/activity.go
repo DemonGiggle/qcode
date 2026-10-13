@@ -75,6 +75,8 @@ func toolActivity(call llm.ToolCall) trace.Activity {
 		return activity("propose_skill", "Preparing skill draft", "Saved skill draft for review", trace.ActivityAgent)
 	case "request_directory_access":
 		return activity("request_directory_access", "Requesting access to "+target(path, "directory"), "Requested access to "+target(path, "directory"), trace.ActivityWrite)
+	case "change_directory":
+		return activity("change_directory", "Switching directory to "+target(path, "directory"), "Switched directory to "+target(path, "directory"), trace.ActivityAgent)
 	case "list_agents":
 		return activity("list_agents", "Listing agents", "Listed agents", trace.ActivityAgent)
 	case "search_agent_work":

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 )
 
 type savedTools struct {
+	Cwd            string `json:"cwd,omitempty"`
 	Disabled       map[string]bool
 	Grants, Skills []string
 }
@@ -15,8 +17,9 @@ type savedTools struct {
 func (r *Registry) SaveTools() json.RawMessage {
 	r.grantMu.RLock()
 	grants := append([]string(nil), r.grants...)
+	cwd := r.cwd
 	r.grantMu.RUnlock()
-	s := savedTools{Disabled: r.disabled, Grants: grants}
+	s := savedTools{Disabled: r.disabled, Grants: grants, Cwd: cwd}
 	if selection, ok := r.skills.(interface{ Selected() []string }); ok {
 		s.Skills = selection.Selected()
 	}
@@ -32,13 +35,15 @@ func (r *Registry) RestoreTools(data json.RawMessage) error {
 	return r.restoreTools(s)
 }
 
-// RestoreToolSelections restores toggles and skills without directory grants.
+// RestoreToolSelections restores toggles and launch-workspace skills while
+// resetting the directory and grants to the launch workspace.
 func (r *Registry) RestoreToolSelections(data json.RawMessage) error {
 	var s savedTools
 	if err := json.Unmarshal(data, &s); err != nil {
 		return err
 	}
 	s.Grants = nil
+	s.Cwd = ""
 	return r.restoreTools(s)
 }
 
@@ -52,6 +57,7 @@ func (r *Registry) restoreTools(s savedTools) error {
 	r.updateSandboxNetworkAccess()
 	r.grantMu.Lock()
 	r.grants = []string{r.root}
+	r.cwd = r.root
 	r.grantMu.Unlock()
 	r.restoreWarnings = nil
 	for _, path := range s.Grants {
@@ -68,6 +74,22 @@ func (r *Registry) restoreTools(s savedTools) error {
 			continue
 		}
 		r.addGrant(path)
+	}
+	// Grants must be restored first. Resuming never prompts for or silently
+	// grants access to a saved working directory.
+	if s.Cwd != "" {
+		canonical, canonicalErr := filepath.EvalSymlinks(s.Cwd)
+		valid := filepath.IsAbs(s.Cwd) && canonicalErr == nil && canonical == s.Cwd
+		if r.sandbox != nil {
+			valid = valid && r.isGranted(s.Cwd)
+		}
+		var err error
+		if valid {
+			_, err = r.ChangeWorkingDirectory(context.Background(), s.Cwd)
+		}
+		if !valid || err != nil {
+			r.restoreWarnings = append(r.restoreWarnings, fmt.Sprintf("Saved working directory is missing, invalid, or unauthorized; using launch workspace %s: %s", r.root, s.Cwd))
+		}
 	}
 	if selection, ok := r.skills.(interface{ Set([]string) }); ok {
 		selection.Set(s.Skills)
