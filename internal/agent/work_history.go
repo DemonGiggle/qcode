@@ -13,6 +13,7 @@ import (
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
 	"qcode/internal/session"
+	"qcode/internal/trust"
 )
 
 type WorkMatch struct {
@@ -265,6 +266,7 @@ func (m *AgentManager) RestoreWorkHistory(saved *session.WorkHistory) error {
 		work.ChangedFiles = append([]string(nil), work.ChangedFiles...)
 		work.Steers = append([]session.SteeringInput(nil), work.Steers...)
 		work.Activities = append([]session.WorkActivity(nil), work.Activities...)
+		work.Response, _ = trust.UnwrapRestored("assistant", work.Response)
 		records = append(records, work)
 	}
 	for i, event := range saved.Events {

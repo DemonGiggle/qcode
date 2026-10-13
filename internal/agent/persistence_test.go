@@ -37,7 +37,10 @@ func TestAgentRestorePreservesImagesContextAndContinuation(t *testing.T) {
 	if err := b.RestoreState(data); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(a.messages, b.messages) || a.SessionUsage() != b.SessionUsage() {
+	wantMessages := append([]llm.Message(nil), a.messages...)
+	wantMessages[1].Origin, wantMessages[1].Untrusted = "restored_user", true
+	wantMessages[2].Origin, wantMessages[2].Untrusted = "restored_assistant", true
+	if !reflect.DeepEqual(wantMessages, b.messages) || a.SessionUsage() != b.SessionUsage() {
 		t.Fatal("conversation or usage changed")
 	}
 	if !b.InteractiveMode() {
@@ -114,7 +117,9 @@ func TestCheckpointPreservesMalformedToolArgumentsAndPendingImages(t *testing.T)
 	if err := b.RestoreState(*a.checkpoint.Load()); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(a.messages, b.messages) || !reflect.DeepEqual(a.pendingImages, b.pendingImages) {
+	wantMessages := append([]llm.Message(nil), a.messages...)
+	wantMessages[1].Origin, wantMessages[1].Untrusted = "restored_assistant", true
+	if !reflect.DeepEqual(wantMessages, b.messages) || !reflect.DeepEqual(a.pendingImages, b.pendingImages) {
 		t.Fatal("lost malformed call or loaded images")
 	}
 	b.repairInterruptedCalls()

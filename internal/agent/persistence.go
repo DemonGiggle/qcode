@@ -9,6 +9,7 @@ import (
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
 	"qcode/internal/session"
+	"qcode/internal/trust"
 )
 
 // SavedMessage explicitly includes images, which are omitted by the wire message type.
@@ -221,16 +222,37 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 		}
 	}
 	a.messages = nil
+	cleanedHistory := false
 	for _, m := range s.Messages {
 		m.Message.Images = m.Images
 		m.Message.ToolCalls = nil
 		for _, call := range m.ToolCalls {
 			m.Message.ToolCalls = append(m.Message.ToolCalls, llm.ToolCall{ID: call.ID, Name: call.Name, Arguments: call.Arguments})
 		}
+		switch m.Role {
+		case "user", "assistant":
+			// Mark only imported turns. Keep their text out of JSON envelopes so
+			// models cannot mistake history annotations for the answer format.
+			content, cleaned := trust.UnwrapRestored(m.Role, m.Content)
+			m.Content = content
+			cleanedHistory = cleanedHistory || cleaned
+			m.Origin = "restored_" + m.Role
+			m.Untrusted = true
+		case "tool":
+			if !m.Untrusted {
+				m.Origin = m.Name
+				if m.Origin == "" {
+					m.Origin = "restored_tool"
+				}
+				m.Content = trust.Wrap(m.Origin, m.Content)
+				m.Untrusted = true
+				cleanedHistory = true
+			}
+		}
 		a.messages = append(a.messages, m.Message)
 	}
-	a.restored = true
-	a.endpoint, a.lastResponse = s.Endpoint, s.LastResponse
+	a.endpoint = s.Endpoint
+	a.lastResponse, _ = trust.UnwrapRestored("assistant", s.LastResponse)
 	a.messages[0].Content = a.system // Never import a system prompt from a saved file.
 	if s.Thinking != "" {
 		if err := a.SetThinking(s.Thinking); err != nil {
@@ -258,7 +280,11 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 	a.updateModeSystem()
 	a.pendingImages = s.PendingImages
 	a.contextStatus.Store(&contextStatus{remaining: s.Remaining, known: s.Known, estimated: s.Estimated})
-	a.publishCheckpoint()
+	if cleanedHistory {
+		a.invalidateContextUsage()
+	} else {
+		a.publishCheckpoint()
+	}
 	return nil
 }
 
@@ -358,6 +384,7 @@ func (m *AgentManager) RestoreAgents(saved []session.SavedAgent, nextID int) err
 			return err
 		}
 		s.summary = item.Summary
+		s.summary.LastOutcome, _ = trust.UnwrapRestored("assistant", s.summary.LastOutcome)
 		s.latestPrompt = item.LatestPrompt
 		if s.summary.Status == StatusRunning || s.summary.Status == StatusWaitingForApproval {
 			s.summary.Status = StatusCancelled

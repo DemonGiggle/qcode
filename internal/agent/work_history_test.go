@@ -14,6 +14,7 @@ import (
 	"qcode/internal/llm"
 	"qcode/internal/session"
 	"qcode/internal/trace"
+	"qcode/internal/trust"
 )
 
 func restoreHistoryManager(t *testing.T, original *AgentManager) *AgentManager {
@@ -94,6 +95,36 @@ func TestWorkRecordsReturnsIndependentSnapshot(t *testing.T) {
 	got := m.WorkRecords()
 	if len(got) != 1 || len(got[0].ChangedFiles) != 1 || got[0].ChangedFiles[0] != "one.go" {
 		t.Fatalf("journal was mutated through snapshot: %+v", got)
+	}
+}
+
+func TestRestoredWorkHistoryRecoversWrappedFindings(t *testing.T) {
+	m := newTestManager(t, 2)
+	worker, err := m.Create("model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SubmitAndWait(context.Background(), worker.ID, "inspect registers"); err != nil {
+		t.Fatal(err)
+	}
+	answer := "Register definitions are in registers.h."
+	wrapped := trust.Wrap("restored_assistant", trust.Wrap("restored_assistant", answer))
+	m.mu.Lock()
+	m.work[0].Response = wrapped
+	m.sessions[worker.ID].summary.LastOutcome = wrapped
+	m.mu.Unlock()
+	restored := restoreHistoryManager(t, m)
+	if got := restored.WorkRecords()[0].Response; got != answer {
+		t.Fatalf("restored findings = %q", got)
+	}
+	if got := restored.SearchWork("register", "", 0); len(got.Matches) != 1 || got.Matches[0].Findings != answer {
+		t.Fatalf("history search reintroduced wrapped findings: %+v", got)
+	}
+	if summary, err := restored.Summary(worker.ID); err != nil || summary.LastOutcome != answer {
+		t.Fatalf("restored last outcome = %+v, %v", summary, err)
+	}
+	if m.WorkRecords()[0].Response != wrapped {
+		t.Fatal("restoring changed the original journal")
 	}
 }
 

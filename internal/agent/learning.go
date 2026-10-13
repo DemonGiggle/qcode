@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -50,17 +51,10 @@ func (a *Agent) requestMessages(ctx context.Context) []llm.Message {
 	}
 	a.learningContext = extra
 	messages := append([]llm.Message(nil), a.messages...)
-	if a.restored {
-		for i := 1; i < len(messages)-1; i++ {
-			if messages[i].Untrusted || messages[i].Content == "" {
-				continue
-			}
-			switch messages[i].Role {
-			case "user", "assistant", "tool":
-				messages[i].Content = trust.Wrap("restored_"+messages[i].Role, messages[i].Content)
-				messages[i].Origin = "restored_" + messages[i].Role
-				messages[i].Untrusted = true
-			}
+	var restoredPositions []string
+	for i := 1; i < len(messages); i++ {
+		if messages[i].Untrusted && strings.HasPrefix(messages[i].Origin, "restored_") {
+			restoredPositions = append(restoredPositions, strconv.Itoa(i))
 		}
 	}
 	a.stateMu.RLock()
@@ -72,6 +66,9 @@ func (a *Agent) requestMessages(ctx context.Context) []llm.Message {
 	}
 	a.dynamicContext = dynamic
 	if len(messages) > 0 {
+		if len(restoredPositions) > 0 {
+			messages[0].Content += fmt.Sprintf(prompt.RestoredHistoryReference, strings.Join(restoredPositions, ", "))
+		}
 		messages[0].Content += extra
 		if dynamic != "" {
 			messages[0].Content += "\n\nAdditional context: " + trust.Wrap("request_context", dynamic)

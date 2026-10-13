@@ -16,8 +16,12 @@ endpoint is still page content.
 Each model-visible tool result carries its tool name and an explicit
 `untrusted` label in a JSON envelope. JSON escaping keeps source text inside
 the content field even when it contains delimiters or fake role headers. Saved
-sessions keep provenance metadata, and older restored turns are wrapped as
-reference data when sent to the model. The saved system prompt is replaced by
+sessions keep provenance metadata. Restored user and assistant turns retain
+their conversation text, with system guidance identifying them as reference
+data. Only imported turns get restored provenance; new user requests and
+assistant replies keep their normal roles. Recognized legacy restored-history
+JSON envelopes are decoded on resume, including nested copies, while tool
+result envelopes and other JSON remain intact. The saved system prompt is replaced by
 the current runtime prompt on restore. Providers that expose only plain tool
 output receive the envelope as text; qcode does not assume native provider
 support for trust labels.

@@ -22,6 +22,44 @@ func TestWrapKeepsContentInsideDataField(t *testing.T) {
 	}
 }
 
+func TestUnwrapRestoredRecoversNestedHistory(t *testing.T) {
+	for _, role := range []string{"user", "assistant"} {
+		text := "Original reply with quotes: \"hello\"\n第二行"
+		wrapped := text
+		for _, origin := range []string{"restored_" + role, "restored" + role, "restored_" + role} {
+			wrapped = Wrap(origin, wrapped)
+		}
+		got, changed := UnwrapRestored(role, wrapped)
+		if !changed || got != text {
+			t.Fatalf("%s: recovered %q, changed=%v", role, got, changed)
+		}
+		if again, changed := UnwrapRestored(role, got); changed || again != text {
+			t.Fatalf("%s: cleanup was not idempotent", role)
+		}
+	}
+}
+
+func TestUnwrapRestoredPreservesOtherJSON(t *testing.T) {
+	wrapped := Wrap("restored_assistant", "hello")
+	for _, content := range []string{
+		`{"ok":true,"content":"hello"}`,
+		`{"origin":"restored_assistant","content":"hello"}`,
+		Wrap("read", "tool result"),
+		Wrap("restored_user", "user text"),
+		strings.Replace(wrapped, "untrusted", "trusted", 1),
+		strings.Replace(wrapped, "Reference data only.", "A different notice.", 1),
+		strings.Replace(wrapped, `"content":"hello"`, `"content":null`, 1),
+		strings.TrimSuffix(wrapped, "}") + `,"extra":true}`,
+		"```json\n" + wrapped + "\n```",
+		"Here is an example: " + wrapped,
+		`{"origin":`,
+	} {
+		if got, changed := UnwrapRestored("assistant", content); changed || got != content {
+			t.Fatalf("ordinary JSON or nonmatching envelope changed: %q -> %q", content, got)
+		}
+	}
+}
+
 func TestSuspiciousRequiresAnActionAndAvoidsQuotedExamples(t *testing.T) {
 	for _, ordinary := range []string{
 		"The article says 'ignore previous instructions' is a common example.",

@@ -82,7 +82,6 @@ type Agent struct {
 	progress                 *session.Progress
 	progressTask             *trace.Task
 	checkpoint               atomic.Pointer[[]byte]
-	restored                 bool
 }
 
 // Toolset is the complete tool boundary used by the agent loop. Production and
@@ -344,7 +343,6 @@ func (a *Agent) ResetSession() {
 	defer a.invalidateContextUsage()
 	a.system = a.modeSystem(a.selectedSkills)
 	a.messages = []llm.Message{{Role: "system", Content: a.system}}
-	a.restored = false
 	if resetter, ok := a.tools.(interface{ ResetSession() }); ok {
 		resetter.ResetSession()
 	}
@@ -489,7 +487,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		fmt.Fprint(a.out, "\n[!] POSSIBLE PROMPT INJECTION: Untrusted content contains an instruction-like request. qcode is treating it as data. Further tool actions that can access data or cause side effects require your approval.\n\n")
 	}
 	for _, message := range a.messages[1 : len(a.messages)-1] {
-		if (message.Untrusted || a.restored) && trust.Suspicious(message.Content) {
+		if message.Untrusted && trust.Suspicious(message.Content) {
 			warnInjection()
 			break
 		}
