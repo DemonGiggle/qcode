@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"sync"
+
+	"qcode/internal/transcript"
 )
 
 type slashCommand struct {
@@ -221,21 +223,22 @@ func (u *UI) runBashCommand(ctx context.Context, command string) {
 			u.updateActiveCancellation()
 		}()
 	}
-	u.printSystemMessage(dim + "Running shell command (Ctrl+C to cancel): " + sanitizeDiffLine(command, "<ESC>") + reset)
+	out := transcript.NewGroup(u.display)
+	u.printMessage(out, dim+"Running shell command (Ctrl+C to cancel): "+sanitizeDiffLine(command, "<ESC>")+reset)
 	output, err := runner.RunShell(commandCtx, command)
 	if output != "" {
-		u.printSystemMessage(dim + "Shell output:" + reset + "\n" + sanitizeShellOutput(output))
+		u.printMessage(out, dim+"Shell output:"+reset+"\n"+sanitizeShellOutput(output))
 	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			u.printSystemMessage(yellow + "Cancelled" + reset)
+			u.printMessage(out, yellow+"Cancelled"+reset)
 		} else {
-			u.printSystemMessage(yellow + "Shell command failed: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+			u.printMessage(out, yellow+"Shell command failed: "+sanitizeDiffLine(err.Error(), "<ESC>")+reset)
 		}
 		return
 	}
 	if output == "" {
-		u.printSystemMessage(dim + "Command completed with no output." + reset)
+		u.printMessage(out, dim+"Command completed with no output."+reset)
 	}
 }
 

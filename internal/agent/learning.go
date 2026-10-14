@@ -12,6 +12,7 @@ import (
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
 	"qcode/internal/redaction"
+	"qcode/internal/transcript"
 	"qcode/internal/trust"
 )
 
@@ -40,7 +41,7 @@ func (a *Agent) requestMessages(ctx context.Context) []llm.Message {
 		if budget > 0 && query != "" {
 			items, err := a.learningStore.Search(ctx, query, budget)
 			if err != nil {
-				fmt.Fprintln(a.out, "Learning warning:", a.redaction.Error(redaction.Terminal, err))
+				fmt.Fprintln(transcript.NewGroup(a.out), "Learning warning:", a.redaction.Error(redaction.Terminal, err))
 			} else if len(items) > 0 {
 				extra = prompt.LearningReference + trust.Wrap("user_approved_learning", learning.Context(items))
 			}

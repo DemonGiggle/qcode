@@ -187,9 +187,9 @@ func (w *MarkdownWriter) renderTable(rows [][]string, alignments []tableAlignmen
 }
 
 func (w *MarkdownWriter) writeTableLine(line string, newline bool) {
-	fmt.Fprint(w.out, line)
+	fmt.Fprint(w.output(), line)
 	if newline {
-		fmt.Fprint(w.out, "\n")
+		fmt.Fprint(w.output(), "\n")
 	}
 }
 

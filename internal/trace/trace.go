@@ -14,6 +14,7 @@ import (
 	"qcode/internal/llm"
 	"qcode/internal/redaction"
 	"qcode/internal/session"
+	"qcode/internal/transcript"
 )
 
 const timestampLayout = "15:04:05"
@@ -34,11 +35,13 @@ type Logger struct {
 	taskIndicator            bool
 	width                    int
 	activitySeparatorPending bool
+	activityOut              io.Writer
 	mu                       sync.Mutex
 }
 
 type Span struct {
 	logger  *Logger
+	out     io.Writer
 	kind    string
 	name    string
 	start   time.Time
@@ -90,6 +93,7 @@ type Activity struct {
 // regardless of whether detailed verbose tracing is enabled.
 type ActivitySpan struct {
 	logger   *Logger
+	out      io.Writer
 	activity Activity
 	start    time.Time
 	stop     chan struct{}
@@ -154,6 +158,9 @@ func (l *Logger) SetWidth(width int) {
 func (l *Logger) SeparateActivity() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if transcript.Grouped(l.out) {
+		return
+	}
 	if !l.activitySeparatorPending {
 		return
 	}
@@ -189,8 +196,12 @@ func (l *Logger) Start(kind, name string, fields map[string]any) *Span {
 	l.mu.Lock()
 	verbose := l.verbose
 	frames := l.spinnerFrames()
+	out := transcript.NewGroup(l.out)
+	if kind == "tool" && l.activityOut != nil {
+		out = l.activityOut
+	}
 	l.mu.Unlock()
-	s := &Span{logger: l, kind: kind, name: name, start: now, fields: cloneFields(fields), verbose: verbose, frames: frames}
+	s := &Span{logger: l, out: out, kind: kind, name: name, start: now, fields: cloneFields(fields), verbose: verbose, frames: frames}
 	if l.json {
 		l.writeJSON("start", kind, name, now, 0, fields)
 		return s
@@ -217,8 +228,10 @@ func (l *Logger) StartActivity(activity Activity) *ActivitySpan {
 	// Verbose spans already own the in-progress row. Keep activity events
 	// persistent in that mode without competing with their detailed spinner.
 	animated := l.animated && !l.json && !l.verbose
+	out := transcript.NewGroup(l.out)
+	l.activityOut = out
 	l.mu.Unlock()
-	s := &ActivitySpan{logger: l, activity: activity, start: now, frames: frames}
+	s := &ActivitySpan{logger: l, out: out, activity: activity, start: now, frames: frames}
 	if l.json {
 		l.writeJSON("start", "activity", activity.Action, now, 0, map[string]any{
 			"action": activity.Action, "summary": activity.Start, "status": "running",
@@ -370,8 +383,10 @@ func (s *ActivitySpan) stopAnimation() {
 func (l *Logger) writeProgress(s *Span, frame string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	fmt.Fprintf(l.out, "\r[%s] start %s %s (%s)", formatTimestamp(s.start), s.kind, l.policy.Text(redaction.Terminal, s.name), frame)
-	writeTextFields(l.out, l.filteredFields(s.fields))
+	var line strings.Builder
+	fmt.Fprintf(&line, "\r[%s] start %s %s (%s)", formatTimestamp(s.start), s.kind, l.policy.Text(redaction.Terminal, s.name), frame)
+	writeTextFields(&line, l.filteredFields(s.fields))
+	_, _ = io.WriteString(s.out, line.String())
 }
 
 func (l *Logger) writeActivityProgress(s *ActivitySpan, frame string) {
@@ -396,7 +411,7 @@ func (l *Logger) writeActivityProgress(s *ActivitySpan, frame string) {
 	start := truncateActivityLine(l.policy.Text(redaction.Terminal, s.activity.Start), avail, l.unicode, false)
 	message := l.style(l.activityColor(s.activity.Category), marker+" "+start)
 	spinner := l.style(traceDim, spinnerSuffix)
-	fmt.Fprintf(l.out, "\r%s%s", message, spinner)
+	fmt.Fprintf(s.out, "\r%s%s", message, spinner)
 }
 
 // SetProgress updates the current operation without restarting its animation.
@@ -539,9 +554,13 @@ func (l *Logger) writeCompleted(s *Span, duration time.Duration, fields map[stri
 	if clearLine {
 		fmt.Fprint(l.out, "\r\x1b[2K")
 	}
-	fmt.Fprintf(l.out, "[%s] start %s %s (%s)", formatTimestamp(s.start), s.kind, l.policy.Text(redaction.Terminal, s.name), duration.Round(time.Millisecond))
-	writeTextFields(l.out, l.filteredFields(fields))
-	fmt.Fprintln(l.out)
+	out := s.out
+	if out == nil {
+		out = transcript.NewGroup(l.out)
+	}
+	fmt.Fprintf(out, "[%s] start %s %s (%s)", formatTimestamp(s.start), s.kind, l.policy.Text(redaction.Terminal, s.name), duration.Round(time.Millisecond))
+	writeTextFields(out, l.filteredFields(fields))
+	fmt.Fprintln(out)
 }
 
 func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration, err error, clearLine bool, output ...string) {
@@ -550,8 +569,12 @@ func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration,
 	if clearLine {
 		fmt.Fprint(l.out, "\r\x1b[2K")
 	}
-	if l.activitySeparatorPending {
+	if l.activitySeparatorPending && !transcript.Grouped(l.out) {
 		fmt.Fprintln(l.out)
+	}
+	out := s.out
+	if out == nil {
+		out = transcript.NewGroup(l.out)
 	}
 	marker := "OK"
 	if l.unicode {
@@ -581,31 +604,32 @@ func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration,
 		lines := wrapActivityMessage(message, durationSuffix, width, runewidth.StringWidth(marker)+1, activityOutputIndent, maxActivityMessageLines, l.unicode)
 		for index, line := range lines {
 			if index == 0 {
-				fmt.Fprint(l.out, l.style(color, marker)+" ")
-				fmt.Fprint(l.out, l.style(accent, line))
+				fmt.Fprint(out, l.style(color, marker)+" ")
+				fmt.Fprint(out, l.style(accent, line))
 			} else {
-				fmt.Fprint(l.out, activityMessageIndent)
-				fmt.Fprint(l.out, l.style(accent, line))
+				fmt.Fprint(out, activityMessageIndent)
+				fmt.Fprint(out, l.style(accent, line))
 			}
 			if index == len(lines)-1 {
-				fmt.Fprint(l.out, l.style(traceDim, durationSuffix))
+				fmt.Fprint(out, l.style(traceDim, durationSuffix))
 			}
-			fmt.Fprintln(l.out)
+			fmt.Fprintln(out)
 		}
 	} else {
-		fmt.Fprint(l.out, l.style(color, marker)+" ")
-		fmt.Fprint(l.out, l.style(accent, message))
-		fmt.Fprint(l.out, l.style(traceDim, durationSuffix))
-		fmt.Fprintln(l.out)
+		fmt.Fprint(out, l.style(color, marker)+" ")
+		fmt.Fprint(out, l.style(accent, message))
+		fmt.Fprint(out, l.style(traceDim, durationSuffix))
+		fmt.Fprintln(out)
 	}
 	preview := ""
 	if len(output) > 0 {
 		preview = output[0]
 	}
 	for _, line := range l.activityOutputLines(l.policy.Text(redaction.Terminal, preview)) {
-		fmt.Fprintln(l.out, l.style(traceDim, "  "+line))
+		fmt.Fprintln(out, l.style(traceDim, "  "+line))
 	}
 	l.activitySeparatorPending = true
+	l.activityOut = nil
 }
 
 const (

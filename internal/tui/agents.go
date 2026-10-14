@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 
 	"qcode/internal/redaction"
 	"qcode/internal/session"
+	"qcode/internal/transcript"
 )
 
 const (
@@ -287,9 +289,11 @@ type approvalRequest struct {
 }
 
 type agentDisplay struct {
-	ui      *UI
-	id      string
-	history *historyWriter
+	ui        *UI
+	id        string
+	history   *historyWriter
+	group     *outputGroup // Guarded by ui.screenMu; never persisted.
+	transient bool
 }
 
 func (d *agentDisplay) Write(data []byte) (int, error) {
@@ -301,6 +305,9 @@ func (d *agentDisplay) Write(data []byte) (int, error) {
 func (d *agentDisplay) writeLocked(data []byte) (int, error) {
 	originalLength := len(data)
 	data = []byte(d.ui.redaction.Text(redaction.Terminal, string(data)))
+	if bytes.ContainsRune(data, '\r') && !bytes.ContainsRune(data, '\n') {
+		d.transient = visibleGroupText(data)
+	}
 	_, err := d.writeFilteredLocked(data)
 	return originalLength, err
 }
@@ -329,9 +336,19 @@ func (d *agentDisplay) writeFilteredLocked(data []byte) (int, error) {
 }
 
 func (d *agentDisplay) AddLine(line string) {
-	d.history.AddLine(d.ui.redaction.Text(redaction.Terminal, line))
+	d.ui.screenMu.Lock()
+	defer d.ui.screenMu.Unlock()
+	g := &outputGroup{display: d}
+	// The line editor already echoed prompts in scrolling terminals.
+	_, _ = d.history.Write(g.prepareLocked([]byte(line + "\n")))
 }
-func (d *agentDisplay) Clear()                    { d.history.Clear() }
+func (d *agentDisplay) Clear() {
+	d.ui.screenMu.Lock()
+	defer d.ui.screenMu.Unlock()
+	d.group = nil
+	d.transient = false
+	d.history.Clear()
+}
 func (d *agentDisplay) Lines() []string           { return d.history.Lines() }
 func (d *agentDisplay) Snapshot() historySnapshot { return d.history.Snapshot() }
 func (d *agentDisplay) ExportSnapshot() historyExportSnapshot {
@@ -469,7 +486,7 @@ func (u *UI) replayConsultationEvents() {
 			message += ": " + event.Error
 		}
 		u.screenMu.Lock()
-		_, _ = view.display.writeLocked([]byte(fmt.Sprintf("\n%s%s%s\n", dim, sanitizeDiffLine(message, "<ESC>"), reset)))
+		view.display.writeNoticeLocked(dim + sanitizeDiffLine(message, "<ESC>") + reset)
 		u.consultationCursor = event.Sequence
 		u.screenMu.Unlock()
 	}
@@ -527,7 +544,7 @@ func (u *UI) handleAgentEvent(event session.Event) {
 					message = formatAgentError(sanitizeDiffLine(event.Agent.Error, "<ESC>"))
 				}
 			}
-			fmt.Fprintf(view.display, "\n%s%s%s\n\n", dim, message, reset)
+			fmt.Fprintf(transcript.NewGroup(view.display), "%s%s%s\n", dim, message, reset)
 		}
 	}
 	if event.Agent.ID != "main" && event.Agent.Status != session.StatusRunning {
@@ -551,7 +568,7 @@ func (u *UI) notifyMain(summary session.Summary) {
 			message = fmt.Sprintf("Agent %s error: %s", sanitizeDiffLine(summary.Name, "<ESC>"), errorMessage)
 		}
 	}
-	fmt.Fprintf(view.display, "\n%s%s%s\n\n", dim, message, reset)
+	fmt.Fprintf(transcript.NewGroup(view.display), "%s%s%s\n", dim, message, reset)
 }
 
 func (u *UI) updateActiveCancellation() {
@@ -1226,7 +1243,7 @@ func (u *UI) replaySteeringEvents() {
 		}
 		u.screenMu.Lock()
 		if view := u.views[event.AgentID]; u.verbose && view != nil {
-			_, _ = view.display.writeLocked([]byte("\n" + sanitizeDiffLine(message, "<ESC>") + "\n"))
+			view.display.writeNoticeLocked(sanitizeDiffLine(message, "<ESC>"))
 		}
 		u.steeringCursor = event.Sequence
 		u.screenMu.Unlock()

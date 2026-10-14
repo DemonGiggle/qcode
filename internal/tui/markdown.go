@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"qcode/internal/redaction"
 	"sort"
 	"strings"
 	"sync"
 	"unicode"
+
+	"qcode/internal/redaction"
+	"qcode/internal/transcript"
 )
 
 const (
@@ -28,6 +30,8 @@ type MarkdownWriter struct {
 	policy        *redaction.Policy
 	stream        *redaction.Stream
 	out           io.Writer
+	renderOut     io.Writer
+	plainLineOpen bool
 	enabled       bool
 	width         int
 	unicode       bool
@@ -49,6 +53,17 @@ func NewMarkdownWriter(out io.Writer, enabled bool, width ...int) *MarkdownWrite
 		writer.width = width[0]
 	}
 	return writer
+}
+
+func (w *MarkdownWriter) OutputGroupsEnabled() bool { return transcript.Grouped(w.out) }
+
+func (w *MarkdownWriter) NewOutputGroup() io.Writer { return transcript.NewGroup(w.out) }
+
+func (w *MarkdownWriter) output() io.Writer {
+	if w.renderOut != nil {
+		return w.renderOut
+	}
+	return w.out
 }
 
 func (w *MarkdownWriter) SetUnicode(enabled bool) {
@@ -87,6 +102,9 @@ func (w *MarkdownWriter) WriteDiff(diff string) {
 	if !w.diffs || diff == "" {
 		return
 	}
+	previous := w.renderOut
+	w.renderOut = w.out // Automatic previews belong to the preceding tool action.
+	defer func() { w.renderOut = previous }()
 	w.diffMu.Lock()
 	diff = w.policy.Text(redaction.Terminal, diff)
 	w.diffList = append(w.diffList, diff)
@@ -116,6 +134,9 @@ func (w *MarkdownWriter) WriteStoredDiff(number int) (int, int, bool) {
 	}
 	diff := w.diffList[number-1]
 	w.diffMu.Unlock()
+	previous := w.renderOut
+	w.renderOut = transcript.NewGroup(w.out)
+	defer func() { w.renderOut = previous }()
 
 	details := parseDiffDetails(diff)
 	w.writeDiffSummary(details, number, true)
@@ -274,21 +295,21 @@ func (w *MarkdownWriter) writeDiffSummary(details diffDetails, number int, expan
 		}
 		plain = marker + truncateDiffLine(details.action+" "+details.path, available, w.unicode)
 		if w.enabled {
-			fmt.Fprintln(w.out, cyan+marker+reset+bold+strings.TrimPrefix(plain, marker)+reset)
+			fmt.Fprintln(w.output(), cyan+marker+reset+bold+strings.TrimPrefix(plain, marker)+reset)
 			return
 		}
-		fmt.Fprintln(w.out, plain)
+		fmt.Fprintln(w.output(), plain)
 		return
 	}
 	if !w.enabled {
-		fmt.Fprintln(w.out, plain)
+		fmt.Fprintln(w.output(), plain)
 		return
 	}
-	fmt.Fprintf(w.out, "%s%s%s%s%s %s%s (%s+%d%s %s-%d%s) %s%s diff %d%s", cyan, marker, reset, bold, details.action, details.path, reset, green, details.additions, reset, red, details.deletions, reset, dim, separator, number, reset)
+	fmt.Fprintf(w.output(), "%s%s%s%s%s %s%s (%s+%d%s %s-%d%s) %s%s diff %d%s", cyan, marker, reset, bold, details.action, details.path, reset, green, details.additions, reset, red, details.deletions, reset, dim, separator, number, reset)
 	if expanded {
-		fmt.Fprintf(w.out, " %s%s expanded%s", dim, separator, reset)
+		fmt.Fprintf(w.output(), " %s%s expanded%s", dim, separator, reset)
 	}
-	fmt.Fprintln(w.out)
+	fmt.Fprintln(w.output())
 }
 
 func (w *MarkdownWriter) writeDiffLines(lines []string, truncate bool) {
@@ -343,7 +364,7 @@ func (w *MarkdownWriter) writeStyledDiffLine(line string, truncate bool) {
 	if style != "" {
 		rendered = style + line + reset
 	}
-	fmt.Fprintln(w.out, wrapANSI(styledMarker+rendered, w.width, styledMarker))
+	fmt.Fprintln(w.output(), wrapANSI(styledMarker+rendered, w.width, styledMarker))
 }
 
 func (w *MarkdownWriter) writeDiffFooter(text string) {
@@ -357,10 +378,10 @@ func (w *MarkdownWriter) writeDiffFooter(text string) {
 	}
 	line = truncateDiffLine(line, w.width, w.unicode)
 	if w.enabled {
-		fmt.Fprintln(w.out, dim+line+reset)
+		fmt.Fprintln(w.output(), dim+line+reset)
 		return
 	}
-	fmt.Fprintln(w.out, line)
+	fmt.Fprintln(w.output(), line)
 }
 
 func truncateDiffLine(line string, width int, unicodeEnabled bool) string {
@@ -410,6 +431,8 @@ func (w *MarkdownWriter) BeginResponse() {
 	w.stateMu.Lock()
 	defer w.stateMu.Unlock()
 	w.active = true
+	w.renderOut = transcript.NewGroup(w.out)
+	w.plainLineOpen = false
 	w.stream = w.policy.Stream(redaction.Terminal)
 	w.thinking = false
 	w.thinkingFence = false
@@ -421,6 +444,11 @@ func (w *MarkdownWriter) BeginResponse() {
 func (w *MarkdownWriter) BeginThinking() {
 	w.stateMu.Lock()
 	w.flushRedaction()
+	if w.OutputGroupsEnabled() {
+		w.finishGroupedText()
+	}
+	w.renderOut = transcript.NewGroup(w.out)
+	w.plainLineOpen = false
 	w.thinking = true
 	w.stateMu.Unlock()
 }
@@ -435,10 +463,15 @@ func (w *MarkdownWriter) EndThinking() {
 	if w.buffer.Len() > 0 {
 		w.renderLine(strings.TrimSuffix(w.buffer.String(), "\r"))
 		w.buffer.Reset()
-		fmt.Fprintln(w.out)
+		fmt.Fprintln(w.output())
 	}
 	w.thinking = false
 	w.thinkingFence = false
+	if w.OutputGroupsEnabled() && w.plainLineOpen {
+		fmt.Fprintln(w.output())
+	}
+	w.renderOut = transcript.NewGroup(w.out)
+	w.plainLineOpen = false
 }
 
 func (w *MarkdownWriter) EndResponse() {
@@ -449,9 +482,12 @@ func (w *MarkdownWriter) EndResponse() {
 	}
 	w.flushRedaction()
 	if w.buffer.Len() > 0 {
-		w.consumeLine(strings.TrimSuffix(w.buffer.String(), "\r"), false)
+		w.consumeLine(strings.TrimSuffix(w.buffer.String(), "\r"), w.OutputGroupsEnabled())
 	}
 	w.flushTable()
+	if w.OutputGroupsEnabled() && w.plainLineOpen {
+		fmt.Fprintln(w.output())
+	}
 	w.buffer.Reset()
 	w.inFence = false
 	w.thinking = false
@@ -459,7 +495,20 @@ func (w *MarkdownWriter) EndResponse() {
 	w.table = nil
 	w.active = false
 	if w.enabled {
-		fmt.Fprint(w.out, reset)
+		fmt.Fprint(w.output(), reset)
+	}
+}
+
+// finishGroupedText closes a partial line before changing between answer and
+// thinking, without adding padding to an already terminated or empty stream.
+func (w *MarkdownWriter) finishGroupedText() {
+	if w.buffer.Len() > 0 {
+		w.consumeLine(strings.TrimSuffix(w.buffer.String(), "\r"), true)
+		w.buffer.Reset()
+	}
+	w.flushTable()
+	if w.plainLineOpen {
+		fmt.Fprintln(w.output())
 	}
 }
 
@@ -482,7 +531,10 @@ func (w *MarkdownWriter) Write(data []byte) (int, error) {
 	}
 	data = []byte(w.stream.Feed(string(data)))
 	if !w.enabled && w.width <= 0 {
-		_, err := w.out.Write(data)
+		if len(data) > 0 {
+			w.plainLineOpen = data[len(data)-1] != '\n'
+		}
+		_, err := w.output().Write(data)
 		return n, err
 	}
 	w.writeBuffered(data)
@@ -505,7 +557,10 @@ func (w *MarkdownWriter) flushRedaction() {
 	if w.stream != nil {
 		data := []byte(w.stream.Flush())
 		if !w.enabled && w.width <= 0 {
-			_, _ = w.out.Write(data)
+			if len(data) > 0 {
+				w.plainLineOpen = data[len(data)-1] != '\n'
+			}
+			_, _ = w.output().Write(data)
 		} else {
 			w.writeBuffered(data)
 		}
@@ -515,7 +570,7 @@ func (w *MarkdownWriter) flushRedaction() {
 func (w *MarkdownWriter) renderCompleteLine(line string, newline bool) {
 	w.renderLine(line)
 	if newline {
-		fmt.Fprint(w.out, "\n")
+		fmt.Fprint(w.output(), "\n")
 	}
 }
 
@@ -533,7 +588,7 @@ func (w *MarkdownWriter) renderLine(line string) {
 	if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
 		if !w.enabled {
 			w.inFence = !w.inFence
-			fmt.Fprint(w.out, wrapANSI(line, w.width, leadingWhitespace(line)))
+			fmt.Fprint(w.output(), wrapANSI(line, w.width, leadingWhitespace(line)))
 			return
 		}
 		if w.inFence {
@@ -559,7 +614,7 @@ func (w *MarkdownWriter) renderLine(line string) {
 	}
 	if w.inFence {
 		if !w.enabled {
-			fmt.Fprint(w.out, wrapANSI(line, w.width, leadingWhitespace(line)))
+			fmt.Fprint(w.output(), wrapANSI(line, w.width, leadingWhitespace(line)))
 			return
 		}
 		marker := "│ "
@@ -574,7 +629,7 @@ func (w *MarkdownWriter) renderLine(line string) {
 		if isPlainStatement(line, w.unicode) {
 			w.writeStatement(line, "")
 		} else {
-			fmt.Fprint(w.out, wrapANSI(line, w.width, leadingWhitespace(line)))
+			fmt.Fprint(w.output(), wrapANSI(line, w.width, leadingWhitespace(line)))
 		}
 		return
 	}
@@ -620,7 +675,7 @@ func (w *MarkdownWriter) renderLine(line string) {
 }
 
 func (w *MarkdownWriter) writeRendered(rendered, continuation string) {
-	fmt.Fprint(w.out, wrapANSI(rendered, w.width, continuation))
+	fmt.Fprint(w.output(), wrapANSI(rendered, w.width, continuation))
 }
 
 func (w *MarkdownWriter) writeStatement(line, style string) {

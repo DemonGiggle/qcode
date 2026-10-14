@@ -9,6 +9,7 @@ import (
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
 	"qcode/internal/redaction"
+	"qcode/internal/transcript"
 	"qcode/internal/trust"
 )
 
@@ -58,11 +59,11 @@ func (a *Agent) autoCompactIfNeeded(ctx context.Context) {
 	if !a.shouldAutoCompact() {
 		return
 	}
-	fmt.Fprintln(a.out, "Compacting conversation to make room for the next request...")
+	fmt.Fprintln(transcript.NewGroup(a.out), "Compacting conversation to make room for the next request...")
 	if _, err := a.Compact(ctx); err != nil {
-		fmt.Fprintln(a.out, "Conversation compaction failed:", a.redaction.Error(redaction.Terminal, err))
+		fmt.Fprintln(transcript.NewGroup(a.out), "Conversation compaction failed:", a.redaction.Error(redaction.Terminal, err))
 	} else {
-		fmt.Fprintln(a.out, "Conversation compacted.")
+		fmt.Fprintln(transcript.NewGroup(a.out), "Conversation compacted.")
 	}
 }
 

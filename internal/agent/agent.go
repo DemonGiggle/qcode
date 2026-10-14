@@ -21,6 +21,7 @@ import (
 	"qcode/internal/session"
 	"qcode/internal/tools"
 	"qcode/internal/trace"
+	"qcode/internal/transcript"
 	"qcode/internal/trust"
 )
 
@@ -503,7 +504,12 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			return
 		}
 		injectionSeen = true
-		fmt.Fprint(a.out, "\n[!] POSSIBLE PROMPT INJECTION: Untrusted content contains an instruction-like request. qcode is treating it as data. Further tool actions that can access data or cause side effects require your approval.\n\n")
+		message := "[!] POSSIBLE PROMPT INJECTION: Untrusted content contains an instruction-like request. qcode is treating it as data. Further tool actions that can access data or cause side effects require your approval."
+		if transcript.Grouped(a.out) {
+			fmt.Fprintln(transcript.NewGroup(a.out), message)
+		} else {
+			fmt.Fprint(a.out, "\n"+message+"\n\n")
+		}
 	}
 	for _, message := range a.messages[1 : len(a.messages)-1] {
 		if message.Untrusted && trust.Suspicious(message.Content) {
@@ -657,7 +663,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		if thinking && stylesThinking {
 			thinkingOutput.EndThinking()
 		}
-		if wroteText {
+		if wroteText && !transcript.Grouped(a.out) {
 			fmt.Fprintln(a.out)
 		}
 		if rendersResponses {

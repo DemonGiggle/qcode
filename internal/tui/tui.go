@@ -23,6 +23,7 @@ import (
 	"qcode/internal/session"
 	"qcode/internal/skills"
 	qtheme "qcode/internal/theme"
+	"qcode/internal/transcript"
 )
 
 const (
@@ -823,7 +824,7 @@ func (u *UI) Run(ctx context.Context) error {
 			continue
 		}
 		if u.fixedInput {
-			u.display.AddLine(reset + "\n> " + line)
+			u.display.AddLine(reset + "> " + line)
 		} else {
 			u.display.AddLine("> " + line)
 		}
@@ -1720,7 +1721,18 @@ func (u *UI) currentInputPrompt() string {
 // printSystemMessage separates status and command feedback from surrounding
 // conversation so it remains easy to scan in both the terminal and history.
 func (u *UI) printSystemMessage(message string) {
-	fmt.Fprintf(u.display, "\n%s\n\n", message)
+	u.printMessage(transcript.NewGroup(u.display), message)
+}
+
+func (u *UI) printMessage(out io.Writer, message string) {
+	if !transcript.Grouped(u.display) {
+		fmt.Fprintf(out, "\n%s\n\n", message)
+		return
+	}
+	if !strings.HasSuffix(message, "\n") {
+		message += "\n"
+	}
+	fmt.Fprint(out, message)
 }
 
 func formatRunDuration(duration time.Duration) string {
@@ -1785,12 +1797,13 @@ func (u *UI) rememberDraft(line string) {
 func (u *UI) printCommandHelp(arguments []string) {
 	color := u.out != nil && ColorEnabled(u.out)
 	if len(arguments) == 0 {
+		out := transcript.NewGroup(u.display)
 		for _, command := range slashCommands {
 			line := fmt.Sprintf("%-8s %s", command.name, command.description)
 			if color {
 				line = fmt.Sprintf("%s%-8s%s %s%s%s", cyan, command.name, reset, dim, command.description, reset)
 			}
-			fmt.Fprintln(u.display, wrapANSI(line, u.width, "         "))
+			fmt.Fprintln(out, wrapANSI(line, u.width, "         "))
 		}
 		return
 	}
@@ -2461,10 +2474,13 @@ func (u *UI) printToolSummary() {
 		}
 		return strings.Join(names, ", ")
 	}
+	out := transcript.NewGroup(u.display)
 	for _, line := range []string{"Tools enabled: " + join(enabled), "Tools disabled: " + join(disabled)} {
-		fmt.Fprintln(u.display, wrapANSI(line, u.width, "  "))
+		fmt.Fprintln(out, wrapANSI(line, u.width, "  "))
 	}
-	fmt.Fprintln(u.display)
+	if !transcript.Grouped(u.display) {
+		fmt.Fprintln(u.display)
+	}
 }
 
 // Refresh the composer when its task finishes or starts from idle. Retain an

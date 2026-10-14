@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"qcode/internal/transcript"
 )
 
 // tipVivid is the vivid 256-color orange-gold used for the startup tip.
@@ -205,6 +207,10 @@ func (u *UI) printTip() {
 	if formatted == "" {
 		return
 	}
-	fmt.Fprintln(u.display, formatted)
-	fmt.Fprintln(u.display)
+	if transcript.Grouped(u.display) {
+		u.printSystemMessage(formatted)
+	} else {
+		fmt.Fprintln(u.display, formatted)
+		fmt.Fprintln(u.display)
+	}
 }

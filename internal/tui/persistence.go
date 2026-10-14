@@ -144,6 +144,8 @@ func (u *UI) RestorePresentation(data json.RawMessage) error {
 			return fmt.Errorf("invalid history cursor")
 		}
 		h := v.display.history
+		v.display.group = nil
+		v.display.transient = false
 		h.lines = sv.History.Lines
 		h.archive = append([]string(nil), sv.History.Archive...)
 		if len(h.archive) == 0 {
@@ -161,6 +163,9 @@ func (u *UI) RestorePresentation(data json.RawMessage) error {
 		v.response.diffList = sv.Diffs
 		v.response.buffer.WriteString(sv.Buffer)
 		v.response.inFence, v.response.thinking, v.response.active = sv.InFence, sv.Thinking, sv.Active
+		if sv.Active {
+			v.response.renderOut = v.display.NewOutputGroup()
+		}
 		for _, line := range sv.Table {
 			v.response.table = append(v.response.table, markdownTableLine{text: line.Text, newline: line.Newline})
 		}
