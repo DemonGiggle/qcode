@@ -175,3 +175,11 @@ func (b *InteractionBroker) WithdrawTask(agentID, taskID string) {
 		}
 	}
 }
+
+func (b *InteractionBroker) WithdrawAgent(agentID string) {
+	for _, item := range b.Pending() {
+		if item.AgentID == agentID {
+			_ = b.Resolve(Resolution{InteractionID: item.ID, Withdrawn: true, ResolvedBy: "agent-close"})
+		}
+	}
+}

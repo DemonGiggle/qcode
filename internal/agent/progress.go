@@ -64,7 +64,7 @@ func (m *AgentManager) setProgress(id string, progress *session.Progress) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s := m.sessions[id]
-	if s == nil || s.active == nil {
+	if s == nil || s.active == nil || s.summary.Status == StatusClosing {
 		return
 	}
 	s.summary.Progress = progress

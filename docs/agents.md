@@ -12,6 +12,8 @@ Use `/agent` or `/agent new` to choose a model for a new tab, or `/agent new <mo
 
 Use `/agent list`, `/agent switch <id>`, `/agent cancel <id>`, and `/agent close <id>` to manage tabs. Closing asks for confirmation; `/agent close <id> --yes` skips it. Main cannot be closed. `/agent list` is an interactive selector: use Up/Down or PgUp/PgDn to move, Enter to switch to the highlighted agent, and Esc or Ctrl+C to leave it. Each row retains the agent ID, name, model, status, and queue information, followed by the latest recorded knowledge preview truncated to at most five lines.
 
+Closing cancels queued prompts, pending steering, and human interactions immediately. A running helper remains `closing` until its run exits, then its live context and tab are removed. Its slot counts toward the agent limit while cancellation is pending. If its tab is selected, the terminal and browser return to main after removal. Recorded work and completed results remain available for searches and exports; closing agents are excluded from saved resumable tabs immediately. Repeated closes are harmless.
+
 The tab bar shows the available switch shortcuts when the row has room: Ctrl+PageUp/PageDown or the Alt+, and Alt+. fallbacks. When all agents do not fit, `main` stays pinned while a moving window keeps the active agent and nearby tabs visible; counters at each edge show how many tabs are hidden in that direction. Each agent keeps independent context, model, output, tool settings, working directory, and sandbox grants while filesystem mutations remain serialized across all agents.
 
 ## Working directories
@@ -103,6 +105,7 @@ The main agent receives five orchestrator tools that sub-agents do not have:
 | `list_agents` | Returns the current status of all agents (outcomes and files stripped for brevity) |
 | `create_agent` | Creates a new agent session and optionally queues its first task asynchronously |
 | `delegate_task` | Queues focused work in another agent asynchronously |
+| `close_agent` | Closes one helper, cancelling pending and active work asynchronously |
 | `search_agent_work` | Searches the full session work journal, including closed agents |
 | `consult_agents` | Asks selected agents questions concurrently and waits for their specific replies within a deadline |
 
@@ -121,6 +124,8 @@ end the current main-agent run so it cannot begin polling. Creating an idle
 agent without a task allows the current run to continue. If an
 optional `create_agent.task` cannot be queued, the agent remains available and
 idle so the main agent can retry with `delegate_task`.
+
+`close_agent` requires one string `agent_id`. It is available only to main in normal execution mode, and cannot close main. It returns either `closed` or `closure accepted; cancellation pending`, with the target ID, without ending main's turn. Main can close several helpers in successive calls or continue working. The tool does not ask for confirmation; manual `/agent close` retains its confirmation and `--yes` option. Closed helpers' recorded findings remain searchable and exportable.
 
 ### Previous work and consultations
 

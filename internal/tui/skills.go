@@ -50,9 +50,6 @@ func (u *UI) chooseSkills() {
 		u.printSystemMessage(dim + "Skill selection cancelled." + reset)
 		return
 	}
-	if u.onSkills != nil {
-		u.onSkills(names)
-	}
 	// Resolve displayed selections against original skill metadata.
 	summaries = nil
 	for _, name := range names {
@@ -63,7 +60,15 @@ func (u *UI) chooseSkills() {
 			}
 		}
 	}
-	runner.SetSkills(summaries)
+	if !u.configureActive(func() error {
+		if u.onSkills != nil {
+			u.onSkills(names)
+		}
+		runner.SetSkills(summaries)
+		return nil
+	}) {
+		return
+	}
 	u.printSystemMessage(formatSkillSelection("Skills enabled", names, u.width, u.unicode, ColorEnabled(u.out), green))
 }
 
@@ -98,10 +103,15 @@ func (u *UI) setSkillCommand(fields []string) {
 		}
 		names, summaries = append(names, name), append(summaries, summary)
 	}
-	if u.onSkills != nil {
-		u.onSkills(names)
+	if !u.configureActive(func() error {
+		if u.onSkills != nil {
+			u.onSkills(names)
+		}
+		runner.SetSkills(summaries)
+		return nil
+	}) {
+		return
 	}
-	runner.SetSkills(summaries)
 	u.drawStatusBar()
 	u.printSystemMessage(formatSkillSelection("Skills enabled", names, u.width, u.unicode, ColorEnabled(u.out), green))
 }

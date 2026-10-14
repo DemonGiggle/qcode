@@ -95,6 +95,19 @@ type Toolset interface {
 	ExecuteDetailed(context.Context, llm.ToolCall) (llm.ToolResult, error)
 }
 
+// releaseContext runs only after the runner returns (or while it is idle).
+// Journal records live in the manager and are deliberately retained.
+func (a *Agent) releaseContext() {
+	a.messages = nil
+	a.pendingImages = nil
+	a.taskContext, a.dynamicContext = "", ""
+	a.checkpoint.Store(nil)
+	a.stateMu.Lock()
+	a.lastResponse = ""
+	a.latestPlan, a.latestSkillDraft = nil, nil
+	a.stateMu.Unlock()
+}
+
 type Question = question.Question
 type Questioner = question.Questioner
 
@@ -327,6 +340,11 @@ func (a *Agent) InheritCapabilitiesFrom(source *Agent) error {
 // ResetSession discards conversation history while retaining the agent's
 // provider, model, tools, and runtime settings.
 func (a *Agent) ResetSession() {
+	a.resetSession()
+	a.directoryChanged()
+}
+
+func (a *Agent) resetSession() {
 	a.pendingImages = nil
 	a.stateMu.Lock()
 	a.lastResponse = ""
@@ -347,7 +365,6 @@ func (a *Agent) ResetSession() {
 	if resetter, ok := a.tools.(interface{ ResetSession() }); ok {
 		resetter.ResetSession()
 	}
-	a.directoryChanged()
 }
 
 // ToolNames returns the names of all registered tools.

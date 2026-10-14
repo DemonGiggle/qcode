@@ -19,6 +19,7 @@ type EventType string
 
 const (
 	EventAgentChanged         EventType = "agent.changed"
+	EventAgentClosed          EventType = "agent.closed"
 	EventConsultationChanged  EventType = "consultation.changed"
 	EventInteractionRequested EventType = "interaction.requested"
 	EventInteractionResolved  EventType = "interaction.resolved"

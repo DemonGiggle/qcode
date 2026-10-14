@@ -271,6 +271,7 @@ type UI struct {
 	modeDecisions        []*modeDecisionRequest
 	tabMu                sync.Mutex
 	pendingTab           int
+	pendingClosures      map[string]bool // Guarded by tabMu; applied by the UI goroutine.
 	agentEventsDone      chan struct{}
 	uiEvents             chan struct{}
 	presentationMu       sync.Mutex
@@ -465,10 +466,48 @@ func (u *UI) RemoveAgentView(id string) {
 	u.screenMu.Lock()
 	delete(u.views, id)
 	delete(u.drafts, id)
+	if u.questionPanel != nil && u.questionPanel.agentID == id {
+		u.questionPanel = nil
+	}
 	u.screenMu.Unlock()
+	u.approvalMu.Lock()
+	for _, request := range u.approvals[id] {
+		select {
+		case request.result <- approvalResult{err: context.Canceled}:
+		default:
+		}
+	}
+	delete(u.approvals, id)
+	u.approvalMu.Unlock()
+	u.questionMu.Lock()
+	keptQuestions := u.questions[:0]
+	for _, request := range u.questions {
+		if request.agentID == id {
+			select {
+			case request.result <- questionResult{err: context.Canceled}:
+			default:
+			}
+		} else {
+			keptQuestions = append(keptQuestions, request)
+		}
+	}
+	u.questions = keptQuestions
+	u.questionMu.Unlock()
+	u.modeDecisionMu.Lock()
+	keptDecisions := u.modeDecisions[:0]
+	for _, request := range u.modeDecisions {
+		if request.agentID != id {
+			keptDecisions = append(keptDecisions, request)
+		}
+	}
+	u.modeDecisions = keptDecisions
+	u.modeDecisionMu.Unlock()
 }
 
 func (u *UI) SetAgentManager(manager agentController) {
+	u.tabMu.Lock()
+	u.pendingClosures = nil
+	u.tabMu.Unlock()
 	u.screenMu.Lock()
 	u.manager = manager
 	u.screenMu.Unlock()
@@ -713,6 +752,7 @@ func (u *UI) Run(ctx context.Context) error {
 	stopDemoScript := u.startDemoPromptScript(ctx)
 	defer stopDemoScript()
 	for {
+		u.handlePendingAgentClosures()
 		u.reportSave(u.saveSession(false))
 		u.handlePendingTabSwitch()
 		u.handlePendingApproval(ctx)
@@ -1185,12 +1225,14 @@ func (u *UI) chooseModel(ctx context.Context) {
 		}
 		break
 	}
-	runner.SetModel(selected)
-	if thinking, ok := runner.(thinkingRunner); ok {
-		if err := thinking.SetThinking(level); err != nil {
-			u.printSystemMessage(yellow + err.Error() + reset)
-			return
+	if !u.configureActive(func() error {
+		runner.SetModel(selected)
+		if thinking, ok := runner.(thinkingRunner); ok {
+			return thinking.SetThinking(level)
 		}
+		return nil
+	}) {
+		return
 	}
 	if u.manager != nil {
 		if err := u.manager.UpdateModel(u.activeAgent, selected); err != nil {
@@ -1204,7 +1246,9 @@ func (u *UI) chooseModel(ctx context.Context) {
 		u.screenMu.Unlock()
 	}
 	if tracker, ok := u.runner.(contextRunner); ok {
-		tracker.RefreshContext(ctx)
+		if !u.configureActive(func() error { tracker.RefreshContext(ctx); return nil }) {
+			return
+		}
 	}
 	u.screenMu.Lock()
 	u.model = selected
@@ -1275,12 +1319,14 @@ func (u *UI) setModelCommand(ctx context.Context, fields []string) {
 			return
 		}
 	}
-	runner.SetModel(fields[1])
-	if thinking, ok := runner.(thinkingRunner); ok {
-		if err := thinking.SetThinking(level); err != nil {
-			u.printSystemMessage(yellow + err.Error() + reset)
-			return
+	if !u.configureActive(func() error {
+		runner.SetModel(fields[1])
+		if thinking, ok := runner.(thinkingRunner); ok {
+			return thinking.SetThinking(level)
 		}
+		return nil
+	}) {
+		return
 	}
 	if u.manager != nil {
 		if err := u.manager.UpdateModel(u.activeAgent, fields[1]); err != nil {
@@ -1296,7 +1342,9 @@ func (u *UI) setModelCommand(ctx context.Context, fields []string) {
 	u.screenMu.Unlock()
 	u.persistModelPreference(fields[1], level)
 	if tracker, ok := u.runner.(contextRunner); ok {
-		tracker.RefreshContext(ctx)
+		if !u.configureActive(func() error { tracker.RefreshContext(ctx); return nil }) {
+			return
+		}
 	}
 	u.drawStatusBar()
 	u.printSystemMessage(green + "Model: " + sanitizeDiffLine(fields[1], "<ESC>") + reset)
@@ -1357,6 +1405,12 @@ func (u *UI) expandDiff(fields []string) {
 }
 
 func (u *UI) updateMaxSteps(fields []string) {
+	if u.manager != nil {
+		if summary, err := u.manager.Summary(u.activeAgent); err == nil && summary.Status == session.StatusClosing {
+			u.printSystemMessage(yellow + "Agent is closing." + reset)
+			return
+		}
+	}
 	if len(fields) == 1 {
 		if reader, ok := u.runner.(maxStepsReader); ok {
 			u.printSystemMessage(fmt.Sprintf("%sMax steps: %d%s", green, reader.MaxSteps(), reset))
@@ -1379,7 +1433,9 @@ func (u *UI) updateMaxSteps(fields []string) {
 		u.printSystemMessage(yellow + "Maximum model steps are unavailable." + reset)
 		return
 	}
-	runner.SetMaxSteps(maxSteps)
+	if !u.configureActive(func() error { runner.SetMaxSteps(maxSteps); return nil }) {
+		return
+	}
 	u.persistMaxStepsPreference(maxSteps)
 	u.printSystemMessage(fmt.Sprintf("%sMax steps: %d%s", green, maxSteps, reset))
 }
@@ -1453,13 +1509,19 @@ func (u *UI) handlePlanCommand(ctx context.Context, fields []string) {
 	switch {
 	case len(fields) == 1:
 		if !controller.PlanMode() {
-			controller.ClearLatestPlan()
+			if !u.configureActive(func() error { controller.ClearLatestPlan(); return nil }) {
+				return
+			}
 		}
-		controller.SetPlanMode(true)
+		if !u.configureActive(func() error { controller.SetPlanMode(true); return nil }) {
+			return
+		}
 		setPrompt(true)
 		u.printSystemMessage(green + "Plan mode enabled; workspace mutation tools are unavailable." + reset)
 	case fields[1] == "off":
-		controller.SetPlanMode(false)
+		if !u.configureActive(func() error { controller.SetPlanMode(false); return nil }) {
+			return
+		}
 		setPrompt(false)
 		u.printSystemMessage(green + "Plan mode disabled." + reset)
 	case fields[1] == "act":
@@ -1472,11 +1534,15 @@ func (u *UI) handlePlanCommand(ctx context.Context, fields []string) {
 			u.printSystemMessage(yellow + "Plan execution requires the interactive agent manager." + reset)
 			return
 		}
-		controller.SetPlanMode(false)
+		if !u.configureActive(func() error { controller.SetPlanMode(false); return nil }) {
+			return
+		}
 		setPrompt(false)
 		implementation := "Implement the approved plan below. Do not re-plan. If a required assumption is invalid, stop and explain before changing files.\n\n" + plan
 		if _, err := u.manager.Submit(u.activeAgent, implementation); err != nil {
-			controller.SetPlanMode(true)
+			if !u.configureActive(func() error { controller.SetPlanMode(true); return nil }) {
+				return
+			}
 			setPrompt(true)
 			u.printSystemMessage(yellow + "Unable to start plan implementation: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 			return
@@ -1512,7 +1578,9 @@ func (u *UI) handleInteractiveCommand(fields []string) {
 		return
 	}
 	enabled := fields[1] == "on"
-	controller.SetInteractiveMode(enabled)
+	if !u.configureActive(func() error { controller.SetInteractiveMode(enabled); return nil }) {
+		return
+	}
 	u.persistInteractivePreference(enabled)
 	u.drawStatusBar()
 	message := "Interactive questions " + fields[1] + "."
@@ -1549,13 +1617,19 @@ func (u *UI) handleSkillPlanCommand(ctx context.Context, fields []string) {
 	switch {
 	case len(fields) == 1:
 		if !controller.SkillPlanMode() {
-			controller.ClearLatestSkillDraft()
+			if !u.configureActive(func() error { controller.ClearLatestSkillDraft(); return nil }) {
+				return
+			}
 		}
-		controller.SetSkillPlanMode(true)
+		if !u.configureActive(func() error { controller.SetSkillPlanMode(true); return nil }) {
+			return
+		}
 		setPrompt(true)
 		u.printSystemMessage(green + "Skill Plan mode enabled; describe your rough idea. Files cannot be changed until you approve a draft with /skillplan create." + reset)
 	case len(fields) == 2 && fields[1] == "off":
-		controller.SetSkillPlanMode(false)
+		if !u.configureActive(func() error { controller.SetSkillPlanMode(false); return nil }) {
+			return
+		}
 		setPrompt(false)
 		u.printSystemMessage(green + "Skill Plan mode disabled." + reset)
 	case len(fields) == 2 && fields[1] == "create":
@@ -1569,7 +1643,9 @@ func (u *UI) handleSkillPlanCommand(ctx context.Context, fields []string) {
 			u.printSystemMessage(yellow + "Unable to create skill: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 			return
 		}
-		controller.SetSkillPlanMode(false)
+		if !u.configureActive(func() error { controller.SetSkillPlanMode(false); return nil }) {
+			return
+		}
 		setPrompt(false)
 		u.skills = nil
 		u.printSystemMessage(green + "Skill created at " + sanitizeDiffLine(path, "<ESC>") + ". Use /skill to refresh and enable it." + reset)
@@ -1578,12 +1654,18 @@ func (u *UI) handleSkillPlanCommand(ctx context.Context, fields []string) {
 			u.printSystemMessage(yellow + "Starting a guided skill draft requires the interactive agent manager." + reset)
 			return
 		}
-		controller.ClearLatestSkillDraft()
-		controller.SetSkillPlanMode(true)
+		if !u.configureActive(func() error { controller.ClearLatestSkillDraft(); return nil }) {
+			return
+		}
+		if !u.configureActive(func() error { controller.SetSkillPlanMode(true); return nil }) {
+			return
+		}
 		setPrompt(true)
 		intention := strings.Join(fields[1:], " ")
 		if _, err := u.manager.Submit(u.activeAgent, intention); err != nil {
-			controller.SetSkillPlanMode(false)
+			if !u.configureActive(func() error { controller.SetSkillPlanMode(false); return nil }) {
+				return
+			}
 			setPrompt(false)
 			u.printSystemMessage(yellow + "Unable to start skill planning: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 			return

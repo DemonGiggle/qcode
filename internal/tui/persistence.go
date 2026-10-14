@@ -220,7 +220,7 @@ func (u *UI) pollSessionSave() error {
 		busy := false
 		if manager != nil {
 			for _, summary := range manager.List() {
-				if summary.Status == session.StatusRunning || summary.Status == session.StatusWaitingForApproval {
+				if summary.Status == session.StatusRunning || summary.Status == session.StatusWaitingForApproval || summary.Status == session.StatusClosing {
 					busy = true
 					break
 				}
@@ -298,6 +298,18 @@ func (u *UI) saveSessionLocked(left bool) error {
 		}
 	}
 	presentation.Views = ordered
+	live := make(map[string]bool, len(agents))
+	for _, a := range agents {
+		live[a.Summary.ID] = true
+	}
+	for id := range presentation.Drafts {
+		if !live[id] {
+			delete(presentation.Drafts, id)
+		}
+	}
+	if !live[presentation.Active] {
+		presentation.Active = "main"
+	}
 	if len(ordered) != len(agents) {
 		return nil
 	} // A tab was removed during capture; retry next checkpoint.
@@ -489,7 +501,7 @@ func (u *UI) restoreSession(id string) error {
 		return nil
 	}
 	for _, a := range u.manager.List() {
-		if a.Status == session.StatusRunning || a.Status == session.StatusWaitingForApproval {
+		if a.Status == session.StatusRunning || a.Status == session.StatusWaitingForApproval || a.Status == session.StatusClosing {
 			return fmt.Errorf("finish or cancel busy agent %s before resuming", a.ID)
 		}
 	}
@@ -561,7 +573,7 @@ func (u *UI) deleteAllSessions() (bool, error) {
 func (u *UI) deleteCurrentSessionLocked(remove func() error) (bool, error) {
 	p := u.persistence
 	for _, a := range u.manager.List() {
-		if a.Status == session.StatusRunning || a.Status == session.StatusWaitingForApproval {
+		if a.Status == session.StatusRunning || a.Status == session.StatusWaitingForApproval || a.Status == session.StatusClosing {
 			return false, fmt.Errorf("finish or cancel busy agent %s before deleting the current session", a.ID)
 		}
 	}

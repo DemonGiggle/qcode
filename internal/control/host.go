@@ -51,6 +51,7 @@ func NewHost(ctx context.Context, maxAgents int) *Host {
 		},
 	)
 	manager.SetSteeringObserver(host.interactions.WithdrawTask)
+	manager.SetCloseObserver(host.interactions.WithdrawAgent)
 	go host.forwardEvents()
 	return host
 }
@@ -59,11 +60,30 @@ func (h *Host) forwardEvents() {
 	defer close(h.done)
 	defer close(h.legacyEvents)
 	defer h.events.close()
+	closed := make(map[string]bool)
+	reconcileClosed := func() {
+		for _, id := range h.manager.ClosedIDs() {
+			if closed[id] {
+				continue
+			}
+			closed[id] = true
+			summary := session.Summary{ID: id, Status: session.StatusClosed}
+			h.events.publish(Event{Type: EventAgentClosed, Agent: &summary})
+			select {
+			case h.legacyEvents <- session.Event{Agent: summary, Closed: true}:
+			default:
+			}
+		}
+	}
 	for event := range h.manager.Events() {
+		reconcileClosed()
 		if event.Barrier != nil {
 			// Barriers belong to the one local presentation consumer. They are
 			// deliberately excluded from the broadcast transport contract.
 			h.legacyEvents <- event
+			continue
+		}
+		if event.Closed || closed[event.Agent.ID] {
 			continue
 		}
 		eventType := EventAgentChanged
@@ -81,6 +101,7 @@ func (h *Host) forwardEvents() {
 		default:
 		}
 	}
+	reconcileClosed()
 }
 
 // Events preserves the current TUI presentation contract. New adapters should
@@ -118,6 +139,14 @@ func (h *Host) BeginInteraction(interaction session.Interaction) (session.Intera
 }
 
 func (h *Host) ResolveInteraction(resolution session.Resolution) error {
+	for _, item := range h.interactions.Pending() {
+		if item.ID == resolution.InteractionID {
+			// Order answers against close/steer under the same lock as Begin.
+			return h.manager.InteractionScope(item.AgentID, func(string, string) error {
+				return h.interactions.Resolve(resolution)
+			})
+		}
+	}
 	return h.interactions.Resolve(resolution)
 }
 
@@ -157,8 +186,12 @@ func (h *Host) GetResult(requestID string) (session.PromptResult, error) {
 func (h *Host) Rename(id, name string) error       { return h.manager.Rename(id, name) }
 func (h *Host) Cancel(id string) error             { return h.manager.Cancel(id) }
 func (h *Host) Close(id string) error              { return h.manager.Close(id) }
+func (h *Host) ClosedIDs() []string                { return h.manager.ClosedIDs() }
 func (h *Host) Reset(id string) error              { return h.manager.Reset(id) }
 func (h *Host) UpdateModel(id, model string) error { return h.manager.UpdateModel(id, model) }
+func (h *Host) Configure(id string, update func() error) error {
+	return h.manager.Configure(id, update)
+}
 func (h *Host) SetWaitingForApproval(id string, waiting bool) {
 	h.manager.SetWaitingForApproval(id, waiting)
 }

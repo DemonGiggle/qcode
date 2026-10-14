@@ -87,6 +87,8 @@ func toolActivity(call llm.ToolCall) trace.Activity {
 		return activity("create_agent", "Creating agent", "Created agent", trace.ActivityAgent)
 	case "delegate_task":
 		return activity("delegate_task", "Starting background task for "+target(agentID, "agent"), "Background task accepted by "+target(agentID, "agent"), trace.ActivityAgent)
+	case "close_agent":
+		return activity("close_agent", "Closing agent "+target(agentID, "agent"), "Closure accepted for "+target(agentID, "agent"), trace.ActivityAgent)
 	default:
 		return activity(call.Name, "Using "+activityTarget(call.Name), "Used "+activityTarget(call.Name), trace.ActivityOther)
 	}

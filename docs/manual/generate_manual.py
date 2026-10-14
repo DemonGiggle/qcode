@@ -885,7 +885,7 @@ def build_pdf(images: dict[str, Path]):
             ("/agent switch <id>", "Jump directly to one agent."),
             ("/agent rename <id> <name>", "Give an agent a new display name."),
             ("/agent cancel <id>", "Stop that agent's current work."),
-            ("/agent close <id>", "Close that agent tab (--yes skips confirm)."),
+            ("/agent close <id>", "Cancel work and close the tab after the run exits (--yes skips confirm)."),
         ],
     )
     bullets(
@@ -896,6 +896,7 @@ def build_pdf(images: dict[str, Path]):
             "/agent and /agent new open the current provider's model picker. /agent new <model> takes a model ID, then /agent rename <id> <name> sets its display name.",
             "Queues are per agent (up to 16 waiting each). A slow helper never blocks `main`.",
             "When main delegates a task, its current run ends after accepting the assignment and the helper continues in its tab. Send a follow-up to main to ask for findings or a consultation. Full recorded findings remain searchable after closing a helper or using /new.",
+            "Main can use close_agent with one agent_id in normal execution mode. Closure returns immediately without ending main's turn. Pending tasks, steering, and interactions are cancelled; a running helper shows closing until its run exits and still counts toward the agent limit. The selected closed tab returns to main. Closing helpers are excluded from saved resumable tabs; recorded work remains searchable and exportable.",
         ],
     )
 

@@ -80,11 +80,6 @@ func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 				u.printSystemMessage(yellow + err.Error() + reset)
 				return
 			}
-			if u.activeAgent == fields[2] {
-				_ = u.switchAgent("main")
-			}
-			u.RemoveAgentView(fields[2])
-			u.drawTabBar()
 			return
 		}
 		if len(fields) != 3 {
@@ -225,11 +220,6 @@ func (u *UI) closeAgent(id string) {
 		u.printSystemMessage(yellow + err.Error() + reset)
 		return
 	}
-	if u.activeAgent == id {
-		_ = u.switchAgent("main")
-	}
-	u.RemoveAgentView(id)
-	u.drawTabBar()
 }
 
 func (u *UI) agentUsage() {
@@ -245,8 +235,26 @@ func (u *UI) activeAgentConfigurable() bool {
 		u.printSystemMessage(yellow + err.Error() + reset)
 		return false
 	}
-	if summary.Status == session.StatusRunning || summary.Status == session.StatusWaitingForApproval {
+	if summary.Status == session.StatusRunning || summary.Status == session.StatusWaitingForApproval || summary.Status == session.StatusClosing {
 		u.printSystemMessage(yellow + fmt.Sprintf("Agent %s is %s.", summary.ID, summary.Status) + reset)
+		return false
+	}
+	return true
+}
+
+// Recheck under the manager lock when applying settings after a selector or
+// provider lookup; main may have closed the selected helper in the meantime.
+func (u *UI) configureActive(update func() error) bool {
+	var err error
+	if manager, ok := u.manager.(interface {
+		Configure(string, func() error) error
+	}); ok {
+		err = manager.Configure(u.activeAgent, update)
+	} else {
+		err = update()
+	}
+	if err != nil {
+		u.printSystemMessage(yellow + err.Error() + reset)
 		return false
 	}
 	return true
@@ -331,22 +339,107 @@ func (d *agentDisplay) ExportSnapshot() historyExportSnapshot {
 
 func (u *UI) watchAgentEvents(events <-chan session.Event) {
 	defer close(u.agentEventsDone)
+	u.reconcileClosedAgents()
 	u.replayConsultationEvents()
 	u.replaySteeringEvents()
 	for event := range events {
+		u.reconcileClosedAgents()
+		if event.Closed {
+			u.queueAgentClosures([]string{event.Agent.ID})
+		}
 		u.replayConsultationEvents()
 		u.replaySteeringEvents()
 		if event.Barrier != nil {
 			close(event.Barrier)
 			continue
 		}
-		if event.Consultation {
+		if event.Closed || event.Consultation {
 			continue
 		}
 		u.handleAgentEvent(event)
 	}
+	u.reconcileClosedAgents()
 	u.replayConsultationEvents()
 	u.replaySteeringEvents()
+}
+
+// Every event, including barriers, reconciles durable removal state. A full
+// notification buffer can lose a close event, but cannot leave a stale tab.
+func (u *UI) reconcileClosedAgents() {
+	source, ok := u.manager.(interface{ ClosedIDs() []string })
+	if !ok {
+		return
+	}
+	u.queueAgentClosures(source.ClosedIDs())
+}
+
+func (u *UI) queueAgentClosures(ids []string) {
+	u.screenMu.Lock()
+	var pending []string
+	activeID := u.activeAgent
+	for _, id := range ids {
+		if u.views[id] != nil {
+			pending = append(pending, id)
+		}
+	}
+	u.screenMu.Unlock()
+	if len(pending) == 0 {
+		return
+	}
+	u.tabMu.Lock()
+	if u.pendingClosures == nil {
+		u.pendingClosures = make(map[string]bool)
+	}
+	added, active := false, false
+	for _, id := range pending {
+		if u.pendingClosures[id] {
+			continue
+		}
+		u.pendingClosures[id] = true
+		added = true
+		active = active || activeID == id
+	}
+	u.tabMu.Unlock()
+	if !added {
+		return
+	}
+	u.signalUIEvent()
+	u.signalPresentation()
+	if active && u.input != nil {
+		u.input.interruptLine()
+	}
+}
+
+// Only the UI goroutine switches the selected runner and line editor.
+func (u *UI) handlePendingAgentClosures() {
+	u.tabMu.Lock()
+	ids := u.pendingClosures
+	u.pendingClosures = nil
+	u.tabMu.Unlock()
+	if len(ids) == 0 {
+		return
+	}
+	u.screenMu.Lock()
+	fallback := ids[u.activeAgent]
+	u.screenMu.Unlock()
+	if fallback {
+		_ = u.switchAgent("main")
+	}
+	for id := range ids {
+		delete(u.deferredInteractions, id)
+		u.RemoveAgentView(id)
+	}
+	if fallback && u.input != nil {
+		u.screenMu.Lock()
+		draft := u.drafts["main"]
+		u.screenMu.Unlock()
+		if draft != "" {
+			u.input.inject([]byte(draft))
+		}
+	}
+	u.signalPresentation()
+	u.requestSessionSave()
+	u.repaintActive()
 }
 
 // Consultation events are replayed from the journal rather than relying on a
@@ -411,6 +504,9 @@ func (u *UI) handleAgentEvent(event session.Event) {
 	}
 	u.drawTabBar()
 	if event.DirectoryChanged {
+		return
+	}
+	if event.Agent.Status == session.StatusClosing {
 		return
 	}
 	if event.Agent.Status != session.StatusRunning && event.Agent.Status != session.StatusWaitingForApproval {
@@ -1040,6 +1136,9 @@ func renderTabs(summaries []session.Summary, active string, views map[string]*ag
 }
 
 func statusIndicator(status session.Status, unicodeEnabled bool) string {
+	if status == session.StatusClosing {
+		return "closing"
+	}
 	if !unicodeEnabled {
 		switch status {
 		case session.StatusRunning:

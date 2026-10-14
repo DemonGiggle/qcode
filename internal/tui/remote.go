@@ -252,7 +252,10 @@ func (u *UI) RemotePresentation() RemotePresentation {
 		result.SteeringEvents = source.SteeringEvents(0)
 	}
 	for _, view := range views {
-		summary := summaries[view.id]
+		summary, live := summaries[view.id]
+		if u.manager != nil && !live {
+			continue
+		}
 		name := summary.Name
 		if name == "" {
 			name = view.id
@@ -279,6 +282,11 @@ func (u *UI) RemotePresentation() RemotePresentation {
 			Cwd: summary.Cwd, StatusBar: u.remoteAgentStatusBar(view.id, view.provider, summary.Model, summary.Cwd),
 			Status: string(summary.Status), Lines: lines, QueuedPrompts: queued, LatestPrompt: latestPrompt,
 		})
+	}
+	if u.manager != nil {
+		if _, live := summaries[result.Active]; !live {
+			result.Active = "main"
+		}
 	}
 	result = redaction.Copy(u.redaction, redaction.Remote, result)
 	for i := range result.Agents {

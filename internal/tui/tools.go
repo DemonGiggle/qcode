@@ -34,12 +34,15 @@ func (u *UI) chooseTools() {
 		u.endRawSelector()
 	}()
 	visible := min(12, max(3, u.height-6))
-	accepted, err := selectTools(u.input, u.themedSelectorWriter(), names, runner, visible, u.width, ColorEnabled(u.out))
+	accepted, err := selectTools(u.input, u.themedSelectorWriter(), names, scopedToolRunner{UI: u, toolRunner: runner}, visible, u.width, ColorEnabled(u.out))
 	if err != nil {
 		return
 	}
 	if !accepted {
 		u.printSystemMessage(dim + "Tool selection cancelled." + reset)
+		return
+	}
+	if !u.activeAgentConfigurable() {
 		return
 	}
 	// Count enabled tools.
@@ -78,7 +81,9 @@ func (u *UI) setToolCommand(fields []string) {
 	}
 	want := fields[2] == "on"
 	if runner.ToolEnabled(fields[1]) != want {
-		runner.ToggleTool(fields[1], want)
+		if !u.configureActive(func() error { runner.ToggleTool(fields[1], want); return nil }) {
+			return
+		}
 	}
 	u.drawStatusBar()
 	u.printSystemMessage(fmt.Sprintf("%sTool %s: %s%s", green, sanitizeDiffLine(fields[1], "<ESC>"), fields[2], reset))
@@ -219,4 +224,14 @@ func renderToolLine(tool toolStatus, current bool, width int, color bool) string
 		line = cyan + line + reset
 	}
 	return line
+}
+
+// scopedToolRunner revalidates selector changes after the user accepts them.
+type scopedToolRunner struct {
+	*UI
+	toolRunner
+}
+
+func (r scopedToolRunner) ToggleTool(name string, enabled bool) {
+	r.configureActive(func() error { r.toolRunner.ToggleTool(name, enabled); return nil })
 }

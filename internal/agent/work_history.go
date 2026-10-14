@@ -146,7 +146,8 @@ func excerpt(text, query string, limit int) string {
 
 func (m *AgentManager) workMatchLocked(index int, query string) WorkMatch {
 	w := m.work[index]
-	_, available := m.sessions[w.AgentID]
+	s := m.sessions[w.AgentID]
+	available := s != nil && s.summary.Status != StatusClosing
 	return WorkMatch{RequestID: w.RequestID, AgentID: w.AgentID, AgentName: truncateUTF8(w.AgentName, 64), Available: available,
 		Status: w.Status, Task: excerpt(steeredPrompt(w), query, 256), Findings: excerpt(w.Response, query, 768), Files: truncateUTF8(strings.Join(w.ChangedFiles, ", "), 256), Created: w.Created, Finished: w.Finished}
 }

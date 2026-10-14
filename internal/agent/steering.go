@@ -87,6 +87,10 @@ func (m *AgentManager) SubmitPrompt(input session.PromptSubmission) (session.Sub
 		m.mu.Unlock()
 		return session.Submission{}, ErrUnknownAgent
 	}
+	if s.summary.Status == StatusClosing {
+		m.mu.Unlock()
+		return session.Submission{}, ErrClosedAgent
+	}
 	steer := input.Intent == session.IntentSteer || input.Intent == session.IntentAutomatic && input.ObservedTaskID != ""
 	if !steer || s.active == nil && input.ObservedTaskID == "" {
 		if input.Intent == session.IntentAutomatic && s.active != nil {
@@ -200,6 +204,9 @@ func (m *AgentManager) InteractionScope(id string, begin func(string, string) er
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s := m.sessions[id]
+	if _, closed := m.closed[id]; closed || s != nil && s.summary.Status == StatusClosing {
+		return ErrClosedAgent
+	}
 	if s == nil || s.active == nil {
 		return begin("", "")
 	}

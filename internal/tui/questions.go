@@ -176,6 +176,18 @@ func (u *UI) removeQuestionRequest(target *questionRequest) bool {
 
 func (u *UI) restoreQuestionDraft(request *questionRequest) {
 	u.screenMu.Lock()
+	if source, ok := u.manager.(interface{ ClosedIDs() []string }); ok {
+		for _, id := range source.ClosedIDs() {
+			if id == request.agentID {
+				u.screenMu.Unlock()
+				return
+			}
+		}
+		if summary, err := u.manager.Summary(request.agentID); err == nil && summary.Status == session.StatusClosing {
+			u.screenMu.Unlock()
+			return
+		}
+	}
 	if request.draft == "" {
 		u.screenMu.Unlock()
 		return

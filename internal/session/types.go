@@ -52,6 +52,8 @@ const (
 	StatusCompleted          Status = "completed"
 	StatusFailed             Status = "failed"
 	StatusCancelled          Status = "cancelled"
+	StatusClosing            Status = "closing"
+	StatusClosed             Status = "closed"
 )
 
 type Summary struct {
@@ -124,6 +126,8 @@ type WorkActivity struct {
 const MaxWorkActivities = 256
 
 type Event struct {
+	// Closed marks final removal from the live roster, after cancellation exits.
+	Closed bool
 	// DirectoryChanged refreshes presentation without reporting task completion.
 	DirectoryChanged bool
 	Agent            Summary

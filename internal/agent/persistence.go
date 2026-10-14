@@ -334,6 +334,9 @@ func (m *AgentManager) saveAgentsLocked() ([]session.SavedAgent, int) {
 	var result []session.SavedAgent
 	for _, id := range m.order {
 		s := m.sessions[id]
+		if s.summary.Status == StatusClosing {
+			continue
+		}
 		if data := s.runner.checkpoint.Load(); data != nil {
 			summary := cloneSummary(s.summary)
 			summary.Progress = nil

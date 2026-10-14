@@ -149,6 +149,9 @@ func (u *UI) drawFixedTaskIndicatorLocked(now time.Time) {
 }
 
 func taskIndicatorMessage(summary session.Summary, unicodeEnabled bool, now time.Time) string {
+	if summary.Status == session.StatusClosing {
+		return dim + "Closing agent | Cancellation pending" + reset
+	}
 	if summary.Status == session.StatusWaitingForApproval {
 		return dim + "Waiting for input | Ctrl+C to cancel | Enter steer | Tab queue | Esc review" + reset
 	}

@@ -96,10 +96,11 @@ func (u *UI) queueModeDecision(id string) {
 		}
 		payload, _ := json.Marshal(map[string]string{payloadKey: request.artifact})
 		waiter, err := broker.BeginInteraction(session.Interaction{AgentID: id, Kind: request.kind, Payload: payload})
-		if err == nil {
-			request.waiter = waiter
-			u.signalPresentation()
+		if err != nil {
+			return
 		}
+		request.waiter = waiter
+		u.signalPresentation()
 	}
 	u.modeDecisionMu.Lock()
 	u.modeDecisions = append(u.modeDecisions, request)

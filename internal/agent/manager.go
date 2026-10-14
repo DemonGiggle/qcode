@@ -46,6 +46,8 @@ const (
 	StatusCompleted          = session.StatusCompleted
 	StatusFailed             = session.StatusFailed
 	StatusCancelled          = session.StatusCancelled
+	StatusClosing            = session.StatusClosing
+	StatusClosed             = session.StatusClosed
 )
 
 type SessionFactory func(id, name, model string, main bool) (*Agent, error)
@@ -86,6 +88,7 @@ type promptRequest struct {
 // mutation lock. Terminal presentation remains the UI's responsibility.
 type AgentManager struct {
 	onSteer func(string, string)
+	onClose func(string)
 
 	ctx                 context.Context
 	cancel              context.CancelFunc
@@ -332,6 +335,9 @@ func (m *AgentManager) Rename(id, name string) error {
 	if !ok {
 		return fmt.Errorf("unknown agent %q", id)
 	}
+	if s.summary.Status == StatusClosing {
+		return fmt.Errorf("%w %q", ErrClosedAgent, id)
+	}
 	s.summary.Name = truncateUTF8(name, 64)
 	return nil
 }
@@ -343,7 +349,7 @@ func (m *AgentManager) UpdateModel(id, model string) error {
 	if !ok {
 		return fmt.Errorf("unknown agent %q", id)
 	}
-	if s.summary.Status == StatusRunning || s.summary.Status == StatusWaitingForApproval {
+	if s.summary.Status == StatusRunning || s.summary.Status == StatusWaitingForApproval || s.summary.Status == StatusClosing {
 		return fmt.Errorf("agent %q is %s", id, s.summary.Status)
 	}
 	s.summary.Model = model
@@ -352,13 +358,12 @@ func (m *AgentManager) UpdateModel(id, model string) error {
 
 func (m *AgentManager) Reset(id string) error {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	s, ok := m.sessions[id]
 	if !ok {
-		m.mu.Unlock()
 		return fmt.Errorf("unknown agent %q", id)
 	}
-	if s.summary.Status == StatusRunning || s.summary.Status == StatusWaitingForApproval {
-		m.mu.Unlock()
+	if s.summary.Status == StatusRunning || s.summary.Status == StatusWaitingForApproval || s.summary.Status == StatusClosing {
 		return fmt.Errorf("agent %q is %s", id, s.summary.Status)
 	}
 	s.summary.Status = StatusIdle
@@ -367,10 +372,29 @@ func (m *AgentManager) Reset(id string) error {
 	s.summary.ChangedFiles = nil
 	s.summary.Error = ""
 	s.latestPrompt = ""
-	runner := s.runner
-	m.mu.Unlock()
-	runner.ResetSession()
+	s.runner.resetSession()
+	s.runner.invalidateContextUsage()
+	s.summary.Cwd = s.runner.WorkingDirectory()
+	select {
+	case m.events <- ManagerEvent{Agent: cloneSummary(s.summary), DirectoryChanged: true}:
+	default:
+	}
 	return nil
+}
+
+// Configure orders live setting changes against closure. The callback must
+// only update runner settings and must not call back into the manager.
+func (m *AgentManager) Configure(id string, update func() error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.sessions[id]
+	if _, closed := m.closed[id]; closed || s != nil && s.summary.Status == StatusClosing {
+		return fmt.Errorf("%w %q", ErrClosedAgent, id)
+	}
+	if s == nil {
+		return fmt.Errorf("%w %q", ErrUnknownAgent, id)
+	}
+	return update()
 }
 
 func (m *AgentManager) Start(id, task string) error {
@@ -468,6 +492,9 @@ func (m *AgentManager) submitRequestLocked(id, task string, deadline time.Time, 
 		}
 		return nil, Submission{}, fmt.Errorf("%w %q", ErrUnknownAgent, id)
 	}
+	if s.summary.Status == StatusClosing {
+		return nil, Submission{}, fmt.Errorf("%w %q", ErrClosedAgent, id)
+	}
 	if s.active != nil && len(s.queue) >= m.queueLimit {
 		return nil, Submission{}, fmt.Errorf("%w for agent %q (limit %d)", ErrPromptQueueFull, id, m.queueLimit)
 	}
@@ -554,6 +581,10 @@ func (m *AgentManager) finish(id string, req *promptRequest, err error, outcome 
 		m.mu.Unlock()
 		return
 	}
+	closing := s.summary.Status == StatusClosing
+	if closing {
+		err = context.Canceled
+	}
 	if req.abortErr != nil {
 		err, outcome = req.abortErr, ""
 	} else if !req.deadline.IsZero() && !time.Now().Before(req.deadline) {
@@ -572,6 +603,11 @@ func (m *AgentManager) finish(id string, req *promptRequest, err error, outcome 
 	s.summary.Progress = nil
 	s.cancel = nil
 	duration := time.Since(s.started)
+	if closing {
+		m.finalizeCloseLocked(id, s)
+		m.mu.Unlock()
+		return
+	}
 	if err == nil {
 		s.summary.Status = StatusCompleted
 		s.summary.LastOutcome = truncateUTF8(strings.TrimSpace(fullOutcome), maxHandoffBytes)
@@ -634,18 +670,56 @@ func (m *AgentManager) Cancel(id string) error {
 }
 
 func (m *AgentManager) Close(id string) error {
+	return m.close(context.Background(), id)
+}
+
+func (m *AgentManager) close(ctx context.Context, id string) error {
 	if id == "main" {
 		return fmt.Errorf("main agent cannot be closed")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s, ok := m.sessions[id]
 	if !ok {
+		if _, closed := m.closed[id]; closed {
+			return nil
+		}
 		return fmt.Errorf("unknown agent %q", id)
 	}
-	if s.summary.Status == StatusRunning || s.summary.Status == StatusWaitingForApproval {
-		return fmt.Errorf("agent %q is %s", id, s.summary.Status)
+	if s.summary.Status == StatusClosing {
+		return nil
 	}
+	if m.shutdown {
+		return ErrManagerClosed
+	}
+	s.summary.Status = StatusClosing
+	s.summary.Progress = nil
+	for _, req := range s.queue {
+		m.completeRequestLocked(req, "", context.Canceled, nil)
+	}
+	s.queue = nil
+	s.summary.QueueDepth = 0
+	if s.active != nil {
+		m.cancelSteersLocked(s.active)
+	}
+	// InteractionScope uses this lock too: no late request can open between
+	// marking the agent closing and withdrawing its existing interactions.
+	if m.onClose != nil {
+		m.onClose(id)
+	}
+	if s.active != nil {
+		m.emitLocked(s.summary, 0)
+		s.cancel()
+		return nil
+	}
+	m.finalizeCloseLocked(id, s)
+	return nil
+}
+
+func (m *AgentManager) finalizeCloseLocked(id string, s *managedSession) {
 	delete(m.sessions, id)
 	m.closed[id] = struct{}{}
 	for i, candidate := range m.order {
@@ -654,7 +728,33 @@ func (m *AgentManager) Close(id string) error {
 			break
 		}
 	}
-	return nil
+	s.summary.Status = StatusClosed
+	s.runner.releaseContext()
+	s.runner = nil
+	s.latestPrompt = ""
+	select {
+	case m.events <- ManagerEvent{Agent: cloneSummary(s.summary), Closed: true}:
+	default:
+	}
+}
+
+// ClosedIDs is durable reconciliation state, independent of buffered events.
+func (m *AgentManager) ClosedIDs() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	ids := make([]string, 0, len(m.closed))
+	for id := range m.closed {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// SetCloseObserver runs under the manager lock and must not call the manager.
+func (m *AgentManager) SetCloseObserver(observer func(string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onClose = observer
 }
 
 func (m *AgentManager) SetWaitingForApproval(id string, waiting bool) {
@@ -852,6 +952,8 @@ func (t *managedToolset) ExecuteDetailed(ctx context.Context, call llm.ToolCall)
 			return t.createAgent(ctx, call.Arguments)
 		case "delegate_task":
 			return t.delegate(ctx, call.Arguments)
+		case "close_agent":
+			return t.closeAgent(ctx, call.Arguments)
 		case "search_agent_work":
 			return t.searchWork(call.Arguments)
 		case "consult_agents":
@@ -872,7 +974,11 @@ func (t *managedToolset) ExecuteDetailed(ctx context.Context, call llm.ToolCall)
 	}
 	result, err := t.base.ExecuteDetailed(ctx, call)
 	if call.Name == "shell" && tracksWorkspace {
-		result.ChangedFiles = append(result.ChangedFiles, changedStateFiles(before, tracker.WorkspaceState(ctx))...)
+		// A cancelled command can already have changed files. Attribution must
+		// outlive caller cancellation, while remaining bounded before run exit.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		result.ChangedFiles = append(result.ChangedFiles, changedStateFiles(before, tracker.WorkspaceState(cleanupCtx))...)
+		cancel()
 	}
 	if len(result.ChangedFiles) > 0 {
 		t.manager.AddChangedFiles(t.id, result.ChangedFiles...)
@@ -977,6 +1083,34 @@ func (t *managedToolset) delegate(ctx context.Context, arguments json.RawMessage
 	return llm.ToolResult{Output: fmt.Sprintf("task accepted by %s; request_id=%s; queue_position=%d", args.AgentID, submission.RequestID, submission.QueuePosition), EndTurn: true}, nil
 }
 
+func (t *managedToolset) closeAgent(ctx context.Context, arguments json.RawMessage) (llm.ToolResult, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(arguments, &fields); err != nil {
+		return llm.ToolResult{}, fmt.Errorf("invalid close_agent arguments: %w", err)
+	}
+	if len(fields) != 1 || fields["agent_id"] == nil {
+		return llm.ToolResult{}, fmt.Errorf("close_agent requires only agent_id")
+	}
+	var agentID string
+	if err := json.Unmarshal(fields["agent_id"], &agentID); err != nil {
+		return llm.ToolResult{}, fmt.Errorf("invalid close_agent.agent_id: %w", err)
+	}
+	if strings.TrimSpace(agentID) == "" {
+		return llm.ToolResult{}, fmt.Errorf("close_agent.agent_id must be a nonempty string")
+	}
+	if err := ctx.Err(); err != nil {
+		return llm.ToolResult{}, err
+	}
+	id := strings.TrimSpace(agentID)
+	if err := t.manager.close(ctx, id); err != nil {
+		return llm.ToolResult{}, err
+	}
+	if summary, err := t.manager.Summary(id); err == nil && summary.Status == StatusClosing {
+		return llm.ToolResult{Output: fmt.Sprintf("agent %s closure accepted; cancellation pending", id)}, nil
+	}
+	return llm.ToolResult{Output: fmt.Sprintf("agent %s closed", id)}, nil
+}
+
 func managerSchemas() []llm.Tool {
 	stringField := func(description string) map[string]any {
 		return map[string]any{"type": "string", "description": description}
@@ -998,6 +1132,7 @@ func managerSchemas() []llm.Tool {
 		{Name: "list_agents", Description: prompt.ListAgentsTool, Parameters: object(nil)},
 		{Name: "create_agent", Description: prompt.CreateAgentTool, Parameters: object(map[string]any{"model": stringField(prompt.AgentModelParameter), "task": stringField(prompt.AgentPromptParameter), "cwd": stringField(prompt.WorkingDirectoryParameter)})},
 		{Name: "delegate_task", Description: prompt.DelegateTaskTool, Parameters: object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter), "prompt": stringField(prompt.AgentPromptParameter)}, "agent_id", "prompt")},
+		{Name: "close_agent", Description: prompt.CloseAgentTool, Parameters: object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter)}, "agent_id")},
 	}
 }
 
