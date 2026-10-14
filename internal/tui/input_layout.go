@@ -176,7 +176,7 @@ func (u *UI) paintFixedLocked(direction int) {
 			screenRows[i+outputStart] = u.themeOutput(row)
 		}
 	} else if outputHeight > 0 && u.display != nil {
-		page := u.activeViewportLocked().page(historyRowsForTheme(u.display.Snapshot(), u.width, u.outputTheme()), outputHeight, historyDirection)
+		page := u.activeViewportLocked().page(u.renderHistoryRowsLocked(u.display.Snapshot()), outputHeight, historyDirection)
 		for i, row := range page {
 			screenRows[i+outputStart] = row.text
 		}

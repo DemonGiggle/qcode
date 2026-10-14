@@ -28,6 +28,58 @@ func (m *persistenceManager) Submit(string, string) (session.Submission, error) 
 	return session.Submission{}, m.submitErr
 }
 
+func TestSessionCheckpointRequestKeepsTabSwitchResponsive(t *testing.T) {
+	u, _ := persistenceUI(t)
+	store, err := session.Open(t.TempDir(), u.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := u.EnableSessions(store, nil); err != nil {
+		t.Fatal(err)
+	}
+	id := u.persistence.current.ID
+	u.drafts["main"] = "keep this draft"
+	u.pendingTab = 1
+	// Simulate an existing checkpoint holding the saver lock. UI work must
+	// finish while it is held, and the queued request must capture the new tab.
+	u.persistence.mu.Lock()
+	stop := u.watchSessions()
+	done := make(chan struct{})
+	go func() {
+		u.handlePendingTabSwitch()
+		u.requestSessionSave()
+		u.requestSessionSave() // Coalesce repeated UI wakeups while saving.
+		close(done)
+	}()
+	select {
+	case <-done:
+		u.persistence.mu.Unlock()
+	case <-time.After(time.Second):
+		u.persistence.mu.Unlock()
+		stop()
+		t.Fatal("tab switch waited for the session saver")
+	}
+	defer stop()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		saved, err := store.Load(id)
+		if err == nil {
+			var presentation savedPresentation
+			if err := json.Unmarshal(saved.Presentation, &presentation); err != nil {
+				t.Fatal(err)
+			}
+			if presentation.Active != "agent-1" || presentation.Drafts["main"] != "keep this draft" {
+				t.Fatalf("background checkpoint lost tab or draft: %+v", presentation)
+			}
+			break
+		}
+		if !os.IsNotExist(err) || time.Now().After(deadline) {
+			t.Fatalf("background checkpoint did not save: %v", err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 type persistencePromptManager struct{ *persistenceManager }
 
 type pollingPersistenceManager struct {

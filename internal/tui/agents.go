@@ -267,6 +267,7 @@ type agentView struct {
 	display  *agentDisplay
 	response *MarkdownWriter
 	viewport viewport
+	rowCache historyRowCache
 	queue    queuePanel
 	unseen   bool
 	onSkills func([]string)
@@ -855,7 +856,7 @@ func (u *UI) repaintActiveLocked(direction int) {
 		return
 	}
 	snapshot := u.display.Snapshot()
-	rows := historyRowsForTheme(snapshot, u.width, u.outputTheme())
+	rows := u.renderHistoryRowsLocked(snapshot)
 	v := u.activeViewportLocked()
 	statusN := u.statusLinesLocked()
 	latest := u.latestPromptRegionRowsLocked(u.height - statusN - 5)
