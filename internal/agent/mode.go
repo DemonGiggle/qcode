@@ -260,7 +260,12 @@ func (a *Agent) enabledSchemas() []llm.Tool {
 	return append(filtered, proposeSkillSchema())
 }
 
-func (a *Agent) executeDetailed(ctx context.Context, call llm.ToolCall) (llm.ToolResult, error) {
+func (a *Agent) executeDetailed(ctx context.Context, call llm.ToolCall) (result llm.ToolResult, err error) {
+	defer func() {
+		if err == nil && call.Name == "change_directory" {
+			a.directoryChanged()
+		}
+	}()
 	if !a.PlanMode() && !a.SkillPlanMode() {
 		if call.Name == "ask_questions" {
 			if !a.InteractiveMode() || !a.interactiveAvailable.Load() {

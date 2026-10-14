@@ -388,13 +388,13 @@ func (u *UI) handleAgentEvent(event session.Event) {
 	defer u.requestSessionSave()
 	u.signalUIEvent()
 	u.signalPresentation()
-	if event.Agent.Status == session.StatusCompleted && event.Agent.CurrentTask != "/compact" {
+	if !event.DirectoryChanged && event.Agent.Status == session.StatusCompleted && event.Agent.CurrentTask != "/compact" {
 		u.queueModeDecision(event.Agent.ID)
 	}
 	u.screenMu.Lock()
 	view := u.views[event.Agent.ID]
 	active := u.activeAgent == event.Agent.ID
-	if view != nil && !active && event.Agent.Status != session.StatusRunning {
+	if !event.DirectoryChanged && view != nil && !active && event.Agent.Status != session.StatusRunning {
 		view.unseen = true
 	}
 	u.screenMu.Unlock()
@@ -410,6 +410,9 @@ func (u *UI) handleAgentEvent(event session.Event) {
 		u.drawStatusBar()
 	}
 	u.drawTabBar()
+	if event.DirectoryChanged {
+		return
+	}
 	if event.Agent.Status != session.StatusRunning && event.Agent.Status != session.StatusWaitingForApproval {
 		if view != nil {
 			message := string(event.Agent.Status)
@@ -509,7 +512,11 @@ func (u *UI) switchAgent(id string) error {
 }
 
 func (u *UI) thinkingLabel() string {
-	runner, ok := u.runner.(thinkingRunner)
+	return thinkingLabelFor(u.runner)
+}
+
+func thinkingLabelFor(value Runner) string {
+	runner, ok := value.(thinkingRunner)
 	if !ok {
 		return ""
 	}

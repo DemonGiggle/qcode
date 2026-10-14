@@ -66,6 +66,9 @@ func (a *Agent) requestMessages(ctx context.Context) []llm.Message {
 	}
 	a.dynamicContext = dynamic
 	if len(messages) > 0 {
+		if cwd := a.WorkingDirectory(); cwd != "" {
+			messages[0].Content += "\n\nCurrent agent working directory: " + strconv.Quote(cwd)
+		}
 		if len(restoredPositions) > 0 {
 			messages[0].Content += fmt.Sprintf(prompt.RestoredHistoryReference, strings.Join(restoredPositions, ", "))
 		}

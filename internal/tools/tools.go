@@ -37,6 +37,7 @@ type ExecutionResult = llm.ToolResult
 type Registry struct {
 	web                   *webTools
 	root                  string
+	cwd                   string // guarded by grantMu; root is the immutable launch workspace
 	schemas               []llm.Tool
 	handlers              map[string]Handler
 	sandbox               *sandboxState
@@ -114,6 +115,9 @@ func NewWithOptions(root string, options Options) (*Registry, error) {
 	r.add(llm.Tool{Name: "list", Description: prompt.ListTool, Parameters: objectSchema(map[string]any{
 		"path": stringProperty(prompt.DirectoryParameter),
 	})}, r.list)
+	r.add(llm.Tool{Name: "change_directory", Description: prompt.ChangeDirectoryTool, Parameters: objectSchema(map[string]any{
+		"path": stringProperty(prompt.WorkingDirectoryParameter),
+	}, "path")}, r.changeDirectory)
 	r.add(llm.Tool{Name: "search", Description: prompt.SearchTool, Parameters: objectSchema(map[string]any{
 		"pattern": stringProperty(prompt.PatternParameter), "path": stringProperty(prompt.SearchPathParameter), "max_results": integerProperty(prompt.MaxResultsParameter),
 		"offset": integerProperty(prompt.SearchOffsetParameter),
@@ -153,13 +157,15 @@ func (r *Registry) loadSkill(_ context.Context, arguments json.RawMessage) (stri
 
 func (r *Registry) SetDirectoryApprover(approver DirectoryApprover) { r.approver = approver }
 
-// ResetSession removes session grants and restores tool defaults. Web tools
-// require explicit user enablement again in every session.
+// ResetSession resets the directory to launch, removes session grants, and
+// restores tool defaults. Web tools require explicit enablement each session.
 func (r *Registry) ResetSession() {
 	r.grantMu.Lock()
 	r.grants = []string{r.root}
+	r.cwd = r.root
 	r.grantMu.Unlock()
 	r.disabled = map[string]bool{"web_fetch": true, "web_search": true}
+	r.restoreWarnings = nil
 	r.updateSandboxNetworkAccess()
 }
 
@@ -356,20 +362,21 @@ func (value *flexibleInteger) UnmarshalJSON(data []byte) error {
 }
 
 func (r *Registry) resolve(name string) (string, error) {
+	cwd := r.WorkingDirectory()
 	if name == "" {
 		name = "."
 	}
 	path := name
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(r.root, path)
+		path = filepath.Join(cwd, path)
 	}
 	path = filepath.Clean(path)
-	rel, err := filepath.Rel(r.root, path)
+	rel, err := filepath.Rel(cwd, path)
 	if err != nil {
 		return "", err
 	}
 	if r.sandbox == nil && (rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
-		return "", fmt.Errorf("path %q is outside workspace %q", name, r.root)
+		return "", fmt.Errorf("path %q is outside workspace %q", name, cwd)
 	}
 	return path, nil
 }
@@ -406,9 +413,12 @@ func (r *Registry) authorizePath(ctx context.Context, path string) (string, erro
 	if !approved {
 		return "", fmt.Errorf("directory access denied for %q", path)
 	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	grant := selected
 	if !filepath.IsAbs(grant) {
-		grant = filepath.Join(r.root, grant)
+		grant = filepath.Join(r.WorkingDirectory(), grant)
 	}
 	grant, err = filepath.Abs(grant)
 	if err != nil {
@@ -700,7 +710,7 @@ func (r *Registry) writeDetailed(ctx context.Context, arguments json.RawMessage)
 	return ExecutionResult{
 		Output:       fmt.Sprintf("wrote %d bytes to %s", len(args.Content), args.Path),
 		Diff:         unifiedDiff(args.Path, before, []byte(args.Content), existed),
-		ChangedFiles: []string{args.Path},
+		ChangedFiles: []string{r.changedFilePath(path)},
 	}, nil
 }
 
@@ -747,7 +757,7 @@ func (r *Registry) editDetailed(ctx context.Context, arguments json.RawMessage) 
 	if err := r.writeFile(path, updated, info.Mode().Perm()); err != nil {
 		return ExecutionResult{}, err
 	}
-	return ExecutionResult{Output: fmt.Sprintf("edited %s", args.Path), Diff: unifiedDiff(args.Path, data, updated, true), ChangedFiles: []string{args.Path}}, nil
+	return ExecutionResult{Output: fmt.Sprintf("edited %s", args.Path), Diff: unifiedDiff(args.Path, data, updated, true), ChangedFiles: []string{r.changedFilePath(path)}}, nil
 }
 
 func (r *Registry) list(ctx context.Context, arguments json.RawMessage) (string, error) {
@@ -786,6 +796,7 @@ func (r *Registry) list(ctx context.Context, arguments json.RawMessage) (string,
 }
 
 func (r *Registry) search(ctx context.Context, arguments json.RawMessage) (string, error) {
+	cwd := r.WorkingDirectory()
 	var args struct {
 		Pattern, Path string
 		MaxResults    int `json:"max_results"`
@@ -856,7 +867,7 @@ func (r *Registry) search(ctx context.Context, arguments json.RawMessage) (strin
 				if seen <= args.Offset {
 					continue
 				}
-				rel, _ := filepath.Rel(r.root, file)
+				rel, _ := filepath.Rel(cwd, file)
 				if len(line) > 2048 {
 					line = "[matching line text omitted: exceeds 2048 bytes; use read or shell for a bounded excerpt]"
 				}
@@ -907,8 +918,9 @@ func (r *Registry) shell(ctx context.Context, arguments json.RawMessage) (string
 	commandCtx, cancel := context.WithTimeout(ctx, time.Duration(args.TimeoutMS)*time.Millisecond)
 	defer cancel()
 	var cmd *exec.Cmd
+	cwd := r.WorkingDirectory()
 	if r.sandbox != nil {
-		cmd = r.sandbox.command(commandCtx, r.root, r.grantPaths(), args.Command)
+		cmd = r.sandbox.command(commandCtx, cwd, r.grantPaths(), args.Command)
 	} else if runtime.GOOS == "windows" {
 		cmd = exec.CommandContext(commandCtx, "cmd.exe", "/d", "/s", "/c", args.Command)
 	} else {
@@ -922,7 +934,7 @@ func (r *Registry) shell(ctx context.Context, arguments json.RawMessage) (string
 	if r.insecureSkipTLSVerify {
 		cmd.Env = shellEnvironment()
 	}
-	cmd.Dir = r.root
+	cmd.Dir = cwd
 	var output limitedBuffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
@@ -969,8 +981,16 @@ func shellEnvironment() []string {
 // keeps shell attribution cheap even in large repositories while detecting
 // edits to files that were dirty before the command through size and mtime.
 func (r *Registry) WorkspaceState(ctx context.Context) map[string]string {
+	cwd := r.WorkingDirectory()
+	rootCmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
+	rootCmd.Dir = cwd
+	rootData, err := rootCmd.Output()
+	if err != nil {
+		return nil
+	}
+	repoRoot := strings.TrimSuffix(strings.TrimSuffix(string(rootData), "\n"), "\r")
 	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1", "-z", "--untracked-files=all")
-	cmd.Dir = r.root
+	cmd.Dir = cwd
 	data, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -984,12 +1004,14 @@ func (r *Registry) WorkspaceState(ctx context.Context) map[string]string {
 		}
 		code := string(record[:2])
 		path := string(record[3:])
-		state[path] = code + fileState(filepath.Join(r.root, filepath.FromSlash(path)))
+		absolute := filepath.Join(repoRoot, filepath.FromSlash(path))
+		state[r.changedFilePath(absolute)] = code + fileState(absolute)
 		if (record[0] == 'R' || record[0] == 'C' || record[1] == 'R' || record[1] == 'C') && index+1 < len(records) {
 			index++
 			oldPath := string(records[index])
 			if oldPath != "" {
-				state[oldPath] = code + fileState(filepath.Join(r.root, filepath.FromSlash(oldPath)))
+				absolute := filepath.Join(repoRoot, filepath.FromSlash(oldPath))
+				state[r.changedFilePath(absolute)] = code + fileState(absolute)
 			}
 		}
 	}

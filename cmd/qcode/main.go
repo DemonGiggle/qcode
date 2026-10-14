@@ -402,6 +402,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			logger.SetColor(tui.ColorEnabled(stdout))
 			logger.SetWidth(tui.OutputWidth(stdout))
 			runner := agent.NewWithSystem(currentProvider, model, wrappedTools, logger, response, opts.maxSteps, system)
+			runner.SetCreationRollback(func() { ui.RemoveAgentView(id) })
 			runner.SetRedaction(policy)
 			runner.SetInteractiveAvailable(questionsAvailable)
 			if saved == nil {

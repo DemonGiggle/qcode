@@ -50,6 +50,11 @@ const (
 
 type SessionFactory func(id, name, model string, main bool) (*Agent, error)
 
+// SetCreationRollback lets a factory discard presentation resources if the
+// manager cannot initialize and register the returned agent. The hook is
+// consumed during creation, before the agent becomes available for work.
+func (a *Agent) SetCreationRollback(rollback func()) { a.creationRollback = rollback }
+
 type managedSession struct {
 	summary      AgentSummary
 	runner       *Agent
@@ -134,6 +139,10 @@ func (m *AgentManager) CreateMain(model string) (AgentSummary, error) {
 }
 
 func (m *AgentManager) Create(model string) (AgentSummary, error) {
+	return m.createNew(model, nil)
+}
+
+func (m *AgentManager) createNew(model string, prepare func(*Agent) error) (AgentSummary, error) {
 	m.mu.Lock()
 	if m.shutdown {
 		m.mu.Unlock()
@@ -146,13 +155,20 @@ func (m *AgentManager) Create(model string) (AgentSummary, error) {
 	m.nextID++
 	id := fmt.Sprintf("agent-%d", m.nextID)
 	m.mu.Unlock()
-	return m.create(id, id, model, false)
+	return m.createPrepared(id, id, model, false, prepare)
 }
 
 // CreateInherited creates a worker and copies the parent agent's capabilities
 // into it before the caller can submit work. The parent conversation and its
 // main-only orchestration tools remain private to the parent.
 func (m *AgentManager) CreateInherited(parentID, model string) (AgentSummary, error) {
+	return m.CreateInheritedAt(context.Background(), parentID, model, "")
+}
+
+// CreateInheritedAt validates and authorizes cwd against the caller before
+// creating a child, then installs its capabilities and directory before it
+// becomes available for task submission. Empty cwd inherits the caller's.
+func (m *AgentManager) CreateInheritedAt(ctx context.Context, parentID, model, cwd string) (AgentSummary, error) {
 	parent, ok := m.Agent(parentID)
 	if !ok {
 		return AgentSummary{}, fmt.Errorf("unknown agent %q", parentID)
@@ -164,21 +180,46 @@ func (m *AgentManager) CreateInherited(parentID, model string) (AgentSummary, er
 		}
 		model = parentSummary.Model
 	}
-	created, err := m.Create(model)
-	if err != nil {
+	if cwd == "" {
+		cwd = parent.WorkingDirectory()
+	}
+	if cwd != "" {
+		tools, ok := parent.tools.(directoryTools)
+		if !ok {
+			return AgentSummary{}, fmt.Errorf("working directories are unavailable for this agent")
+		}
+		var err error
+		cwd, err = tools.ValidateWorkingDirectory(ctx, cwd)
+		if err != nil {
+			return AgentSummary{}, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
 		return AgentSummary{}, err
 	}
-	child, ok := m.Agent(created.ID)
-	if !ok {
-		return AgentSummary{}, fmt.Errorf("created agent %q is unavailable", created.ID)
-	}
-	if err := child.InheritCapabilitiesFrom(parent); err != nil {
-		return AgentSummary{}, fmt.Errorf("inherit capabilities for %s: %w", created.ID, err)
-	}
-	return created, nil
+	return m.createNew(model, func(child *Agent) error {
+		if err := child.InheritCapabilitiesFrom(parent); err != nil {
+			return fmt.Errorf("inherit capabilities: %w", err)
+		}
+		if cwd != "" {
+			tools, ok := child.tools.(directoryTools)
+			if !ok {
+				return fmt.Errorf("working directories are unavailable for the child")
+			}
+			if _, err := tools.ChangeWorkingDirectory(ctx, cwd); err != nil {
+				return err
+			}
+			child.directoryChanged()
+		}
+		return ctx.Err()
+	})
 }
 
 func (m *AgentManager) create(id, name, model string, main bool) (AgentSummary, error) {
+	return m.createPrepared(id, name, model, main, nil)
+}
+
+func (m *AgentManager) createPrepared(id, name, model string, main bool, prepare func(*Agent) error) (AgentSummary, error) {
 	m.mu.RLock()
 	factory := m.factory
 	shuttingDown := m.shutdown
@@ -193,9 +234,22 @@ func (m *AgentManager) create(id, name, model string, main bool) (AgentSummary, 
 	if err != nil {
 		return AgentSummary{}, err
 	}
+	registered := false
+	defer func() {
+		if !registered && runner.creationRollback != nil {
+			runner.creationRollback()
+		}
+		runner.creationRollback = nil
+	}()
+	if prepare != nil {
+		if err := prepare(runner); err != nil {
+			return AgentSummary{}, err
+		}
+	}
 	runner.SetActivityRecorder(func(event session.WorkActivity) { m.RecordActivity(id, event) })
+	runner.directoryRecorder = func(cwd string) { m.directoryChanged(id, cwd) }
 	runner.progressRecorder = func(progress *session.Progress) { m.setProgress(id, progress) }
-	summary := AgentSummary{ID: id, Name: name, Model: model, Status: StatusIdle}
+	summary := AgentSummary{ID: id, Name: name, Model: model, Status: StatusIdle, Cwd: runner.WorkingDirectory()}
 	m.mu.Lock()
 	if m.shutdown {
 		m.mu.Unlock()
@@ -211,6 +265,7 @@ func (m *AgentManager) create(id, name, model string, main bool) (AgentSummary, 
 	}
 	m.sessions[id] = &managedSession{summary: summary, runner: runner}
 	m.order = append(m.order, id)
+	registered = true
 	m.mu.Unlock()
 	if main {
 		runner.SetRequestContext(m.RosterContext)
@@ -669,6 +724,9 @@ func (m *AgentManager) RosterContext() string {
 			continue
 		}
 		line := fmt.Sprintf("- %s name=%q model=%q status=%s", item.ID, truncateUTF8(item.Name, 40), truncateUTF8(item.Model, 60), item.Status)
+		if item.Cwd != "" {
+			line += " cwd=" + strconvQuote(truncateUTF8(item.Cwd, 160))
+		}
 		if item.CurrentTask != "" {
 			line += " task=" + strconvQuote(truncateUTF8(item.CurrentTask, 80))
 		}
@@ -856,8 +914,9 @@ func (t *managedToolset) listAgents() (llm.ToolResult, error) {
 
 func (t *managedToolset) createAgent(ctx context.Context, arguments json.RawMessage) (llm.ToolResult, error) {
 	var args struct {
-		Model string `json:"model"`
-		Task  string `json:"task"`
+		Model string  `json:"model"`
+		Task  string  `json:"task"`
+		Cwd   *string `json:"cwd"`
 	}
 	if err := json.Unmarshal(arguments, &args); err != nil {
 		return llm.ToolResult{}, fmt.Errorf("invalid create_agent arguments: %w", err)
@@ -873,7 +932,14 @@ func (t *managedToolset) createAgent(ctx context.Context, arguments json.RawMess
 		}
 		model = summary.Model
 	}
-	summary, err := t.manager.CreateInherited(t.id, model)
+	cwd := ""
+	if args.Cwd != nil {
+		cwd = *args.Cwd
+		if cwd == "" {
+			return llm.ToolResult{}, fmt.Errorf("create_agent.cwd must name an existing directory")
+		}
+	}
+	summary, err := t.manager.CreateInheritedAt(ctx, t.id, model, cwd)
 	if err != nil {
 		return llm.ToolResult{}, err
 	}
@@ -930,7 +996,7 @@ func managerSchemas() []llm.Tool {
 		{Name: "search_agent_work", Description: prompt.SearchAgentWorkTool, Parameters: object(map[string]any{"query": stringField(prompt.AgentWorkQueryParameter), "agent_id": stringField(prompt.AgentIDParameter), "offset": map[string]any{"type": "integer", "minimum": 0}}, "query")},
 		{Name: "consult_agents", Description: prompt.ConsultAgentsTool, Parameters: object(map[string]any{"requests": map[string]any{"type": "array", "minItems": 1, "maxItems": DefaultMaxAgents - 1, "items": object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter), "prompt": stringField(prompt.AgentPromptParameter)}, "agent_id", "prompt")}}, "requests")},
 		{Name: "list_agents", Description: prompt.ListAgentsTool, Parameters: object(nil)},
-		{Name: "create_agent", Description: prompt.CreateAgentTool, Parameters: object(map[string]any{"model": stringField(prompt.AgentModelParameter), "task": stringField(prompt.AgentPromptParameter)})},
+		{Name: "create_agent", Description: prompt.CreateAgentTool, Parameters: object(map[string]any{"model": stringField(prompt.AgentModelParameter), "task": stringField(prompt.AgentPromptParameter), "cwd": stringField(prompt.WorkingDirectoryParameter)})},
 		{Name: "delegate_task", Description: prompt.DelegateTaskTool, Parameters: object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter), "prompt": stringField(prompt.AgentPromptParameter)}, "agent_id", "prompt")},
 	}
 }
