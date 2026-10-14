@@ -99,7 +99,7 @@ type historyExportSnapshot struct {
 func (w *historyWriter) Snapshot() historySnapshot {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	s := historySnapshot{style: w.style}
+	s := historySnapshot{style: w.style, lines: make([]historyLine, 0, len(w.lines)+1)}
 	for _, cell := range w.current[:min(w.cursor, len(w.current))] {
 		s.cursor += len(string(cell.char))
 	}

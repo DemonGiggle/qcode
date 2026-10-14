@@ -246,6 +246,7 @@ type UI struct {
 	height               int
 	unicode              bool
 	viewport             viewport
+	rowCache             historyRowCache
 	queue                queuePanel
 	statusActive         bool
 	statusBarText        string
@@ -753,8 +754,10 @@ func (u *UI) Run(ctx context.Context) error {
 	defer stopDemoScript()
 	for {
 		u.handlePendingAgentClosures()
-		u.reportSave(u.saveSession(false))
 		u.handlePendingTabSwitch()
+		// Checkpoint on the existing saver; input and tab changes must not
+		// wait for serialization or a synchronous disk flush.
+		u.requestSessionSave()
 		u.handlePendingApproval(ctx)
 		if u.handlePendingQuestions(ctx) {
 			continue
@@ -2359,7 +2362,7 @@ func (u *UI) showHistoryBoundary(beginning bool) bool {
 	if u.display == nil {
 		return false
 	}
-	rows := historyRows(u.display.Snapshot(), u.width)
+	rows := u.renderHistoryRowsLocked(u.display.Snapshot())
 	if v.atBottom(rows) {
 		if v.browsing {
 			v.browsing = false

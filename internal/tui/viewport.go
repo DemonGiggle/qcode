@@ -24,6 +24,74 @@ type historyRow struct {
 	text     string
 }
 
+// historyRowCache belongs to UI.screenMu, alongside the display's viewport.
+// Committed lines are immutable; only a changed suffix needs to be wrapped.
+// Keep one width/theme per display so resizing cannot grow the cache forever.
+type historyRowCache struct {
+	width   int
+	palette qtheme.Palette
+	lines   []cachedHistoryLine
+	rows    []historyRow
+}
+
+type cachedHistoryLine struct {
+	line historyLine
+	end  int // Exclusive end of this logical line in the wrapped rows.
+}
+
+func (u *UI) renderHistoryRowsLocked(snapshot historySnapshot) []historyRow {
+	cache := &u.rowCache
+	if view := u.views[u.activeAgent]; view != nil {
+		cache = &view.rowCache
+	}
+	return cache.render(snapshot, u.width, u.outputTheme())
+}
+
+// render returns borrowed rows, valid until the next call under screenMu.
+func (c *historyRowCache) render(snapshot historySnapshot, width int, palette qtheme.Palette) []historyRow {
+	if c.width != width || c.palette != palette {
+		*c = historyRowCache{width: width, palette: palette}
+	}
+	if len(snapshot.lines) > 0 && len(c.lines) > 0 {
+		// Retention drops old logical lines without changing surviving IDs.
+		// Move their cached rows rather than rewrapping the remaining history.
+		drop := 0
+		for drop < len(c.lines) && c.lines[drop].line.id < snapshot.lines[0].id {
+			drop++
+		}
+		if drop > 0 {
+			rowDrop := c.lines[drop-1].end
+			n := copy(c.rows, c.rows[rowDrop:])
+			clear(c.rows[n:])
+			c.rows = c.rows[:n]
+			n = copy(c.lines, c.lines[drop:])
+			clear(c.lines[n:])
+			c.lines = c.lines[:n]
+			for i := range c.lines {
+				c.lines[i].end -= rowDrop
+			}
+		}
+	}
+	unchanged := 0
+	for unchanged < len(c.lines) && unchanged < len(snapshot.lines) && c.lines[unchanged].line == snapshot.lines[unchanged] {
+		unchanged++
+	}
+	end := 0
+	if unchanged > 0 {
+		end = c.lines[unchanged-1].end
+	}
+	clear(c.rows[end:])
+	c.rows = c.rows[:end]
+	clear(c.lines[unchanged:])
+	c.lines = c.lines[:unchanged]
+	for _, line := range snapshot.lines[unchanged:] {
+		styled := historyLine{line.id, qtheme.TransformANSI(line.text, palette)}
+		c.rows = append(c.rows, historyRows(historySnapshot{lines: []historyLine{styled}}, width)...)
+		c.lines = append(c.lines, cachedHistoryLine{line: line, end: len(c.rows)})
+	}
+	return c.rows
+}
+
 func plainHistoryText(text string) string {
 	var result strings.Builder
 	for _, unit := range displayUnits(text) {
