@@ -113,6 +113,42 @@ func finalSteeringResponse(text string) llm.Response {
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: text}}
 }
 
+func TestSubmissionsPreservePastedWhitespace(t *testing.T) {
+	m, p := steeringFixture(t, 2, &steeringTools{})
+	const prompt = "  first line\n\tsecond line\n\n"
+	original, err := m.SubmitPrompt(session.PromptSubmission{AgentID: "main", Prompt: prompt, Intent: session.IntentAutomatic})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := nextSteeringRequest(t, p)
+	if got := request.Messages[len(request.Messages)-1].Content; got != prompt {
+		t.Fatalf("submitted prompt=%q, want %q", got, prompt)
+	}
+	const steer = "\tupdate this\n  keep indentation\n"
+	steeringSubmit(t, m, original.RequestID, steer)
+	queued, err := m.SubmitPrompt(session.PromptSubmission{AgentID: "main", Prompt: prompt, Intent: session.IntentQueue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.replies <- finalSteeringResponse("superseded answer")
+	request = nextSteeringRequest(t, p)
+	if got := request.Messages[len(request.Messages)-1].Content; got != steer {
+		t.Fatalf("steering prompt=%q, want %q", got, steer)
+	}
+	p.replies <- finalSteeringResponse("updated answer")
+	waitSteeringResult(t, m, original.RequestID)
+	request = nextSteeringRequest(t, p)
+	if got := request.Messages[len(request.Messages)-1].Content; got != prompt {
+		t.Fatalf("queued prompt=%q, want %q", got, prompt)
+	}
+	p.replies <- finalSteeringResponse("queued answer")
+	waitSteeringResult(t, m, queued.RequestID)
+	records := m.WorkRecords()
+	if records[0].Prompt != prompt || records[0].Steers[0].Text != steer || records[1].Prompt != prompt {
+		t.Fatalf("journal changed pasted whitespace: %+v", records)
+	}
+}
+
 func TestSteeringStreamingReplacementBudgetAndFIFO(t *testing.T) {
 	m, p := steeringFixture(t, 1, &steeringTools{})
 	original, err := m.Submit("main", "original task")

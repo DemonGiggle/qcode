@@ -14,9 +14,14 @@ import (
 // renderInput receives committed editor state after every edit, including
 // deletion, paste and history navigation. The editor lock is released first.
 func (u *UI) renderInput(prompt, line string, pos int) {
+	display, displayPos := line, pos
+	if u.terminal != nil {
+		display, displayPos = u.terminal.DisplayInput(line, pos)
+	}
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
 	u.inputLabel, u.inputText, u.inputPosition = prompt, line, pos
+	u.inputDisplay, u.inputDisplayPosition = display, displayPos
 	u.tabMu.Lock()
 	pending := u.pendingTab != 0
 	u.tabMu.Unlock()
@@ -97,7 +102,7 @@ func (u *UI) paintFixedLocked(direction int) {
 			label = plainHistoryText(u.inputLabel)
 		}
 	}
-	rows, cy, cx := inputRows(label+u.inputText, utf8.RuneCountInString(label)+u.inputPosition, u.width)
+	rows, cy, cx := inputRows(label+u.inputDisplay, utf8.RuneCountInString(label)+u.inputDisplayPosition, u.width)
 	question := u.activeQuestionPanelLocked()
 	queued := u.queuedPromptsLocked()
 	if question != nil {

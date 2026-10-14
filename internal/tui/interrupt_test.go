@@ -4,9 +4,52 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestInterruptReaderKeepsPasteShortcutsLiteral(t *testing.T) {
+	for _, split := range []bool{false, true} {
+		t.Run(fmt.Sprintf("split=%v", split), func(t *testing.T) {
+			reader := newInterruptReader(nil)
+			calls := 0
+			reader.setCancel(func() { calls++ })
+			reader.setPageHandler(func(int) { calls++ })
+			reader.setTabHandler(func(int) { calls++ })
+			reader.setQueueHandler(func() { calls++ })
+			reader.setHistoryBoundaryHandler(func(bool) bool { calls++; return true })
+			var payload strings.Builder
+			payload.WriteString("first\r\nsecond\t\x03\x15\x1bq")
+			payload.WriteString(pageUpSequence + pageDownSequence)
+			for _, sequence := range tabKeySequences {
+				payload.WriteString(sequence.value)
+			}
+			for _, sequence := range historyBoundarySequences {
+				payload.WriteString(sequence.value)
+			}
+			input := bracketedPasteStart + payload.String() + bracketedPasteEnd + "\r"
+			if split {
+				for _, key := range []byte(input) {
+					reader.route([]byte{key})
+				}
+			} else {
+				reader.route([]byte(input))
+			}
+			if calls != 0 {
+				t.Fatalf("clipboard triggered %d shortcuts", calls)
+			}
+			got := make([]byte, len(input))
+			if _, err := io.ReadFull(reader, got); err != nil || string(got) != input {
+				t.Fatalf("clipboard input=%q, error=%v; want %q", got, err, input)
+			}
+			reader.route([]byte(pageUpSequence + "\x03"))
+			if calls != 2 {
+				t.Fatalf("shortcuts after paste triggered %d callbacks, want 2", calls)
+			}
+		})
+	}
+}
 
 func TestInterruptReaderCancelsActiveTask(t *testing.T) {
 	input, writer := io.Pipe()

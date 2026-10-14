@@ -226,6 +226,8 @@ type UI struct {
 	inputText            string
 	inputLabel           string
 	inputPosition        int
+	inputDisplay         string
+	inputDisplayPosition int
 	inputFrame           string
 	inputScreenRows      []string
 	inputCursorRow       int
@@ -715,10 +717,12 @@ func (u *UI) Run(ctx context.Context) error {
 		return fmt.Errorf("enable terminal mode: %w", err)
 	}
 	defer func() {
+		u.terminal.SetBracketedPasteMode(false)
 		u.teardownStatusBar()
 		_ = term.Restore(int(u.in.Fd()), state)
 		u.printExitMessage()
 	}()
+	u.terminal.SetBracketedPasteMode(true)
 	if u.manager != nil {
 		defer func() { u.shutdownAgentManager(); u.closeSession() }()
 	}
@@ -797,6 +801,7 @@ func (u *UI) Run(ctx context.Context) error {
 			u.drafts[u.activeAgent] = ""
 			u.screenMu.Unlock()
 		}
+		fullLine := line
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -824,9 +829,9 @@ func (u *UI) Run(ctx context.Context) error {
 			continue
 		}
 		if u.fixedInput {
-			u.display.AddLine(reset + "> " + line)
+			u.display.AddLine(reset + "> " + fullLine)
 		} else {
-			u.display.AddLine("> " + line)
+			u.display.AddLine("> " + fullLine)
 		}
 		u.resetPage()
 		fields := strings.Fields(line)
@@ -947,7 +952,7 @@ func (u *UI) Run(ctx context.Context) error {
 		u.responseWriter.ResetDiffs()
 		started := time.Now()
 		if u.manager != nil {
-			err = u.runActiveTask(ctx, line)
+			err = u.runActiveTask(ctx, fullLine)
 			if err != nil {
 				u.printSystemMessage(yellow + formatAgentError(err.Error()) + reset)
 			}
@@ -955,7 +960,7 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		taskCtx, cancel := context.WithCancel(ctx)
 		u.input.setCancel(cancel)
-		err = u.runActiveTask(taskCtx, line)
+		err = u.runActiveTask(taskCtx, fullLine)
 		u.input.setCancel(nil)
 		cancel()
 		u.drawStatusBar()

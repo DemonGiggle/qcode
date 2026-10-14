@@ -97,7 +97,7 @@ func (m *AgentManager) SubmitPrompt(input session.PromptSubmission) (session.Sub
 			m.mu.Unlock()
 			return session.Submission{}, ErrStaleTask
 		}
-		_, sub, err := m.submitRequestLocked(input.AgentID, strings.TrimSpace(input.Prompt), time.Time{}, false, input.Source, input.Actor)
+		_, sub, err := m.submitRequestLocked(input.AgentID, input.Prompt, time.Time{}, false, input.Source, input.Actor)
 		m.mu.Unlock()
 		sub.Intent = session.IntentQueue
 		sub.State = session.InputPending
@@ -121,7 +121,7 @@ func (m *AgentManager) SubmitPrompt(input session.PromptSubmission) (session.Sub
 		return session.Submission{}, errors.New("prompt ID space exhausted")
 	}
 	m.nextRequestID++
-	item := session.SteeringInput{ID: fmt.Sprintf("request-%d", m.nextRequestID), ParentTaskID: req.id, Text: strings.TrimSpace(input.Prompt), Source: input.Source, Actor: input.Actor, State: session.InputPending, Created: time.Now().UTC()}
+	item := session.SteeringInput{ID: fmt.Sprintf("request-%d", m.nextRequestID), ParentTaskID: req.id, Text: input.Prompt, Source: input.Source, Actor: input.Actor, State: session.InputPending, Created: time.Now().UTC()}
 	work := &m.work[req.journalIndex]
 	for i := range work.Steers {
 		if work.Steers[i].State == session.InputPending {

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"io"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,6 +21,8 @@ const (
 	altPreviousTab       = "\x1b,"
 	altNextTab           = "\x1b."
 	altQueuePanel        = "\x1bq"
+	bracketedPasteStart  = "\x1b[200~"
+	bracketedPasteEnd    = "\x1b[201~"
 )
 
 type tabKeySequence struct {
@@ -72,6 +75,7 @@ type interruptReader struct {
 	escapeTimer *time.Timer
 	pending     []byte
 	raw         bool
+	pasteActive bool
 }
 
 func newInterruptReader(source io.Reader) *interruptReader {
@@ -118,6 +122,7 @@ func (r *interruptReader) setRaw(raw bool) {
 	r.mu.Lock()
 	r.raw = raw
 	r.pending = nil
+	r.pasteActive = false
 	r.mu.Unlock()
 	if !raw {
 		for {
@@ -211,6 +216,16 @@ func (r *interruptReader) inject(data []byte) {
 			r.injected <- key
 		}
 	}()
+}
+
+// Restored multiline drafts must enter the editor as data, so their newlines
+// cannot submit prompts or disappear during reinjection.
+func (r *interruptReader) injectDraft(draft string) {
+	if strings.ContainsAny(draft, "\r\n") {
+		r.inject([]byte(bracketedPasteStart + draft + bracketedPasteEnd))
+		return
+	}
+	r.inject([]byte(draft))
 }
 
 func (r *interruptReader) Read(buffer []byte) (int, error) {
@@ -309,6 +324,7 @@ func (r *interruptReader) route(input []byte) {
 	boundary := r.boundary
 	tab := r.tab
 	queue := r.queue
+	pasteActive := r.pasteActive
 	pending := append([]byte(nil), r.pending...)
 	r.pending = nil
 	if r.escapeTimer != nil {
@@ -319,6 +335,33 @@ func (r *interruptReader) route(input []byte) {
 
 	input = append(pending, input...)
 	for len(input) > 0 {
+		marker := bracketedPasteStart
+		if pasteActive {
+			marker = bracketedPasteEnd
+		}
+		if strings.HasPrefix(string(input), marker) {
+			pasteActive = !pasteActive
+			r.mu.Lock()
+			r.pasteActive = pasteActive
+			r.mu.Unlock()
+			for _, key := range input[:len(marker)] {
+				r.data <- key
+			}
+			input = input[len(marker):]
+			continue
+		}
+		if pasteActive {
+			if strings.HasPrefix(marker, string(input)) {
+				r.mu.Lock()
+				r.pending = append(r.pending, input...)
+				r.mu.Unlock()
+				return
+			}
+			// Clipboard control bytes and shortcuts are literal input.
+			r.data <- input[0]
+			input = input[1:]
+			continue
+		}
 		if beginning, length, ok := matchHistoryBoundarySequence(input); ok && boundary != nil {
 			if !boundary(beginning) {
 				for _, key := range input[:length] {
@@ -416,7 +459,7 @@ func isKnownSequencePrefix(input []byte) bool {
 	if len(prefix) < len(altQueuePanel) && altQueuePanel[:len(prefix)] == prefix {
 		return true
 	}
-	for _, sequence := range []string{pageUpSequence, pageDownSequence} {
+	for _, sequence := range []string{pageUpSequence, pageDownSequence, bracketedPasteStart} {
 		if len(prefix) < len(sequence) && sequence[:len(prefix)] == prefix {
 			return true
 		}

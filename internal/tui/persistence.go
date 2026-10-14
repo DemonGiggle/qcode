@@ -676,6 +676,6 @@ func (u *UI) activateRestoredTab() {
 	u.updateActiveCancellation()
 	u.repaintActive()
 	if draft := u.drafts[u.activeAgent]; draft != "" {
-		u.input.inject([]byte(draft))
+		u.input.injectDraft(draft)
 	}
 }

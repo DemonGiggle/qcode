@@ -197,7 +197,7 @@ func (u *UI) restoreQuestionDraft(request *questionRequest) {
 	active := u.activeAgent == request.agentID
 	u.screenMu.Unlock()
 	if active && u.input != nil {
-		u.input.inject([]byte(draft))
+		u.input.injectDraft(draft)
 	}
 }
 

@@ -76,6 +76,9 @@ type Terminal struct {
 	// pasteActive is true iff there is a bracketed paste operation in
 	// progress.
 	pasteActive bool
+	pasteBuffer []rune
+	pasteLastCR bool
+	pastes      []pastedRange
 
 	// cursorX contains the current X value of the cursor where the left
 	// edge is 0. cursorY contains the row number where the first row of
@@ -102,7 +105,8 @@ type Terminal struct {
 	// When navigating up and down the history it's possible to return to
 	// the incomplete, initial line. That value is stored in
 	// historyPending.
-	historyPending string
+	historyPending       string
+	historyPendingPastes []pastedRange
 }
 
 // NewTerminal runs a VT100 terminal on the given ReadWriter. If the ReadWriter is
@@ -156,6 +160,17 @@ var (
 func bytesToKey(b []byte, pasteActive bool) (rune, []byte) {
 	if len(b) == 0 {
 		return utf8.RuneError, nil
+	}
+	if pasteActive {
+		if bytes.HasPrefix(b, pasteEnd) {
+			return keyPasteEnd, b[len(pasteEnd):]
+		}
+		if bytes.HasPrefix(pasteEnd, b) || !utf8.FullRune(b) {
+			return utf8.RuneError, b
+		}
+		// Everything except the closing marker is literal clipboard data.
+		r, n := utf8.DecodeRune(b)
+		return r, b[n:]
 	}
 
 	if !pasteActive {
@@ -278,10 +293,6 @@ func bytesToKey(b []byte, pasteActive bool) (rune, []byte) {
 		return keyPasteStart, b[6:]
 	}
 
-	if pasteActive && len(b) >= 6 && bytes.Equal(b[:6], pasteEnd) {
-		return keyPasteEnd, b[6:]
-	}
-
 	// If we get here then we have a key that we don't recognise, or a
 	// partial sequence. It's not clear how one should find the end of a
 	// sequence without knowing them all, but it seems that [a-zA-Z~] only
@@ -314,7 +325,8 @@ func (t *Terminal) moveCursorToPos(pos int) {
 		return
 	}
 
-	x, y := t.position(t.line[:pos])
+	display, displayPos := t.displayLineAt(pos)
+	x, y := t.position(display[:displayPos])
 
 	up := 0
 	if y < t.cursorY {
@@ -392,7 +404,9 @@ const maxLineLength = 4096
 func (t *Terminal) setLine(newLine []rune, newPos int) {
 	t.line = newLine
 	t.pos = newPos
-	if t.echo {
+	t.collapseMultiline()
+	t.pos = t.blockBoundary(t.pos, true)
+	if t.echo && t.RenderInput == nil {
 		t.clearAndRepaintLinePlusNPrevious(t.maxLine)
 	}
 }
@@ -428,10 +442,10 @@ func (t *Terminal) eraseNPreviousChars(n int) {
 	if t.pos < n {
 		n = t.pos
 	}
-	t.pos -= n
-	copy(t.line[t.pos:], t.line[n+t.pos:])
-	t.line = t.line[:len(t.line)-n]
-	if t.echo {
+	start := t.blockBoundary(t.pos-n, false)
+	t.replaceRunes(start, t.pos, nil)
+	t.pos = start
+	if t.echo && t.RenderInput == nil {
 		t.clearAndRepaintLinePlusNPrevious(t.maxLine)
 	}
 }
@@ -504,8 +518,17 @@ func visualLength(runes []rune) int {
 // handleKey processes the given key and, optionally, returns a line of text
 // that the user has entered.
 func (t *Terminal) handleKey(key rune) (line string, ok bool) {
-	if t.pasteActive && key != keyEnter {
-		t.addKeyToLine(key)
+	if t.pasteActive {
+		// Terminals may encode clipboard line breaks as CR, LF, or CRLF.
+		if key == '\n' && t.pasteLastCR {
+			t.pasteLastCR = false
+			return
+		}
+		t.pasteLastCR = key == '\r'
+		if key == '\r' {
+			key = '\n'
+		}
+		t.pasteBuffer = append(t.pasteBuffer, key)
 		return
 	}
 
@@ -541,27 +564,27 @@ func (t *Terminal) handleKey(key rune) (line string, ok bool) {
 		if t.pos >= len(t.line) {
 			return
 		}
-		t.pos++
+		t.pos = t.blockBoundary(t.pos+1, true)
 		t.eraseNPreviousChars(1)
 	case keyAltLeft:
 		// move left by a word.
-		t.pos -= t.countToLeftWord()
+		t.pos = t.blockBoundary(t.pos-t.countToLeftWord(), false)
 		t.moveCursorToPos(t.pos)
 	case keyAltRight:
 		// move right by a word.
-		t.pos += t.countToRightWord()
+		t.pos = t.blockBoundary(t.pos+t.countToRightWord(), true)
 		t.moveCursorToPos(t.pos)
 	case keyLeft:
 		if t.pos == 0 {
 			return
 		}
-		t.pos--
+		t.pos = t.blockBoundary(t.pos-1, false)
 		t.moveCursorToPos(t.pos)
 	case keyRight:
 		if t.pos == len(t.line) {
 			return
 		}
-		t.pos++
+		t.pos = t.blockBoundary(t.pos+1, true)
 		t.moveCursorToPos(t.pos)
 	case keyHome:
 		if t.pos == 0 {
@@ -582,6 +605,7 @@ func (t *Terminal) handleKey(key rune) (line string, ok bool) {
 		}
 		if t.historyIndex == -1 {
 			t.historyPending = string(t.line)
+			t.historyPendingPastes = append([]pastedRange(nil), t.pastes...)
 		}
 		t.historyIndex++
 		runes := []rune(entry)
@@ -593,6 +617,10 @@ func (t *Terminal) handleKey(key rune) (line string, ok bool) {
 		case 0:
 			runes := []rune(t.historyPending)
 			t.setLine(runes, len(runes))
+			t.pastes = append([]pastedRange(nil), t.historyPendingPastes...)
+			if t.echo && t.RenderInput == nil {
+				t.clearAndRepaintLinePlusNPrevious(t.maxLine)
+			}
 			t.historyIndex--
 		default:
 			entry, ok := t.history.NthPreviousEntry(t.historyIndex - 1)
@@ -603,11 +631,16 @@ func (t *Terminal) handleKey(key rune) (line string, ok bool) {
 			}
 		}
 	case keyEnter:
+		if t.echo && t.RenderInput == nil && len(t.pastes) > 0 {
+			t.pastes = nil
+			t.clearAndRepaintLinePlusNPrevious(t.maxLine)
+		}
 		t.moveCursorToPos(len(t.line))
 		t.queue([]rune("\r\n"))
 		line = string(t.line)
 		ok = true
 		t.line = t.line[:0]
+		t.pastes = nil
 		t.pos = 0
 		t.cursorX = 0
 		t.cursorY = 0
@@ -618,8 +651,8 @@ func (t *Terminal) handleKey(key rune) (line string, ok bool) {
 	case keyDeleteLine:
 		// Delete everything from the current cursor position to the
 		// end of line.
-		t.line = t.line[:t.pos]
-		if t.echo {
+		t.replaceRunes(t.pos, len(t.line), nil)
+		if t.echo && t.RenderInput == nil {
 			t.clearAndRepaintLinePlusNPrevious(t.maxLine)
 		}
 	case keyCtrlD:
@@ -627,7 +660,7 @@ func (t *Terminal) handleKey(key rune) (line string, ok bool) {
 		// The EOF case when the line is empty is handled in
 		// readLine().
 		if t.pos < len(t.line) {
-			t.pos++
+			t.pos = t.blockBoundary(t.pos+1, true)
 			t.eraseNPreviousChars(1)
 		}
 	case keyCtrlU:
@@ -638,7 +671,7 @@ func (t *Terminal) handleKey(key rune) (line string, ok bool) {
 		t.queue(t.prompt)
 		t.cursorX, t.cursorY = 0, 0
 		t.advanceCursor(visualLength(t.prompt))
-		t.setLine(t.line, t.pos)
+		t.clearAndRepaintLinePlusNPrevious(t.maxLine)
 	default:
 		if t.AutoCompleteCallback != nil {
 			prefix := string(t.line[:t.pos])
@@ -649,14 +682,14 @@ func (t *Terminal) handleKey(key rune) (line string, ok bool) {
 			t.lock.Lock()
 
 			if completeOk {
-				t.setLine([]rune(newLine), utf8.RuneCount([]byte(newLine)[:newPos]))
+				t.replaceLine([]rune(newLine), utf8.RuneCount([]byte(newLine)[:newPos]))
 				return
 			}
 		}
 		if !isPrintable(key) {
 			return
 		}
-		if len(t.line) == maxLineLength {
+		if t.editableLength() >= maxLineLength {
 			return
 		}
 		t.addKeyToLine(key)
@@ -667,16 +700,9 @@ func (t *Terminal) handleKey(key rune) (line string, ok bool) {
 // addKeyToLine inserts the given key at the current position in the current
 // line.
 func (t *Terminal) addKeyToLine(key rune) {
-	if len(t.line) == cap(t.line) {
-		newLine := make([]rune, len(t.line), 2*(1+len(t.line)))
-		copy(newLine, t.line)
-		t.line = newLine
-	}
-	t.line = t.line[:len(t.line)+1]
-	copy(t.line[t.pos+1:], t.line[t.pos:])
-	t.line[t.pos] = key
+	t.replaceRunes(t.pos, t.pos, []rune{key})
 	t.pos++
-	if t.echo {
+	if t.echo && t.RenderInput == nil {
 		t.clearAndRepaintLinePlusNPrevious(t.maxLine)
 	}
 }
@@ -684,6 +710,13 @@ func (t *Terminal) addKeyToLine(key rune) {
 func (t *Terminal) writeLine(line []rune) {
 	inEscape := false
 	for _, r := range line {
+		if r == '\n' {
+			t.queue([]rune("\r\n"))
+			t.cursorX = 0
+			t.cursorY++
+			t.maxLine = max(t.maxLine, t.cursorY)
+			continue
+		}
 		width := runeColumns(r, &inEscape)
 		if width > 0 && t.cursorX+width > t.termWidth {
 			t.clearLineToRight()
@@ -702,6 +735,10 @@ func (t *Terminal) position(line []rune) (x, y int) {
 	inEscape := false
 	for _, part := range [][]rune{t.prompt, line} {
 		for _, r := range part {
+			if r == '\n' {
+				x, y = 0, y+1
+				continue
+			}
 			width := runeColumns(r, &inEscape)
 			if width > 0 && x+width > t.termWidth {
 				x = 0
@@ -795,7 +832,8 @@ func (t *Terminal) Write(buf []byte) (n int, err error) {
 
 	t.writeLine(t.prompt)
 	if t.echo {
-		t.writeLine(t.line)
+		display, _ := t.displayLine()
+		t.writeLine(display)
 	}
 
 	t.moveCursorToPos(t.pos)
@@ -844,17 +882,16 @@ func (t *Terminal) readLine() (line string, err error) {
 		t.outBuf = t.outBuf[:0]
 	}
 
-	lineIsPasted := t.pasteActive
-
 	for {
 		rest := t.remainder
 		lineOk := false
 		for !lineOk {
 			var key rune
-			key, rest = bytesToKey(rest, t.pasteActive)
-			if key == utf8.RuneError {
+			key, next := bytesToKey(rest, t.pasteActive)
+			if key == utf8.RuneError && len(next) == len(rest) {
 				break
 			}
+			rest = next
 			if !t.pasteActive {
 				if key == keyCtrlD {
 					if len(t.line) == 0 {
@@ -866,17 +903,13 @@ func (t *Terminal) readLine() (line string, err error) {
 				}
 				if key == keyPasteStart {
 					t.pasteActive = true
-					if len(t.line) == 0 {
-						lineIsPasted = true
-					}
+					t.pasteBuffer = t.pasteBuffer[:0]
+					t.pasteLastCR = false
 					continue
 				}
 			} else if key == keyPasteEnd {
-				t.pasteActive = false
+				t.finishPaste()
 				continue
-			}
-			if !t.pasteActive {
-				lineIsPasted = false
 			}
 			line, lineOk = t.handleKey(key)
 		}
@@ -889,6 +922,9 @@ func (t *Terminal) readLine() (line string, err error) {
 		if t.RenderInput != nil {
 			t.renderInput()
 		} else {
+			if t.pasteActive && t.echo {
+				t.clearAndRepaintLinePlusNPrevious(t.maxLine)
+			}
 			t.c.Write(t.outBuf)
 			t.outBuf = t.outBuf[:0]
 		}
@@ -896,9 +932,6 @@ func (t *Terminal) readLine() (line string, err error) {
 			if t.echo {
 				t.historyIndex = -1
 				t.history.Add(line)
-			}
-			if lineIsPasted {
-				err = ErrPasteIndicator
 			}
 			return
 		}
@@ -957,7 +990,8 @@ func (t *Terminal) clearAndRepaintLinePlusNPrevious(numPrevLines int) {
 
 	t.maxLine = 0
 	t.writeLine(t.prompt)
-	t.writeLine(t.line)
+	display, _ := t.displayLine()
+	t.writeLine(display)
 	t.moveCursorToPos(t.pos)
 }
 
@@ -1023,17 +1057,15 @@ func (pasteIndicatorError) Error() string {
 	return "terminal: ErrPasteIndicator not correctly handled"
 }
 
-// ErrPasteIndicator may be returned from ReadLine as the error, in addition
-// to valid line data. It indicates that bracketed paste mode is enabled and
-// that the returned line consists only of pasted data. Programs may wish to
-// interpret pasted data more literally than typed data.
+// ErrPasteIndicator is retained for compatibility with the upstream editor.
+// ReadLine now buffers complete pastes and returns only on an explicit submit,
+// so it no longer returns this error.
 var ErrPasteIndicator = pasteIndicatorError{}
 
 // SetBracketedPasteMode requests that the terminal bracket paste operations
 // with markers. Not all terminals support this but, if it is supported, then
 // enabling this mode will stop any autocomplete callback from running due to
-// pastes. Additionally, any lines that are completely pasted will be returned
-// from ReadLine with the error set to ErrPasteIndicator.
+// pastes. Pasted newlines are kept in one draft until an explicit submission.
 func (t *Terminal) SetBracketedPasteMode(on bool) {
 	if on {
 		io.WriteString(t.c, "\x1b[?2004h")

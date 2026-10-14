@@ -476,7 +476,7 @@ func (m *AgentManager) submitRequest(id, task string, deadline time.Time, compac
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.submitRequestLocked(id, task, deadline, compact)
+	return m.submitRequestLocked(id, strings.TrimSpace(task), deadline, compact)
 }
 func (m *AgentManager) submitRequestLocked(id, task string, deadline time.Time, compact bool, attribution ...string) (*promptRequest, Submission, error) {
 	if m.shutdown {
@@ -504,7 +504,7 @@ func (m *AgentManager) submitRequestLocked(id, task string, deadline time.Time, 
 	m.nextRequestID++
 	req := &promptRequest{
 		id: fmt.Sprintf("request-%d", m.nextRequestID), targetID: id,
-		prompt: strings.TrimSpace(task), compact: compact, done: make(chan struct{}),
+		prompt: task, compact: compact, done: make(chan struct{}),
 		journalIndex: len(m.work), deadline: deadline,
 	}
 	if len(attribution) > 0 {

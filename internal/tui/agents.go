@@ -452,7 +452,7 @@ func (u *UI) handlePendingAgentClosures() {
 		draft := u.drafts["main"]
 		u.screenMu.Unlock()
 		if draft != "" {
-			u.input.inject([]byte(draft))
+			u.input.injectDraft(draft)
 		}
 	}
 	u.signalPresentation()
@@ -792,7 +792,7 @@ func (u *UI) handlePendingApproval(ctx context.Context) {
 		draft := u.drafts[id]
 		u.screenMu.Unlock()
 		if draft != "" {
-			u.input.inject([]byte(draft))
+			u.input.injectDraft(draft)
 		}
 		return
 	}
@@ -845,7 +845,7 @@ func (u *UI) handlePendingTabSwitch() {
 	activeID := u.activeAgent
 	u.screenMu.Unlock()
 	if draft != "" && !u.hasPendingQuestion(activeID) {
-		u.input.inject([]byte(draft))
+		u.input.injectDraft(draft)
 	}
 }
 
@@ -1206,7 +1206,7 @@ func (u *UI) runActiveTask(ctx context.Context, line string) error {
 	if err != nil {
 		u.rememberDraft(line)
 		if u.input != nil {
-			u.input.inject([]byte(line))
+			u.input.injectDraft(line)
 		}
 		return err
 	}
