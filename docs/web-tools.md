@@ -17,15 +17,19 @@ backend = "duckduckgo"
 
 Omitting the setting defaults to `duckduckgo`. Unknown backend names fail at startup. Backend changes require restarting qcode; there is no command-line, environment-variable, model argument, or slash-command override.
 
-## Enabling the tools
+## Tool defaults and toggles
 
-`/tool` can enable or disable the two tools independently. Both web tools start disabled for security. Enable each one explicitly through `/tool` for the current session; `/new` and restarting qcode disable them again. Disabled tools are neither sent to the model nor executable through tool calls. Backend configuration does not enable them. One-shot mode leaves them disabled because it has no interactive opt-in.
+Both web tools start enabled outside sandbox mode and disabled when a sandbox is active, in both interactive and one-shot runs. `/tool` can enable or disable them independently for the current agent; for example, `/tool web_fetch off` disables fetching. `/new` and a fresh launch restore these defaults. Resuming a saved session restores its tool selections, and helpers created by main inherit its selections. Disabled tools are neither sent to the model nor executable through tool calls. The `[web_search].backend` setting selects the search backend independently of tool enablement.
 
 ## Limits and networking
 
 Requests have a 20-second deadline, at most 5 redirects, a 2 MiB response limit (after HTTP decompression), and at most two concurrent web operations. Text output is capped at 64 KiB with an explicit truncation marker. The HTML tokenizer avoids building a full page DOM. Requests use normal TLS certificate validation unless `--danger-skip-tls-verify` (or `danger_skip_tls_verify = true`) is set.
 
-In sandbox mode, enabling either web tool also enables networking for the current sandbox session; disabling both tools or starting a new session restores network isolation. Outside the sandbox they still accept only public destinations: loopback, private, link-local, and reserved addresses are rejected, including DNS results and redirects. They connect directly and do not use environment HTTP proxies, browser cookies, or provider credentials. Retrieved content is wrapped as untrusted reference data with tool origin metadata. Page text, snippets, links, and encoded instructions cannot authorize tool actions. A detected instruction attempt causes a visible warning and requires user approval before later calls that can access data, change state, or send data; see the [trust model](trust-model.md) for scope and limitations.
+In sandbox mode, fresh sessions block networking for native web tools and sandboxed shell commands. Enabling either web tool allows networking for both, including shell commands such as `curl` or package downloads. Disabling only one leaves networking available while the other is enabled; disabling both or using `/new` restores isolation. Resumed sessions and helpers with an enabled web tool also allow sandbox networking.
+
+The defaults follow the effective sandbox state after configuration, CLI overrides, and startup checks: `sandbox = true` and `--sandbox` match, `--sandbox=false` overrides configuration, and continuing without a sandbox after a startup failure uses enabled web defaults.
+
+The web tools accept only public destinations: loopback, private, link-local, and reserved addresses are rejected, including DNS results and redirects. They connect directly and do not use environment HTTP proxies, browser cookies, or provider credentials. Retrieved content is wrapped as untrusted reference data with tool origin metadata. Page text, snippets, links, and encoded instructions cannot authorize tool actions. A detected instruction attempt causes a visible warning and requires user approval before later calls that can access data, change state, or send data; see the [trust model](trust-model.md) for scope and limitations.
 
 ## Testing
 

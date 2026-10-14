@@ -18,8 +18,9 @@ argument. Positional words are joined into one prompt. Stdin supplies the prompt
 only when no nonempty positional prompt was provided; empty piped input is an
 error. Assistant text goes to stdout and activity or diagnostics go to stderr.
 One-shot and piped runs do not save sessions or wait for interactive questions
-or directory approvals. Web tools start disabled. Configured skill autoloading
-and learning retrieval still apply.
+or directory approvals. Both web tools start enabled outside the sandbox and
+disabled when sandbox isolation is active. Configured skill autoloading and
+learning retrieval still apply.
 
 ## Startup flags
 
@@ -52,6 +53,13 @@ Boolean flags can explicitly override a true configuration value, for example
 `--sandbox=false` or `--disable-auto-compact=false`. There is no startup
 `--interactive` or `--theme` flag: set `interactive` and `theme` in
 `config.toml`, or use `/interactive` and `/theme` in the terminal.
+
+`sandbox = true` and `--sandbox` use the same tool defaults. Fresh sandbox
+sessions block networking for native web tools and shell commands. Enabling
+either web tool through `/tool` allows networking for both; disabling both
+restores isolation. `--sandbox=false` uses the enabled web defaults even if
+configuration requests sandbox mode. If sandbox startup fails and qcode
+continues without it, both web tools start enabled.
 
 Context-window overrides and compaction preferences are applied to terminal
 agents. Current one-shot runs use provider-discovered capacity and the built-in

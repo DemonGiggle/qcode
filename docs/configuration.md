@@ -22,6 +22,17 @@ paths = ["/opt/qcode/team-skills", ".team/skills"]
 autoload_paths = [".team/always-on-skills"]
 ```
 
+`sandbox = true` requests the same isolation as `--sandbox`; an explicit
+`--sandbox=false` overrides it. Fresh sessions and `/new` enable both web
+tools outside the sandbox and disable both inside it. Enabling either web
+tool through `/tool` allows networking for native web tools and sandboxed
+shell commands; disabling both restores isolation. Resume restores saved
+tool selections, and helpers inherit them. If sandbox startup fails and
+qcode continues without it, both web tools start enabled.
+
+`[web_search].backend` selects the search backend without changing tool
+enablement. See [Web tools](web-tools.md) for defaults and limits.
+
 `sandbox_command_paths` is a persistent trusted-code allowlist for sandbox
 mode. Each entry expands `~`, resolves symlinks, deduplicates, and must be an
 existing directory. The filesystem root and any directory overlapping a

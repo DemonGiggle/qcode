@@ -13,14 +13,13 @@ func TestToolEnableDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Web tools require opt-in; other tools remain enabled by default.
+	// All tools, including web tools, are enabled by default.
 	names := registry.ToolNames()
 	if len(names) == 0 {
 		t.Fatal("expected at least one tool")
 	}
 	for _, name := range names {
-		want := name != "web_fetch" && name != "web_search"
-		if registry.IsToolEnabled(name) != want {
+		if !registry.IsToolEnabled(name) {
 			t.Fatalf("unexpected default for %q", name)
 		}
 	}
@@ -86,10 +85,9 @@ func TestToolResetSessionRestoresDefaults(t *testing.T) {
 	// Reset session.
 	registry.ResetSession()
 
-	// Restore the original defaults, including disabled web tools.
+	// Restore the original defaults, including enabled web tools.
 	for _, name := range names {
-		want := name != "web_fetch" && name != "web_search"
-		if registry.IsToolEnabled(name) != want {
+		if !registry.IsToolEnabled(name) {
 			t.Fatalf("unexpected reset default for %q", name)
 		}
 	}

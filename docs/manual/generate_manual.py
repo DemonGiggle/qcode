@@ -720,7 +720,7 @@ def build_pdf(images: dict[str, Path]):
             "The newest pending steer replaces earlier pending steering. If the task ends before your steer is accepted, qcode rejects it and keeps the draft. Cancellation or failure drops undelivered steers; queued tasks still continue.",
             "Tab still completes matching slash commands. During manual /compact, Enter cannot steer and keeps your draft; Tab can queue a separate task.",
             "Use `/history` to find an old prompt. Pick one to re-read its final answer.",
-            "Use `/new` to clear the active tab's conversation, latest prompt, usage, and plans; it restores tool defaults with web tools off and removes added directory grants. Models, selected skills, and the questions toggle stay.",
+            "Use `/new` to clear the active tab's conversation, latest prompt, usage, and plans; it restores web tools to on outside the sandbox and off inside it, and removes added directory grants. Models, selected skills, and the questions toggle stay.",
             "Use `/compact` to summarize old context. Automatic compaction starts at 80% use when capacity is known; change auto_compact_threshold or disable_auto_compact in config.toml.",
         ],
     )
@@ -967,13 +967,13 @@ def build_pdf(images: dict[str, Path]):
     h1(pdf, "10. Tools, web fetch, and search")
     h2(pdf, "Choosing tools")
     body(pdf, "Use /tool to filter and toggle the active tab's file, shell, image, skill, and web tools. Space toggles; Enter applies. Or use /tool <name> on|off, for example /tool shell off. New conversations restore tool defaults. Plan and Skill Plan show only their allowed tools; /interactive controls questions.")
-    h2(pdf, "Enabling web access")
-    body(pdf, "Web tools read public pages and search results as text. They start OFF. Turn them on for the current session with `/tool`. The backend setting alone does not enable them.")
+    h2(pdf, "Using web access")
+    body(pdf, "Web tools read public pages and search results as text. Both start enabled outside sandbox mode and disabled when a sandbox is active, in interactive and one-shot runs. Use `/tool` to change the active tab's selections. The web_search backend setting does not change tool enablement.")
     bullets(
         pdf,
         [
-            "Type `/tool` and enable `web_fetch` and/or `web_search` independently.",
-            "`/new` or a fresh launch starts with web tools off. Resume restores saved selections, and helpers created by main inherit its tools. One-shot runs keep web tools off.",
+            "Type `/tool` to toggle `web_fetch` and `web_search` independently, or use `/tool web_fetch off` to disable fetching.",
+            "`/new` and fresh launches restore these defaults. Resume restores saved selections, and helpers created by main inherit its tools; an enabled web tool allows sandbox networking.",
             "Use them for docs and public references. They do not run page scripts and do not open a browser.",
         ],
     )
@@ -1050,9 +1050,9 @@ def build_pdf(images: dict[str, Path]):
         ],
     )
     h2(pdf, "Sandbox and trusted commands")
-    body(pdf, "On Linux, use --sandbox with bubblewrap installed and check the startup notice to confirm isolation is active. Tools can change only approved directories; home is hidden and networking is blocked until either web tool is enabled. If sandbox setup fails, the terminal offers to continue without it or leave; one-shot runs warn and continue without it.")
+    body(pdf, "On Linux, use --sandbox with bubblewrap installed and check the startup notice to confirm isolation is active. Tools can change only approved directories; home is hidden. Fresh sandbox sessions start with both web tools off and networking blocked. Enabling either through /tool allows networking for native web tools and sandboxed shell commands. Disabling both or using /new blocks it again. If sandbox setup fails, the terminal offers to continue without it or leave; one-shot runs warn and continue without it. Continuing without a sandbox starts with both web tools enabled.")
     code(pdf, "qcode --sandbox --sandbox-command-path ~/.local/bin\n\n# Persistent defaults in config.toml:\nsandbox = true\nsandbox_command_paths = [\"~/.local/bin\", \"~/go/bin\"]")
-    body(pdf, "Trusted command directories are mounted read-only and kept across /new. Missing, invalid, duplicate, root, or protected directories produce warnings. Additional writable directories require your approval and are cleared by /new. Temporary shell files do not survive separate sandbox calls; use workspace files for results you need later.")
+    body(pdf, "Configured sandbox = true and --sandbox use the same defaults; --sandbox=false overrides configuration. Trusted command directories are mounted read-only and kept across /new. Missing, invalid, duplicate, root, or protected directories produce warnings. Additional writable directories require your approval and are cleared by /new. Temporary shell files do not survive separate sandbox calls; use workspace files for results you need later.")
     h2(pdf, "Context capacity")
     body(pdf, "CTX shows remaining capacity, with ~ for an estimate or unknown when no limit is available. Use --context-window 32768 or context_window = 32768 for an unlisted model; this sets terminal-agent accounting and compaction capacity without changing the provider's allocation. Switching models clears the override. --disable-auto-compact disables automatic summaries in terminal sessions; /compact remains available. One-shot runs use provider capacity and the built-in 80% threshold.")
 

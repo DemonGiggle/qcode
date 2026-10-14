@@ -354,31 +354,39 @@ func TestAgentReportsActionableMaxStepsMessage(t *testing.T) {
 }
 
 func TestAgentResetSessionDiscardsConversationHistory(t *testing.T) {
-	registry, err := tools.New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	provider := &responseProvider{}
-	var output, events bytes.Buffer
-	runner := New(provider, "test", registry, trace.New(&events, false), &output, 1)
-	if err := runner.Run(context.Background(), "remember this"); err != nil {
-		t.Fatal(err)
-	}
-	if len(runner.messages) != 3 {
-		t.Fatalf("message count before reset = %d, want 3", len(runner.messages))
-	}
-
-	runner.ToggleTool("web_fetch", true)
-	runner.ToggleTool("web_search", true)
-	runner.ResetSession()
-	for _, name := range []string{"web_fetch", "web_search"} {
-		if runner.ToolEnabled(name) {
-			t.Fatalf("%s remained enabled after a new session", name)
+	for _, sandbox := range []bool{false, true} {
+		name := "outside sandbox"
+		if sandbox {
+			name = "inside sandbox"
 		}
-	}
+		t.Run(name, func(t *testing.T) {
+			registry, err := tools.NewWithOptions(t.TempDir(), tools.Options{Sandbox: sandbox, BubblewrapPath: "/unused/bwrap"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider := &responseProvider{}
+			var output, events bytes.Buffer
+			runner := New(provider, "test", registry, trace.New(&events, false), &output, 1)
+			if err := runner.Run(context.Background(), "remember this"); err != nil {
+				t.Fatal(err)
+			}
+			if len(runner.messages) != 3 {
+				t.Fatalf("message count before reset = %d, want 3", len(runner.messages))
+			}
 
-	if len(runner.messages) != 1 || runner.messages[0].Role != "system" || runner.messages[0].Content != prompt.System {
-		t.Fatalf("messages after reset = %#v, want only the system prompt", runner.messages)
+			runner.ToggleTool("web_fetch", sandbox)
+			runner.ToggleTool("web_search", sandbox)
+			runner.ResetSession()
+			for _, name := range []string{"web_fetch", "web_search"} {
+				if runner.ToolEnabled(name) == sandbox {
+					t.Fatalf("%s enabled after a new session = %v, want %v", name, runner.ToolEnabled(name), !sandbox)
+				}
+			}
+
+			if len(runner.messages) != 1 || runner.messages[0].Role != "system" || runner.messages[0].Content != prompt.System {
+				t.Fatalf("messages after reset = %#v, want only the system prompt", runner.messages)
+			}
+		})
 	}
 }
 

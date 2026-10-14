@@ -42,36 +42,43 @@ func TestSandboxArgumentsCanAllowNetwork(t *testing.T) {
 	}
 }
 
-func TestEnablingWebToolAllowsSandboxNetworking(t *testing.T) {
+func TestWebToolSettingsControlSandboxNetworking(t *testing.T) {
 	registry, err := NewWithOptions(t.TempDir(), Options{Sandbox: true, BubblewrapPath: "/unused/bwrap"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if registry.sandbox.allowNetwork {
-		t.Fatal("sandbox networking should start disabled")
+	checkNetwork := func(want bool) {
+		t.Helper()
+		if registry.sandbox.allowNetwork != want {
+			t.Fatalf("sandbox networking = %v, want %v", registry.sandbox.allowNetwork, want)
+		}
+		args := registry.sandbox.arguments(registry.root, registry.grantPaths(), "/bin/true")
+		if isolated := strings.Contains(strings.Join(args, " "), "--unshare-net"); isolated == want {
+			t.Fatalf("sandbox network isolation = %v, want %v: %q", isolated, !want, args)
+		}
 	}
-
+	checkNetwork(false)
+	for _, name := range []string{"web_fetch", "web_search"} {
+		registry.EnableTool(name)
+		checkNetwork(true)
+		registry.DisableTool(name)
+		checkNetwork(false)
+	}
+	for _, firstDisabled := range []string{"web_fetch", "web_search"} {
+		registry.EnableTool("web_fetch")
+		registry.EnableTool("web_search")
+		registry.DisableTool(firstDisabled)
+		checkNetwork(true)
+		registry.DisableTool("web_fetch")
+		registry.DisableTool("web_search")
+		checkNetwork(false)
+	}
 	registry.EnableTool("web_fetch")
-	if !registry.sandbox.allowNetwork {
-		t.Fatal("enabling web_fetch should allow sandbox networking")
-	}
-	if strings.Contains(strings.Join(registry.sandbox.arguments(registry.root, registry.grantPaths(), "/bin/true"), " "), "--unshare-net") {
-		t.Fatal("web-enabled sandbox still unshared the network namespace")
-	}
-
-	registry.DisableTool("web_fetch")
-	if registry.sandbox.allowNetwork {
-		t.Fatal("disabling the only web tool should restore network isolation")
-	}
 	registry.EnableTool("web_search")
-	registry.EnableTool("web_fetch")
-	registry.DisableTool("web_search")
-	if !registry.sandbox.allowNetwork {
-		t.Fatal("network should remain enabled while web_fetch is enabled")
-	}
 	registry.ResetSession()
-	if registry.sandbox.allowNetwork {
-		t.Fatal("reset should restore sandbox network isolation")
+	checkNetwork(false)
+	if registry.IsToolEnabled("web_fetch") || registry.IsToolEnabled("web_search") {
+		t.Fatal("reset should disable both web tools in the sandbox")
 	}
 }
 
@@ -80,10 +87,16 @@ func TestConfiguredSandboxNetworkingSurvivesWebToolChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry.DisableTool("web_fetch")
-	registry.DisableTool("web_search")
-	if !registry.sandbox.allowNetwork {
-		t.Fatal("explicit network allowance should survive web-tool changes")
+	for _, name := range []string{"web_fetch", "web_search"} {
+		if registry.IsToolEnabled(name) {
+			t.Fatalf("explicit network allowance should not enable %s", name)
+		}
+		registry.EnableTool(name)
+		registry.DisableTool(name)
+	}
+	registry.ResetSession()
+	if !registry.sandbox.allowNetwork || strings.Contains(strings.Join(registry.sandbox.arguments(registry.root, registry.grantPaths(), "/bin/true"), " "), "--unshare-net") {
+		t.Fatal("explicit network allowance should survive web-tool changes and reset")
 	}
 }
 

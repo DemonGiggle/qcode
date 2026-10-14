@@ -31,8 +31,6 @@ func fixtureWeb(t *testing.T, handler http.HandlerFunc) *Registry {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.EnableTool("web_fetch")
-	r.EnableTool("web_search")
 	transport := r.web.client.Transport.(*http.Transport)
 	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
@@ -58,8 +56,6 @@ func tlsFixtureWeb(t *testing.T, insecureSkipTLSVerify bool, handler http.Handle
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.EnableTool("web_fetch")
-	r.EnableTool("web_search")
 	transport := r.web.client.Transport.(*http.Transport)
 	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
@@ -337,7 +333,6 @@ func TestWebLive(t *testing.T) {
 		{"web_fetch", map[string]any{"url": "https://example.com"}},
 		{"web_search", map[string]any{"query": "golang documentation"}},
 	} {
-		r.EnableTool(tc.name)
 		out, err := callWeb(r, context.Background(), tc.name, tc.args)
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
@@ -385,49 +380,63 @@ func TestWebTextExtraction(t *testing.T) {
 	}
 }
 
-func TestWebToolsRequireSessionOptIn(t *testing.T) {
-	r, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	for _, name := range []string{"web_fetch", "web_search"} {
-		r.handlers[name] = func(context.Context, json.RawMessage) (string, error) { calls++; return "called", nil }
-	}
-	checkDisabled := func() {
-		t.Helper()
-		for _, name := range []string{"web_fetch", "web_search"} {
-			if r.IsToolEnabled(name) {
-				t.Fatalf("%s enabled without user opt-in", name)
+func TestWebToolsDefaultEnabledAndSessionToggles(t *testing.T) {
+	for _, sandbox := range []bool{false, true} {
+		name := "outside sandbox"
+		if sandbox {
+			name = "inside sandbox"
+		}
+		t.Run(name, func(t *testing.T) {
+			r, err := NewWithOptions(t.TempDir(), Options{Sandbox: sandbox, BubblewrapPath: "/unused/bwrap"})
+			if err != nil {
+				t.Fatal(err)
 			}
-			for _, schema := range r.EnabledSchemas() {
-				if schema.Name == name {
-					t.Fatalf("advertised %s", name)
+			calls := 0
+			for _, name := range []string{"web_fetch", "web_search"} {
+				r.handlers[name] = func(context.Context, json.RawMessage) (string, error) { calls++; return "called", nil }
+			}
+			checkTools := func(fetchEnabled, searchEnabled bool) {
+				t.Helper()
+				for name, enabled := range map[string]bool{"web_fetch": fetchEnabled, "web_search": searchEnabled} {
+					if r.IsToolEnabled(name) != enabled {
+						t.Fatalf("%s enabled = %v, want %v", name, r.IsToolEnabled(name), enabled)
+					}
+					advertised := false
+					for _, schema := range r.EnabledSchemas() {
+						if schema.Name == name {
+							advertised = true
+						}
+					}
+					if advertised != enabled {
+						t.Fatalf("%s advertised = %v, want %v", name, advertised, enabled)
+					}
+					before := calls
+					out, err := r.Execute(context.Background(), llm.ToolCall{Name: name})
+					if enabled {
+						if err != nil || out != "called" || calls != before+1 {
+							t.Fatalf("enabled %s: %q, %v; handler calls = %d, want %d", name, out, err, calls, before+1)
+						}
+						continue
+					}
+					if err == nil || !strings.Contains(err.Error(), "disabled") {
+						t.Fatalf("disabled %s: %v", name, err)
+					}
+					if calls != before {
+						t.Fatal("disabled tool handler executed")
+					}
 				}
 			}
-			before := calls
-			if _, err := r.Execute(context.Background(), llm.ToolCall{Name: name}); err == nil || !strings.Contains(err.Error(), "disabled") {
-				t.Fatalf("%s: %v", name, err)
-			}
-			if calls != before {
-				t.Fatal("disabled tool handler executed")
-			}
-		}
-	}
-	checkDisabled()
-	for _, name := range []string{"web_fetch", "web_search"} {
-		r.EnableTool(name)
-		if _, err := r.Execute(context.Background(), llm.ToolCall{Name: name}); err != nil {
-			t.Fatal(err)
-		}
-		r.DisableTool(name)
-		checkDisabled()
-	}
-	r.EnableTool("web_fetch")
-	r.EnableTool("web_search")
-	r.ResetSession()
-	checkDisabled()
-	if calls != 2 {
-		t.Fatalf("handler calls = %d", calls)
+			checkTools(!sandbox, !sandbox)
+			r.EnableTool("web_search")
+			r.DisableTool("web_fetch")
+			checkTools(false, true)
+			r.DisableTool("web_search")
+			checkTools(false, false)
+			r.EnableTool("web_fetch")
+			checkTools(true, false)
+			r.EnableTool("web_search")
+			r.ResetSession()
+			checkTools(!sandbox, !sandbox)
+		})
 	}
 }

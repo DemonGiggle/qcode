@@ -158,21 +158,24 @@ func (r *Registry) loadSkill(_ context.Context, arguments json.RawMessage) (stri
 func (r *Registry) SetDirectoryApprover(approver DirectoryApprover) { r.approver = approver }
 
 // ResetSession resets the directory to launch, removes session grants, and
-// restores tool defaults. Web tools require explicit enablement each session.
+// restores tool defaults. Web tools start enabled unless a sandbox is active.
 func (r *Registry) ResetSession() {
 	r.grantMu.Lock()
 	r.grants = []string{r.root}
 	r.cwd = r.root
 	r.grantMu.Unlock()
-	r.disabled = map[string]bool{"web_fetch": true, "web_search": true}
+	r.disabled = map[string]bool{}
+	if r.sandbox != nil {
+		r.disabled["web_fetch"] = true
+		r.disabled["web_search"] = true
+	}
 	r.restoreWarnings = nil
 	r.updateSandboxNetworkAccess()
 }
 
 // updateSandboxNetworkAccess keeps sandbox networking aligned with the
-// session's web-tool opt-in. An explicit network allowance remains in force;
-// otherwise enabling either web tool grants networking until the session is
-// reset or both tools are disabled again.
+// session's web-tool settings. An explicit network allowance remains in force;
+// otherwise networking is allowed while either web tool is enabled.
 func (r *Registry) updateSandboxNetworkAccess() {
 	if r.sandbox == nil {
 		return

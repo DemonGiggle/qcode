@@ -21,6 +21,9 @@ max_steps = 32
 # agent_timeout = "5m"
 
 # Isolate model-triggered tools with bubblewrap on Linux. Disabled by default.
+# Fresh sandbox sessions disable both web tools and block networking.
+# Enabling either web tool through /tool allows web and shell networking;
+# disabling both blocks it again. /new restores these sandbox defaults.
 # sandbox = true
 
 # Persistent trusted executable directories for sandbox mode. Each existing
@@ -68,10 +71,11 @@ max_steps = 32
 # to the user-level config file.
 # statusline_hidden = ["tok"]
 
-# Web tools start disabled; enable them with /tool in each interactive session.
-# Backend configuration does not enable web tools.
+# Web tools start enabled outside sandbox mode, including in one-shot runs.
+# In sandbox mode both start disabled; /tool can change their selections.
 # Web search backend, read at startup. Currently only duckduckgo is supported.
 # Omitting this section defaults to duckduckgo. Changes require a restart.
+# This backend setting does not change tool enablement.
 [web_search]
 backend = "duckduckgo"
 

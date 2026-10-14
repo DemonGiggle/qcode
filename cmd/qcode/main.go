@@ -234,7 +234,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		} else {
 			sandboxActive = true
 			sandboxPath = checkedPath
-			sandboxNotice = "Sandbox enabled: only approved folders can be changed; home is hidden; network is blocked until a web tool is enabled."
+			sandboxNotice = "Sandbox enabled: only approved folders can be changed; home is hidden; web tools start disabled. Enabling either web tool allows networking for web tools and shell commands; disabling both blocks it."
 		}
 		if !sandboxActive && !interactive {
 			fmt.Fprintln(diagnosticsOut, "WARNING:", sandboxNotice, "Continuing without sandbox.")

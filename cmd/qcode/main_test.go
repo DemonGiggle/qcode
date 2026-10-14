@@ -80,6 +80,17 @@ func TestAutoloadSkillDataAndOneShotPrompt(t *testing.T) {
 	if !strings.Contains(system, "Review code") || !strings.Contains(system, "Automatic override") || strings.Contains(system, "Secret body instructions") {
 		t.Fatalf("unexpected initial skill context: %s", system)
 	}
+	for _, name := range []string{"web_fetch", "web_search"} {
+		found := false
+		for _, tool := range provider.request.Tools {
+			if tool.Name == name {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("one-shot request did not advertise enabled web tool %q", name)
+		}
+	}
 }
 
 func TestAgentTimeoutConfigPrecedence(t *testing.T) {
