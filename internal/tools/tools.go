@@ -364,32 +364,39 @@ func (value *flexibleInteger) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (r *Registry) resolve(name string) (string, error) {
-	cwd := r.WorkingDirectory()
+func (r *Registry) resolve(name string) string {
 	if name == "" {
 		name = "."
 	}
 	path := name
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(cwd, path)
+		path = filepath.Join(r.WorkingDirectory(), path)
 	}
-	path = filepath.Clean(path)
+	return filepath.Clean(path)
+}
+
+func (r *Registry) resolveFor(ctx context.Context, name string) (string, error) {
+	path := r.resolve(name)
+	if r.sandbox == nil {
+		return path, nil
+	}
+	return r.authorizePath(ctx, path)
+}
+
+func (r *Registry) resolveForWrite(ctx context.Context, name string) (string, error) {
+	path, err := r.resolveFor(ctx, name)
+	if err != nil || r.sandbox != nil {
+		return path, err
+	}
+	cwd := r.WorkingDirectory()
 	rel, err := filepath.Rel(cwd, path)
 	if err != nil {
 		return "", err
 	}
-	if r.sandbox == nil && (rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path %q is outside workspace %q", name, cwd)
 	}
 	return path, nil
-}
-
-func (r *Registry) resolveFor(ctx context.Context, name string) (string, error) {
-	path, err := r.resolve(name)
-	if err != nil || r.sandbox == nil {
-		return path, err
-	}
-	return r.authorizePath(ctx, path)
 }
 
 func (r *Registry) authorizePath(ctx context.Context, path string) (string, error) {
@@ -587,10 +594,7 @@ func (r *Registry) requestDirectoryAccess(ctx context.Context, arguments json.Ra
 	if err := decode(arguments, &args); err != nil {
 		return "", err
 	}
-	path, err := r.resolve(args.Path)
-	if err != nil {
-		return "", err
-	}
+	path := r.resolve(args.Path)
 	canonical, err := canonicalTarget(path)
 	if err != nil {
 		return "", err
@@ -692,7 +696,7 @@ func (r *Registry) writeDetailed(ctx context.Context, arguments json.RawMessage)
 	if err := ctx.Err(); err != nil {
 		return ExecutionResult{}, err
 	}
-	path, err := r.resolveFor(ctx, args.Path)
+	path, err := r.resolveForWrite(ctx, args.Path)
 	if err != nil {
 		return ExecutionResult{}, err
 	}
@@ -737,7 +741,7 @@ func (r *Registry) editDetailed(ctx context.Context, arguments json.RawMessage) 
 	if args.OldText == "" {
 		return ExecutionResult{}, errors.New("old_text must not be empty")
 	}
-	path, err := r.resolveFor(ctx, args.Path)
+	path, err := r.resolveForWrite(ctx, args.Path)
 	if err != nil {
 		return ExecutionResult{}, err
 	}

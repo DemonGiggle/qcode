@@ -40,9 +40,11 @@ the bounded roster also include each agent's `cwd`.
 
 With sandboxing, switching outside an agent's approved directories uses the
 existing directory approval flow. An existing grant needs no new approval, and
-a switch never silently grants access. Without sandboxing, agents can switch
-outside the launch workspace; file tools then apply their existing lexical
-confinement rule to the selected directory.
+a switch never silently grants access. Without sandboxing, `read`, `list`,
+`search`, and `view_image` can inspect paths outside the current directory using
+absolute or parent-relative paths, subject to operating-system permissions.
+Agents can also switch outside the launch workspace; `write` and `edit` remain
+lexically confined to the selected directory.
 
 `create_agent` accepts optional `cwd`. Omitting it inherits the caller's current
 directory; relative values resolve against the caller's directory. qcode validates

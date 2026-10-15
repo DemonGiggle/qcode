@@ -51,7 +51,7 @@ request additional directories, or delegate work to other agents.
 
 ## Without the sandbox
 
-Without `--sandbox`, file tools reject paths that lexically leave the agent's current directory (initially `--cwd`), but symbolic links and the `shell` tool can still reach anything allowed by the operating-system account. The `change_directory` tool can select an existing directory outside the launch workspace; subsequent file-tool confinement follows that selected directory.
+Without `--sandbox`, `read`, `list`, `search`, and `view_image` can inspect paths outside the agent's current directory, subject to operating-system permissions. Absolute paths and parent-relative paths such as `../notes.txt` are accepted; relative paths resolve against the agent's current directory (initially `--cwd`). The `write` and `edit` tools still reject paths that lexically leave that directory, but symbolic links and the `shell` tool can still reach anything allowed by the operating-system account. The `change_directory` tool can select an existing directory outside the launch workspace; subsequent write and edit confinement follows that selected directory.
 
 ## With the sandbox (`--sandbox`, Linux)
 

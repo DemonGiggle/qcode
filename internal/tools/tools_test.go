@@ -119,17 +119,6 @@ func TestSearchReportsIncompleteScan(t *testing.T) {
 	}
 }
 
-func TestFileToolsRejectParentEscape(t *testing.T) {
-	registry, err := New(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = call(t, registry, "read", map[string]any{"path": "../secret"})
-	if err == nil || !strings.Contains(err.Error(), "outside workspace") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
 func TestViewImageLoadsSupportedImage(t *testing.T) {
 	for _, test := range []struct {
 		name      string

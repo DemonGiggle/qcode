@@ -184,8 +184,27 @@ func TestWorkingDirectoryFilesystemAndShell(t *testing.T) {
 			t.Fatal(got, err)
 		}
 	}
-	if _, err := call(t, r, "read", map[string]any{"path": "../outside.txt"}); err == nil {
-		t.Fatal("file confinement did not follow selected directory")
+	parentFile := filepath.Join(root, "outside.txt")
+	const parentContent = "parent directory context\n"
+	if err := os.WriteFile(parentFile, []byte(parentContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := call(t, r, "read", map[string]any{"path": "../outside.txt"}); err != nil || !strings.Contains(got, parentContent) {
+		t.Fatalf("parent read = %q, %v", got, err)
+	}
+	for _, tool := range []string{"write", "edit"} {
+		args := map[string]any{"path": "../outside.txt"}
+		if tool == "write" {
+			args["content"] = "changed"
+		} else {
+			args["old_text"], args["new_text"] = "parent", "changed"
+		}
+		if _, err := call(t, r, tool, args); err == nil || !strings.Contains(err.Error(), "outside workspace") {
+			t.Fatalf("%s confinement did not follow selected directory: %v", tool, err)
+		}
+		if data, err := os.ReadFile(parentFile); err != nil || string(data) != parentContent {
+			t.Fatalf("parent file = %q, %v", data, err)
+		}
 	}
 	external := t.TempDir()
 	if _, err := r.ChangeWorkingDirectory(context.Background(), external); err != nil {
