@@ -16,12 +16,16 @@ func (statusRunner) ToolEnabled(name string) bool        { return name != "shell
 func (statusRunner) ContextRemaining() (int, bool, bool) { return 73, true, true }
 func (statusRunner) RefreshContext(context.Context)      {}
 
-func TestStartupToolSummary(t *testing.T) {
+func TestStartupHeaderOmitsToolSummary(t *testing.T) {
 	var out bytes.Buffer
-	u := &UI{runner: statusRunner{}, display: newHistoryWriter(&out), width: 80}
-	u.printToolSummary()
-	if !strings.Contains(out.String(), "Tools enabled: read, write") || !strings.Contains(out.String(), "Tools disabled: shell") {
-		t.Fatal(out.String())
+	u := &UI{runner: statusRunner{}, display: newHistoryWriter(&out), width: 80, statusActive: true}
+	u.printHeader()
+	got := out.String()
+	if strings.Contains(got, "Tools enabled:") || strings.Contains(got, "Tools disabled:") {
+		t.Fatal(got)
+	}
+	if !strings.Contains(got, "Tip: ") {
+		t.Fatalf("header missing tip: %q", got)
 	}
 	if got := u.contextLabel(); got != "~73% left" {
 		t.Fatal(got)

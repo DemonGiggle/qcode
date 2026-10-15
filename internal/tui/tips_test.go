@@ -71,19 +71,17 @@ func TestFormatTipStaysWithinTwoLinesOnNarrowTerminals(t *testing.T) {
 	}
 }
 
-func TestPrintHeaderShowsTipBelowToolSummary(t *testing.T) {
+func TestPrintHeaderShowsTipWithoutToolSummary(t *testing.T) {
 	var out bytes.Buffer
 	u := &UI{runner: statusRunner{}, display: newHistoryWriter(&out), width: 80, statusActive: true}
 	u.printHeader()
 	got := out.String()
-	enabled := strings.Index(got, "Tools enabled:")
-	disabled := strings.Index(got, "Tools disabled:")
-	tip := strings.Index(got, "Tip: ")
-	if enabled < 0 || disabled < 0 || tip < 0 {
-		t.Fatalf("header missing tools/tip block: %q", got)
+	if strings.Contains(got, "Tools enabled:") || strings.Contains(got, "Tools disabled:") {
+		t.Fatalf("header should omit tools block: %q", got)
 	}
-	if !(enabled < disabled && disabled < tip) {
-		t.Fatalf("tip is not below tools block: %q", got)
+	tip := strings.Index(got, "Tip: ")
+	if tip < 0 {
+		t.Fatalf("header missing tip block: %q", got)
 	}
 }
 

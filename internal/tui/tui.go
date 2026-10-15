@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1867,7 +1866,6 @@ func (u *UI) printHeader() {
 		}
 	}
 	fmt.Fprintf(u.display, "\r\n")
-	u.printToolSummary()
 	u.printTip()
 	if !u.statusActive {
 		fmt.Fprintf(u.display, "%s\r\n", u.statusBar())
@@ -2455,37 +2453,6 @@ func modeLabelFor(value Runner) string {
 		return "INTERACTIVE"
 	}
 	return ""
-}
-
-func (u *UI) printToolSummary() {
-	runner, ok := u.runner.(toolRunner)
-	if !ok {
-		return
-	}
-	var enabled, disabled []string
-	for _, name := range runner.ToolNames() {
-		safe := sanitizeDiffLine(name, "<ESC>")
-		if runner.ToolEnabled(name) {
-			enabled = append(enabled, safe)
-		} else {
-			disabled = append(disabled, safe)
-		}
-	}
-	sort.Strings(enabled)
-	sort.Strings(disabled)
-	join := func(names []string) string {
-		if len(names) == 0 {
-			return "none"
-		}
-		return strings.Join(names, ", ")
-	}
-	out := transcript.NewGroup(u.display)
-	for _, line := range []string{"Tools enabled: " + join(enabled), "Tools disabled: " + join(disabled)} {
-		fmt.Fprintln(out, wrapANSI(line, u.width, "  "))
-	}
-	if !transcript.Grouped(u.display) {
-		fmt.Fprintln(u.display)
-	}
 }
 
 // Refresh the composer when its task finishes or starts from idle. Retain an

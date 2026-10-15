@@ -32,7 +32,7 @@ var tipTexts = []string{
 	"`write` and `edit` show 10-line diff previews; run `/diff` or `/diff N` to expand one up to 200 lines.",
 	"Run `/plan` for read-only Plan mode, `/plan show` to review, `/plan act` to implement, `/plan off` to leave.",
 	"Run `/skillplan <idea>` for guided skill design; refine the draft, then approve it with `/skillplan create`.",
-	"Run `/clear` to redraw the header and see the active agent's enabled and disabled tools.",
+	"Run `/clear` to redraw the header.",
 	"Run `/bash <cmd>` to execute a shell command from the workspace in the active agent's environment.",
 	"Run `/verbose` to toggle timestamped tool traces, including tool arguments, for troubleshooting.",
 	"Move through your draft with Left/Right; Home/End or Ctrl+A/E jump to the line ends.",
@@ -197,7 +197,7 @@ func formatTip(width int, colorEnabled bool) string {
 	return tipVivid + line + reset
 }
 
-// printTip prints the startup tip below the Tools enabled/disabled block.
+// printTip prints the startup tip below the header logo.
 func (u *UI) printTip() {
 	color := false
 	if u.out != nil {
