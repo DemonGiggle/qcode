@@ -13,6 +13,10 @@ type latestPromptReader interface {
 	LatestPrompt(string) string
 }
 
+type latestPromptClearer interface {
+	ClearLatestPrompt(string)
+}
+
 func latestPromptMarker(unicode bool) string { return interfaceGlyph(unicode, "✦", "*") }
 
 // The region uses up to three prompt rows. On small screens it gives space

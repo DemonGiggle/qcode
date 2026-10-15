@@ -913,11 +913,7 @@ func (u *UI) Run(ctx context.Context) error {
 		case "/quit", "/exit":
 			return nil
 		case "/clear":
-			fmt.Fprint(u.terminal, "\x1b[2J\x1b[H")
-			u.display.Clear()
-			u.responseWriter.ResetDiffs()
-			u.resetStatusLayout()
-			u.printHeader()
+			u.clearVisibleTranscript()
 			continue
 		case "/compact":
 			u.compactConversation(ctx)
@@ -1903,6 +1899,39 @@ func (u *UI) resetStatusLayout() {
 	u.screenMu.Unlock()
 	u.drawTabBar()
 	u.drawStatusBar()
+}
+
+// clearVisibleTranscript clears the visible conversation and redraws the
+// header. The fixed renderer diffs against inputScreenRows, so the cached
+// frame must be invalidated; otherwise a raw 2J leaves unchanged rows blank
+// because later paints skip them. It also exits history browsing so a stale
+// anchor cannot leave the fresh view paused, and clears the pinned prompt for
+// the active agent.
+func (u *UI) clearVisibleTranscript() {
+	if u.display != nil {
+		u.display.Clear()
+	}
+	if u.responseWriter != nil {
+		u.responseWriter.ResetDiffs()
+	}
+	u.screenMu.Lock()
+	activeID := u.activeAgent
+	u.inputFrame = ""
+	if v := u.activeViewportLocked(); v != nil {
+		v.browsing = false
+		v.anchor = historyPosition{}
+	}
+	u.screenMu.Unlock()
+	if clearer, ok := u.manager.(latestPromptClearer); ok && activeID != "" {
+		clearer.ClearLatestPrompt(activeID)
+		u.signalPresentation()
+		u.requestSessionSave()
+	}
+	if !u.fixedInput && u.terminal != nil {
+		fmt.Fprint(u.terminal, "\x1b[2J\x1b[H")
+	}
+	u.resetStatusLayout()
+	u.printHeader()
 }
 
 func (u *UI) drawStatusBar() {

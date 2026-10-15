@@ -302,6 +302,17 @@ func (m *AgentManager) LatestPrompt(id string) string {
 	return ""
 }
 
+// ClearLatestPrompt removes the pinned prompt for one agent without touching
+// conversation context. /clear uses it so the active tab returns to a clean
+// header; /new clears it via Reset.
+func (m *AgentManager) ClearLatestPrompt(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s := m.sessions[id]; s != nil {
+		s.latestPrompt = ""
+	}
+}
+
 func (m *AgentManager) List() []AgentSummary {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

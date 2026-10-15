@@ -679,7 +679,7 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             "Tabs: `main` is always there. Extra agents appear as new tabs (up to 20 total).",
-            "Latest prompt: a star marks up to three highlighted lines beneath the tabs. It changes when a task starts or steering is delivered. Pending input does not change it; /clear and completion keep it, /new clears it, and /resume restores it. Small windows show fewer lines.",
+            "Latest prompt: a star marks up to three highlighted lines beneath the tabs. It changes when a task starts or steering is delivered. Pending input does not change it; completion keeps it, /clear and /new clear it, and /resume restores it. Small windows show fewer lines.",
             "Transcript: streamed answers with Markdown, tables, and tool activity like `Reading ...` or `Writing ...`.",
             "Task indicator: Waiting for model response, Receiving model thinking, or Receiving model response, with elapsed time for that operation. The timer resets when the phase changes. Tools appear in the transcript; questions show Waiting for input.",
             "Pending area: shows the current steer separately from FIFO tasks.",

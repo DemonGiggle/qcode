@@ -82,8 +82,8 @@ marker (`*` in ASCII mode) introduces up to three wrapped lines in the theme's
 accent color, on a subtle background that fills each row. Output scrolls beneath
 it. A task replaces this text when it starts; steering replaces it when delivered.
 Queued or pending input leaves it unchanged.
-The prompt remains after completion, cancellation, failure, and `/clear`, and is
-restored with saved sessions. `/new` clears it for the active agent. Default
+The prompt remains after completion, cancellation, and failure, and is
+restored with saved sessions. `/clear` and `/new` clear it for the active agent. Default
 uses magenta; `NO_COLOR` keeps the terminal region plain.
 
 ## Prompt queues

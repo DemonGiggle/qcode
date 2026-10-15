@@ -21,6 +21,13 @@ type layoutManager struct {
 
 func (m *layoutManager) LatestPrompt(id string) string { return m.latest[id] }
 
+func (m *layoutManager) ClearLatestPrompt(id string) {
+	if m.latest == nil {
+		return
+	}
+	delete(m.latest, id)
+}
+
 func (m *layoutManager) Summary(id string) (session.Summary, error) {
 	return session.Summary{ID: id, Name: id, Status: m.states[id], QueueDepth: len(m.queued[id])}, nil
 }

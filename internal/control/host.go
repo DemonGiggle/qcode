@@ -165,6 +165,7 @@ func (h *Host) Summary(id string) (session.Summary, error)       { return h.mana
 func (h *Host) Agent(id string) (*agent.Agent, bool)             { return h.manager.Agent(id) }
 func (h *Host) Runner(id string) (any, bool)                     { return h.manager.Runner(id) }
 func (h *Host) LatestPrompt(id string) string                    { return h.manager.LatestPrompt(id) }
+func (h *Host) ClearLatestPrompt(id string)                         { h.manager.ClearLatestPrompt(id) }
 
 func (h *Host) Start(id, task string) error { return h.manager.Start(id, task) }
 func (h *Host) Submit(id, task string) (session.Submission, error) {
