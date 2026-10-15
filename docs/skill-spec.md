@@ -3,7 +3,7 @@
 This document describes how to create a skill that qcode can discover and
 make available to an agent. A qcode skill is a directory containing one
 focused `SKILL.md` document with reusable instructions for a recurring kind of
-work.
+work, plus optional companion files.
 
 This is a qcode-specific format. qcode does not execute a skill as a plugin,
 interpret a general skill manifest, or merge several instruction files
@@ -58,9 +58,12 @@ defines the skill name `review-go`. Invalid names and directories without a
 usable `SKILL.md` are not listed. An oversized file may still appear in the
 selector, but loading it fails with the 64 KiB limit error.
 
-Keep the document in readable UTF-8 Markdown. qcode passes the complete file
-content through the `skill` tool; it does not transform the body into another
-format.
+Keep the document in readable UTF-8 Markdown. qcode prepends a labeled context
+header to the complete file content returned by the `skill` tool. The header
+contains the skill name, absolute resolved `SKILL.md` path, and base directory
+(the document's containing directory). The original Markdown, including front
+matter and whitespace, follows unchanged. The 64 KiB limit applies to the
+document, before the header is added.
 
 ## Description and summary parsing
 
@@ -137,9 +140,37 @@ Checks to run and what success looks like.
 This structure is a recommendation, not a parser requirement. qcode does not
 require particular headings or keywords in the body.
 
-Keep all required instructions in `SKILL.md`. qcode discovers and loads that
-file only; additional files placed beside it are not automatically loaded or
-executed as part of the skill.
+## Optional companion files
+
+Keep the workflow and instructions for using supporting files in `SKILL.md`.
+A skill may also contain references, scripts, templates, images, databases,
+and other assets:
+
+```text
+<skill-root>/query/
+├── SKILL.md
+├── references/schema.md
+└── foo.db
+```
+
+Resolve bundled file references relative to the base directory returned by
+the `skill` tool unless the skill explicitly specifies another base. For
+example, `foo.db` with base directory `/opt/skills/query` resolves to
+`/opt/skills/query/foo.db`. Pass absolute paths to tools so references keep
+working after the agent changes its working directory. The returned paths
+identify the winning definition when multiple roots define the same name,
+and use the resolved document's location when symlinks are involved.
+
+qcode loads only `SKILL.md`; it does not automatically ingest or execute
+companion files or add their contents to the initial catalog. Read them only
+when needed with existing tools: `read` for text, `view_image` for images, or
+appropriate shell commands for binary assets such as databases. Loading a
+skill does not change the agent's working directory or grant access to its
+directory. Existing sandbox directory approvals, tool availability, and
+execution-mode restrictions still apply to companion files and commands.
+
+[`/skillplan`](skillplan.md) creates only the reviewed `SKILL.md`. Supporting
+files must already exist or be created separately.
 
 ## Discovery, selection, and loading
 
@@ -152,7 +183,8 @@ Selecting a skill does not immediately add its full document to the model
 context. qcode adds only the selected name and summary to the agent's system
 prompt. When the selected skill applies, the agent is expected to call the
 `skill` tool with the exact directory name. qcode then returns the complete
-`SKILL.md` content.
+`SKILL.md` content after the context header described above. Interactive
+selection and autoloaded skills use the same loading format.
 
 The `skill` tool refuses to load a name that was not selected for the current
 agent. Removing a skill from the selection therefore prevents its instructions
@@ -201,6 +233,9 @@ Before relying on a new or changed skill:
    its exact name when the workflow applies.
 6. Check that the result follows the documented constraints and validation
    steps.
+7. If the skill references companion files, confirm the returned path and
+   base directory identify the intended definition, then read a reference
+   through that base directory using the normal access-approval flow.
 
 ## Complete example
 

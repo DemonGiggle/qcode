@@ -31,6 +31,7 @@ func TestAutoloadSkillDataAndOneShotPrompt(t *testing.T) {
 		"manual/manual/SKILL.md":    "# Manual only\nNever autoload this.",
 		"manual/optional/SKILL.md":  "# Optional\nSelect this manually.",
 		"automatic/review/SKILL.md": "---\ndescription: Review code\n---\nSecret body instructions",
+		"automatic/review/foo.db":   "SQLite format 3\x00adjacent binary contents\xff",
 		"automatic/manual/SKILL.md": "# Automatic override\nBody instructions",
 	} {
 		full := filepath.Join(root, path)
@@ -55,8 +56,17 @@ func TestAutoloadSkillDataAndOneShotPrompt(t *testing.T) {
 	if _, err := selection.Load("optional"); err == nil {
 		t.Fatal("non-autoloaded skill was enabled")
 	}
-	if body, err := selection.Load("review"); err != nil || !strings.Contains(body, "Secret body instructions") {
-		t.Fatalf("autoloaded skill = %q, %v", body, err)
+	for _, test := range []struct{ name, markdown string }{
+		{"review", "---\ndescription: Review code\n---\nSecret body instructions"},
+		{"manual", "# Automatic override\nBody instructions"},
+	} {
+		loaded, err := selection.Load(test.name)
+		base := filepath.Join(root, "automatic", test.name)
+		if err != nil || !strings.Contains(loaded, "\nName: "+test.name+"\n") ||
+			!strings.Contains(loaded, "\nSKILL.md path: "+filepath.Join(base, "SKILL.md")+"\n") ||
+			!strings.Contains(loaded, "\nBase directory: "+base+"\n\n") || !strings.HasSuffix(loaded, "\n\n"+test.markdown) {
+			t.Fatalf("autoloaded skill = %q, %v", loaded, err)
+		}
 	}
 	registry, err := tools.NewWithOptions(root, tools.Options{Skills: selection})
 	if err != nil {
@@ -79,6 +89,9 @@ func TestAutoloadSkillDataAndOneShotPrompt(t *testing.T) {
 	system := provider.request.Messages[0].Content
 	if !strings.Contains(system, "Review code") || !strings.Contains(system, "Automatic override") || strings.Contains(system, "Secret body instructions") {
 		t.Fatalf("unexpected initial skill context: %s", system)
+	}
+	if strings.Contains(system, "adjacent binary contents") || strings.Contains(system, filepath.Join(root, "automatic")) {
+		t.Fatalf("skill file context or companion contents entered the initial catalog: %s", system)
 	}
 	for _, name := range []string{"web_fetch", "web_search"} {
 		found := false

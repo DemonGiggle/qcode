@@ -45,6 +45,11 @@ character skill name and fit the 64 KiB `SKILL.md` limit. qcode writes exactly
 the reviewed document and never overwrites an existing `SKILL.md`; conflicts
 remain in Skill Plan mode so you can choose another name or location.
 
+A skill may reference optional companion files relative to its returned base
+directory. `/skillplan` creates only the reviewed `SKILL.md`; supporting files
+must already exist or be created separately. Loading the skill does not
+automatically read those files or grant access to their directory.
+
 After creation, run `/skill` to refresh discovery and enable the new skill.
 See the [qcode skill specification](skill-spec.md) for the complete format and
 loading rules.

@@ -23,9 +23,10 @@ func TestDiscoverListsSkillsAndQcodeTakesPrecedence(t *testing.T) {
 		t.Fatalf("skills = %#v", items)
 	}
 	content, err := catalog.Load("review")
-	if err != nil || content != "---\ndescription: Focused review\n---\npreferred instructions" {
+	if err != nil {
 		t.Fatalf("Load(review) = %q, %v", content, err)
 	}
+	assertLoadedSkill(t, content, "review", filepath.Join(root, ".qcode/skills/review/SKILL.md"), "---\ndescription: Focused review\n---\npreferred instructions")
 }
 
 func TestDiscoverIgnoresInvalidNamesAndSkillOutsideWorkspace(t *testing.T) {
@@ -41,6 +42,13 @@ func TestDiscoverIgnoresInvalidNamesAndSkillOutsideWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(filepath.Dir(outside), link); err != nil {
+		t.Fatal(err)
+	}
+	escape := filepath.Join(root, ".qcode/skills/escape/SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(escape), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, escape); err != nil {
 		t.Fatal(err)
 	}
 	catalog, err := Discover(root)
@@ -65,8 +73,14 @@ func TestSelectionLoadsOnlyEnabledSkills(t *testing.T) {
 		t.Fatal("disabled skill loaded")
 	}
 	selection.Set([]string{"review"})
-	if got, err := selection.Load("review"); err != nil || got != "Review instructions" {
+	got, err := selection.Load("review")
+	if err != nil {
 		t.Fatalf("Load(review) = %q, %v", got, err)
+	}
+	assertLoadedSkill(t, got, "review", filepath.Join(root, ".qcode/skills/review/SKILL.md"), "Review instructions")
+	selection.Set(nil)
+	if _, err := selection.Load("review"); err == nil {
+		t.Fatal("deselected skill loaded")
 	}
 }
 
@@ -79,9 +93,11 @@ func TestDiscoverIncludesUserSkills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := catalog.Load("global"); err != nil || got != "Global instructions" {
+	got, err := catalog.Load("global")
+	if err != nil {
 		t.Fatalf("Load(global) = %q, %v", got, err)
 	}
+	assertLoadedSkill(t, got, "global", filepath.Join(home, ".qcode/skills/global/SKILL.md"), "Global instructions")
 }
 
 func TestDiscoverIncludesCustomSkillsAndKeepsMissingLocations(t *testing.T) {
@@ -129,6 +145,11 @@ func TestSkillsInPathsUsesWinningDefinitionAndResolvedRoots(t *testing.T) {
 	if got := catalog.SkillsInPaths("override"); len(got) != 1 || got[0].Name != "review" {
 		t.Fatalf("override selection = %#v", got)
 	}
+	got, err := catalog.Load("review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLoadedSkill(t, got, "review", filepath.Join(root, "override/review/SKILL.md"), "# Override review")
 }
 
 func TestDiscoverReadsOnlySkillDescriptionPrefix(t *testing.T) {
@@ -156,9 +177,111 @@ func TestLazySelectionDefersDiscoveryUntilLoad(t *testing.T) {
 	selection.Set([]string{"review"})
 	writeSkill(t, root, ".qcode/skills/review/SKILL.md", "Review instructions")
 
-	if got, err := selection.Load("review"); err != nil || got != "Review instructions" {
+	got, err := selection.Load("review")
+	if err != nil {
 		t.Fatalf("Load(review) = %q, %v", got, err)
 	}
+	assertLoadedSkill(t, got, "review", filepath.Join(root, ".qcode/skills/review/SKILL.md"), "Review instructions")
+}
+
+func TestLoadContextForSkillLocationsWithSpaces(t *testing.T) {
+	for _, location := range []string{".agents/skills", ".qcode/skills", "user", "custom-relative", "custom-absolute"} {
+		t.Run(location, func(t *testing.T) {
+			base := t.TempDir()
+			root := filepath.Join(base, "workspace with spaces")
+			home := filepath.Join(base, "home with spaces")
+			t.Setenv("HOME", home)
+			skillRoot := filepath.Join(root, location)
+			var customPaths []string
+			switch location {
+			case "user":
+				skillRoot = filepath.Join(home, ".qcode/skills")
+			case "custom-relative":
+				skillRoot = filepath.Join(root, "team skills")
+				customPaths = []string{"team skills"}
+			case "custom-absolute":
+				skillRoot = filepath.Join(base, "external skills")
+				customPaths = []string{skillRoot}
+			}
+			const markdown = "\n---\ndescription: Query a bundled database.\n---\n\n# Query\n\nUse `foo.db`.\n  \t"
+			writeSkill(t, skillRoot, "query/SKILL.md", markdown)
+			catalog, err := Discover(root, customPaths...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := catalog.Load("query")
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertLoadedSkill(t, got, "query", filepath.Join(skillRoot, "query/SKILL.md"), markdown)
+		})
+	}
+}
+
+func TestLoadContextUsesValidatedSymlinkTarget(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	const markdown = "# Query\r\n\r\nRead `foo.db`.\r\n"
+	writeSkill(t, root, ".qcode/skills/query/SKILL.md", markdown)
+	catalog, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Replace the discovered document with a link inside the same root. The
+	// returned context must describe the target actually validated at load time.
+	target := filepath.Join(root, ".qcode/skills/references/query.md")
+	writeSkill(t, root, ".qcode/skills/references/query.md", markdown)
+	path := filepath.Join(root, ".qcode/skills/query/SKILL.md")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := catalog.Load("query")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLoadedSkill(t, got, "query", target, markdown)
+	// Discovery must also use the resolved target rather than the link's parent.
+	catalog, err = Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = catalog.Load("query")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLoadedSkill(t, got, "query", target, markdown)
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "SKILL.md")
+	if err := os.WriteFile(outside, []byte("outside instructions"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, target); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := catalog.Load("query"); err == nil || !strings.Contains(err.Error(), "outside its skill directory") || got != "" {
+		t.Fatalf("Load(query) after symlink escape = %q, %v", got, err)
+	}
+}
+
+func TestLoadAllowsDocumentAtSizeLimit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	markdown := strings.Repeat("x", maxFileSize)
+	writeSkill(t, root, ".qcode/skills/large/SKILL.md", markdown)
+	catalog, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := catalog.Load("large")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLoadedSkill(t, got, "large", filepath.Join(root, ".qcode/skills/large/SKILL.md"), markdown)
 }
 
 func TestCreateWritesReviewedSkillWithoutOverwriting(t *testing.T) {
@@ -208,5 +331,21 @@ func writeSkill(t *testing.T, root, name, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func assertLoadedSkill(t *testing.T, got, name, path, markdown string) {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header, body, ok := strings.Cut(got, "\n\n")
+	if !ok || body != markdown {
+		t.Fatalf("loaded skill Markdown changed: got %q, want %q", body, markdown)
+	}
+	want := strings.Join([]string{"Skill context:", "Name: " + name, "SKILL.md path: " + resolved, "Base directory: " + filepath.Dir(resolved)}, "\n")
+	if header != want {
+		t.Fatalf("skill context = %q, want %q", header, want)
 	}
 }

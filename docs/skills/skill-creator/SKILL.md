@@ -47,11 +47,24 @@ If the target already exists, inspect it before editing and preserve useful
 behavior unless the user asks for a replacement. Do not overwrite unrelated
 working-tree changes.
 
-qcode loads only `SKILL.md` as the skill document. Keep every instruction
-needed for the workflow in that file; do not make the skill depend on an
-adjacent README, reference file, manifest, or placeholder that qcode will not
-automatically load. Add supporting files only when the skill explicitly needs
-them and the instructions explain how they are used.
+qcode loads only `SKILL.md` as the skill document, prefixed by the skill name,
+absolute resolved document path, and base directory. Keep the workflow and
+instructions for using supporting files in that document. Add optional
+references, scripts, templates, images, databases, or other assets only when
+the workflow needs them, and explain when and how to use each one.
+
+Write bundled file references relative to the returned base directory unless
+the workflow explicitly needs another base. For example, `foo.db` with base
+directory `/opt/skills/query` means `/opt/skills/query/foo.db`. Tell the agent
+to pass absolute paths to existing tools and load companions only when
+needed: `read` for text, `view_image` for images, and appropriate shell commands
+for binary assets. Loading a skill does not change the working directory,
+ingest companion files, or grant directory access or execution permission;
+normal sandbox approvals and execution-mode restrictions still apply.
+
+When using `/skillplan`, propose only the reviewed `SKILL.md`. Supporting
+files must already exist or be created separately; do not assume the draft
+creation flow will write them.
 
 ### 3. Write the skill
 
@@ -109,8 +122,9 @@ Before handing it off, check all of the following:
    a usable single-line `description:` within the first 8 KiB.
 4. The body states when the skill applies, the workflow's important
    constraints, and observable validation criteria.
-5. The instructions do not silently expand permissions or depend on content
-   qcode will not load.
+5. Any companion files exist or have an explicit separate creation step, and
+   their references resolve through the returned base directory. The skill
+   explains when and how to read or use them without expanding permissions.
 
 When the skill is placed in a directory qcode scans, refresh discovery with
 `/skill`, select the exact skill name, and try one representative request when

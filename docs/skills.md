@@ -64,8 +64,24 @@ calls the `skill` tool—this keeps context small. The system prompt includes a
 compact catalog of selected skill names and descriptions; full instructions
 are loaded on demand.
 
+Each `skill` result starts with the skill name, absolute resolved `SKILL.md`
+path, and base directory, followed by the original Markdown unchanged. This
+applies to both manually selected and autoloaded skills. Optional companion
+files such as references, templates, images, or databases are read only when
+needed. Bundled references are relative to that base directory unless the
+skill explicitly specifies another base: `foo.db` in a skill based at
+`/opt/skills/query` means `/opt/skills/query/foo.db`. The agent passes absolute
+paths to existing tools, so references still work after a directory change.
+Loading a skill does not change the working directory or automatically read
+adjacent files. `/skillplan` creates only the reviewed `SKILL.md`; supporting
+files must already exist or be created separately.
+
 Workspace-local `.qcode/skills` takes precedence over `.agents/skills`, which takes precedence over user-level skills. Like `/model` and `/tool`, `/skill` affects only the active agent tab.
 
 ## Security
 
 Symlink resolution and path checks prevent skill files from escaping their directory. `/skill` rediscovers the catalog when invoked, so newly added skills appear without a restart.
+
+Loading a skill does not grant directory access or command-execution
+permission. Companion files use the existing sandbox approval flow, enabled
+tools, and execution-mode restrictions.

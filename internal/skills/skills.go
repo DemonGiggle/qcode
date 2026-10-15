@@ -364,8 +364,9 @@ func (c *Catalog) Locations() []string {
 // Path returns the discovered SKILL.md path for display to the user.
 func (s Skill) Path() string { return s.path }
 
-// Load returns the complete document for a discovered skill. Names not in the
-// startup catalog are deliberately unavailable until qcode is restarted.
+// Load returns the skill's name, resolved document path, and base directory,
+// followed by the complete, unchanged document. Names not in the startup
+// catalog are deliberately unavailable until qcode is restarted.
 func (c *Catalog) Load(name string) (string, error) {
 	if c == nil {
 		return "", fmt.Errorf("no skills are available")
@@ -385,7 +386,7 @@ func (c *Catalog) Load(name string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("read skill %q: %w", name, err)
 		}
-		return string(data), nil
+		return fmt.Sprintf("Skill context:\nName: %s\nSKILL.md path: %s\nBase directory: %s\n\n%s", skill.Name, path, filepath.Dir(path), data), nil
 	}
 	return "", fmt.Errorf("unknown skill %q", name)
 }
