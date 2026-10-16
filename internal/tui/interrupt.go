@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"qcode/internal/lineedit"
 )
 
 const (
@@ -218,10 +220,12 @@ func (r *interruptReader) inject(data []byte) {
 	}()
 }
 
-// Restored multiline drafts must enter the editor as data, so their newlines
-// cannot submit prompts or disappear during reinjection.
+// Restored drafts must enter the editor as data when they contain newlines,
+// so their newlines cannot submit prompts or disappear during reinjection.
+// Long single-line drafts use the same bracketed path to stay collapsed;
+// short multiline drafts stay literal but keep their line breaks.
 func (r *interruptReader) injectDraft(draft string) {
-	if strings.ContainsAny(draft, "\r\n") {
+	if strings.ContainsAny(draft, "\r\n") || lineedit.ShouldCollapsePaste([]rune(draft)) {
 		r.inject([]byte(bracketedPasteStart + draft + bracketedPasteEnd))
 		return
 	}

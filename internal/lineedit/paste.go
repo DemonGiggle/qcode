@@ -10,6 +10,42 @@ import (
 // range as one block while retaining its original text for submission.
 type pastedRange struct{ start, end int }
 
+// Dual collapse rule: only long or tall pastes become [paste N].
+// Short pastes stay inline and editable; the placeholder itself is ~22 runes,
+// so collapsing anything shorter would hide useful context to save no space.
+const (
+	pasteCollapseThreshold = 100
+	pasteCollapseMaxLines  = 3
+)
+
+func pasteLineCount(runes []rune) int {
+	if len(runes) == 0 {
+		return 0
+	}
+	s := string(runes)
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	// A single trailing newline is the usual clipboard terminator, not an
+	// extra empty line: "a\n" is 1 line, "a\nb\nc\n" is 3 lines.
+	s = strings.TrimSuffix(s, "\n")
+	if s == "" {
+		return 1
+	}
+	return strings.Count(s, "\n") + 1
+}
+
+func shouldCollapsePaste(runes []rune) bool {
+	if len(runes) >= pasteCollapseThreshold {
+		return true
+	}
+	return pasteLineCount(runes) > pasteCollapseMaxLines
+}
+
+// ShouldCollapsePaste reports whether pasted runes meet the dual collapse
+// rule (long or tall). The prompt restores long single-line drafts through
+// the same bracketed path so they stay collapsed after a session restore.
+func ShouldCollapsePaste(runes []rune) bool { return shouldCollapsePaste(runes) }
+
 func (t *Terminal) editableLength() int {
 	length := len(t.line)
 	for _, block := range t.pastes {
@@ -25,10 +61,13 @@ func pasteLabel(characters int) []rune {
 func (t *Terminal) finishPaste() {
 	if len(t.pasteBuffer) > 0 {
 		start := t.pos
+		collapse := shouldCollapsePaste(t.pasteBuffer)
 		t.replaceRunes(start, start, t.pasteBuffer)
 		t.pos = start + len(t.pasteBuffer)
-		t.pastes = append(t.pastes, pastedRange{start, t.pos})
-		sort.Slice(t.pastes, func(i, j int) bool { return t.pastes[i].start < t.pastes[j].start })
+		if collapse {
+			t.pastes = append(t.pastes, pastedRange{start, t.pos})
+			sort.Slice(t.pastes, func(i, j int) bool { return t.pastes[i].start < t.pastes[j].start })
+		}
 	}
 	t.pasteBuffer = t.pasteBuffer[:0]
 	t.pasteActive = false
@@ -115,6 +154,13 @@ func (t *Terminal) displayLine() ([]rune, int) {
 	}
 	display = append(display, t.line[start:]...)
 	if t.pasteActive && len(t.pasteBuffer) > 0 {
+		if !shouldCollapsePaste(t.pasteBuffer) {
+			tail := append([]rune(nil), display[pos:]...)
+			display = append(display[:pos], t.pasteBuffer...)
+			pos += len(t.pasteBuffer)
+			display = append(display, tail...)
+			return display, pos
+		}
 		label := pasteLabel(len(t.pasteBuffer))
 		tail := append([]rune(nil), display[pos:]...)
 		display = append(display[:pos], label...)
@@ -149,7 +195,7 @@ func (t *Terminal) DisplayInput(line string, pos int) (string, int) {
 
 func (t *Terminal) collapseMultiline() {
 	t.pastes = nil
-	if strings.ContainsAny(string(t.line), "\r\n") {
+	if strings.ContainsAny(string(t.line), "\r\n") && shouldCollapsePaste(t.line) {
 		t.pastes = []pastedRange{{0, len(t.line)}}
 	}
 }

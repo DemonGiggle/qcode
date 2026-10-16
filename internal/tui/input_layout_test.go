@@ -107,6 +107,17 @@ func TestInputRowsTracksWideCharactersAndWrapBoundary(t *testing.T) {
 	}
 }
 
+func TestInputRowsSplitsShortMultilinePaste(t *testing.T) {
+	rows, y, x := inputRows("> alpha\nbeta", len([]rune("> alpha\nbeta")), 80)
+	if strings.Join(rows, "|") != "> alpha|beta" || y != 1 || x != 4 {
+		t.Fatalf("rows=%q cursor=%d,%d", rows, y, x)
+	}
+	rows, y, x = inputRows("> a\nb", 3, 80)
+	if strings.Join(rows, "|") != "> a|b" || y != 0 || x != 3 {
+		t.Fatalf("cursor before newline: rows=%q cursor=%d,%d", rows, y, x)
+	}
+}
+
 func TestInputRowsTracksChineseAndEmojiCursor(t *testing.T) {
 	for _, cluster := range []string{"🛡️", "👩‍💻", "👍🏽", "🇹🇼", "1️⃣"} {
 		text := "> " + cluster + "甲"

@@ -41,7 +41,10 @@ func queuePrompt(status session.Status) string {
 	return "> "
 }
 
-// inputRows wraps by display cells and retains the logical cursor location.
+// inputRows wraps by display cells, splits on hard line breaks, and retains
+// the logical cursor location. Short multiline pastes below the collapse
+// threshold stay literal, so embedded newlines must start a new composer row
+// instead of leaking into a single row string.
 func inputRows(text string, cursor, width int) ([]string, int, int) {
 	width = max(1, width)
 	rows := []string{""}
@@ -49,6 +52,19 @@ func inputRows(text string, cursor, width int) ([]string, int, int) {
 	for _, unit := range termtext.Units(text) {
 		w, raw := unit.Width, unit.Text
 		count := utf8.RuneCountInString(raw)
+		if strings.ContainsAny(raw, "\r\n") {
+			if cursor >= i && cursor < i+count {
+				cy, cx = len(rows)-1, x
+			}
+			i += count
+			// A hard break always starts a new row, unless wrapping
+			// already left us at the start of an empty row.
+			if len(rows[len(rows)-1]) > 0 || x > 0 {
+				rows = append(rows, "")
+			}
+			x = 0
+			continue
+		}
 		if w > width {
 			raw, w = "?", 1
 		}
