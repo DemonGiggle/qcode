@@ -451,19 +451,19 @@ func (u *UI) resumeSessionID(requestedID string) {
 	if requestedID == currentID {
 		return
 	}
-	p.mu.Lock()
-	choices, err := p.listSessionsLocked()
-	p.mu.Unlock()
-	if err != nil {
-		u.printSystemMessage("Cannot list sessions: " + err.Error())
-		return
-	}
-	if len(choices) == 0 {
-		u.printSystemMessage("No saved sessions for this workspace.")
-		return
-	}
 	id := requestedID
 	if id == "" {
+		p.mu.Lock()
+		choices, err := p.listSessionsLocked()
+		p.mu.Unlock()
+		if err != nil {
+			u.printSystemMessage("Cannot list sessions: " + err.Error())
+			return
+		}
+		if len(choices) == 0 {
+			u.printSystemMessage("No saved sessions for this workspace.")
+			return
+		}
 		u.input.setRaw(true)
 		u.beginRawSelector()
 		var accepted bool

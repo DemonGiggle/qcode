@@ -364,7 +364,7 @@ func TestExitMessageHighlightsResumeCommand(t *testing.T) {
 	}
 }
 
-func TestPrintExitMessageDoesNotRequirePriorSave(t *testing.T) {
+func TestPrintExitMessageWithoutSaveDoesNotPromiseResume(t *testing.T) {
 	out, err := os.CreateTemp(t.TempDir(), "exit-message")
 	if err != nil {
 		t.Fatal(err)
@@ -379,7 +379,7 @@ func TestPrintExitMessageDoesNotRequirePriorSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(message), "/resume") {
+	if !strings.Contains(string(message), "No new conversation to save.") || strings.Contains(string(message), "/resume") || strings.Contains(string(message), "Session saved!") {
 		t.Fatalf("exit message = %q", message)
 	}
 }

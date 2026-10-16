@@ -405,7 +405,19 @@ func (u *UI) readLine() (string, error) {
 }
 
 func (u *UI) printExitMessage() {
-	if u.persistence == nil {
+	p := u.persistence
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	failed, saved := p.lastError != "", !p.current.Left.IsZero()
+	p.mu.Unlock()
+	if failed {
+		fmt.Fprint(u.out, "\r\nSession save failed. See the error above.\r\n")
+		return
+	}
+	if !saved {
+		fmt.Fprint(u.out, "\r\nNo new conversation to save.\r\n")
 		return
 	}
 	fmt.Fprint(u.out, u.themeOutput(exitMessage(ColorEnabled(u.out))))

@@ -46,7 +46,7 @@ func TestSanitizedListingAndLegacyRewrite(t *testing.T) {
 	}
 	files, _ := os.ReadDir(store.dir)
 	for _, file := range files {
-		if file.Name() != snap.ID+".json" {
+		if file.Name() != snap.ID+".json" && file.Name() != snapshotLockName {
 			t.Fatal("unexpected backup")
 		}
 	}

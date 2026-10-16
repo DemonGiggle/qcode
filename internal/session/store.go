@@ -79,11 +79,17 @@ func (s *Store) Sanitize(snap Snapshot) (Snapshot, error) {
 	return snap, nil
 }
 
-// LoadForResume rewrites sanitized state before exposing it. Concurrent saves
-// replace complete snapshots; the last successful atomic replacement wins.
+// LoadForResume rewrites sanitized state before exposing it. The read and
+// rewrite share a transaction with all snapshot writers so opening a session
+// cannot roll back another process's save or recreate its deletion.
 func (s *Store) LoadForResume(id string) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := s.lockSnapshots()
+	if err != nil {
+		return Snapshot{}, err
+	}
+	defer lock.Close()
 	snap, err := s.Load(id)
 	if err != nil {
 		return snap, err
@@ -146,14 +152,24 @@ func (s *Store) New() (Snapshot, error) {
 func (s *Store) Save(snap Snapshot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := s.lockSnapshots()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	return s.save(snap)
 }
 
 // Delete removes metadata before the snapshot without reading either. Like
-// Save, it is serialized within this store; a later save may recreate the ID.
+// Save, it is serialized across processes; a later save may recreate the ID.
 func (s *Store) Delete(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := s.lockSnapshots()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	return s.delete(id)
 }
 
@@ -179,6 +195,11 @@ func (s *Store) delete(id string) error {
 func (s *Store) DeleteAll(excluded ...string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := s.lockSnapshots()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	skip := make(map[string]bool, len(excluded))
 	for _, id := range excluded {
 		if !validID(id) {
@@ -321,23 +342,27 @@ func (s *Store) List() ([]Entry, error) {
 			entry.MetadataProblem = metadataErr.Error()
 		}
 		snap, err := s.Load(id)
+		if err == nil {
+			snap, err = s.Sanitize(snap)
+		}
 		if err != nil {
+			// Both decoding and filtering failures belong to this entry. Never
+			// expose its rejected payload or let it hide healthy sessions.
+			entry.Snapshot = Snapshot{ID: id}
 			info, statErr := file.Info()
-			if statErr != nil {
-				return nil, statErr
+			if os.IsNotExist(statErr) {
+				continue
 			}
+			if statErr == nil {
+				entry.Saved = info.ModTime()
+			}
+			entry.Problem = "Unreadable or incompatible snapshot"
 			problem, filterErr := s.Sanitize(Snapshot{ID: id, Workspace: s.workspace, Version: SnapshotVersion, Preview: "Unreadable or incompatible snapshot: " + err.Error()})
-			if filterErr != nil {
-				return nil, filterErr
+			if filterErr == nil && strings.TrimSpace(problem.Preview) != "" {
+				entry.Problem = problem.Preview
 			}
-			entry.Snapshot = Snapshot{ID: id, Saved: info.ModTime()}
-			entry.Problem = problem.Preview
 			entries = append(entries, entry)
 			continue
-		}
-		snap, err = s.Sanitize(snap)
-		if err != nil {
-			return nil, err
 		}
 		entry.Snapshot = snap
 		entries = append(entries, entry)

@@ -106,6 +106,53 @@ func TestSnapshotStorageFiltersAllOwnedPayloads(t *testing.T) {
 	}
 }
 
+func TestSnapshotListingIsolatesMalformedOwnedPayloads(t *testing.T) {
+	for _, payload := range []string{"presentation", "agent checkpoint"} {
+		t.Run(payload, func(t *testing.T) {
+			store, err := session.Open(t.TempDir(), t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			healthy, _ := store.New()
+			healthy.Preview = "healthy conversation"
+			broken, _ := store.New()
+			broken.Preview = cliRedactionSecret
+			if payload == "presentation" {
+				broken.Presentation = json.RawMessage(`{"Views":"wrong type"}`)
+			} else {
+				broken.Agents = []session.SavedAgent{{State: json.RawMessage(`{"Messages":"wrong type"}`)}}
+			}
+			for _, snap := range []session.Snapshot{healthy, broken} {
+				if err := store.Save(snap); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p, err := redaction.New(redaction.Config{}, []string{cliRedactionSecret})
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.SetSnapshotFilter(func(s session.Snapshot) (session.Snapshot, error) {
+				return filterSessionSnapshot(p, s)
+			})
+			entries, err := store.List()
+			if err != nil || len(entries) != 2 {
+				t.Fatalf("malformed payload blocked listing: %+v, %v", entries, err)
+			}
+			for _, entry := range entries {
+				if entry.ID == healthy.ID && entry.Problem != "" {
+					t.Fatalf("healthy conversation unavailable: %+v", entry)
+				}
+				if entry.ID == broken.ID && (entry.Problem == "" || entry.Preview != "" || len(entry.Agents) != 0 || len(entry.Presentation) != 0) {
+					t.Fatalf("rejected payload escaped through listing: %+v", entry)
+				}
+			}
+			if _, err := store.LoadForResume(healthy.ID); err != nil {
+				t.Fatal("healthy conversation could not resume", err)
+			}
+		})
+	}
+}
+
 func TestInvalidRedactionConfigStopsCLIStartup(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux configuration lookup fixture")

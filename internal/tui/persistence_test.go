@@ -572,6 +572,90 @@ func TestResumeBuildFailureKeepsPickerAndCurrentSession(t *testing.T) {
 	}
 }
 
+func TestResumeExplicitIDDoesNotInspectOtherSessions(t *testing.T) {
+	u, _ := persistenceUI(t)
+	store, err := session.Open(t.TempDir(), u.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, _ := persistenceUI(t)
+	snap, _ := store.New()
+	snap.Agents, _ = target.manager.(savedAgentController).SaveAgents()
+	snap.Presentation, _ = json.Marshal(target.snapshotPresentation())
+	if err := store.Save(snap); err != nil {
+		t.Fatal(err)
+	}
+	broken, _ := store.New()
+	broken.Presentation = json.RawMessage(`{"Views":"wrong type"}`)
+	if err := store.Save(broken); err != nil {
+		t.Fatal(err)
+	}
+	store.SetSnapshotFilter(func(s session.Snapshot) (session.Snapshot, error) {
+		if s.ID == broken.ID {
+			t.Error("explicit resume inspected an unrelated session")
+		}
+		return FilterSnapshot(u.redaction, s)
+	})
+	if err := u.EnableSessions(store, func(s session.Snapshot) (*UI, error) {
+		v, _ := persistenceUI(t)
+		return v, v.RestorePresentation(s.Presentation)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer u.shutdownAgentManager()
+	u.resumeSessionID(snap.ID)
+	if u.persistence.current.ID != snap.ID {
+		t.Fatal("healthy explicit session did not resume")
+	}
+}
+
+func TestExitMessageReflectsFinalSave(t *testing.T) {
+	for _, scenario := range []string{"saved", "empty", "failed", "failed after checkpoint"} {
+		t.Run(scenario, func(t *testing.T) {
+			u, manager := persistenceUI(t)
+			store, err := session.Open(t.TempDir(), u.root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := u.EnableSessions(store, nil); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "empty" {
+				for i := range manager.agents {
+					manager.agents[i].State = json.RawMessage(`{"Messages":[{"Role":"system","Content":"system"}]}`)
+				}
+			}
+			if scenario == "failed after checkpoint" {
+				if err := u.saveSession(false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if strings.HasPrefix(scenario, "failed") {
+				store.SetSnapshotFilter(func(session.Snapshot) (session.Snapshot, error) {
+					return session.Snapshot{}, errors.New("simulated save failure")
+				})
+			}
+			u.closeSession()
+			u.printExitMessage()
+			output, err := os.ReadFile(u.out.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(string(output), "Session saved!"); got != (scenario == "saved") {
+				t.Fatalf("incorrect save confirmation: %s", output)
+			}
+			_, err = store.Load(u.persistence.current.ID)
+			if scenario == "saved" || scenario == "failed after checkpoint" {
+				if err != nil {
+					t.Fatal("saved snapshot missing", err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatalf("unexpected saved snapshot: %v", err)
+			}
+		})
+	}
+}
+
 func TestMatchingSessionIndicesFiltersUsefulSessionDetails(t *testing.T) {
 	entries := []session.Entry{
 		{Snapshot: session.Snapshot{ID: "a1b2c3d4", Preview: "Review the deployment plan"}},
