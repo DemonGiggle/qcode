@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +13,24 @@ import (
 	"qcode/internal/lineedit"
 	"qcode/internal/session"
 )
+
+func TestFixedComposerSeparatorPreservesTranscriptBlanks(t *testing.T) {
+	u, _ := layoutFixture(t)
+	_, _ = io.WriteString(u.display, "first\n\n\x1b[2m \t\x1b[0m\n")
+	before := u.display.Snapshot()
+	rows := u.renderHistoryRowsLocked(before)
+	if len(rows) != 1 || plainHistoryText(rows[0].text) != "first" {
+		t.Fatalf("trailing blank display rows remain: %+v", rows)
+	}
+	if after := u.display.Snapshot(); !reflect.DeepEqual(after, before) {
+		t.Fatal("composer spacing changed the retained transcript")
+	}
+	_, _ = io.WriteString(u.display, "second")
+	rows = u.renderHistoryRowsLocked(u.display.Snapshot())
+	if len(rows) != 4 || plainHistoryText(rows[1].text) != "" || strings.TrimSpace(plainHistoryText(rows[2].text)) != "" || plainHistoryText(rows[3].text) != "second" {
+		t.Fatalf("appending content lost internal blank lines: %+v", rows)
+	}
+}
 
 func TestViewportPagesOverlapTwoRenderedRows(t *testing.T) {
 	for _, wrapped := range []bool{false, true} {
@@ -130,13 +149,19 @@ func TestTranscriptLayoutsUseTwoRowPageOverlap(t *testing.T) {
 			u.renderInput(inputPrompt, "draft", 5)
 			size := u.height - 3 - u.statusLinesLocked()
 			if fixed {
-				// The fixture has a single input row and no queue or candidates.
-				size = u.inputCursorRow - 2
+				// The fixture has a single input row, a blank separator, and
+				// no queue or candidates.
+				size = u.inputCursorRow - 3
 			}
 			if size <= 2 {
 				t.Fatalf("fixture has insufficient transcript rows: %d", size)
 			}
 			rows := historyRows(u.display.Snapshot(), u.width)
+			if fixed {
+				// The fixed composer provides its own separator instead of
+				// displaying the snapshot's empty unfinished tail.
+				rows = rows[:len(rows)-1]
+			}
 			tail := len(rows) - size
 			before := fileSize(t, out)
 			u.showPage(1)

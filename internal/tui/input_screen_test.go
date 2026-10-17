@@ -9,6 +9,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/mattn/go-runewidth"
+
+	"qcode/internal/session"
 )
 
 // fixedScreen replays the cursor positioning, erasure and wrapping used by the
@@ -96,6 +98,107 @@ func (s *fixedScreen) feed(data string) {
 	}
 }
 
+func TestFixedComposerHasOneBlankSeparator(t *testing.T) {
+	for _, tc := range []struct {
+		name, output string
+		queued       bool
+		expanded     bool
+		draft        string
+		label        string
+		prompt       string
+		status       session.Status
+	}{
+		{name: "streaming", output: "last output"},
+		{name: "newline", output: "last output\n"},
+		{name: "blank tail", output: "last output\n\n\n"},
+		{name: "styled blank tail", output: "last output\n\x1b[2m \t\x1b[0m\n"},
+		{name: "shell running", output: "\r\x1b[2KRunning shell command: sleep 1 (|)"},
+		{name: "manual shell", output: "Running shell command (Ctrl+C to cancel): sleep 1\n"},
+		{name: "queued", output: "last output\n", queued: true},
+		{name: "expanded queue", output: "last output\n", queued: true, expanded: true},
+		{name: "suggestions", output: "last output\n", draft: "/"},
+		{name: "queue and suggestions", output: "last output\n", queued: true, draft: "/"},
+		{name: "wrapped draft", output: "last output", draft: strings.Repeat("draft ", 30)},
+		{name: "idle", output: "last output", label: inputPrompt, prompt: "> ", status: session.StatusIdle},
+		{name: "plan", output: "last output\n", label: planInputPrompt, prompt: "(Plan)> ", status: session.StatusCompleted},
+		{name: "skill plan", output: "last output\n\n", label: skillPlanInputPrompt, prompt: "(Skill plan)> ", status: session.StatusCompleted},
+		{name: "approval", output: "last output", prompt: "(Steer)> ", status: session.StatusWaitingForApproval},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u, _ := layoutFixture(t)
+			u.unicode = true
+			label, prompt := tc.label, tc.prompt
+			if label == "" {
+				label = inputPrompt
+			}
+			if prompt == "" {
+				prompt = "(Steer)> "
+			}
+			if tc.status != "" {
+				u.manager.(*layoutManager).states["main"] = tc.status
+			}
+			if tc.queued {
+				u.manager.(*layoutManager).queued = map[string][]session.QueuedPrompt{"main": {
+					{RequestID: "queued", Prompt: "Does this fix apply to all models"},
+				}}
+			}
+			_, _ = io.WriteString(u.display, strings.Repeat("earlier output\n", 40)+tc.output)
+			u.renderInput(label, tc.draft, len([]rune(tc.draft)))
+			if tc.expanded {
+				u.toggleQueuePanel()
+			}
+			check := func() {
+				t.Helper()
+				data, err := os.ReadFile(u.out.Name())
+				if err != nil {
+					t.Fatal(err)
+				}
+				screen := newFixedScreen(u.width, u.height)
+				screen.feed(string(data))
+				promptRow := -1
+				for i, row := range screen.rows {
+					if strings.HasPrefix(string(row), prompt) {
+						promptRow = i
+						break
+					}
+				}
+				if promptRow < 2 {
+					t.Fatalf("composer missing: %q", u.inputScreenRows)
+				}
+				if gap := strings.TrimSpace(string(screen.rows[promptRow-1])); gap != "" {
+					t.Fatalf("missing blank separator above composer: %q", gap)
+				}
+				if previous := strings.TrimSpace(string(screen.rows[promptRow-2])); previous == "" {
+					t.Fatalf("more than one blank row above composer: %q", u.inputScreenRows)
+				}
+			}
+			check()
+			if tc.name == "shell running" {
+				_, _ = io.WriteString(u.display, "\r\x1b[2KRunning shell command: sleep 1 (/)")
+				u.drawTaskIndicator()
+				check()
+			}
+			// Resizing and repaints must keep the separator above the first
+			// draft row, even when the cursor is on a wrapped continuation.
+			u.width, u.height = 32, 12
+			if err := u.out.Truncate(0); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := u.out.Seek(0, io.SeekStart); err != nil {
+				t.Fatal(err)
+			}
+			u.inputFrame = ""
+			u.renderInput(label, tc.draft, 0)
+			check()
+			if tc.queued {
+				u.manager.(*layoutManager).queued["main"] = nil
+				u.renderInput(label, tc.draft, 0)
+				check()
+			}
+		})
+	}
+}
+
 func TestFixedStreamingTabsDoNotOverwriteComposer(t *testing.T) {
 	u, _ := layoutFixture(t)
 	for i := 0; i < u.height; i++ {
@@ -115,7 +218,10 @@ func TestFixedStreamingTabsDoNotOverwriteComposer(t *testing.T) {
 	if got := string(screen.rows[u.inputCursorRow-1]); !strings.HasPrefix(got, "(Steer)> draft") {
 		t.Fatalf("streaming output overwrote the composer without a keypress: %q", got)
 	}
-	if got := string(screen.rows[u.inputCursorRow-2]); !strings.HasPrefix(got, "   "+strings.Repeat("x", 70)) {
+	if got := string(screen.rows[u.inputCursorRow-2]); strings.TrimSpace(got) != "" {
+		t.Fatalf("streaming output overwrote the composer separator: %q", got)
+	}
+	if got := string(screen.rows[u.inputCursorRow-3]); !strings.HasPrefix(got, "   "+strings.Repeat("x", 70)) {
 		t.Fatalf("tabbed output was clipped instead of fitting its measured row: %q", got)
 	}
 	if !screen.wrap {

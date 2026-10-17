@@ -44,7 +44,16 @@ func (u *UI) renderHistoryRowsLocked(snapshot historySnapshot) []historyRow {
 	if view := u.views[u.activeAgent]; view != nil {
 		cache = &view.rowCache
 	}
-	return cache.render(snapshot, u.width, u.outputTheme())
+	rows := cache.render(snapshot, u.width, u.outputTheme())
+	if u.fixedInput {
+		// The composer owns its separator. Omit trailing blank display rows
+		// so newline-terminated output does not add a second gap. The cache
+		// and retained transcript keep every original line.
+		for len(rows) > 0 && strings.TrimSpace(plainHistoryText(rows[len(rows)-1].text)) == "" {
+			rows = rows[:len(rows)-1]
+		}
+	}
+	return rows
 }
 
 // render returns borrowed rows, valid until the next call under screenMu.

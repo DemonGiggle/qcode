@@ -140,23 +140,26 @@ func (u *UI) paintFixedLocked(direction int) {
 		statusN = 1
 	}
 	footer := min(1+statusN, max(0, u.height-2))
-	// The pin yields space to the composer and two transcript rows on short
-	// screens. Its row count can change without moving a paused history anchor.
-	latest := u.latestPromptRegionRowsLocked(u.height - footer - 4)
+	// The pin yields space to the composer, its separator, and two transcript
+	// rows on short screens. Its height does not move a paused history anchor.
+	latest := u.latestPromptRegionRowsLocked(u.height - footer - 5)
 	if question != nil {
 		latest = nil
 	}
 	// Keep a cursor-centered window for drafts taller than the terminal.
-	inputLimit := u.height - 4 - statusN - len(latest)
+	inputLimit := u.height - 5 - statusN - len(latest)
 	if len(queued) > 0 {
-		reserve := min(previewLimit, len(queueRows), max(1, u.height-footer-4-len(latest)))
-		inputLimit = min(inputLimit, u.height-footer-3-len(latest)-reserve)
+		reserve := min(previewLimit, len(queueRows), max(1, u.height-footer-5-len(latest)))
+		inputLimit = min(inputLimit, u.height-footer-4-len(latest)-reserve)
 	}
 	inputHeight := min(len(rows), max(1, inputLimit))
 	start := max(0, cy-inputHeight+1)
 	rows = rows[start:min(len(rows), start+inputHeight)]
 	cy -= start
 	promptRow := u.height - footer - len(rows) + 1
+	// All content panels end before this row, leaving exactly one separator
+	// above the first composer row, including while output is unfinished.
+	panelEnd := max(1, promptRow-1)
 	if len(queued) == 0 && question == nil {
 		queue.expanded, queue.anchorID, queue.anchorRow = false, "", 0
 	}
@@ -168,9 +171,14 @@ func (u *UI) paintFixedLocked(direction int) {
 	if u.inputLabel != inputPrompt && u.inputLabel != planInputPrompt && u.inputLabel != skillPlanInputPrompt {
 		matches = nil
 	}
-	// Keep two output rows available: history snapshots end with an unfinished
-	// line, so a single row can otherwise show only that empty tail.
-	extras := max(0, promptRow-4-len(latest)) // Preserve two conversation rows when possible.
+	// Preserve two conversation rows when possible, yielding the second to
+	// the queue shortcut on cramped screens.
+	outputStart := 2 + len(latest)
+	minOutput := 2
+	if len(queued) > 0 && panelEnd-outputStart < 3 {
+		minOutput = 1
+	}
+	extras := max(0, panelEnd-outputStart-minOutput)
 	queueHeight := 0
 	if len(queued) > 0 && extras > 0 {
 		queueHeight = min(previewLimit, len(queueRows), extras)
@@ -180,8 +188,7 @@ func (u *UI) paintFixedLocked(direction int) {
 		room := extras - count
 		queueHeight = min(1+len(queueRows), room, max(queueHeight, 2*room/3))
 	}
-	outputStart := 2 + len(latest)
-	outputHeight := max(0, promptRow-count-queueHeight-outputStart)
+	outputHeight := max(0, panelEnd-count-queueHeight-outputStart)
 	if question == nil {
 		u.activeViewportLocked().visibleRows = outputHeight
 	}
@@ -221,10 +228,10 @@ func (u *UI) paintFixedLocked(direction int) {
 		if i == count-1 && len(matches) > count {
 			text += " (type to filter)"
 		}
-		screenRows[promptRow-queueHeight-count+i] = truncateDiffLine(text, u.width, u.unicode)
+		screenRows[panelEnd-queueHeight-count+i] = truncateDiffLine(text, u.width, u.unicode)
 	}
 	if queueHeight > 0 {
-		queueStart := promptRow - queueHeight
+		queueStart := panelEnd - queueHeight
 		visible := queueRows[:min(len(queueRows), queueHeight)]
 		if queue.expanded {
 			header := "Alt+Q close | Up/Down | Delete remove | Esc"
