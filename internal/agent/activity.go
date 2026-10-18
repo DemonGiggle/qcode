@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/url"
 	"strconv"
@@ -70,6 +71,11 @@ func toolActivity(call llm.ToolCall) trace.Activity {
 	case "skill":
 		return activity("skill", "Loading skill "+target(name, "skill"), "Loaded skill "+target(name, "skill"), trace.ActivityAgent)
 	case "ask_questions":
+		if count := askQuestionsCount(call.Arguments); count == 1 {
+			return activity("ask_questions", "Asking the user (1 question)", "Received 1 user answer", trace.ActivityAgent)
+		} else if count > 1 {
+			return activity("ask_questions", fmt.Sprintf("Asking the user (%d questions)", count), fmt.Sprintf("Received %d user answers", count), trace.ActivityAgent)
+		}
 		return activity("ask_questions", "Asking the user", "Received user answers", trace.ActivityAgent)
 	case "propose_skill":
 		return activity("propose_skill", "Preparing skill draft", "Saved skill draft for review", trace.ActivityAgent)
@@ -128,6 +134,19 @@ func readActivityTarget(path string, arguments json.RawMessage) string {
 
 func activity(action, start, completed string, category trace.ActivityCategory) trace.Activity {
 	return trace.Activity{Action: action, Start: start, Completed: completed, Category: category}
+}
+
+// askQuestionsCount reports how many questions a ask_questions call contains.
+// It returns 0 when the arguments do not parse so callers can fall back to
+// the generic activity labels.
+func askQuestionsCount(arguments json.RawMessage) int {
+	var request struct {
+		Questions []json.RawMessage `json:"questions"`
+	}
+	if json.Unmarshal(arguments, &request) != nil {
+		return 0
+	}
+	return len(request.Questions)
 }
 
 func activityArgument(arguments json.RawMessage, key string) string {

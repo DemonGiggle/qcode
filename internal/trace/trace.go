@@ -625,7 +625,7 @@ func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration,
 	if len(output) > 0 {
 		preview = output[0]
 	}
-	for _, line := range l.activityOutputLines(l.policy.Text(redaction.Terminal, preview)) {
+	for _, line := range l.activityOutputLines(s.activity.Action, l.policy.Text(redaction.Terminal, preview)) {
 		fmt.Fprintln(out, l.style(traceDim, "  "+line))
 	}
 	l.activitySeparatorPending = true
@@ -636,6 +636,11 @@ const (
 	maxActivityPreviewLines    = 3
 	activityOutputIndent       = 2
 	activityOutputDefaultWidth = 120
+	// maxAskQuestionsPreviewLines keeps full questionnaires visible. A header
+	// plus two rows per question (question + indented answer) for the maximum
+	// of 8 questions fits within this bound, so collected answers render as a
+	// complete list instead of raw JSON truncated to three rows.
+	maxAskQuestionsPreviewLines = 20
 	// maxActivityMessageLines bounds the persistent activity line (for
 	// example a long "Ran shell command: ..." message) after wrapping.
 	// The full command stays in the message and in JSON summaries; only its
@@ -810,15 +815,21 @@ func splitActivityWord(word string, width int) []string {
 }
 
 // activityOutputLines returns at most three non-empty, terminal-safe output
-// lines. It must be called while l.mu is held.
-func (l *Logger) activityOutputLines(output string) []string {
+// lines, or up to maxAskQuestionsPreviewLines for ask_questions so collected
+// answers render as a complete indented list. It must be called while l.mu is
+// held.
+func (l *Logger) activityOutputLines(action, output string) []string {
+	limit := maxActivityPreviewLines
+	if action == "ask_questions" {
+		limit = maxAskQuestionsPreviewLines
+	}
 	output = sanitizeActivityOutput(output)
 	if strings.TrimSpace(output) == "" {
 		return nil
 	}
 
 	rawLines := strings.Split(strings.ReplaceAll(output, "\r", "\n"), "\n")
-	lines := make([]string, 0, maxActivityPreviewLines)
+	lines := make([]string, 0, limit)
 	nonEmptyLines := 0
 	for _, line := range rawLines {
 		if strings.TrimSpace(line) == "" {
@@ -826,7 +837,7 @@ func (l *Logger) activityOutputLines(output string) []string {
 		}
 		line = normalizeActivityOutputLine(line)
 		nonEmptyLines++
-		if len(lines) < maxActivityPreviewLines {
+		if len(lines) < limit {
 			lines = append(lines, line)
 		}
 	}

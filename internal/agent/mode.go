@@ -413,15 +413,50 @@ func (a *Agent) askQuestions(ctx context.Context, arguments json.RawMessage) (ll
 			a.askedQuestions = make(map[string]bool)
 		}
 		a.askedQuestions[strings.ToLower(strings.Join(strings.Fields(questions[0].Text), " "))] = true
-		return llm.ToolResult{Output: "The user answered the question. Continue with the user message that follows.", UserAnswer: fmt.Sprintf("In response to %q: %s", questions[0].Text, answers[0])}, nil
+		output := formatQuestionAnswers(questions, answers) + "\n\nContinue with the user message that follows."
+		return llm.ToolResult{Output: output, UserAnswer: fmt.Sprintf("In response to %q: %s", questions[0].Text, answers[0])}, nil
 	}
-	data, err := json.Marshal(struct {
-		Answers []string `json:"answers"`
-	}{Answers: answers})
-	if err != nil {
-		return llm.ToolResult{}, err
+	return llm.ToolResult{Output: formatQuestionAnswers(questions, answers)}, nil
+}
+
+// formatQuestionAnswers renders collected answers as an indented list for both
+// the model transcript and the terminal activity preview. It replaces the
+// previous raw JSON output so scrollback shows the actual answers instead of
+// `{"answers": [...]}`.
+func formatQuestionAnswers(questions []Question, answers []string) string {
+	var out strings.Builder
+	if len(questions) == 1 {
+		out.WriteString("User answer:\n")
+	} else {
+		fmt.Fprintf(&out, "User answers (%d):\n", len(questions))
 	}
-	return llm.ToolResult{Output: string(data)}, nil
+	for i, question := range questions {
+		text := strings.Join(strings.Fields(strings.TrimSpace(question.Text)), " ")
+		if text == "" {
+			text = "(empty question)"
+		}
+		out.WriteString("- " + text + "\n")
+		answer := ""
+		if i < len(answers) {
+			answer = strings.Trim(strings.ReplaceAll(strings.ReplaceAll(answers[i], "\r\n", "\n"), "\r", "\n"), "\n")
+		}
+		if answer == "" {
+			out.WriteString("  → (no answer)\n")
+			continue
+		}
+		lines := strings.Split(answer, "\n")
+		for j, line := range lines {
+			line = strings.TrimRight(line, " \t")
+			if j == 0 {
+				out.WriteString("  → " + line + "\n")
+			} else if strings.TrimSpace(line) == "" {
+				out.WriteString("\n")
+			} else {
+				out.WriteString("    " + line + "\n")
+			}
+		}
+	}
+	return strings.TrimSuffix(out.String(), "\n")
 }
 
 // Some models return choice objects even when the schema requests strings.
