@@ -92,9 +92,9 @@ func (u *UI) drawTaskIndicator() {
 		return
 	}
 	if u.activeViewportLocked().browsing {
-		message = truncateDiffLine("History paused | PgUp/PgDn | PgDn to bottom resumes", u.width, u.unicode)
+		message = truncateDiffLine("History paused | Up/Down PgUp/PgDn | PgDn to bottom resumes", u.width, u.unicode)
 		if summary.Status == session.StatusRunning {
-			message = truncateDiffLine("Running | History paused | PgUp/PgDn | Ctrl+C cancel", u.width, u.unicode)
+			message = truncateDiffLine("Running | History paused | Up/Down PgUp/PgDn | Ctrl+C cancel", u.width, u.unicode)
 		}
 	}
 	if u.taskIndicatorText == message {
@@ -109,7 +109,7 @@ func (u *UI) fixedTaskIndicatorMessageLocked(summary session.Summary, now time.T
 	if u.activeQuestionPanelLocked() != nil {
 		message = "PgUp/PgDn scroll question | Ctrl+C cancel"
 	} else if u.activeViewportLocked().browsing {
-		message = "History paused | PgUp/PgDn | PgDn to bottom resumes"
+		message = "History paused | Up/Down PgUp/PgDn | PgDn to bottom resumes"
 	}
 	return truncateDiffLine(message, u.width, u.unicode)
 }

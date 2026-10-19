@@ -382,6 +382,7 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	display.ui = u
 	t.AutoCompleteCallback = u.completeSlashCommand
 	input.setPageHandler(u.showPage)
+	input.setScrollHandler(u.showScroll)
 	input.setHistoryBoundaryHandler(u.showHistoryBoundary)
 	u.terminal.SubmitOnTab = func(line string) bool {
 		u.observeComposerTask()
@@ -2401,6 +2402,55 @@ func (u *UI) showPage(direction int) {
 	if *u.activeViewportLocked() != previous {
 		u.signalPresentation()
 	}
+}
+
+// showScroll moves the output buffer by a single row while history browsing
+// is active. Direction follows showPage: positive scrolls toward older
+// output, negative toward newer output. It returns true when the arrow key is
+// consumed for scrolling. When the view is live, or when a modal panel owns
+// Up/Down, it returns false so the key keeps operating on the prompt area.
+func (u *UI) showScroll(direction int) bool {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	if u.commandViewActive {
+		return false
+	}
+	if u.activeQuestionPanelLocked() != nil {
+		return false
+	}
+	if u.fixedInput {
+		if queue := u.activeQueueLocked(); queue.expanded && len(u.queuedPromptsLocked()) > 0 {
+			return false
+		}
+	} else if !u.statusActive || u.terminal == nil {
+		return false
+	}
+	if u.display == nil {
+		return false
+	}
+	v := u.activeViewportLocked()
+	if !v.browsing {
+		return false
+	}
+	rows := u.renderHistoryRowsLocked(u.display.Snapshot())
+	if len(rows) == 0 {
+		return false
+	}
+	size := v.visibleRows
+	if size <= 0 {
+		size = max(1, u.height-6)
+	}
+	previous := *v
+	v.scroll(rows, size, direction)
+	if *v == previous {
+		// Already at the oldest row: stay paused and keep the key from
+		// reaching prompt history or the cursor.
+		return true
+	}
+	u.commandMenu.reset()
+	u.repaintActiveLocked(0)
+	u.signalPresentation()
+	return true
 }
 
 func (u *UI) showHistoryBoundary(beginning bool) bool {

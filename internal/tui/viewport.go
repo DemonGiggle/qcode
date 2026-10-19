@@ -235,3 +235,37 @@ func (v *viewport) page(rows []historyRow, size, direction int) []historyRow {
 	}
 	return rows[start:min(len(rows), start+size)]
 }
+
+// scroll moves the reading position by a single wrapped row. Direction follows
+// page: positive scrolls toward older output, negative toward newer output.
+// It only makes progress when the view is already browsing; callers return
+// false otherwise so arrow keys keep editing the prompt. The key that resumes
+// the live tail is consumed, matching PageDown, so the next arrow press edits
+// the prompt instead of also changing its history.
+func (v *viewport) scroll(rows []historyRow, size, direction int) []historyRow {
+	size = max(1, size)
+	v.visibleRows = size
+	if len(rows) == 0 {
+		v.browsing = false
+		return nil
+	}
+	if direction == 0 {
+		start := v.start(rows, size)
+		return rows[start:min(len(rows), start+size)]
+	}
+	tail := max(0, len(rows)-size)
+	start := v.start(rows, size)
+	if direction > 0 {
+		start--
+	} else {
+		start++
+	}
+	start = max(0, min(start, len(rows)-1))
+	v.browsing = start < tail
+	if !v.browsing {
+		start = tail
+	} else {
+		v.anchor = rows[start].position
+	}
+	return rows[start:min(len(rows), start+size)]
+}

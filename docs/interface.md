@@ -96,7 +96,7 @@ Interactive mode always records concise colored activity events for tool calls a
 
 ## Scrolling
 
-Use Page Up and Page Down to scroll through qcode's output history, including while an agent is running. Each page retains two visible rows from the previous page for reading context, including wrapped text. Very short views move at least one row. Scrolling back pauses the live view: new output is still recorded, but the page you are reading stays in place. Page Down to the latest content resumes live output.
+Use Page Up and Page Down to scroll through qcode's output history, including while an agent is running. Each page retains two visible rows from the previous page for reading context, including wrapped text. Very short views move at least one row. While paused, Up and Down move a single row for finer control; they keep editing the prompt once the live view resumes. Scrolling back pauses the live view: new output is still recorded, but the page you are reading stays in place. Page Down to the latest content resumes live output.
 
 When the current view is above the end of the output, Home jumps to the oldest retained transcript row and End jumps to the latest content and resumes live output. When the view includes the end of the output, Home/End move the prompt cursor to the beginning/end. This depends on the visible position, including after resizing or changes to the prompt layout. History browsing is per agent tab; an expanded queue does not change these Home/End bindings. In the `/remote` browser page, use the **Beginning** and **Latest** buttons, or Home/End while focus is outside text fields, command panels, and the expanded queue list. Home/End keep their normal editing behavior in browser text fields.
 

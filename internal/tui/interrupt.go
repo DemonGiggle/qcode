@@ -70,6 +70,7 @@ type interruptReader struct {
 	injectMu    sync.Mutex
 	cancel      context.CancelFunc
 	page        func(int)
+	scroll      func(int) bool
 	boundary    func(bool) bool
 	tab         func(int)
 	queue       func()
@@ -97,6 +98,15 @@ func (r *interruptReader) setCancel(cancel context.CancelFunc) {
 func (r *interruptReader) setPageHandler(page func(int)) {
 	r.mu.Lock()
 	r.page = page
+	r.mu.Unlock()
+}
+
+// The scroll handler returns true when history browsing consumes an arrow
+// key for single-line scrolling. Otherwise the complete terminal sequence is
+// forwarded to the prompt editor so Up/Down keep their prompt behavior.
+func (r *interruptReader) setScrollHandler(scroll func(int) bool) {
+	r.mu.Lock()
+	r.scroll = scroll
 	r.mu.Unlock()
 }
 
@@ -325,6 +335,7 @@ func (r *interruptReader) route(input []byte) {
 	}
 	cancel := r.cancel
 	page := r.page
+	scroll := r.scroll
 	boundary := r.boundary
 	tab := r.tab
 	queue := r.queue
@@ -403,6 +414,32 @@ func (r *interruptReader) route(input []byte) {
 			input = input[len(pageDownSequence):]
 			continue
 		}
+		if len(input) >= len(arrowUpSequence) && string(input[:len(arrowUpSequence)]) == arrowUpSequence {
+			consumed := false
+			if scroll != nil {
+				consumed = scroll(1)
+			}
+			if !consumed {
+				for _, key := range input[:len(arrowUpSequence)] {
+					r.data <- key
+				}
+			}
+			input = input[len(arrowUpSequence):]
+			continue
+		}
+		if len(input) >= len(arrowDownSequence) && string(input[:len(arrowDownSequence)]) == arrowDownSequence {
+			consumed := false
+			if scroll != nil {
+				consumed = scroll(-1)
+			}
+			if !consumed {
+				for _, key := range input[:len(arrowDownSequence)] {
+					r.data <- key
+				}
+			}
+			input = input[len(arrowDownSequence):]
+			continue
+		}
 		if isKnownSequencePrefix(input) {
 			r.mu.Lock()
 			r.pending = append(r.pending, input...)
@@ -463,7 +500,7 @@ func isKnownSequencePrefix(input []byte) bool {
 	if len(prefix) < len(altQueuePanel) && altQueuePanel[:len(prefix)] == prefix {
 		return true
 	}
-	for _, sequence := range []string{pageUpSequence, pageDownSequence, bracketedPasteStart} {
+	for _, sequence := range []string{pageUpSequence, pageDownSequence, arrowUpSequence, arrowDownSequence, bracketedPasteStart} {
 		if len(prefix) < len(sequence) && sequence[:len(prefix)] == prefix {
 			return true
 		}

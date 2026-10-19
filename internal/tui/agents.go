@@ -930,7 +930,7 @@ func (u *UI) drawNavigationLocked() {
 	if u.commandViewActive || !u.statusActive || !u.activeViewportLocked().browsing {
 		return
 	}
-	message := truncateDiffLine("History paused | PgUp/PgDn | PgDn to bottom resumes", u.width, u.unicode)
+	message := truncateDiffLine("History paused | Up/Down PgUp/PgDn | PgDn to bottom resumes", u.width, u.unicode)
 	fmt.Fprint(u.out, fmt.Sprintf("\x1b[s\x1b[?7l\x1b[%d;1H\x1b[2K%s\x1b[?7h\x1b[u", u.statusTaskRowLocked(), renderThemeStatusBarLine(dim+message+reset, u.width, u.outputTheme(), true)))
 }
 

@@ -331,6 +331,7 @@ func startQuestionnaire(t *testing.T, u *UI, questions []question.Question) (<-c
 	t.Helper()
 	u.input = newInterruptReader(nil)
 	u.input.setPageHandler(u.showPage)
+	u.input.setScrollHandler(u.showScroll)
 	u.input.setHistoryBoundaryHandler(u.showHistoryBoundary)
 	u.input.setTabHandler(u.requestTabSwitch)
 	u.terminal = lineedit.NewTerminal(readWriter{Reader: u.input, Writer: io.Discard}, inputPrompt)
