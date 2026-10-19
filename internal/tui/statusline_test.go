@@ -6,6 +6,18 @@ import (
 	"testing"
 )
 
+func TestStatusSeparatorGlyphs(t *testing.T) {
+	if got := statusSeparator(true); got != " · " {
+		t.Fatalf("unicode separator = %q, want %q", got, " · ")
+	}
+	if got := statusSeparator(false); got != " . " {
+		t.Fatalf("ascii separator = %q, want %q", got, " . ")
+	}
+	if visibleWidth(statusSeparator(true)) != 3 || visibleWidth(statusSeparator(false)) != 3 {
+		t.Fatalf("separator widths = %d/%d, want 3/3", visibleWidth(statusSeparator(true)), visibleWidth(statusSeparator(false)))
+	}
+}
+
 func TestStatuslineTwoLineAlignment(t *testing.T) {
 	// Overflow wraps to a second left-aligned line: high priority first,
 	// remainder second, each fitting its own width.
@@ -185,8 +197,8 @@ func TestStatuslinePreservesLongWorkspaceTail(t *testing.T) {
 		unicode bool
 	}{
 		{"plain", 64, false, true},
-		{"colored", 84, true, true},
-		{"ascii", 84, true, false},
+		{"colored", 68, true, true},
+		{"ascii", 68, true, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			bar := statusBar("ollama", "qwen", root, test.width, test.unicode, test.color, "73% left", "I:1 O:2")
@@ -276,7 +288,7 @@ func TestStatuslineTokenTotalFitsWrappedRow(t *testing.T) {
 	for _, color := range []bool{false, true} {
 		for _, unicode := range []bool{false, true} {
 			total := interfaceGlyph(unicode, "Σ:150", "T:150")
-			for _, width := range []int{60, 19} {
+			for _, width := range []int{48, 19} {
 				bar := statusBar("ollama", "qwen", "/w", width, unicode, color, "73% left", "I:120 O:30 "+total)
 				if width == 19 {
 					bar = statusBarWithStatuslineHidden("p", "m", "/w", width, unicode, color, false, []string{"ws", "ctx"}, magenta, blue, "73% left", "I:120 O:30 "+total)
@@ -288,7 +300,7 @@ func TestStatuslineTokenTotalFitsWrappedRow(t *testing.T) {
 				if !strings.Contains(lines[1], "TOK") || !strings.Contains(lines[1], "I:120 O:30") {
 					t.Fatalf("want tokens on second row: %q", bar)
 				}
-				if strings.Contains(bar, total) != (width == 60) {
+				if strings.Contains(bar, total) != (width == 48) {
 					t.Fatalf("total should depend on available row space (width %d): %q", width, bar)
 				}
 				for _, line := range lines {

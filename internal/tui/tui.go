@@ -2190,10 +2190,7 @@ func buildStatusBar(provider, model, root string, unicodeEnabled, color, remote 
 	if len(contextLabel) > 1 {
 		segments = append(segments, statusSegment("TOK", contextLabel[1], cyan))
 	}
-	separator := dim + "  │  " + reset
-	if !unicodeEnabled {
-		separator = dim + "  |  " + reset
-	}
+	separator := statusSeparatorColored(unicodeEnabled)
 	return strings.Join(segments, separator)
 }
 
@@ -2274,10 +2271,7 @@ func compactStatusBar(labels []string, color, unicodeEnabled, remote bool) strin
 	if len(labels) == 0 && !remote {
 		return ""
 	}
-	separator := "  │  "
-	if !unicodeEnabled {
-		separator = "  |  "
-	}
+	separator := statusSeparator(unicodeEnabled)
 	segments := []string{}
 	if remote {
 		segments = append(segments, remoteStatusBadge(color))

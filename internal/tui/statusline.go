@@ -159,6 +159,18 @@ func (u *UI) statuslineHiddenLocked() map[string]bool {
 	return statusHiddenSet(u.statuslineHidden)
 }
 
+// statusSeparator is the divider between status bar segments.
+// Unicode terminals use a spaced middle dot for readability; ASCII-only
+// terminals fall back to a spaced period so QCODE_ASCII output stays portable.
+func statusSeparator(unicodeEnabled bool) string {
+	return interfaceGlyph(unicodeEnabled, " · ", " . ")
+}
+
+// statusSeparatorColored is the dimmed divider used for colored status bars.
+func statusSeparatorColored(unicodeEnabled bool) string {
+	return dim + statusSeparator(unicodeEnabled) + reset
+}
+
 func shortenModeLabel(mode string, short bool) string {
 	if short && mode == "INTERACTIVE" {
 		return "INT"
@@ -268,10 +280,7 @@ func renderFilteredStatusBar(provider, model, ws string, unicodeEnabled, color, 
 	if showTok {
 		segments = append(segments, statusSegment("TOK", tok, cyan))
 	}
-	separator := dim + "  │  " + reset
-	if !unicodeEnabled {
-		separator = dim + "  |  " + reset
-	}
+	separator := statusSeparatorColored(unicodeEnabled)
 	return strings.Join(segments, separator)
 }
 
