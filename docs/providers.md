@@ -2,6 +2,9 @@
 
 qcode talks to Ollama and OpenAI-compatible APIs, plus OpenCode Go. Provider-specific wire formats stay isolated behind the small `llm.Provider` interface; see [Extending providers](extending-providers.md) to add one.
 
+Normal agent turns leave temperature unspecified, preserving the provider's
+model defaults, including parameters stored in an Ollama model.
+
 ## Ollama (default)
 
 ```sh

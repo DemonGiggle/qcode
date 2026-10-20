@@ -14,6 +14,10 @@ is unavailable. Preserve any required reasoning replay data in
 `Message.ReasoningDetails`; `Message.Thinking` supplies displayable text.
 Honor context cancellation and the configured HTTP client/TLS policy.
 
+`Request.Temperature` is optional: a nil pointer preserves the provider's model
+default. Omit the parameter when nil; send an explicit value, including zero,
+only when the model and protocol support it.
+
 Implement optional capabilities when supported: `ModelLister` for `/model`,
 `ThinkingProvider` for exact-model thinking choices, `ContextWindowProvider`
 for capacity discovery, and `ModelValidator` for early validation. Providers

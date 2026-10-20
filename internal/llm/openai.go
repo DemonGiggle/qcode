@@ -171,8 +171,8 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 		tools = append(tools, openAITool{Type: "function", Function: tool})
 	}
 	body := map[string]any{"stream_options": map[string]any{"include_usage": true}, "model": input.Model, "messages": messages, "stream": true}
-	if p.name != "openai" || !capability.Supported {
-		body["temperature"] = input.Temperature
+	if input.Temperature != nil && (p.name != "openai" || !capability.Supported) {
+		body["temperature"] = *input.Temperature
 	}
 	if len(tools) > 0 {
 		body["tools"] = tools

@@ -48,10 +48,12 @@ type Request struct {
 	Model string
 	// Thinking is an optional user-selected level. Providers must omit thinking
 	// request fields when it is empty or unsupported for the selected model.
-	Thinking    string
-	Messages    []Message
-	Tools       []Tool
-	Temperature float64
+	Thinking string
+	Messages []Message
+	Tools    []Tool
+	// Temperature is optional: nil preserves the provider's model default.
+	// A non-nil value, including zero, is sent only by adapters that support it.
+	Temperature *float64
 }
 
 type Response struct {
