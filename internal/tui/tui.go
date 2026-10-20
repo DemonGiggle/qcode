@@ -1178,6 +1178,19 @@ func (u *UI) compactConversation(ctx context.Context) {
 	u.printSystemMessage(green + result + reset)
 }
 
+// openCodeGoBackendChanged reports whether switching models crosses an
+// OpenCode Go wire protocol (chat/completions vs messages vs responses).
+// Other providers use one protocol, so model switches there never warn.
+func openCodeGoBackendChanged(provider, oldModel, newModel string) bool {
+	if provider != "opencode-go" {
+		return false
+	}
+	if oldModel == "" || oldModel == newModel {
+		return false
+	}
+	return llm.OpenCodeGoRoute(oldModel) != llm.OpenCodeGoRoute(newModel)
+}
+
 func (u *UI) chooseModel(ctx context.Context) {
 	if !u.activeAgentConfigurable() {
 		return
@@ -1267,6 +1280,7 @@ func (u *UI) chooseModel(ctx context.Context) {
 			return
 		}
 	}
+	oldModel, provider := u.model, u.provider
 	u.screenMu.Lock()
 	u.model = selected
 	u.screenMu.Unlock()
@@ -1277,6 +1291,9 @@ func (u *UI) chooseModel(ctx context.Context) {
 		message += interfaceGlyph(u.unicode, " · thinking: ", " | thinking: ") + level
 	}
 	u.printSystemMessage(message + reset)
+	if openCodeGoBackendChanged(provider, oldModel, selected) {
+		u.printSystemMessage(yellow + "History kept. This model uses a different backend than the previous one, so the next request may fail — if it does, run /new to start fresh." + reset)
+	}
 }
 
 func (u *UI) setModelCommand(ctx context.Context, fields []string) {
@@ -1351,6 +1368,7 @@ func (u *UI) setModelCommand(ctx context.Context, fields []string) {
 			return
 		}
 	}
+	oldModel, provider := u.model, u.provider
 	u.screenMu.Lock()
 	u.model = fields[1]
 	if view := u.views[u.activeAgent]; view != nil {
@@ -1365,6 +1383,9 @@ func (u *UI) setModelCommand(ctx context.Context, fields []string) {
 	}
 	u.drawStatusBar()
 	u.printSystemMessage(green + "Model: " + sanitizeDiffLine(fields[1], "<ESC>") + reset)
+	if openCodeGoBackendChanged(provider, oldModel, fields[1]) {
+		u.printSystemMessage(yellow + "History kept. This model uses a different backend than the previous one, so the next request may fail — if it does, run /new to start fresh." + reset)
+	}
 }
 
 // selectThinkingLevelWithBack is a second, model-aware selector. It never

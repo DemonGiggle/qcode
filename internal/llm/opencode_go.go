@@ -35,6 +35,15 @@ var openCodeGoModelRoutes = map[string]string{
 	"qwen3.8-max":                openCodeGoMessagesRoute,
 }
 
+// OpenCodeGoRoute reports the wire-protocol route used for model. Unknown
+// models use the Chat Completions route, matching Complete's default.
+func OpenCodeGoRoute(model string) string {
+	if route, ok := openCodeGoModelRoutes[model]; ok {
+		return route
+	}
+	return openCodeGoChatRoute
+}
+
 func init() { Register("opencode-go", newOpenCodeGo) }
 
 // newOpenCodeGo configures OpenCode Go's OpenAI-compatible Chat Completions

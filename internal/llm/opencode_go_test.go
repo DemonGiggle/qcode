@@ -336,3 +336,15 @@ func TestOpenCodeGoResponsesThinkingCatalog(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenCodeGoRouteMatchesCompleteRouting(t *testing.T) {
+	if OpenCodeGoRoute("minimax-m3") != openCodeGoMessagesRoute {
+		t.Errorf("minimax-m3 route = %q", OpenCodeGoRoute("minimax-m3"))
+	}
+	if OpenCodeGoRoute("muse-spark-1.3-contributor") != openCodeGoResponsesRoute {
+		t.Errorf("muse route = %q", OpenCodeGoRoute("muse-spark-1.3-contributor"))
+	}
+	if OpenCodeGoRoute("unknown-future-model") != openCodeGoChatRoute {
+		t.Errorf("unknown route = %q", OpenCodeGoRoute("unknown-future-model"))
+	}
+}
