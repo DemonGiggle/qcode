@@ -188,7 +188,7 @@ func TestPinnedPromptHidesInCommandViewsAndReturnsAfterwards(t *testing.T) {
 	u.endRawSelector()
 	u.showRemoteLogin(RemoteLogin{URL: "https://example.test/#login=secret", ExpiresAt: time.Now().Add(time.Minute)})
 	t.Cleanup(u.clearRemoteLogin)
-	if u.inputScreenRows[2] != "* one" || !strings.Contains(u.inputScreenRows[5], "Remote login") {
+	if u.inputScreenRows[2] != "* one" || strings.TrimSpace(u.inputScreenRows[5]) != "" || !strings.Contains(u.inputScreenRows[6], "Remote login") {
 		t.Fatal("login view overwrote the pinned prompt")
 	}
 }

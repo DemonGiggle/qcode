@@ -172,23 +172,149 @@ func (u *UI) paintFixedLocked(direction int) {
 		matches = nil
 	}
 	// Preserve two conversation rows when possible, yielding the second to
-	// the queue shortcut on cramped screens.
-	outputStart := 2 + len(latest)
+	// the queue shortcut on cramped screens. Each visible content region
+	// below is separated by exactly one blank row: the pinned prompt from
+	// the transcript, the transcript from suggestions/queue, and
+	// suggestions from queue. The composer keeps its own separator above
+	// it at panelEnd.
+	baseOutputStart := 2 + len(latest)
+	// Reserve the pinned-prompt separator only when some content follows.
+	// It becomes the blank row at baseOutputStart.
+	sepL := 0
+	if len(latest) > 0 && panelEnd > baseOutputStart {
+		sepL = 1
+	}
+	outputStart := baseOutputStart + sepL
+	total := panelEnd - outputStart
 	minOutput := 2
-	if len(queued) > 0 && panelEnd-outputStart < 3 {
+	if len(queued) > 0 && total < 3 {
 		minOutput = 1
 	}
-	extras := max(0, panelEnd-outputStart-minOutput)
+	extras := max(0, total-minOutput)
+	hasQueue := len(queueRows) > 0
+	hasSugg := len(matches) > 0
+	sepsNeeded := 0
+	if hasQueue && hasSugg {
+		sepsNeeded = 2
+	} else if hasQueue || hasSugg {
+		sepsNeeded = 1
+	}
 	queueHeight := 0
-	if len(queued) > 0 && extras > 0 {
-		queueHeight = min(previewLimit, len(queueRows), extras)
+	count := 0
+	outputHeight := 0
+	sepO, sepS := 0, 0
+	if extras >= sepsNeeded {
+		extrasForPanels := extras - sepsNeeded
+		if hasQueue && extrasForPanels > 0 {
+			queueHeight = min(previewLimit, len(queueRows), extrasForPanels)
+		}
+		if hasSugg {
+			count = min(len(matches), max(0, extrasForPanels-queueHeight))
+		}
+		if queue.expanded && queueHeight > 0 {
+			room := max(0, extrasForPanels-count)
+			queueHeight = min(1+len(queueRows), room, max(queueHeight, 2*room/3))
+		}
+		// Keep content over separators: if separators would hide pending
+		// work or suggestions entirely, fall back to the touching layout.
+		if (hasQueue && queueHeight == 0) || (hasSugg && count == 0) {
+			sepL = 0
+			outputStart = baseOutputStart
+			total = panelEnd - outputStart
+			minOutput = 2
+			if len(queued) > 0 && total < 3 {
+				minOutput = 1
+			}
+			extras = max(0, total-minOutput)
+			queueHeight = 0
+			if len(queued) > 0 && extras > 0 {
+				queueHeight = min(previewLimit, len(queueRows), extras)
+			}
+			count = min(len(matches), extras-queueHeight)
+			if queue.expanded && queueHeight > 0 {
+				room := extras - count
+				queueHeight = min(1+len(queueRows), room, max(queueHeight, 2*room/3))
+			}
+			outputHeight = max(0, panelEnd-count-queueHeight-outputStart)
+			sepO, sepS = 0, 0
+		} else {
+			// Recompute actual separators from what will be shown. An
+			// over-reserved separator becomes transcript space.
+			if queueHeight > 0 || count > 0 {
+				sepO = 1
+			}
+			if queueHeight > 0 && count > 0 {
+				sepS = 1
+			}
+			actualSeps := sepO + sepS
+			outputHeight = max(0, total-count-queueHeight-actualSeps)
+			// Keep minimum transcript rows over separators on cramped
+			// screens; fall back to touching when separators would hide
+			// them.
+			if outputHeight < minOutput && (count > 0 || queueHeight > 0 || len(latest) > 0) {
+				// Check whether dropping all separators restores minimum
+				// output. If so, prefer content over separators.
+				withoutTotal := panelEnd - baseOutputStart
+				withoutMin := 2
+				if len(queued) > 0 && withoutTotal < 3 {
+					withoutMin = 1
+				}
+				withoutExtras := max(0, withoutTotal-withoutMin)
+				withoutQueue := 0
+				if len(queued) > 0 && withoutExtras > 0 {
+					withoutQueue = min(previewLimit, len(queueRows), withoutExtras)
+				}
+				withoutCount := min(len(matches), withoutExtras-withoutQueue)
+				withoutOutput := max(0, withoutTotal-withoutCount-withoutQueue)
+				if withoutOutput >= withoutMin && withoutOutput > outputHeight {
+					sepL = 0
+					outputStart = baseOutputStart
+					total = withoutTotal
+					minOutput = withoutMin
+					extras = withoutExtras
+					queueHeight = withoutQueue
+					count = withoutCount
+					if queue.expanded && queueHeight > 0 {
+						room := extras - count
+						queueHeight = min(1+len(queueRows), room, max(queueHeight, 2*room/3))
+						count = min(len(matches), extras-queueHeight)
+						withoutOutput = max(0, panelEnd-count-queueHeight-outputStart)
+					}
+					outputHeight = withoutOutput
+					sepO, sepS = 0, 0
+				}
+			}
+			// Drop the pinned-prompt separator when nothing follows; the
+			// composer separator already separates the pin from the prompt.
+			if outputHeight == 0 && count == 0 && queueHeight == 0 {
+				sepL = 0
+				outputStart = baseOutputStart
+				total = panelEnd - outputStart
+				sepO, sepS = 0, 0
+			}
+		}
+	} else {
+		// Cramped screens keep content over separators: fall back to the
+		// touching layout so pending work and minimum output stay visible.
+		sepL = 0
+		outputStart = baseOutputStart
+		total = panelEnd - outputStart
+		minOutput = 2
+		if len(queued) > 0 && total < 3 {
+			minOutput = 1
+		}
+		extras = max(0, total-minOutput)
+		if len(queued) > 0 && extras > 0 {
+			queueHeight = min(previewLimit, len(queueRows), extras)
+		}
+		count = min(len(matches), extras-queueHeight)
+		if queue.expanded && queueHeight > 0 {
+			room := extras - count
+			queueHeight = min(1+len(queueRows), room, max(queueHeight, 2*room/3))
+		}
+		outputHeight = max(0, panelEnd-count-queueHeight-outputStart)
+		sepO, sepS = 0, 0
 	}
-	count := min(len(matches), extras-queueHeight)
-	if queue.expanded && queueHeight > 0 {
-		room := extras - count
-		queueHeight = min(1+len(queueRows), room, max(queueHeight, 2*room/3))
-	}
-	outputHeight := max(0, panelEnd-count-queueHeight-outputStart)
 	if question == nil {
 		u.activeViewportLocked().visibleRows = outputHeight
 	}
@@ -228,7 +354,7 @@ func (u *UI) paintFixedLocked(direction int) {
 		if i == count-1 && len(matches) > count {
 			text += " (type to filter)"
 		}
-		screenRows[panelEnd-queueHeight-count+i] = truncateDiffLine(text, u.width, u.unicode)
+		screenRows[panelEnd-queueHeight-sepS-count+i] = truncateDiffLine(text, u.width, u.unicode)
 	}
 	if queueHeight > 0 {
 		queueStart := panelEnd - queueHeight
