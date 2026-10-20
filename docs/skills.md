@@ -27,6 +27,12 @@ Alternatively, copy a chosen skill directory into `.qcode/skills/` or
 every skill in that directory selected at startup. Release executables do not
 bundle these Markdown files.
 
+For explicit stopping conditions during code investigations and fixes, select
+[`bounded-verification`](skills/bounded-verification/SKILL.md). It requires each
+additional verification step to resolve a fact that could change the answer,
+while preserving task scope and required checks. It provides model guidance;
+`/maxsteps` separately limits model turns.
+
 ## Discovery and precedence
 
 qcode scans three directories in ascending precedence (later overrides earlier on name collisions):
