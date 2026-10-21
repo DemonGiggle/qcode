@@ -93,8 +93,19 @@ func TestFixedTaskIndicatorAnimatesOnlyItsRow(t *testing.T) {
 	u.drawFixedTaskIndicatorLocked(now)
 	previous := append([]string(nil), u.inputScreenRows...)
 	row, column := u.inputCursorRow, u.inputCursorColumn
+	before, _ := u.out.Stat()
 	history.snapshots = 0
 	u.drawFixedTaskIndicatorLocked(now.Add(1100 * time.Millisecond))
+	data, err := os.ReadFile(u.out.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := string(data[before.Size():])
+	for _, unwanted := range []string{"\x1b[2K", "\x1b[?25l", "\x1b[?25h", "Waiting", "Ctrl+C"} {
+		if strings.Contains(update, unwanted) {
+			t.Fatalf("spinner tick disturbed unchanged content with %q: %q", unwanted, update)
+		}
+	}
 	if history.snapshots != 0 {
 		t.Fatal("spinner animation rebuilt history")
 	}

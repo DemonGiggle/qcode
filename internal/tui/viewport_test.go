@@ -222,7 +222,18 @@ func TestHistoryBoundaryJumpsPreserveDraftAndResumeLiveOutput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(string(data[before:]), "latest streamed output") || strings.Contains(string(data[before:]), "background output") {
+			visible := string(data[before:])
+			if fixed {
+				screen := newFixedScreen(u.width, u.height)
+				screen.feed(string(data))
+				var rows strings.Builder
+				for _, row := range screen.rows {
+					rows.WriteString(string(row))
+					rows.WriteByte('\n')
+				}
+				visible = rows.String()
+			}
+			if !strings.Contains(visible, "latest streamed output") || strings.Contains(visible, "background output") {
 				t.Fatal("End did not restore the active tab's latest output")
 			}
 			if u.inputText != "draft" || u.inputPosition != 3 {

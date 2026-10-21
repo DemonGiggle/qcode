@@ -260,8 +260,11 @@ func TestFixedInputUpdatesOnlyChangedRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	update := string(after[before.Size():])
-	if clears := strings.Count(update, "\x1b[2K"); clears != 1 {
-		t.Fatalf("changed input cleared %d rows: %q", clears, update)
+	if strings.Contains(update, "\x1b[2K") || strings.Contains(update, "> a") {
+		t.Fatalf("changed input cleared or rewrote unchanged text: %q", update)
+	}
+	if !strings.Contains(update, "b") {
+		t.Fatalf("changed input was not painted: %q", update)
 	}
 	if strings.Contains(update, "\x1b[2;1H") {
 		t.Fatalf("changed input repainted history: %q", update)

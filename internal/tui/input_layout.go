@@ -417,9 +417,8 @@ func (u *UI) paintFixedLocked(direction int) {
 	u.writeFixedScreenLocked(screenRows, promptRow+cy, cx+1)
 }
 
-// writeFixedScreenLocked applies a row-level diff to the fixed layout. Typing
-// normally changes only the prompt and slash-command rows, so history is not
-// cleared and repainted for each keystroke.
+// writeFixedScreenLocked diffs rows, then overwrites only their changed spans.
+// Spinner ticks and typing leave unchanged text and cursor visibility alone.
 func (u *UI) writeFixedScreenLocked(screenRows []string, cursorRow, cursorColumn int) {
 	full := u.inputFrame == "" || len(u.inputScreenRows) != len(screenRows)
 	changed := full || cursorRow != u.inputCursorRow || cursorColumn != u.inputCursorColumn
@@ -435,24 +434,52 @@ func (u *UI) writeFixedScreenLocked(screenRows []string, cursorRow, cursorColumn
 		return
 	}
 
-	var output strings.Builder
-	// Each row is positioned explicitly. Disable terminal autowrap while
-	// painting so a width mismatch cannot overwrite another cached row.
-	output.WriteString("\x1b[?25l\x1b[?7l")
-	if full {
-		output.WriteString("\x1b[0m\x1b[r")
-	}
+	var rows strings.Builder
 	for row := 1; row < len(screenRows); row++ {
 		if !full && screenRows[row] == u.inputScreenRows[row] {
 			continue
 		}
-		painted := screenRows[row]
+		previous, painted := "", screenRows[row]
+		if !full {
+			previous = u.inputScreenRows[row]
+		}
 		if ColorEnabled(u.out) {
 			painted = qtheme.PaintRow(painted, u.width, u.currentTheme())
+			if !full {
+				previous = qtheme.PaintRow(previous, u.width, u.currentTheme())
+			}
 		}
-		fmt.Fprintf(&output, "\x1b[%d;1H\x1b[2K%s\x1b[0m", row, painted)
+		if column, text := fixedRowDiff(previous, painted, u.width, full); text != "" {
+			fmt.Fprintf(&rows, "\x1b[%d;%dH%s", row, column, text)
+		}
 	}
-	fmt.Fprintf(&output, "\x1b[%d;%dH\x1b[?7h\x1b[?25h", cursorRow, cursorColumn)
+	keepCursor := !full && cursorRow == u.inputCursorRow && cursorColumn == u.inputCursorColumn
+	if rows.Len() == 0 && keepCursor {
+		u.inputScreenRows = screenRows
+		return
+	}
+	var output strings.Builder
+	// Each span is positioned explicitly. Disable terminal autowrap while
+	// painting so a width mismatch cannot overwrite another cached row.
+	if full {
+		output.WriteString("\x1b[?25l")
+	} else if keepCursor {
+		output.WriteString("\x1b[s")
+	}
+	output.WriteString("\x1b[?7l")
+	if full {
+		output.WriteString("\x1b[0m\x1b[r")
+	}
+	output.WriteString(rows.String())
+	output.WriteString("\x1b[?7h")
+	if keepCursor {
+		output.WriteString("\x1b[u")
+	} else {
+		fmt.Fprintf(&output, "\x1b[%d;%dH", cursorRow, cursorColumn)
+	}
+	if full {
+		output.WriteString("\x1b[?25h")
+	}
 	if _, err := u.out.WriteString(output.String()); err != nil {
 		return
 	}

@@ -54,10 +54,15 @@ func (s *fixedScreen) feed(data string) {
 				s.y = max(0, min(len(s.rows)-1, s.y-1))
 				s.wrapPending = false
 			case 'K':
-				if params != "2" {
+				start := 0
+				if params == "" || params == "0" {
+					start = s.x
+				} else if params != "2" {
 					panic("unsupported screen erasure")
 				}
-				s.rows[s.y] = []rune(strings.Repeat(" ", width))
+				for x := start; x < width; x++ {
+					s.rows[s.y][x] = ' '
+				}
 			case 's':
 				s.savedX, s.savedY = s.x, s.y
 			case 'u':
