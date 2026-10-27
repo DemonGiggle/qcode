@@ -55,17 +55,17 @@ func (g *outputGroup) prepareLocked(data []byte) []byte {
 		g.pending = nil
 		g.visible = true
 	}
-	if d.transient && visibleGroupText(data) {
+	clearTransient := d.transient && visibleGroupText(data)
+	if clearTransient {
 		// Spinner rows stay transient until completion. A notice may arrive
 		// while one is active; erase it before committing
 		// any rows so it cannot become archived transcript content.
-		_, _ = d.writeFilteredLocked([]byte("\r\x1b[2K"))
 		d.transient = false
 	}
 	if d.group != g && visibleGroupText(data) {
 		// Derive the boundary from retained history, including restored or
 		// cleared tabs. Incoming blank rows can supply the separator too.
-		padding := d.history.groupPadding()
+		padding := d.history.groupPadding(clearTransient)
 		plain := plainHistoryText(string(data))
 		leading := plain[:len(plain)-len(strings.TrimLeftFunc(plain, unicode.IsSpace))]
 		blankRows := strings.Count(leading, "\n")
@@ -75,6 +75,11 @@ func (g *outputGroup) prepareLocked(data []byte) []byte {
 		padding = max(0, padding-blankRows)
 		data = append([]byte(strings.Repeat("\n", padding)), data...)
 		d.group = g
+	}
+	if clearTransient {
+		// Clear and replace the transient line in one write, so the fixed
+		// layout never paints the intermediate empty transcript.
+		data = append([]byte("\r\x1b[2K"), data...)
 	}
 	return data
 }
@@ -126,10 +131,10 @@ func visibleGroupText(data []byte) bool {
 
 // groupPadding returns the newlines needed before the next visible group.
 // It uses only the repaint window: /clear starts a fresh visible transcript.
-func (w *historyWriter) groupPadding() int {
+func (w *historyWriter) groupPadding(clearCurrent bool) int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if strings.TrimSpace(plainHistoryText(renderHistoryCells(w.current))) != "" {
+	if !clearCurrent && strings.TrimSpace(plainHistoryText(renderHistoryCells(w.current))) != "" {
 		return 2
 	}
 	if len(w.lines) > 0 && strings.TrimSpace(plainHistoryText(w.lines[len(w.lines)-1])) != "" {

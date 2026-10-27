@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -169,6 +170,45 @@ func TestEmptyStreamsAndSpinnerRedrawsDoNotAddSeparators(t *testing.T) {
 			task.End()
 			if got := plainGroupLines(d); !reflect.DeepEqual(got, []string{"before", "", "during spinner"}) {
 				t.Fatalf("notice archived the spinner: %#v", got)
+			}
+		})
+	}
+}
+
+func TestFullWidthProgressRedrawDoesNotShiftTranscript(t *testing.T) {
+	for _, width := range []int{20, 80} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			u, _ := layoutFixture(t)
+			u.width = width
+			d := u.display.(*agentDisplay)
+			for i := 0; i < 30; i++ {
+				fmt.Fprintf(d, "transcript %d\n", i)
+			}
+			group := d.NewOutputGroup()
+			prefix := strings.Repeat("x", width-1)
+			fmt.Fprintf(group, "\r%s|", prefix)
+			previous := append([]string(nil), u.inputScreenRows...)
+			before, err := u.out.Stat()
+			if err != nil {
+				t.Fatal(err)
+			}
+			fmt.Fprintf(group, "\r%s/", prefix)
+			data, err := os.ReadFile(u.out.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+			update := string(data[before.Size():])
+			if strings.Contains(update, "transcript") || strings.Contains(update, "\x1b[K") {
+				t.Fatalf("spinner redraw repainted transcript or cleared a row: %q", update)
+			}
+			changed := 0
+			for row := range previous {
+				if previous[row] != u.inputScreenRows[row] {
+					changed++
+				}
+			}
+			if changed != 1 || !strings.Contains(update, "/") {
+				t.Fatalf("spinner redraw changed %d rows: %q", changed, update)
 			}
 		})
 	}
