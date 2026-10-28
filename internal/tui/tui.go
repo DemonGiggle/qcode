@@ -1183,7 +1183,7 @@ func (u *UI) compactConversation(ctx context.Context) {
 		return
 	}
 	u.printSystemMessage(green + result + reset)
-	u.printSystemMessage(dim + "Type /compact show to inspect the compacted context." + reset)
+	u.printSystemMessage(dim + "Type " + reset + bold + yellow + "/compact show" + reset + dim + " to inspect the compacted context." + reset)
 }
 
 // openCodeGoBackendChanged reports whether switching models crosses an

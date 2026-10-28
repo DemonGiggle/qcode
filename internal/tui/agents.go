@@ -549,7 +549,7 @@ func (u *UI) handleAgentEvent(event session.Event) {
 			}
 			fmt.Fprintf(transcript.NewGroup(view.display), "%s%s%s\n", dim, message, reset)
 			if compactHint {
-				fmt.Fprintf(transcript.NewGroup(view.display), "%s%s%s\n", dim, "Type /compact show to inspect the compacted context.", reset)
+				fmt.Fprintf(transcript.NewGroup(view.display), "%s\n", dim+"Type "+reset+bold+yellow+"/compact show"+reset+dim+" to inspect the compacted context."+reset)
 			}
 		}
 	}
