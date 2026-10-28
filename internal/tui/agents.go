@@ -186,7 +186,6 @@ func (u *UI) selectAgentModel(ctx context.Context, runner modelRunner) (string, 
 		return "", "", false, fmt.Errorf("provider returned no models")
 	}
 	visible := min(12, max(3, u.height-6))
-	u.printSystemMessage(dim + "Type to search; use Up/Down to move, Enter to select, Esc to leave, or Ctrl+C to cancel." + reset)
 	modelQuery := ""
 	for {
 		u.input.setRaw(true)

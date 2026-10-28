@@ -1210,10 +1210,11 @@ func (u *UI) chooseModel(ctx context.Context) {
 	}
 	fetchCtx, cancel := context.WithCancel(ctx)
 	u.input.setCancel(cancel)
-	u.printSystemMessage(dim + "Waiting for models...  Ctrl+C to cancel" + reset)
+	u.showTransientStatus(dim + "Waiting for models...  Ctrl+C to cancel" + reset)
 	models, err := runner.ListModels(fetchCtx)
 	u.input.setCancel(nil)
 	cancel()
+	u.clearTransientStatus()
 	if errors.Is(err, context.Canceled) {
 		u.printSystemMessage(yellow + "Model selection cancelled." + reset)
 		return
@@ -1321,8 +1322,9 @@ func (u *UI) setModelCommand(ctx context.Context, fields []string) {
 	u.input.setCancel(cancel)
 	defer u.input.setCancel(nil)
 	defer cancel()
-	u.printSystemMessage(dim + "Waiting for models...  Ctrl+C to cancel" + reset)
+	u.showTransientStatus(dim + "Waiting for models...  Ctrl+C to cancel" + reset)
 	models, err := runner.ListModels(fetchCtx)
+	u.clearTransientStatus()
 	if errors.Is(err, context.Canceled) {
 		u.printSystemMessage(yellow + "Model selection cancelled." + reset)
 		return
@@ -1413,7 +1415,6 @@ func (u *UI) selectThinkingLevelWithBack(runner modelRunner, model string, visib
 	if model == u.model {
 		current = thinking.ThinkingLevel()
 	}
-	u.printSystemMessage(dim + "Select a thinking level; Esc returns to the model list; Ctrl+C cancels." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
 	selected, accepted, back, err := selectThinkingWithBack(u.input, u.themedSelectorWriter(), capability.Levels, current, visible, u.width, ColorEnabled(u.out))
@@ -1758,6 +1759,26 @@ func (u *UI) currentInputPrompt() string {
 		return planInputPrompt
 	}
 	return inputPrompt
+}
+
+// showTransientStatus writes a carriage-return-anchored line that history
+// treats as unfinished output, so it never becomes committed transcript.
+// It keeps fetch feedback visible without leaking into the output window.
+// Callers must clear it with clearTransientStatus before opening a raw
+// selector (which bypasses display history) or when no further display
+// write would clear it.
+func (u *UI) showTransientStatus(message string) {
+	if u.display == nil {
+		return
+	}
+	_, _ = io.WriteString(u.display, "\r"+message)
+}
+
+func (u *UI) clearTransientStatus() {
+	if u.display == nil {
+		return
+	}
+	_, _ = io.WriteString(u.display, "\r\x1b[2K")
 }
 
 // printSystemMessage separates status and command feedback from surrounding

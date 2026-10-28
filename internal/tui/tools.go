@@ -26,7 +26,6 @@ func (u *UI) chooseTools() {
 		u.printSystemMessage(dim + "No tools are available." + reset)
 		return
 	}
-	u.printSystemMessage(dim + "Type to filter. Use Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, Esc to leave, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
 	defer func() {

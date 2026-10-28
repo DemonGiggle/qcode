@@ -34,7 +34,6 @@ func (u *UI) chooseSkills() {
 		}
 	}
 	u.printSystemMessage(formatSkillSelection("Currently enabled", selectedSkillNames(u.skills, initial), u.width, u.unicode, ColorEnabled(u.out), dim))
-	u.printSystemMessage(dim + "Type to filter. Use Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, Esc to leave, or Ctrl+C to cancel." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
 	defer func() {

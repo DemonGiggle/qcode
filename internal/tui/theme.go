@@ -13,7 +13,6 @@ func (u *UI) chooseTheme() {
 		u.printSystemMessage(dim + "Theme selection is unavailable." + reset)
 		return
 	}
-	u.printSystemMessage(dim + "Preview with Up/Down. Enter applies and saves; Esc or Ctrl+C cancels." + reset)
 	u.input.setRaw(true)
 	u.beginRawSelector()
 	visibleRows := u.height - 12
