@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"qcode/internal/llm"
@@ -55,20 +56,44 @@ func (a *Agent) Compact(ctx context.Context) (string, error) {
 	if len(summarize) == 0 {
 		summarize = stripTrailingToolCalls(sanitizeForCompact(a.messages[1:]))
 	}
-	request := llm.Request{Model: a.model, Thinking: "", Messages: append([]llm.Message{{Role: "system", Content: prompt.ConversationCompact}}, summarize...)}
-	streamed := false
-	response, err := a.provider.Complete(ctx, request, func(event llm.StreamEvent) {
-		if ctx.Err() != nil || event.Text == "" || streamed {
-			return
-		}
-		streamed = true
-		a.reportProgress("Compacting conversation... receiving summary")
-	})
-	a.recordUsage(response.Usage)
+	if len(summarize) == 0 {
+		// Nothing completed to summarize (e.g. history is only a dangling
+		// tool call awaiting its result). A system-only request comes back
+		// empty from most models, so don't send it.
+		return "Conversation is already compact.", nil
+	}
+	completeSummary := func(msgs []llm.Message) (llm.Response, error) {
+		request := llm.Request{Model: a.model, Thinking: "", Messages: append([]llm.Message{{Role: "system", Content: prompt.ConversationCompact}}, msgs...)}
+		streamed := false
+		response, err := a.provider.Complete(ctx, request, func(event llm.StreamEvent) {
+			if ctx.Err() != nil || event.Text == "" || streamed {
+				return
+			}
+			streamed = true
+			a.reportProgress("Compacting conversation... receiving summary")
+		})
+		a.recordUsage(response.Usage)
+		return response, err
+	}
+	response, err := completeSummary(summarize)
 	if err != nil {
 		return "", err
 	}
-	summary := response.Message.Content
+	summary := compactSummaryText(response.Message)
+	if summary == "" {
+		// Retry once with only the most recent turns: transient empty
+		// responses and oversized inputs often succeed when smaller.
+		retry := summarize
+		if len(retry) > 10 {
+			retry = stripTrailingToolCalls(retry[len(retry)-10:])
+		}
+		if len(retry) != 0 {
+			if response, err = completeSummary(retry); err != nil {
+				return "", err
+			}
+			summary = compactSummaryText(response.Message)
+		}
+	}
 	if summary == "" {
 		return "", fmt.Errorf("compaction produced no summary")
 	}
@@ -92,6 +117,16 @@ func stripTrailingToolCalls(messages []llm.Message) []llm.Message {
 	return messages
 }
 
+// compactSummaryText extracts usable summary text. Some models return
+// whitespace-only content or thinking-only output for summarization requests;
+// trimming and falling back to Thinking avoids a spurious "no summary" error.
+func compactSummaryText(msg llm.Message) string {
+	if s := strings.TrimSpace(msg.Content); s != "" {
+		return s
+	}
+	return strings.TrimSpace(msg.Thinking)
+}
+
 // sanitizeForCompact truncates large tool results with explicit markers while
 // preserving tool-call pairing and provider-required replay fields. Images are
 // replaced with a placeholder (base64 payloads dominate cost); Thinking and
@@ -99,13 +134,12 @@ func stripTrailingToolCalls(messages []llm.Message) []llm.Message {
 // them to replay assistant turns. User/assistant text is otherwise preserved
 // verbatim.
 //
-// Performance: O(L) in total sanitized bytes with zero json.Marshal calls.
-// Token usage is tracked arithmetically per message, so budget enforcement is
-// a single extra pass instead of re-marshaling the whole slice after every
-// truncated tool result (previously O(n*L)).
+// Performance: O(L) in total sanitized bytes. The budget uses one exact
+// estimateTokens over the whole slice plus one per truncated tool message to
+// track savings, instead of re-marshaling the whole slice after every
+// truncation (previously O(n*L)).
 func sanitizeForCompact(messages []llm.Message) []llm.Message {
 	out := make([]llm.Message, 0, len(messages))
-	totalBytes := 2 // JSON array envelope; per-message overhead lives in compactMessageBytes.
 	for _, msg := range messages {
 		next := llm.Message{
 			Role:             msg.Role,
@@ -135,44 +169,29 @@ func sanitizeForCompact(messages []llm.Message) []llm.Message {
 			truncated := len(next.Content) - maxCompactToolChars
 			next.Content = next.Content[:maxCompactToolChars] + fmt.Sprintf("\n\n[truncated %d chars for compaction]", truncated)
 		}
-		totalBytes += compactMessageBytes(next)
 		out = append(out, next)
 	}
-	if (totalBytes+3)/4 <= maxCompactInputTokens {
+	total := estimateTokens(out)
+	if total <= maxCompactInputTokens {
 		return out
 	}
-	// Over budget: tighten tool results from 4000 down to 500 chars, largest
-	// savings first by scanning in order and stopping as soon as the
-	// arithmetically tracked total fits. No re-marshaling per truncation.
+	// Over budget: tighten tool results from 4000 down to 500 chars, tracking
+	// savings with per-message estimates so the whole slice is marshaled once.
 	for i := range out {
 		if out[i].Role != "tool" || len(out[i].Content) <= minCompactToolChars {
 			continue
 		}
-		before := compactMessageBytes(out[i])
+		before := estimateTokens(out[i])
 		truncated := len(out[i].Content) - minCompactToolChars
 		out[i].Content = out[i].Content[:minCompactToolChars] + fmt.Sprintf("\n\n[truncated %d chars for compaction to fit budget]", truncated)
-		totalBytes -= before - compactMessageBytes(out[i])
-		if (totalBytes+3)/4 <= maxCompactInputTokens {
+		total += estimateTokens(out[i]) - before
+		if total <= maxCompactInputTokens {
 			break
 		}
 	}
 	// If still over budget the bloat is user/assistant text, which is preserved
 	// verbatim by design; return best-effort rather than dropping turns.
 	return out
-}
-
-// compactMessageBytes approximates the json.Marshal length of one sanitized
-// message for budget accounting without serializing. It must stay in sync
-// with estimateTokens' (len(json)+3)/4 rule: only relative savings matter.
-func compactMessageBytes(m llm.Message) int {
-	n := len(m.Role) + len(m.Content) + len(m.Name) + len(m.ToolCallID) + len(m.Thinking)
-	n += len(m.ReasoningDetails)
-	for _, call := range m.ToolCalls {
-		n += len(call.ID) + len(call.Name) + len(call.Arguments)
-	}
-	// Keys, quotes, brackets, and commas for one array element.
-	n += 64
-	return n
 }
 
 func (a *Agent) shouldAutoCompact() bool {
