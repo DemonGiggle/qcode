@@ -293,8 +293,8 @@ func TestCompactSendsReducedPayload(t *testing.T) {
 		t.Fatal("compaction request missing instructions")
 	}
 	for _, msg := range req.Messages[1:] {
-		if len(msg.Images) != 0 || msg.Thinking != "" || len(msg.ReasoningDetails) != 0 {
-			t.Fatalf("compaction retained wire overhead: %+v", msg)
+		if len(msg.Images) != 0 {
+			t.Fatalf("compaction must strip image payloads: %+v", msg)
 		}
 		if msg.Origin != "" || msg.Untrusted {
 			t.Fatalf("compaction retained provenance metadata: %+v", msg)
@@ -302,6 +302,27 @@ func TestCompactSendsReducedPayload(t *testing.T) {
 		if strings.Contains(msg.Content, "TAIL-USER-") {
 			t.Fatalf("compaction re-summarized retained tail: %q", msg.Content)
 		}
+	}
+	// Reasoning replay fields are required by Responses/Chat adapters to
+	// accept assistant history; stripping them caused 400
+	// "input_text is not valid on assistant messages".
+	preservedThinking := false
+	for _, msg := range req.Messages[1:] {
+		if msg.Role == "assistant" && strings.HasPrefix(msg.Content, "old answer") {
+			if msg.Thinking != "secret thinking" || len(msg.ReasoningDetails) == 0 {
+				t.Fatalf("compaction dropped required replay fields: %+v", msg)
+			}
+			if !strings.Contains(msg.Content, "[1 image(s) omitted for compaction]") {
+				t.Fatalf("image placeholder missing: %+v", msg)
+			}
+			if len(msg.Images) != 0 {
+				t.Fatalf("image payload not stripped: %+v", msg)
+			}
+			preservedThinking = true
+		}
+	}
+	if !preservedThinking {
+		t.Fatal("old assistant turn missing from compaction request")
 	}
 	foundTruncated := false
 	for _, msg := range req.Messages[1:] {

@@ -92,18 +92,22 @@ func stripTrailingToolCalls(messages []llm.Message) []llm.Message {
 	return messages
 }
 
-// sanitizeForCompact strips per-turn wire overhead that dominates compaction
-// cost (images, thinking/reasoning blobs, local provenance) and truncates
-// large tool results with explicit markers. User/assistant text is preserved
-// verbatim; tool-call pairing fields are always kept.
+// sanitizeForCompact truncates large tool results with explicit markers while
+// preserving tool-call pairing and provider-required replay fields. Images are
+// replaced with a placeholder (base64 payloads dominate cost); Thinking and
+// ReasoningDetails are preserved because Responses/Anthropic adapters need
+// them to replay assistant turns. User/assistant text is otherwise preserved
+// verbatim.
 func sanitizeForCompact(messages []llm.Message) []llm.Message {
 	out := make([]llm.Message, 0, len(messages))
 	for _, msg := range messages {
 		next := llm.Message{
-			Role:       msg.Role,
-			Content:    msg.Content,
-			Name:       msg.Name,
-			ToolCallID: msg.ToolCallID,
+			Role:             msg.Role,
+			Content:          msg.Content,
+			Name:             msg.Name,
+			ToolCallID:       msg.ToolCallID,
+			Thinking:         msg.Thinking,
+			ReasoningDetails: append([]byte(nil), msg.ReasoningDetails...),
 		}
 		if len(msg.ToolCalls) > 0 {
 			next.ToolCalls = make([]llm.ToolCall, 0, len(msg.ToolCalls))
@@ -114,6 +118,12 @@ func sanitizeForCompact(messages []llm.Message) []llm.Message {
 					Arguments: append([]byte(nil), call.Arguments...),
 				})
 			}
+		}
+		if len(msg.Images) > 0 {
+			if next.Content != "" {
+				next.Content += "\n\n"
+			}
+			next.Content += fmt.Sprintf("[%d image(s) omitted for compaction]", len(msg.Images))
 		}
 		if next.Role == "tool" && len(next.Content) > maxCompactToolChars {
 			truncated := len(next.Content) - maxCompactToolChars
