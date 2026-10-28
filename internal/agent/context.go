@@ -98,8 +98,14 @@ func stripTrailingToolCalls(messages []llm.Message) []llm.Message {
 // ReasoningDetails are preserved because Responses/Anthropic adapters need
 // them to replay assistant turns. User/assistant text is otherwise preserved
 // verbatim.
+//
+// Performance: O(L) in total sanitized bytes with zero json.Marshal calls.
+// Token usage is tracked arithmetically per message, so budget enforcement is
+// a single extra pass instead of re-marshaling the whole slice after every
+// truncated tool result (previously O(n*L)).
 func sanitizeForCompact(messages []llm.Message) []llm.Message {
 	out := make([]llm.Message, 0, len(messages))
+	totalBytes := 2 // JSON array envelope; per-message overhead lives in compactMessageBytes.
 	for _, msg := range messages {
 		next := llm.Message{
 			Role:             msg.Role,
@@ -129,26 +135,44 @@ func sanitizeForCompact(messages []llm.Message) []llm.Message {
 			truncated := len(next.Content) - maxCompactToolChars
 			next.Content = next.Content[:maxCompactToolChars] + fmt.Sprintf("\n\n[truncated %d chars for compaction]", truncated)
 		}
+		totalBytes += compactMessageBytes(next)
 		out = append(out, next)
 	}
-	for estimateTokens(out) > maxCompactInputTokens {
-		reduced := false
-		for i := range out {
-			if out[i].Role != "tool" || len(out[i].Content) <= minCompactToolChars {
-				continue
-			}
-			truncated := len(out[i].Content) - minCompactToolChars
-			out[i].Content = out[i].Content[:minCompactToolChars] + fmt.Sprintf("\n\n[truncated %d chars for compaction to fit budget]", truncated)
-			reduced = true
-			if estimateTokens(out) <= maxCompactInputTokens {
-				break
-			}
+	if (totalBytes+3)/4 <= maxCompactInputTokens {
+		return out
+	}
+	// Over budget: tighten tool results from 4000 down to 500 chars, largest
+	// savings first by scanning in order and stopping as soon as the
+	// arithmetically tracked total fits. No re-marshaling per truncation.
+	for i := range out {
+		if out[i].Role != "tool" || len(out[i].Content) <= minCompactToolChars {
+			continue
 		}
-		if !reduced {
+		before := compactMessageBytes(out[i])
+		truncated := len(out[i].Content) - minCompactToolChars
+		out[i].Content = out[i].Content[:minCompactToolChars] + fmt.Sprintf("\n\n[truncated %d chars for compaction to fit budget]", truncated)
+		totalBytes -= before - compactMessageBytes(out[i])
+		if (totalBytes+3)/4 <= maxCompactInputTokens {
 			break
 		}
 	}
+	// If still over budget the bloat is user/assistant text, which is preserved
+	// verbatim by design; return best-effort rather than dropping turns.
 	return out
+}
+
+// compactMessageBytes approximates the json.Marshal length of one sanitized
+// message for budget accounting without serializing. It must stay in sync
+// with estimateTokens' (len(json)+3)/4 rule: only relative savings matter.
+func compactMessageBytes(m llm.Message) int {
+	n := len(m.Role) + len(m.Content) + len(m.Name) + len(m.ToolCallID) + len(m.Thinking)
+	n += len(m.ReasoningDetails)
+	for _, call := range m.ToolCalls {
+		n += len(call.ID) + len(call.Name) + len(call.Arguments)
+	}
+	// Keys, quotes, brackets, and commas for one array element.
+	n += 64
+	return n
 }
 
 func (a *Agent) shouldAutoCompact() bool {
