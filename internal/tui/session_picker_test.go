@@ -265,7 +265,7 @@ func TestSessionPreviewActiveTabArchiveCurrentAndFallbacks(t *testing.T) {
 		{ID: "agent-1", History: savedHistory{Archive: []string{"one", "two", "", "  three", "four", "five", "six"}, Lines: []string{"wrong retained line"}, Current: []savedCell{{Char: '七'}, {Char: '😀'}}}},
 	}}
 	snap.Presentation, _ = json.Marshal(presentation)
-	if got := sessionPreview(snap, nil, 80, true, false); !reflect.DeepEqual(got, []string{"one", "two", "  three", "four", "five", "six", "七😀"}) {
+	if got := sessionPreview(snap, nil, 80, true, false); !reflect.DeepEqual(got, []string{"one", "two", "", "  three", "four", "five", "six", "七😀"}) {
 		t.Fatal("active archive/current tail", got)
 	}
 	presentation.Views[1].History.Archive = nil

@@ -663,12 +663,15 @@ func sessionPreview(snap session.Snapshot, policy *redaction.Policy, width int, 
 	filtered := strings.Split(policy.Text(redaction.Terminal, strings.Join(plain, "\n")), "\n")
 	var lines []string
 	for i, line := range filtered {
-		if strings.TrimSpace(line) != "" {
-			if color {
-				line = colorSessionPreviewLine(styled[i], plain[i], line)
-			}
-			lines = append(lines, truncateDiffLine(line, width, unicodeEnabled))
+		if i < len(styled) && color {
+			line = colorSessionPreviewLine(styled[i], plain[i], line)
 		}
+		lines = append(lines, truncateDiffLine(line, width, unicodeEnabled))
+	}
+	// Match the resumed session's fixed composer, which omits trailing blank
+	// display rows while keeping every interior blank line.
+	for len(lines) > 0 && strings.TrimSpace(stripSessionEscapes(lines[len(lines)-1])) == "" {
+		lines = lines[:len(lines)-1]
 	}
 	return lines
 }
