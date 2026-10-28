@@ -922,14 +922,21 @@ func (u *UI) Run(ctx context.Context) error {
 			}
 			continue
 		}
+		if len(fields) > 0 && fields[0] == "/compact" {
+			if len(fields) == 1 {
+				u.compactConversation(ctx)
+			} else if len(fields) == 2 && fields[1] == "show" {
+				u.showCompactedContext(ctx)
+			} else {
+				u.printSystemMessage(yellow + "Usage: /compact [show]" + reset)
+			}
+			continue
+		}
 		switch line {
 		case "/quit", "/exit":
 			return nil
 		case "/clear":
 			u.clearVisibleTranscript()
-			continue
-		case "/compact":
-			u.compactConversation(ctx)
 			continue
 		case "/model":
 			u.chooseModel(ctx)
@@ -1176,6 +1183,7 @@ func (u *UI) compactConversation(ctx context.Context) {
 		return
 	}
 	u.printSystemMessage(green + result + reset)
+	u.printSystemMessage(dim + "Type /compact show to inspect the compacted context." + reset)
 }
 
 // openCodeGoBackendChanged reports whether switching models crosses an

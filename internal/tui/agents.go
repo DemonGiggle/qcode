@@ -530,14 +530,17 @@ func (u *UI) handleAgentEvent(event session.Event) {
 	if event.Agent.Status != session.StatusRunning && event.Agent.Status != session.StatusWaitingForApproval {
 		if view != nil {
 			message := string(event.Agent.Status)
+			compactHint := false
 			if event.Agent.CurrentTask == "/compact" && event.Agent.Status == session.StatusCompleted {
 				message = event.Agent.LastOutcome
+				compactHint = true
 			} else if event.Agent.Status == session.StatusCompleted {
 				message = formatCompletedMessage(event.Duration, time.Now())
 			} else if event.Agent.Status == session.StatusCancelled {
 				message = "Cancelled"
 			}
 			if event.Agent.Error != "" {
+				compactHint = false
 				if event.Agent.CurrentTask == "/compact" {
 					message = "Conversation compaction failed: " + sanitizeDiffLine(event.Agent.Error, "<ESC>")
 				} else {
@@ -545,6 +548,9 @@ func (u *UI) handleAgentEvent(event session.Event) {
 				}
 			}
 			fmt.Fprintf(transcript.NewGroup(view.display), "%s%s%s\n", dim, message, reset)
+			if compactHint {
+				fmt.Fprintf(transcript.NewGroup(view.display), "%s%s%s\n", dim, "Type /compact show to inspect the compacted context.", reset)
+			}
 		}
 	}
 	if event.Agent.ID != "main" && event.Agent.Status != session.StatusRunning {

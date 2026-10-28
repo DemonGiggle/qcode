@@ -202,6 +202,28 @@ func (a *Agent) shouldAutoCompact() bool {
 	return known && 100-remaining >= a.autoCompactThreshold
 }
 
+// ContextSnapshot returns a copy of the current conversation messages for
+// inspection (e.g. the /compact show debug view). The copy is shallow for
+// text but duplicates slice headers so callers cannot mutate the live
+// history.
+func (a *Agent) ContextSnapshot() []llm.Message {
+	out := make([]llm.Message, len(a.messages))
+	for i, msg := range a.messages {
+		next := msg
+		if len(msg.ToolCalls) > 0 {
+			next.ToolCalls = append([]llm.ToolCall(nil), msg.ToolCalls...)
+		}
+		if len(msg.Images) > 0 {
+			next.Images = append([]llm.Image(nil), msg.Images...)
+		}
+		if len(msg.ReasoningDetails) > 0 {
+			next.ReasoningDetails = append([]byte(nil), msg.ReasoningDetails...)
+		}
+		out[i] = next
+	}
+	return out
+}
+
 func (a *Agent) autoCompactIfNeeded(ctx context.Context) {
 	if !a.shouldAutoCompact() {
 		return
