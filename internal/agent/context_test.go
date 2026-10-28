@@ -235,3 +235,97 @@ func TestManualCompactWorksWhenAutomaticCompactionIsDisabled(t *testing.T) {
 		t.Fatal("manual compaction did not run")
 	}
 }
+
+type optimizingCompactProvider struct {
+	requests []llm.Request
+	streamed int
+	sawNil   bool
+}
+
+func (*optimizingCompactProvider) Name() string { return "optimizing-compact" }
+
+func (p *optimizingCompactProvider) Complete(_ context.Context, request llm.Request, onText llm.StreamCallback) (llm.Response, error) {
+	p.requests = append(p.requests, request)
+	if onText == nil {
+		p.sawNil = true
+		return llm.Response{Message: llm.Message{Role: "assistant", Content: "summary ok"}}, nil
+	}
+	onText(llm.StreamEvent{Kind: llm.StreamOutput, Text: "partial"})
+	p.streamed++
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "summary ok"}}, nil
+}
+
+func TestCompactSendsReducedPayload(t *testing.T) {
+	p := &optimizingCompactProvider{}
+	a := NewWithSystem(p, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 3, "system instructions")
+	largeToolOutput := strings.Repeat("T", 10000)
+	a.messages = append(a.messages,
+		llm.Message{Role: "user", Content: "old question"},
+		llm.Message{Role: "assistant", Content: "old answer", Thinking: "secret thinking", ReasoningDetails: []byte(`{"reasoning":"verbose"}`), Images: []llm.Image{{MediaType: "image/png", Data: []byte{1, 2, 3}}}},
+		llm.Message{Role: "tool", ToolCallID: "call-large", Content: largeToolOutput},
+		llm.Message{Role: "user", Content: "middle question"},
+		llm.Message{Role: "assistant", Content: "middle answer"},
+		llm.Message{Role: "user", Content: "TAIL-USER-1"},
+		llm.Message{Role: "user", Content: "TAIL-USER-2"},
+		llm.Message{Role: "user", Content: "TAIL-USER-3"},
+		llm.Message{Role: "user", Content: "TAIL-USER-4"},
+		llm.Message{Role: "user", Content: "TAIL-USER-5"},
+		llm.Message{Role: "user", Content: "TAIL-USER-6"},
+	)
+	result, err := a.Compact(context.Background())
+	if err != nil || result != "Conversation compacted." {
+		t.Fatalf("compact = %q, %v", result, err)
+	}
+	if len(p.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(p.requests))
+	}
+	req := p.requests[0]
+	if req.Thinking != "" {
+		t.Fatalf("compaction thinking = %q, want empty", req.Thinking)
+	}
+	if len(req.Tools) != 0 || req.Temperature != nil {
+		t.Fatalf("compaction must not send tools or temperature: tools=%d temp=%v", len(req.Tools), req.Temperature)
+	}
+	if p.sawNil || p.streamed == 0 {
+		t.Fatalf("compaction did not stream progress: sawNil=%v streamed=%d", p.sawNil, p.streamed)
+	}
+	if req.Messages[0].Content != prompt.ConversationCompact {
+		t.Fatal("compaction request missing instructions")
+	}
+	for _, msg := range req.Messages[1:] {
+		if len(msg.Images) != 0 || msg.Thinking != "" || len(msg.ReasoningDetails) != 0 {
+			t.Fatalf("compaction retained wire overhead: %+v", msg)
+		}
+		if msg.Origin != "" || msg.Untrusted {
+			t.Fatalf("compaction retained provenance metadata: %+v", msg)
+		}
+		if strings.Contains(msg.Content, "TAIL-USER-") {
+			t.Fatalf("compaction re-summarized retained tail: %q", msg.Content)
+		}
+	}
+	foundTruncated := false
+	for _, msg := range req.Messages[1:] {
+		if msg.Role == "tool" && strings.Contains(msg.Content, "[truncated") {
+			foundTruncated = true
+			if len(msg.Content) >= len(largeToolOutput) {
+				t.Fatal("tool output was not reduced")
+			}
+			if msg.ToolCallID == "" {
+				t.Fatal("truncation dropped tool pairing")
+			}
+		}
+	}
+	if !foundTruncated {
+		t.Fatal("large tool output was not truncated with a marker")
+	}
+	// Retained tail must survive verbatim alongside the new summary.
+	tailKept := false
+	for _, msg := range a.messages {
+		if strings.Contains(msg.Content, "TAIL-USER-6") {
+			tailKept = true
+		}
+	}
+	if !tailKept {
+		t.Fatal("retained tail was lost")
+	}
+}

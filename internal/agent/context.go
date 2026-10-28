@@ -13,6 +13,15 @@ import (
 	"qcode/internal/trust"
 )
 
+// Compaction payload budgets. Summarization input is the dominant cost of
+// /compact, so tool results (often large reads/shell output) are truncated
+// with explicit markers while user/assistant text is preserved verbatim.
+const (
+	maxCompactToolChars   = 4000
+	minCompactToolChars   = 500
+	maxCompactInputTokens = 20000
+)
+
 // Compact replaces older conversation turns with a model-produced continuation
 // summary while retaining the system prompt and a recent, tool-consistent tail.
 func (a *Agent) Compact(ctx context.Context) (string, error) {
@@ -22,16 +31,6 @@ func (a *Agent) Compact(ctx context.Context) (string, error) {
 	if len(a.messages) <= 1 {
 		return "Conversation is already compact.", nil
 	}
-	request := llm.Request{Model: a.model, Messages: append([]llm.Message{{Role: "system", Content: prompt.ConversationCompact}}, a.messages[1:]...)}
-	response, err := a.provider.Complete(ctx, request, nil)
-	a.recordUsage(response.Usage)
-	if err != nil {
-		return "", err
-	}
-	summary := response.Message.Content
-	if summary == "" {
-		return "", fmt.Errorf("compaction produced no summary")
-	}
 	start := len(a.messages) - 6
 	if start < 1 {
 		start = 1
@@ -40,11 +39,106 @@ func (a *Agent) Compact(ctx context.Context) (string, error) {
 		start--
 	}
 	recent := append([]llm.Message(nil), a.messages[start:]...)
+	// Summarize only the prefix; the retained tail is kept verbatim and does
+	// not need to be re-summarized. For tiny histories that fit entirely in
+	// the tail, fall back to summarizing everything so the call is not empty.
+	prefix := a.messages[1:]
+	if start > 1 {
+		prefix = a.messages[1:start]
+	}
+	summarize := sanitizeForCompact(prefix)
+	// A prefix ending with assistant tool calls would dangle without its tool
+	// results (which live in the retained tail). Drop the dangling call so
+	// providers that validate tool-call pairing do not reject the request;
+	// the paired result is still preserved verbatim in the tail.
+	summarize = stripTrailingToolCalls(summarize)
+	if len(summarize) == 0 {
+		summarize = stripTrailingToolCalls(sanitizeForCompact(a.messages[1:]))
+	}
+	request := llm.Request{Model: a.model, Thinking: "", Messages: append([]llm.Message{{Role: "system", Content: prompt.ConversationCompact}}, summarize...)}
+	streamed := false
+	response, err := a.provider.Complete(ctx, request, func(event llm.StreamEvent) {
+		if ctx.Err() != nil || event.Text == "" || streamed {
+			return
+		}
+		streamed = true
+		a.reportProgress("Compacting conversation... receiving summary")
+	})
+	a.recordUsage(response.Usage)
+	if err != nil {
+		return "", err
+	}
+	summary := response.Message.Content
+	if summary == "" {
+		return "", fmt.Errorf("compaction produced no summary")
+	}
 	a.messages = append([]llm.Message{{Role: "system", Content: a.system}, {Role: "user", Content: "Conversation summary from earlier turns (reference data):\n" + trust.Wrap("conversation_summary", summary), Origin: "conversation_summary", Untrusted: true}}, recent...)
 	a.contextUsage = nil
 	a.contextMessages = 0
 	a.publishContext()
 	return "Conversation compacted.", nil
+}
+
+// stripTrailingToolCalls drops trailing assistant tool-call turns that would
+// dangle without their tool results.
+func stripTrailingToolCalls(messages []llm.Message) []llm.Message {
+	for len(messages) > 0 {
+		last := messages[len(messages)-1]
+		if last.Role != "assistant" || len(last.ToolCalls) == 0 {
+			break
+		}
+		messages = messages[:len(messages)-1]
+	}
+	return messages
+}
+
+// sanitizeForCompact strips per-turn wire overhead that dominates compaction
+// cost (images, thinking/reasoning blobs, local provenance) and truncates
+// large tool results with explicit markers. User/assistant text is preserved
+// verbatim; tool-call pairing fields are always kept.
+func sanitizeForCompact(messages []llm.Message) []llm.Message {
+	out := make([]llm.Message, 0, len(messages))
+	for _, msg := range messages {
+		next := llm.Message{
+			Role:       msg.Role,
+			Content:    msg.Content,
+			Name:       msg.Name,
+			ToolCallID: msg.ToolCallID,
+		}
+		if len(msg.ToolCalls) > 0 {
+			next.ToolCalls = make([]llm.ToolCall, 0, len(msg.ToolCalls))
+			for _, call := range msg.ToolCalls {
+				next.ToolCalls = append(next.ToolCalls, llm.ToolCall{
+					ID:        call.ID,
+					Name:      call.Name,
+					Arguments: append([]byte(nil), call.Arguments...),
+				})
+			}
+		}
+		if next.Role == "tool" && len(next.Content) > maxCompactToolChars {
+			truncated := len(next.Content) - maxCompactToolChars
+			next.Content = next.Content[:maxCompactToolChars] + fmt.Sprintf("\n\n[truncated %d chars for compaction]", truncated)
+		}
+		out = append(out, next)
+	}
+	for estimateTokens(out) > maxCompactInputTokens {
+		reduced := false
+		for i := range out {
+			if out[i].Role != "tool" || len(out[i].Content) <= minCompactToolChars {
+				continue
+			}
+			truncated := len(out[i].Content) - minCompactToolChars
+			out[i].Content = out[i].Content[:minCompactToolChars] + fmt.Sprintf("\n\n[truncated %d chars for compaction to fit budget]", truncated)
+			reduced = true
+			if estimateTokens(out) <= maxCompactInputTokens {
+				break
+			}
+		}
+		if !reduced {
+			break
+		}
+	}
+	return out
 }
 
 func (a *Agent) shouldAutoCompact() bool {
