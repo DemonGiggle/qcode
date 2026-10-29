@@ -163,6 +163,14 @@ func TestFormatQuestion(t *testing.T) {
 	}
 }
 
+func TestFormatQuestionPreservesNewlinesAndEscapesControls(t *testing.T) {
+	item := question.Question{Text: "Approve this exact list call?\n{\"path\":\"internal/trust\"}\x1b\r!", Options: []string{"Deny", "Approve once"}}
+	got := formatQuestion(item, 0, 1, 80)
+	if !strings.Contains(got, "Approve this exact list call?\n{\"path\":\"internal/trust\"}<ESC><0x0D>!") || strings.Contains(got, "<0x0A>") || strings.ContainsRune(got, '\x1b') {
+		t.Fatalf("unexpected question rendering: %q", got)
+	}
+}
+
 func TestQuestionPanelKeepsChineseOptionsOnTheirOwnLines(t *testing.T) {
 	item := question.Question{
 		Text: "三種陀螺外觀差異要到什麼程度？",

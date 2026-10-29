@@ -406,7 +406,11 @@ func formatQuestion(item question.Question, index, total, width int) string {
 func formatQuestionWithFooter(item question.Question, index, total, width int, footer string) string {
 	var output strings.Builder
 	fmt.Fprintf(&output, "Question %d/%d:\n", index+1, total)
-	text := sanitizeDiffLine(strings.TrimSpace(item.Text), "<ESC>")
+	lines := strings.Split(strings.TrimSpace(item.Text), "\n")
+	for i, line := range lines {
+		lines[i] = sanitizeDiffLine(line, "<ESC>")
+	}
+	text := strings.Join(lines, "\n")
 	fmt.Fprintf(&output, "%s\n", wrapANSI(text, width, "   "))
 	for optionIndex, option := range item.Options {
 		option = sanitizeDiffLine(strings.TrimSpace(option), "<ESC>")
