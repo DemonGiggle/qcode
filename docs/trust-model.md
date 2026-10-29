@@ -32,9 +32,14 @@ quoted or fenced example can still match if it contains a complete action
 request; the warning does not assert that the document's author had malicious
 intent. Later calls that can access data, mutate state, or send data require the interactive user's
 approval for the exact call. In one-shot or other non-interactive use, those
-calls are denied. An isolated quoted phrase does not trigger the warning. Tool
+calls are denied. Interactive users can also approve subsequent tool calls for
+the current agent run; this includes actions that change or send data and does
+not carry over to the next run. Other tool and sandbox restrictions still apply.
+An isolated quoted phrase does not trigger the warning. Tool
 output remains readable so factual extraction and ordinary coding tasks
-continue.
+continue. In interactive mode, `/verbose` shows the full, terminal-sanitized
+and redacted tool output behind a hidden activity preview, which can help
+identify what triggered a warning. Enable it before the tool runs.
 
 The detector is deliberately conservative and can miss novel or heavily
 obfuscated attacks. The content boundary and model instructions apply to all

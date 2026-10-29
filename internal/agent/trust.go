@@ -20,24 +20,31 @@ func requiresInjectionApproval(name string) bool {
 	}
 }
 
-func (a *Agent) approveInjectionAction(ctx context.Context, call llm.ToolCall) error {
+func (a *Agent) approveInjectionAction(ctx context.Context, call llm.ToolCall) (bool, error) {
 	a.stateMu.RLock()
 	questioner := a.questioner
 	a.stateMu.RUnlock()
 	if questioner == nil {
-		return fmt.Errorf("action blocked after a prompt-injection warning: interactive approval is unavailable")
+		return false, fmt.Errorf("action blocked after a prompt-injection warning: interactive approval is unavailable")
 	}
 	args := compactJSON(call.Arguments)
 	if len(args) > 2048 {
-		return fmt.Errorf("action blocked after a prompt-injection warning: arguments are too long for review")
+		return false, fmt.Errorf("action blocked after a prompt-injection warning: arguments are too long for review")
 	}
-	question := fmt.Sprintf("Warning: possible prompt injection was found in untrusted content. Approve this exact %s call?\n%s", call.Name, args)
-	answers, err := questioner(ctx, []Question{{Text: question, Options: []string{"Deny", "Approve once"}, AllowCustom: false}})
+	question := fmt.Sprintf("Warning: possible prompt injection was found in untrusted content. Approve this %s call?\n%s\nApproving for this run also permits subsequent tool calls without injection approval, including calls that change or send data.", call.Name, args)
+	answers, err := questioner(ctx, []Question{{Text: question, Options: []string{"Deny", "Approve once", "Approve for this run"}, AllowCustom: false}})
 	if err != nil {
-		return fmt.Errorf("prompt-injection approval failed: %w", err)
+		return false, fmt.Errorf("prompt-injection approval failed: %w", err)
 	}
-	if len(answers) != 1 || strings.TrimSpace(answers[0]) != "Approve once" {
-		return fmt.Errorf("action denied after a prompt-injection warning")
+	if len(answers) != 1 {
+		return false, fmt.Errorf("action denied after a prompt-injection warning")
 	}
-	return nil
+	switch strings.TrimSpace(answers[0]) {
+	case "Approve once":
+		return false, nil
+	case "Approve for this run":
+		return true, nil
+	default:
+		return false, fmt.Errorf("action denied after a prompt-injection warning")
+	}
 }

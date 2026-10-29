@@ -34,7 +34,7 @@ var tipTexts = []string{
 	"Run `/skillplan <idea>` for guided skill design; refine the draft, then approve it with `/skillplan create`.",
 	"Run `/clear` to redraw the header.",
 	"Run `/bash <cmd>` to execute a shell command from the workspace in the active agent's environment.",
-	"Run `/verbose` to toggle timestamped tool traces, including tool arguments, for troubleshooting.",
+	"Run `/verbose` to toggle detailed tool traces and show hidden untrusted tool output for troubleshooting.",
 	"Move through your draft with Left/Right; Home/End or Ctrl+A/E jump to the line ends.",
 	"Use Ctrl/Alt+Left/Right or Alt+B/F to move by word; Ctrl+W deletes the previous word.",
 	"Press Up/Down at the prompt to recall earlier input and return to your unfinished draft.",

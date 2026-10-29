@@ -330,6 +330,16 @@ func (s *ActivitySpan) End(err error) {
 // Structured JSON activity events intentionally omit the preview because tool
 // output can contain arbitrary user data.
 func (s *ActivitySpan) EndWithOutput(err error, output string) {
+	s.endWithOutput(err, output, false)
+}
+
+// EndWithUntrustedOutput hides the preview unless verbose tracing is enabled.
+// In verbose mode it displays the complete terminal-safe, redacted output.
+func (s *ActivitySpan) EndWithUntrustedOutput(err error, output string) {
+	s.endWithOutput(err, output, true)
+}
+
+func (s *ActivitySpan) endWithOutput(err error, output string, untrusted bool) {
 	if s == nil {
 		return
 	}
@@ -353,7 +363,7 @@ func (s *ActivitySpan) EndWithOutput(err error, output string) {
 		s.logger.writeJSON("end", "activity", s.activity.Action, time.Now(), duration, fields)
 		return
 	}
-	s.logger.writeActivityCompleted(s, duration, err, s.stop != nil, output)
+	s.logger.writeActivityCompleted(s, duration, err, s.stop != nil, output, untrusted)
 }
 
 func (s *ActivitySpan) animate() {
@@ -563,7 +573,7 @@ func (l *Logger) writeCompleted(s *Span, duration time.Duration, fields map[stri
 	fmt.Fprintln(out)
 }
 
-func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration, err error, clearLine bool, output ...string) {
+func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration, err error, clearLine bool, output string, untrusted bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if clearLine {
@@ -621,12 +631,18 @@ func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration,
 		fmt.Fprint(out, l.style(traceDim, durationSuffix))
 		fmt.Fprintln(out)
 	}
-	preview := ""
-	if len(output) > 0 {
-		preview = output[0]
-	}
-	for _, line := range l.activityOutputLines(s.activity.Action, l.policy.Text(redaction.Terminal, preview)) {
-		fmt.Fprintln(out, l.style(traceDim, "  "+line))
+	if untrusted && l.verbose {
+		clean := sanitizeActivityOutput(l.policy.Text(redaction.Terminal, output))
+		for _, line := range strings.Split(clean, "\n") {
+			fmt.Fprintln(out, l.style(traceDim, "  "+strings.ReplaceAll(line, "\r", "")))
+		}
+	} else {
+		if untrusted {
+			output = "[untrusted content hidden from activity preview]"
+		}
+		for _, line := range l.activityOutputLines(s.activity.Action, l.policy.Text(redaction.Terminal, output)) {
+			fmt.Fprintln(out, l.style(traceDim, "  "+line))
+		}
 	}
 	l.activitySeparatorPending = true
 	l.activityOut = nil

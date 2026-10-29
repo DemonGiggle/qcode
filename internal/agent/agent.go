@@ -498,6 +498,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 	a.publishContext()
 	identicalToolCalls := map[string]int{}
 	injectionSeen := false
+	injectionApprovedForRun := false
 	deniedCalls := map[string]bool{}
 	warnInjection := func() {
 		if injectionSeen {
@@ -744,14 +745,16 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			var toolErr error
 			if userAnswer != "" {
 				toolErr = fmt.Errorf("tool deferred until after the user answer is processed")
-			} else if injectionSeen && requiresInjectionApproval(call.Name) {
+			} else if injectionSeen && !injectionApprovedForRun && requiresInjectionApproval(call.Name) {
 				if deniedCalls[fingerprint] {
 					toolErr = fmt.Errorf("action remains denied after a prompt-injection warning")
-				} else if err := a.approveInjectionAction(ctx, call); err != nil {
+				} else if approvedForRun, err := a.approveInjectionAction(ctx, call); err != nil {
 					if !errors.Is(err, session.ErrInteractionWithdrawn) {
 						deniedCalls[fingerprint] = true
 					}
 					toolErr = err
+				} else {
+					injectionApprovedForRun = approvedForRun
 				}
 			}
 			if toolErr == nil {
@@ -762,11 +765,11 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 				}
 			}
 			toolSpan.End(toolErr)
-			activityOutput := execution.Output
-			if injectionSeen || trust.Suspicious(activityOutput) {
-				activityOutput = "[untrusted content hidden from activity preview]"
+			if injectionSeen || trust.Suspicious(execution.Output) {
+				activity.EndWithUntrustedOutput(toolErr, execution.Output)
+			} else {
+				activity.EndWithOutput(toolErr, execution.Output)
 			}
-			activity.EndWithOutput(toolErr, activityOutput)
 			a.recordActivity(session.WorkActivity{Action: activityDetails.Action, Summary: activityDetails.Completed, Success: toolErr == nil})
 			if err := ctx.Err(); err != nil {
 				return err
