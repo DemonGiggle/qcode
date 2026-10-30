@@ -54,7 +54,7 @@ func UnwrapRestored(role, content string) (string, bool) {
 var (
 	ignoreRules = regexp.MustCompile(`(?i)\b(?:ignore|disregard|override|forget|bypass)\s+(?:(?:all|any|the|your)\s+)?(?:previous|prior|above|system|developer|user)\s+(?:instructions|directions|rules|prompts|messages)\b`)
 	roleSpoof   = regexp.MustCompile(`(?i)^\s*(?:\[|<|###\s*)?\s*(?:system|developer|assistant)\s*(?:\]|>|:|message\s*:)`)
-	modelOrder  = regexp.MustCompile(`(?i)^\s*(?:assistant|agent|model|chatgpt|qcode)\s*[,,:-]?\s*(?:(?:you\s+)?(?:must|should|please|now)\s+)?(?:run|execute|read|open|print|send|post|upload|exfiltrate|write|edit|delete|disable|reveal|fetch|search)\b`)
+	modelOrder  = regexp.MustCompile(`(?i)^\s*(?:assistant|agent|model|chatgpt|qcode)\b\s*[,,:-]?\s*(?:(?:you\s+)?(?:must|should|please|now)\s+)?(?:run|execute|read|open|print|send|post|upload|exfiltrate|write|edit|delete|disable|reveal|fetch|search)\b`)
 	actionVerb  = regexp.MustCompile(`(?i)^\s*(?:(?:and|then|next|now|please|you\s+must|you\s+should)\s+|[.,;:]\s*)*(?:run|execute|read|open|print|send|post|upload|exfiltrate|write|edit|delete|disable|reveal|fetch|search)\b`)
 	base64Word  = regexp.MustCompile(`[A-Za-z0-9+/]{24,}={0,2}`)
 )

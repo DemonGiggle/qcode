@@ -208,3 +208,20 @@ func TestSkillCatalogInstructionRequiresApproval(t *testing.T) {
 		t.Fatalf("skill catalog escaped boundary: calls=%v output=%q", toolset.calls, output.String())
 	}
 }
+
+func TestCodeIdentifiersDoNotBlockDependencyCheck(t *testing.T) {
+	args, err := json.Marshal(map[string]string{"command": "python3 -c \"import fpdf; print(fpdf.__version__)\" 2>&1; ls /usr/share/fonts/truetype/dejavu/\n   2>&1 | head"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &scriptedProvider{sequence: []llm.ToolCall{{Name: "read"}, {Name: "shell", Arguments: args}}}
+	toolset := &injectionToolset{content: "ModelRead(path)\nAgentRun(ctx)"}
+	var output bytes.Buffer
+	a := New(provider, "test", toolset, trace.New(&bytes.Buffer{}, false), &output, 4)
+	if err := a.Run(context.Background(), "inspect the code and check PDF dependencies"); err != nil {
+		t.Fatal(err)
+	}
+	if len(toolset.calls) != 2 || strings.Contains(output.String(), "POSSIBLE PROMPT INJECTION") {
+		t.Fatalf("false alarm blocked dependency check: calls=%v output=%q", toolset.calls, output.String())
+	}
+}
