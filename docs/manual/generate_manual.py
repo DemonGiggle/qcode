@@ -620,9 +620,10 @@ def build_pdf(images: dict[str, Path]):
     pdf.multi_cell(
         0,
         5.5,
-        "In this manual: install once, tour the screen, try practical use cases,\n"
-        "clarifying questions, switch models, use agents, plan, skills, memory,\n"
-        "web tools, sessions, browser control, and settings.",
+        "In this manual: install once, tour the screen (including pasted blocks),\n"
+        "try practical use cases, clarifying questions, switch models, use agents\n"
+        "with working directories, plan, skills, memory, tools with approvals,\n"
+        "sessions, browser control, and settings.",
         align="C",
         new_x=XPos.LMARGIN, new_y=YPos.NEXT,
     )
@@ -635,7 +636,7 @@ def build_pdf(images: dict[str, Path]):
         "Read chapters 1-3 to start. Keep chapters 4 and 15 nearby as a command "
         "reference. The Use cases pages after chapter 3 offer complete example workflows. "
         "Chapters 5-12 are task guides you can read when you need them: "
-        "models, agents, planning, skills, memory, web, sessions, and phone/browser control.",
+        "models, agents with working directories, planning, skills, memory, tools with approvals and web, sessions, and phone/browser control.",
     )
     bullets(
         pdf,
@@ -663,7 +664,24 @@ def build_pdf(images: dict[str, Path]):
     tip(pdf, "If you only want to learn the keys and screens, start with --demo. It runs a scripted tour with fake tools and queued prompts.")
     h2(pdf, "Update")
     body(pdf, "Use the shell command below to install the latest release. It is a qcode CLI command, not a slash command.")
-    code(pdf, "qcode update\nqcode update --arch arm64")
+    code(pdf, "qcode update\nqcode update --arch arm64\nqcode update --pre\nqcode update --help")
+    body(pdf, "Without --pre only stable releases are considered; --pre also considers pre-releases such as release candidates. The command installs the latest release for the current operating system and chosen architecture.")
+    h2(pdf, "Startup flags and environment")
+    body(pdf, "qcode --help lists every flag supported by your installed binary. The most useful launch choices are workspace, model, thinking, step limit, context accounting, compaction, sandbox, networking, and one-shot output. Put flags before any one-shot prompt; option parsing stops at the first positional word.")
+    code(pdf, "qcode --cwd /path/to/project\nqcode --provider ollama --model qwen3:8b --thinking high \"reply with OK\"\nqcode --max-steps 64 \"explain this repository\"\nqcode --context-window 32768 \"explain this repository\"\nqcode --disable-auto-compact\nqcode --sandbox --sandbox-command-path ~/.local/bin\nqcode --danger-skip-tls-verify \"run the tests\"\nqcode --agent-timeout 90s \"explain this repository\"\nqcode --json-events \"run the tests\" 2>events.jsonl\nqcode --list-providers\nqcode --provider openai --update-model-meta\nqcode --version")
+    bullets(
+        pdf,
+        [
+            "--cwd DIRECTORY selects the workspace for tools, skills, and saved-session lookup without changing your shell directory (default `.`).",
+            "--provider, --model, --thinking, --base-url, and --api-key select the assistant. Flags beat QCODE_PROVIDER, QCODE_MODEL, QCODE_THINKING, QCODE_BASE_URL, QCODE_API_KEY (or OPENAI_API_KEY fallback), which beat config.toml, which beats built-ins. There is no --interactive or --theme flag: set interactive and theme in config.toml or use /interactive and /theme.",
+            "--max-steps N sets the per-request model-turn limit (default 32); /maxsteps shows or changes it later. --agent-timeout DURATION sets how long main waits for a batch of agent consultations including queue time (default 5m, for example 90s).",
+            "--context-window N overrides terminal-agent context accounting for an unlisted model (0 means automatic); switching models clears it. --disable-auto-compact disables automatic summaries in terminal sessions; /compact stays available. One-shot runs use provider capacity and the built-in 80% threshold.",
+            "--sandbox requests Linux bubblewrap isolation; --sandbox=false overrides config. Repeat --sandbox-command-path for each trusted executable directory (it replaces sandbox_command_paths). Check the startup notice to confirm isolation is active.",
+            "--danger-skip-tls-verify disables certificate verification for qcode HTTP clients and supplies insecure-TLS settings to supported shell clients.",
+            "--json-events emits JSON Lines trace, activity, and token-usage events and never waits for questions; answers stay on stdout while activity goes to stderr. --demo runs the offline scripted tour with mocked tools and skips configuration and saved sessions. --demo with a quoted prompt runs one text demo.",
+            "--list-providers prints built-in provider names and exits. --update-model-meta refreshes cached thinking choices for --provider openai or opencode-go and exits; it does not update the binary or context-window catalog.",
+        ],
+    )
 
     # 2 Tour
     h1(pdf, "2. Touring the terminal")
@@ -680,11 +698,12 @@ def build_pdf(images: dict[str, Path]):
         [
             "Tabs: `main` is always there. Extra agents appear as new tabs (up to 20 total).",
             "Latest prompt: a star marks up to three highlighted lines beneath the tabs. It changes when a task starts or steering is delivered. Pending input does not change it; completion keeps it, /clear and /new clear it, and /resume restores it. Small windows show fewer lines.",
-            "Transcript: streamed answers with Markdown, tables, and tool activity like `Reading ...` or `Writing ...`.",
+            "Transcript: streamed answers with Markdown, tables, and tool activity like `Reading ...` or `Writing ...`. One blank separator row sits between each pair of visible regions (pinned prompt, transcript, pending prompts, suggestions, Steer/Queued blocks, composer); very small terminals keep minimum output visible and omit separators that would hide content.",
             "Task indicator: Waiting for model response, Receiving model thinking, or Receiving model response, with elapsed time for that operation. The timer resets when the phase changes. Tools appear in the transcript; questions show Waiting for input.",
             "Pending area: shows the current steer separately from FIFO tasks.",
             "Prompt: `>` idle, `(Plan)>` planning, `(Skill plan)>` skill design, `(Steer)>` working. You can keep typing while work runs.",
-            "Status bar: provider, MODEL, WS folder, CTX percent left, STEP n/max, and TOK input/output plus total when it fits. THINK appears when set, MODE for planning or interactive questions, and REMOTE while browser control runs. Hide parts with /statusline.",
+            "Status bar: provider, MODEL, WS folder, CTX percent left, STEP n/max, and TOK input/output plus total when it fits. THINK appears when set, MODE for planning or interactive questions, and REMOTE while browser control runs. Narrow windows shorten the workspace path first, then wrap to a second left-aligned row before dropping low-priority segments (tok first). Hide parts with /statusline.",
+            "Pastes: long pastes stay together as one `[paste N characters]` block (100+ characters or more than 3 lines; one trailing newline does not count as a line). Short pastes stay inline and editable. Pasting never submits: press Enter to submit the full draft. Type before or after a collapsed block; Left/Right moves across it as a whole, Backspace/Delete removes the whole block.",
         ],
     )
     if pdf.will_page_break(85):
@@ -694,11 +713,12 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             "Type `/` to see up to five matching commands. Type more to filter, Tab to complete the first match, Esc to close.",
-            "Left/Right edits input. At the bottom of output, Home/End move to input ends. Ctrl+Left/Right jumps by word; Ctrl+W deletes a word; Ctrl+A/E moves to input ends.",
-            "PageUp/PageDown scrolls history with two overlapping rows of context, even while the agent works. Scrolling pauses the live view; PageDown to the bottom resumes it.",
+            "Left/Right edits input. At the bottom of output, Home/End move to input ends. Ctrl+Left/Right (or Alt+Left/Right, Alt+B/F) jumps by word; Ctrl+W deletes a word; Ctrl+A/E moves to input ends.",
+            "PageUp/PageDown scrolls history with two overlapping rows of context, even while the agent works. Scrolling pauses the live view; PageDown to the bottom resumes it. While paused, Up/Down moves one row for fine reading; it edits the draft again once the live view resumes.",
+            "Press Up/Down at an empty prompt to recall earlier input and return to your unfinished draft.",
             "When the view is above the bottom, Home/End jump to oldest/latest output. At the bottom they edit the prompt again. Browser text fields keep editing keys.",
             "Alt+Q opens pending work. Up/Down selects, PgUp/PgDn scrolls, Delete removes, and Esc closes.",
-            "Ctrl+C in the composer cancels the running prompt; the next queued prompt can start. In a command view, it closes the view while agents keep working.",
+            "Ctrl+C in the composer cancels the running prompt; the next queued prompt can start. In a command view or picker, it closes the view while agents keep working; it also cancels a running /bash command without exiting qcode.",
         ],
     )
     bullets(
@@ -720,8 +740,8 @@ def build_pdf(images: dict[str, Path]):
             "The newest pending steer replaces earlier pending steering. If the task ends before your steer is accepted, qcode rejects it and keeps the draft. Cancellation or failure drops undelivered steers; queued tasks still continue.",
             "Tab still completes matching slash commands. During manual /compact, Enter cannot steer and keeps your draft; Tab can queue a separate task.",
             "Use `/history` to find an old prompt. Pick one to re-read its final answer.",
-            "Use `/new` to clear the active tab's conversation, latest prompt, usage, and plans; it restores web tools to on outside the sandbox and off inside it, and removes added directory grants. Models, selected skills, and the questions toggle stay.",
-            "Use `/compact` to summarize old context. Automatic compaction starts at 80% use when capacity is known; change auto_compact_threshold or disable_auto_compact in config.toml.",
+            "Use `/new` to clear the active tab's conversation, latest prompt, usage, and plans; it restores web tools to on outside the sandbox and off inside it, removes added directory grants, and resets the working directory to launch. Models, selected skills, and the questions toggle stay.",
+            "Use `/compact` to summarize old context, or `/compact show` to inspect the compacted context (system + summary + recent tail) in a history-style debug view. Automatic compaction starts at 80% use when capacity is known; change auto_compact_threshold or disable_auto_compact in config.toml. During manual /compact, Enter cannot steer and keeps your draft.",
         ],
     )
     tip(pdf, "Example: submit `fix the login timeout` with Enter. While it runs, submit `preserve the existing API` with Enter to steer it, or `run the login tests after the fix` with Tab to queue a separate task.")
@@ -822,9 +842,9 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             ("/help", "List commands or explain one command."),
-            ("/bash <cmd>", "Run a shell command in the workspace."),
+            ("/bash <cmd>", "Run a shell command in the active agent's environment."),
             ("/new", "Start a fresh conversation for the active agent."),
-            ("/resume", "Preview, rename, pin, delete, or continue saved sessions."),
+            ("/resume [session-id]", "Preview, rename, pin, delete, or continue saved sessions."),
             ("/clear", "Clear the visible conversation and redraw the header."),
             ("/history", "Browse completed prompts and responses."),
             ("/diff [N]", "View more lines of saved diff N; omit N for latest."),
@@ -832,11 +852,13 @@ def build_pdf(images: dict[str, Path]):
             ("/maxsteps [N]", "Show or change the model-turn limit."),
             ("/statusline", "Show, hide, or reset status bar parts."),
             ("/theme", "Preview, apply, and save a terminal color theme."),
-            ("/compact", "Summarize old context to make room."),
+            ("/compact [show]", "Summarize old context; show inspects the compacted context."),
             ("/export", "Export conversations or full transcript as HTML."),
             ("/quit, /exit", "Save the session and exit qcode."),
         ],
     )
+    h2(pdf, "Compacted context inspector")
+    body(pdf, "After a manual or automatic compaction, the terminal hints `Type /compact show to inspect the compacted context.` Use `/compact show` to open a history-style debug view with the compacted conversation (system prompt + summary + recent tail). It is read-only and helps you check what was kept before continuing.")
     h2(pdf, "Diff previews")
     body(pdf, "When qcode writes or edits a file you see a short numbered 10-line preview with added and removed lines. Use `/diff` to expand the latest saved diff or `/diff N` to expand saved diff N, up to the 200-line safety limit. The model still receives plain text.")
     figure(pdf, images["diff"], "Figure 4: Numbered change preview plus /export pretty saving a readable HTML copy.")
@@ -855,22 +877,31 @@ def build_pdf(images: dict[str, Path]):
     # 5 Models
     h1(pdf, "5. Choosing models and providers")
     body(pdf, "Use `/model` to switch the assistant for the current tab. The list shows model names from your current provider only, with no provider suffix. Type to search, move with Up/Down and PgUp/PgDn, Enter to pick. You can also run `/model <id> [thinking]` directly. Some models ask a second question for thinking level; Esc returns to the model list and Ctrl+C cancels.")
-    figure(pdf, images["model"], "Figure 5: /model picker. Model names only; the list comes from the current provider. An optional thinking level follows (off/low/medium/high/max). Choices depend on the model.")
+    figure(pdf, images["model"], "Figure 5: /model picker. Model names only; the list comes from the current provider. An optional thinking level follows when the model offers one (for example off/low/medium/high/max; other models offer on, none, minimal, or xhigh). Choices depend on the model.")
     h2(pdf, "Providers you can use")
     bullets(
         pdf,
         [
             "Ollama (local default): pull a model first, then `qcode --model qwen2.5-coder:7b`. Thinking uses the model's native think setting.",
             "OpenAI-compatible: `export OPENAI_API_KEY=...` then `qcode --provider openai --model gpt-5`. Thinking uses reasoning effort where the model offers it.",
-            "OpenCode Go: `export QCODE_API_KEY=...` then `qcode --provider opencode-go --model kimi-k3`. Options vary per model.",
+            "OpenCode Go: `export QCODE_API_KEY=...` then `qcode --provider opencode-go --model kimi-k3`. Options vary per model. Known models may offer off, on, none, minimal, low, medium, high, xhigh, or max; the set is model-specific. With no setting, qcode preserves the provider default and omits optional thinking fields.",
             "Flags can also come from QCODE_PROVIDER, QCODE_MODEL, QCODE_THINKING, QCODE_BASE_URL, QCODE_API_KEY.",
         ],
     )
     code(pdf, "qcode --provider ollama --model qwen3:8b --thinking high \"reply with OK\"\nqcode --provider opencode-go --model deepseek-v4-flash --thinking high \"reply with OK\"")
+    bullets(
+        pdf,
+        [
+            "Switching to a model from a different provider family warns before applying; the same-backend switch applies silently. A failed or unsupported explicit level fails before any model request.",
+            "OpenAI and OpenCode Go read thinking choices from the public Models.dev catalog, cached under your cache directory (openai-model-meta-v1.json, opencode-go-model-meta-v1.json). Refresh with qcode --provider openai --update-model-meta or qcode --provider opencode-go --update-model-meta. A failed first fetch runs without selectable thinking; a failed refresh keeps the last valid cache. Custom --base-url endpoints do not load this metadata.",
+            "Ollama discovers thinking support from local model metadata and sends it through its native think field (GPT-OSS supports low/medium/high and cannot disable thinking that way). Unknown model IDs stay usable but omit optional thinking fields.",
+            "Vision-capable models can inspect PNG, JPEG, WEBP, and GIF files inside the workspace (20 MiB each) when you name the image; the agent loads it with view_image through the active provider. The model and endpoint must support image input.",
+        ],
+    )
     tip(pdf, "On `main`, /model and /maxsteps remember your choice. Other tabs, demo, one-shot, and piped runs keep changes for that session only.")
     h2(pdf, "One-shot and demo")
     code(pdf, "qcode \"explain this repository\"\nqcode --json-events \"run the tests\" 2>events.jsonl\nprintf '%s\\n' 'explain this repository' | qcode\nqcode --demo \"show me how qcode works\"")
-    body(pdf, "Put flags before one-shot prompts or piped text. Empty stdin fails. Answers use stdout; activity uses stderr. Demo tools are mocked; /export still writes a file.")
+    body(pdf, "Put flags before one-shot prompts or piped text. Empty stdin fails. Answers use stdout; activity or diagnostics use stderr. One-shot and piped runs never wait for questions or directory approvals and do not save sessions. Configured skill autoloading and learning retrieval still apply. With --json-events, each completion also emits a usage event with provider, model, per-completion usage (null when unavailable), and session totals. Demo tools are mocked; /export still writes a file. --demo without a prompt starts the automatic interactive showcase.")
 
     # 6 Agents
     h1(pdf, "6. Working with multiple agents")
@@ -895,6 +926,8 @@ def build_pdf(images: dict[str, Path]):
             "Ask the main agent to split work and it can coordinate helpers; you can also create tabs yourself with /agent.",
             "/agent and /agent new open the current provider's model picker. /agent new <model> takes a model ID, then /agent rename <id> <name> sets its display name.",
             "Queues are per agent (up to 16 waiting each). A slow helper never blocks `main`.",
+            "Each agent has its own working directory, starting at the launch workspace (--cwd). Use the change_directory tool (ask for packages/server) to select another existing directory; relative paths resolve against that agent\u2019s current directory and symlinks resolve to their canonical destination. The status WS segment updates during the task; other agents and qcode keep their own directories. Helpers created by main inherit its model, tools, skills, directory grants, and step limit when created.",
+            "Ask main to wait for helpers with a consultation deadline: --agent-timeout 90s (default 5m) is shared by the batch including queue time. Completed replies are kept; failed or expired consultations are reported and skipped. This applies to main\u2019s consult_agents coordination, not ordinary prompts or background delegate_task work.",
             "When main delegates a task, its current run ends after accepting the assignment and the helper continues in its tab. Send a follow-up to main to ask for findings or a consultation. Full recorded findings remain searchable after closing a helper or using /new.",
             "Main can use close_agent with one agent_id in normal execution mode. Closure returns immediately without ending main's turn. Pending tasks, steering, and interactions are cancelled; a running helper shows closing until its run exits and still counts toward the agent limit. The selected closed tab returns to main. Closing helpers are excluded from saved resumable tabs; recorded work remains searchable and exportable.",
         ],
@@ -913,12 +946,19 @@ def build_pdf(images: dict[str, Path]):
             "Type `/plan act` to build the latest plan, or `/plan off` to leave without building.",
         ],
     )
+    bullets(
+        pdf,
+        [
+            "Plan mode only advertises inspection tools (read, list, search, view_image, skills, and explicitly enabled web tools). Mutation, shell execution, extra directory grants, and sub-agent delegation are rejected at the tool boundary.",
+            "Earlier plan revisions stay in the conversation, but only the latest submitted plan is used for the /plan act handoff.",
+        ],
+    )
     tip(pdf, "`/new` clears the saved plan. Plan commands need an idle agent with no running or queued work.")
 
     # 8 Skills
     h1(pdf, "8. Skills and SkillPlan")
     h2(pdf, "Using skills")
-    body(pdf, "Skills are reusable instruction bundles, for example a team review checklist. Turn them on per tab with `/skill`. Only selected skills are shared with the assistant. You can also run `/skill name1,name2` directly, or `/skill none` to clear them.")
+    body(pdf, "Skills are reusable instruction bundles, for example a team review checklist. Turn them on per tab with `/skill`. Selected skills initially add only names and summaries to context; the agent loads the full SKILL.md when needed. You can also run `/skill name1,name2` directly, or `/skill none` to clear them.")
     bullets(
         pdf,
         [
@@ -927,6 +967,8 @@ def build_pdf(images: dict[str, Path]):
             "New files appear in `/skill` without restarting.",
             "The source repository's docs/skills collection is optional. Add its absolute directory to [skills] paths in config.toml, or copy a chosen folder into a built-in root; release binaries do not bundle these files.",
             "Use [skills] autoload_paths to select every valid skill in a directory for new runs, including one-shot and piped prompts. Resumed tabs retain their saved selection.",
+            "The bundled collection includes bounded-verification (stop re-checking once no unresolved fact could change the answer), pdf-read (parse, chunk, retrieve, and reason over long PDFs), and skill-creator (turn a workflow brief into a focused SKILL.md). Enable any of them with /skill after adding the collection to [skills] paths.",
+            "A skill can ship companion files (scripts, templates, data) beside SKILL.md. The agent is told the skill\u2019s base directory and loads companions only when needed with read, view_image, or shell; loading a skill does not change the working directory or grant directory access.",
         ],
     )
     h2(pdf, "Creating a skill safely")
@@ -957,16 +999,38 @@ def build_pdf(images: dict[str, Path]):
     bullets(
         pdf,
         [
-            "Memory is per user on this device and shared across folders.",
+            "Memory is per user on this device and shared across folders. Retrieval ranks learning against the latest prompt (up to 3 items, about 1200 tokens by default).",
+            "Set context_budget = 0 under [learning] to stop retrieving learning while keeping /learn working and saved records intact.",
             "Keep entries reusable: state the language or condition when they apply.",
             "Review proposals: secrets are rejected, but you decide what is worth keeping.",
         ],
     )
 
     # 10 Web
-    h1(pdf, "10. Tools, web fetch, and search")
+    h1(pdf, "10. Tools, working directories, approvals, and web")
     h2(pdf, "Choosing tools")
-    body(pdf, "Use /tool to filter and toggle the active tab's file, shell, image, skill, and web tools. Space toggles; Enter applies. Or use /tool <name> on|off, for example /tool shell off. New conversations restore tool defaults. Plan and Skill Plan show only their allowed tools; /interactive controls questions.")
+    body(pdf, "Use /tool to filter and toggle the active tab's tools: read, write, edit, list, search, shell, change_directory, view_image, skill, web_fetch, and web_search, plus request_directory_access where offered. Space toggles; Enter applies. Or use /tool <name> on|off, for example /tool shell off. New conversations restore tool defaults. Plan and Skill Plan show only their allowed tools; /interactive controls questions, not /tool.")
+    h2(pdf, "Working directories")
+    body(pdf, "Every agent starts in the launch workspace (--cwd) and keeps its own current directory. Ask for another directory (for example packages/server) and the agent can call change_directory; absolute paths and parent-relative paths such as ../notes.txt are accepted, relative paths resolve against that agent\u2019s directory, and symlinks resolve to their canonical destination. The terminal and browser status WS segment follows the selected tab. Other agents and the qcode process keep their own directories.")
+    bullets(
+        pdf,
+        [
+            "Without the sandbox, read, list, search, and view_image may inspect paths outside the agent\u2019s directory, subject to OS permissions. write and edit still reject paths that lexically leave that directory, but symlinks and shell can reach anything your OS account allows. change_directory can select an existing directory outside the launch workspace; later write/edit confinement follows the newly selected directory.",
+            "The model can call request_directory_access when work needs another directory. qcode asks you to review an editable path, grants it read/write for the session, and clears added grants on /new. The filesystem root cannot be granted. Non-interactive runs deny the request. Switching to an already approved directory needs no prompt; an unapproved destination needs approval before the switch or creation proceeds.",
+            "/resume restores saved grants when paths remain valid under current protections, else warns and falls back to launch. /new clears added grants and resets the active directory to launch.",
+            "For large files, ask for a line range; read supports offsets and limits, and search reports matching line numbers. Name a workspace image in your prompt to inspect it with a vision model (PNG, JPEG, WEBP, GIF, 20 MiB each).",
+        ],
+    )
+    h2(pdf, "Approvals and untrusted content")
+    body(pdf, "Your request and qcode\u2019s built-in instructions set the task. Web pages and snippets, local files and search results, shell output and errors, loaded skills, agent handoffs, saved conversations, and imported context are reference data: they can supply facts but cannot authorize tool calls. When qcode sees an actionable instruction pattern inside untrusted content, it prints a calibrated warning without repeating that content.")
+    bullets(
+        pdf,
+        [
+            "Later calls that can access data, change state, or send data then need your approval for the exact call. In one-shot or other non-interactive use those calls are denied. You can also approve subsequent tool calls for the current agent run; approval does not carry to the next run. Other tool and sandbox restrictions still apply.",
+            "After a prompt-injection warning, activity and trace arguments are redacted; the approval prompt still shows the exact proposed call for review. Run /verbose before the tool runs to see the full sanitized output behind the hidden preview.",
+            "Plan mode is stricter: only inspection tools are advertised and every mutation-capable call is rejected before execution. It never runs shell, requests directories, or delegates to other agents.",
+        ],
+    )
     h2(pdf, "Using web access")
     body(pdf, "Web tools read public pages and search results as text. Both start enabled outside sandbox mode and disabled when a sandbox is active, in interactive and one-shot runs. Use `/tool` to change the active tab's selections. The web_search backend setting does not change tool enablement.")
     bullets(
@@ -975,6 +1039,8 @@ def build_pdf(images: dict[str, Path]):
             "Type `/tool` to toggle `web_fetch` and `web_search` independently, or use `/tool web_fetch off` to disable fetching.",
             "`/new` and fresh launches restore these defaults. Resume restores saved selections, and helpers created by main inherit its tools; an enabled web tool allows sandbox networking.",
             "Use them for docs and public references. They do not run page scripts and do not open a browser.",
+            "Limits: 20-second deadline, at most 5 redirects, 2 MiB response cap, at most two concurrent web operations, 64 KiB text cap with truncation marker. Only public destinations are accepted; loopback, private, link-local, and reserved addresses are rejected, including DNS results and redirects. Requests use normal TLS unless --danger-skip-tls-verify is set.",
+            "In sandbox mode, enabling either web tool allows networking for native web tools and sandboxed shell commands (curl, package downloads); disabling both or using /new restores isolation.",
         ],
     )
     tip(pdf, "If a page needs login or runs an app, fetch will not see it. Paste the relevant text into qcode instead.")
@@ -989,8 +1055,8 @@ def build_pdf(images: dict[str, Path]):
             "Type /resume to reopen a session for this folder. A separate marker identifies the current session; selecting it keeps it open. Entries show a preview and activity time. Pinned sessions appear first; prompt activity orders each group. Tab opens Rename, Pin/Unpin, and Delete; Ctrl+D opens Delete all from the list. Up/Down chooses an action; Enter applies it. Finish or cancel running work before switching or deleting the current session. Concurrent processes can restore the same session, with the last save winning.",
             "Ctrl+D opens Delete all with Cancel selected by default. Cancel or Esc returns to the list with its filter and selection intact. It deletes every saved session in this workspace, including sessions hidden by the filter, along with names and pins. Other workspaces are unaffected. If the current session is saved, it starts fresh after the other removals succeed; an unsaved current conversation stays open. Failures refresh the list and retain the current conversation.",
             "Delete requires confirmation with Cancel selected by default. Enter applies the choice; Cancel or Esc returns to actions; Ctrl+C closes the picker. Deleting another session keeps the filter and selects the next match, or the previous match if it was last. Deleting the current session clears all tabs, drafts, history, plans, usage, work history, and added directory grants, then starts fresh with the main agent's current provider, model, thinking, runtime settings, skills, and tool selections. Deletion removes the saved snapshot, custom name, and pin; another process's later autosave may recreate it.",
-            "Resume restores tabs, models, the pinned latest prompt, conversation and styled output, diffs, drafts, reading positions, tool and skill settings, and token totals. Provider credentials come from current configuration.",
-            "Empty and demo/one-shot runs are not saved. `/new` resets only the current tab inside its session.",
+            "Resume restores tabs, models, the pinned latest prompt, conversation and styled output (including blank lines in the preview), diffs and expandable diff data, drafts, reading positions, tool and skill settings, context accounting, and token totals. Provider credentials come from current configuration. Existing directory grants are restored when paths remain valid; discarded grants produce a notice.",
+            "Sessions containing only slash commands, unsent drafts, settings, or idle agent tabs are not saved; saving starts with user conversation or recorded agent work, including queued prompts. Previously saved empty sessions stay available for manual deletion. Demo and one-shot runs are never saved. `/new` resets only the current tab inside its session.",
             "After a crash, start qcode in the same folder and use /resume. The last good checkpoint marks unfinished work interrupted; pending tasks and steering are never resubmitted automatically. Inspect current files before continuing, since completed tool changes are not rolled back.",
             "Sessions live outside your project: ~/.local/state/qcode/sessions on Linux (or $XDG_STATE_HOME), ~/Library/Application Support on macOS, %AppData% on Windows. They keep private file permissions.",
         ],
@@ -998,11 +1064,11 @@ def build_pdf(images: dict[str, Path]):
     h2(pdf, "Local privacy and redaction")
     body(pdf, "Local text filtering is on by default. Detected credentials, private keys, payment-card numbers, and labelled card security codes or expiry dates appear as [REDACTED] in output, thinking, tool previews, saved sessions, exports, and browser views. Live editable input stays visible while you compose it; submitted history and saved draft copies are filtered.")
     body(pdf, "When you resume an older session, qcode filters and rewrites it before showing the restored conversation. If that rewrite fails, resume stops. Redacted saved text cannot be recovered, so the resumed conversation may need missing context supplied again.")
-    body(pdf, "Filtering applies to local text, not requests sent to a model provider, shell commands, workspace file writes, or image contents. Detection can miss unfamiliar formats. Use [redaction] settings for custom patterns, fields, and paths; see docs/privacy.md and docs/configuration.md for coverage and options.")
+    body(pdf, "Filtering applies to local text, not requests sent to a model provider, shell commands, workspace file writes, or image contents. It covers five sinks (terminal, persistence, exports, json_events, remote); each can be toggled under [redaction]. Detection can miss unfamiliar formats. Use [redaction] settings for custom patterns, fields, and paths; see docs/privacy.md and docs/configuration.md for coverage and options.")
 
     # 12 Remote
     h1(pdf, "12. Controlling qcode from a browser")
-    body(pdf, "Type /remote to control the same session from a phone or browser. Choose Pure Web for a trusted LAN or Tailscale for your tailnet. No auth gives anyone with the URL access; reserve it for open, short-lived demos.")
+    body(pdf, "Type /remote to control the same session from a phone or browser. Choose Pure Web for a trusted LAN, Tailscale for your tailnet, or Pure Web (No auth, danger!) for open control by anyone with the URL; reserve no-auth for open, short-lived trusted-network demos. Pure Web is plain HTTP on your LAN: use only networks you trust.")
     figure(pdf, images["remote"], "Figure 9: /remote screen. Scan or open the link, then Accept. Save QR as PNG if it does not fit.", w=160)
     numbered(
         pdf,
@@ -1012,6 +1078,8 @@ def build_pdf(images: dict[str, Path]):
             "If the code does not fit, choose `Save QR as PNG` and open the shown file path (in WSL, convert it with `wslpath -w <path>`). The file is kept on disk.",
             "Choose Accept to keep the connection open. Run `/remote` again for one more device; existing browsers stay connected.",
             "To stop all browsers, choose Close Connection and confirm, or quit qcode. Used and expired links tell you to run `/remote` again.",
+            "If more than one active LAN IPv4 interface exists, qcode asks which one to expose (name, address, and CIDR); with one eligible interface it uses that address directly.",
+            "Tailscale binds a loopback listener and proxies it with a foreground tailscale serve process. It tries HTTPS port 443 first, then 8443, then 10000-10031; the selected port appears in the browser URL and QR link. Tailnet access rules must allow that port. Browsers must belong to the same tailnet.",
         ],
     )
     bullets(
@@ -1045,14 +1113,18 @@ def build_pdf(images: dict[str, Path]):
             "Copy `config.toml.example` to your user config location; missing files are ignored. Priority, highest first: file beside the program, user config (~/.local/etc/qcode on Linux, ~/Library/Application Support on macOS, %AppData% on Windows), system config (/usr/local/etc/qcode), then etc/ beside the program.",
             "Command flags beat environment variables. Both beat config files. Config files beat built-ins. `--api-key` beats config and environment keys.",
             "Prefer environment variables for keys: QCODE_API_KEY or OPENAI_API_KEY. Keep key files private (mode 0600).",
-            "Common knobs: thinking level, agent_timeout like \"5m\", interactive true/false, statusline_hidden, web_search backend, learning budget, skills paths.",
+            "Common knobs: thinking level, agent_timeout like \"5m\", interactive true/false, statusline_hidden, web_search backend, learning context_budget, skills paths and autoload_paths, redaction sinks/patterns, context_window and auto_compact_threshold.",
             "Restart after changing the web backend. /model, /maxsteps, and /statusline on main save automatically; worker-tab changes to these settings stay within the session.",
         ],
     )
+    h2(pdf, "Working directories under the sandbox")
+    body(pdf, "In sandbox mode the same per-agent directory rules apply, but confinement is stronger: each shell call gets a fresh namespace with no network by default, a hidden home and runtime, a private temporary directory, a read-only root, and read/write mounts for approved directories. qcode itself stays outside the sandbox so it can load configuration and contact the provider; API keys and other environment secrets are removed from shell-tool environments, and every qcode configuration file inspected at startup is hidden from model tools. Built-in file tools use kernel-assisted confinement to prevent symlink escapes. Resume restores saved tool selections, so an enabled web tool also allows networking in those sandbox sessions.")
     h2(pdf, "Sandbox and trusted commands")
     body(pdf, "On Linux, use --sandbox with bubblewrap installed and check the startup notice to confirm isolation is active. Tools can change only approved directories; home is hidden. Fresh sandbox sessions start with both web tools off and networking blocked. Enabling either through /tool allows networking for native web tools and sandboxed shell commands. Disabling both or using /new blocks it again. If sandbox setup fails, the terminal offers to continue without it or leave; one-shot runs warn and continue without it. Continuing without a sandbox starts with both web tools enabled.")
     code(pdf, "qcode --sandbox --sandbox-command-path ~/.local/bin\n\n# Persistent defaults in config.toml:\nsandbox = true\nsandbox_command_paths = [\"~/.local/bin\", \"~/go/bin\"]")
-    body(pdf, "Configured sandbox = true and --sandbox use the same defaults; --sandbox=false overrides configuration. Trusted command directories are mounted read-only and kept across /new. Missing, invalid, duplicate, root, or protected directories produce warnings. Additional writable directories require your approval and are cleared by /new. Temporary shell files do not survive separate sandbox calls; use workspace files for results you need later.")
+    body(pdf, "Configured sandbox = true and --sandbox use the same defaults; --sandbox=false overrides configuration, including web-tool defaults. Trusted command directories are mounted read-only at their original paths (only empty ancestors are created under the hidden home) and kept across /new, never read/write, and never prompt. Missing, invalid, duplicate, root, or protected directories produce warnings. Additional writable directories require your approval and are cleared by /new. Temporary shell files do not survive separate sandbox calls; use workspace files for results you need later.")
+    h2(pdf, "TLS, keys, and provider routing")
+    body(pdf, "Prefer QCODE_API_KEY or OPENAI_API_KEY for credentials; --api-key beats both environment variables and the config file. danger_skip_tls_verify = true (or --danger-skip-tls-verify) disables certificate and hostname verification for provider and native web requests and supplies insecure-TLS settings to Git, Node.js, npm, and compatible Python shell clients; other shell programs may need their own insecure-TLS flag. When a flag or environment variable selects a different provider than the configured one, the configured model, thinking, base_url, api_key, and context_window are not inherited.")
     h2(pdf, "Context capacity")
     body(pdf, "CTX shows remaining capacity, with ~ for an estimate or unknown when no limit is available. Use --context-window 32768 or context_window = 32768 for an unlisted model; this sets terminal-agent accounting and compaction capacity without changing the provider's allocation. Switching models clears the override. --disable-auto-compact disables automatic summaries in terminal sessions; /compact remains available. One-shot runs use provider capacity and the built-in 80% threshold.")
 
@@ -1070,6 +1142,11 @@ def build_pdf(images: dict[str, Path]):
             ("Waiting a long time?", "Read the model operation and elapsed timer above the status bar. Use Ctrl+C from the composer to cancel; tool activity appears in the transcript."),
             ("Text is redacted?", "Detected sensitive text is replaced locally by [REDACTED]. Saved redactions are permanent; review docs/privacy.md for scope."),
             ("Remote blocked?", "On Linux run once: sudo tailscale set --operator=$USER. Then retry /remote."),
+            ("Approval prompt?", "Review the exact proposed call. Untrusted page, file, or shell text never authorizes it. Approve only the current run when you understand the action; one-shot runs deny such calls."),
+            ("Paste collapsed?", "Long pastes show [paste N characters]. Left/Right jumps the block; Backspace/Delete removes it whole. Short pastes stay inline. Pasting never submits."),
+            ("Model switch warns?", "A cross-backend model switch warns before applying. Same-backend switches apply silently. Unsupported thinking levels fail before any request."),
+            ("Directory denied?", "Approve request_directory_access or change_directory to an approved directory. The root can never be granted. /new clears added grants and resets to launch."),
+            ("Compacted context?", "Run /compact show to inspect system + summary + recent tail after any compaction."),
         ],
     )
     tip(pdf, "Good defaults for most users: local model for drafts, stronger hosted model for final edits, Plan mode for risky changes, one agent per independent job.")
@@ -1081,18 +1158,18 @@ def build_pdf(images: dict[str, Path]):
         [
             ("/help", "Help for all or one command."),
             ("/bash <cmd>", "Run a shell command."),
-            ("/model", "Switch model by name only (+ thinking)."),
+            ("/model [id] [thinking]", "Switch model by name only (+ thinking)."),
             ("/agent ...", "Create, list, switch, rename, cancel, close."),
             ("/plan ...", "Plan, show, act, off."),
             ("/skill", "Enable instruction bundles."),
             ("/skillplan ...", "Draft, show, create, or leave skill design."),
             ("/interactive", "Let normal work ask up to 3 questions per prompt."),
             ("/learn ...", "Save/list/forget/compact preferences."),
-            ("/tool", "Choose file, shell, image, skill, and web tools."),
+            ("/tool", "Choose file, shell, image, skill, web, directory tools."),
             ("/resume, /new", "Reopen session / reset tab."),
             ("/history", "Find and re-read answers."),
-            ("/diff", "Expand saved diffs."),
-            ("/compact", "Summarize old context."),
+            ("/diff [N]", "Expand saved diff N (to 200 lines)."),
+            ("/compact [show]", "Summarize context; show inspects it."),
             ("/verbose", "Show/hide detailed traces."),
             ("/export", "Save pretty or raw HTML."),
             ("/remote", "Browser control via QR link."),
@@ -1117,7 +1194,7 @@ def build_pdf(images: dict[str, Path]):
     body(
         pdf,
         "This manual teaches use, not construction. It omits source layout, network internals, "
-        "and developer extension points on purpose. For command details, type `/help` inside qcode. "
+        "and developer extension points on purpose. Approvals, directories, and redaction are covered because you operate them. For command details, type `/help` inside qcode. "
         f"Generated {DATE} as version {VERSION}. Screenshots are illustrative examples rendered for print clarity.",
     )
 
@@ -1140,7 +1217,7 @@ def build_pdf(images: dict[str, Path]):
             "7. Planning before coding",
             "8. Skills and SkillPlan",
             "9. Remembering preferences with /learn",
-            "10. Tools, web fetch, and search",
+            "10. Tools, working directories, approvals, and web",
             "11. Sessions: autosave, resume, and export",
             "12. Controlling qcode from a browser",
             "13. Settings you actually change",

@@ -6,9 +6,12 @@ implementation and architecture details and shows how to use each feature.
 The **Use cases** pages after chapter 3 walk through repository onboarding,
 bug fixes with queued checks, planning, independent agent tabs, reusable skills,
 and resuming or sharing work. The guide also covers pinned latest prompts,
-steering and pending-work removal, model-operation progress and elapsed time,
-local redaction, terminal themes, transcript boundary navigation, token totals,
-workspace path shortening, skill autoloading, and sandbox command directories.
+steering and pending-work removal, pasted-block handling, /compact show inspection,
+model-operation progress and elapsed time, working directories with
+change_directory and directory approvals, tool approvals and prompt-injection
+warnings, cross-backend model-switch warnings, local redaction, terminal themes,
+transcript boundary navigation, token totals, workspace path shortening, skill
+autoloading and companion files, official skills, and sandbox command directories.
 
 - **PDF:** [`qcode-user-manual.pdf`](qcode-user-manual.pdf)
 - **Screenshots:** [`assets/`](assets/) — illustrative terminal screens
@@ -76,8 +79,9 @@ frames against the recording after each refresh.
 
 ## Scope rule
 
-Keep this manual about **using** qcode: install, prompt, queue, commands,
-models, agents, plans, skills, memory, web tools, sessions, privacy, browser control,
+Keep this manual about **using** qcode: install, prompt, queue, pastes, commands,
+models, agents with working directories, plans, skills, memory, tools with
+approvals and web access, sessions, privacy, browser control,
 settings, and troubleshooting. Do not add package layouts, control-plane,
 event-bus, provider wire formats, or other internals here.
 
