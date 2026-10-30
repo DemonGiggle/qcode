@@ -410,6 +410,28 @@ def make_screenshots() -> dict[str, Path]:
         ],
     )
 
+    out["skillplan"] = ASSETS / "11-skillplan-question.png"
+    draw_terminal(
+        out["skillplan"],
+        "qcode \u2014 Skill Plan question",
+        [
+            ("[main \u25cb]    Ctrl+PgUp/PgDn \u00b7 Alt+,/.", CYAN, None, True),
+            ("\u2726 review database migrations before deployment", MAGENTA, PROMPT_BG, True),
+            ("> review database migrations before deployment", DIM, None, False),
+            ("Question 1/2:", YELLOW, None, True),
+            ("When should this skill apply?", YELLOW, None, True),
+            ("", FG, None, False),
+            ("   1) Before deploying migrations - review rollback and compatibility", FG, None, False),
+            ("   2) After a failed migration - diagnose and recover", FG, None, False),
+            ("", FG, None, False),
+            ("Choose an option or type your own answer.", DIM, None, False),
+            ("Esc defers; Ctrl+C cancels active work.", DIM, None, False),
+            ("Answer 1/2> 1", WHITE, None, True),
+            ("Waiting for input | Ctrl+C to cancel | Esc review", DIM, None, False),
+            ("[MODE SKILL PLAN] ollama [MODEL qwen2.5-coder:7b]", DIM, STATUS_BG, False),
+        ],
+    )
+
     return out
 
 
@@ -702,7 +724,7 @@ def build_pdf(images: dict[str, Path]):
             "Task indicator: Waiting for model response, Receiving model thinking, or Receiving model response, with elapsed time for that operation. The timer resets when the phase changes. Tools appear in the transcript; questions show Waiting for input.",
             "Pending area: shows the current steer separately from FIFO tasks.",
             "Prompt: `>` idle, `(Plan)>` planning, `(Skill plan)>` skill design, `(Steer)>` working. You can keep typing while work runs.",
-            "Status bar: provider, MODEL, WS folder, CTX percent left, STEP n/max, and TOK input/output plus total when it fits. THINK appears when set, MODE for planning or interactive questions, and REMOTE while browser control runs. Narrow windows shorten the workspace path first, then wrap to a second left-aligned row before dropping low-priority segments (tok first). Hide parts with /statusline.",
+            "Status bar: provider, MODEL, WS folder, CTX percent left, STEP n/max, and TOK input/output plus total when it fits. THINK appears when set, MODE shows PLAN, SKILL PLAN, or INTERACTIVE, and REMOTE while browser control runs. Narrow windows shorten the workspace path first, then wrap to a second left-aligned row before dropping low-priority segments (tok first). Hide parts with /statusline.",
             "Pastes: long pastes stay together as one `[paste N characters]` block (100+ characters or more than 3 lines; one trailing newline does not count as a line). Short pastes stay inline and editable. Pasting never submits: press Enter to submit the full draft. Type before or after a collapsed block; Left/Right moves across it as a whole, Backspace/Delete removes the whole block.",
         ],
     )
@@ -972,15 +994,16 @@ def build_pdf(images: dict[str, Path]):
         ],
     )
     h2(pdf, "Creating a skill safely")
-    body(pdf, "Use `/skillplan` alone or with a rough idea to turn it into a reviewed skill. It asks when the skill applies, its workflow, inputs and outputs, constraints, validation, name, and scope, with follow-ups when an answer leaves a decision open.")
+    body(pdf, "Use `/skillplan` alone or with a rough idea to turn it into a reviewed skill. Entering from another mode starts a fresh draft; `/skillplan <rough intention>` submits that idea immediately and prints that guided design started. The prompt shows (Skill plan)> and the status bar shows [MODE SKILL PLAN]. It asks one focused question at a time about when the skill applies, its workflow, inputs and outputs, constraints, validation, name, and scope, with follow-ups when an answer leaves a decision open. Questions offer numbered choices (a description-only answer is shown as the choice) and always accept your own custom answer.")
+    figure(pdf, images["skillplan"], "Figure 8: Skill Plan question. Type an option number or your own answer; questions arrive one at a time like Plan and interactive questions.")
     code(pdf, "/skillplan review database migrations before deployment")
     bullets(
         pdf,
         [
-            "`/skillplan show` reviews the draft. `/skillplan create` writes it. `/skillplan off` leaves without writing.",
-            "Names allow 1-64 lowercase letters, digits, hyphens, or underscores; files must fit 64 KiB. qcode never overwrites an existing SKILL.md.",
-            "After creation, run `/skill` to enable the new skill.",
-            "SkillPlan can read context but cannot run shell commands or change files until you approve creation.",
+            "`/skillplan show` opens the latest complete draft in a quoted, scrollable review (Up/Down, PgUp/PgDn, Home/End or g/G; q, Esc, or Ctrl+C closes; the header shows Skill draft | /skillplan create to approve). `/skillplan create` writes exactly the reviewed SKILL.md and leaves Skill Plan mode. `/skillplan off` leaves without writing.",
+            "Creation targets are only ~/.qcode/skills, .agents/skills, and .qcode/skills; the draft name must be 1-64 lowercase letters, digits, hyphens, or underscores and the content must be non-empty valid UTF-8 within 64 KiB. qcode writes only the reviewed SKILL.md (companions must already exist or be created separately) and never overwrites an existing SKILL.md; a name or location conflict stays in Skill Plan mode so you can pick another.",
+            "When the design is coherent, qcode asks whether to Create skill (same as /skillplan create) now or Stay in Skill Plan mode to review it with /skillplan show or request refinements; each complete revision replaces the previous draft. After creation, run `/skill` to refresh discovery and enable the new skill.",
+            "Skill Plan mode advertises only inspection tools (read, list, search, view_image, web_fetch, web_search, skill, plus agent-history helpers) with ask_questions and propose_skill. Shell, write, edit, directory changes or grants, and sub-agent delegation are rejected at the tool boundary. `/new` clears the saved draft and returns the agent to normal mode, like `/plan off` leaves planning.",
         ],
     )
 
@@ -1047,7 +1070,7 @@ def build_pdf(images: dict[str, Path]):
 
     # 11 Sessions
     h1(pdf, "11. Sessions: autosave, resume, and export")
-    figure(pdf, images["resume"], "Figure 8: /resume previews the saved active tab. Pinned sessions sort first; Tab opens Rename, Pin/Unpin, and Delete, while Ctrl+D opens Delete all.")
+    figure(pdf, images["resume"], "Figure 9: /resume previews the saved active tab. Pinned sessions sort first; Tab opens Rename, Pin/Unpin, and Delete, while Ctrl+D opens Delete all.")
     bullets(
         pdf,
         [
@@ -1069,7 +1092,7 @@ def build_pdf(images: dict[str, Path]):
     # 12 Remote
     h1(pdf, "12. Controlling qcode from a browser")
     body(pdf, "Type /remote to control the same session from a phone or browser. Choose Pure Web for a trusted LAN, Tailscale for your tailnet, or Pure Web (No auth, danger!) for open control by anyone with the URL; reserve no-auth for open, short-lived trusted-network demos. Pure Web is plain HTTP on your LAN: use only networks you trust.")
-    figure(pdf, images["remote"], "Figure 9: /remote screen. Scan or open the link, then Accept. Save QR as PNG if it does not fit.", w=160)
+    figure(pdf, images["remote"], "Figure 10: /remote screen. Scan or open the link, then Accept. Save QR as PNG if it does not fit.", w=160)
     numbered(
         pdf,
         [
@@ -1099,7 +1122,7 @@ def build_pdf(images: dict[str, Path]):
     body(pdf, "Most daily choices live in the terminal (`/model`, `/maxsteps`, `/statusline`, `/theme`, `/tool`). Use a config file only for defaults you always want.")
     h2(pdf, "Terminal colors and workspace visibility")
     body(pdf, "Use /theme to preview terminal palettes with Up/Down. Enter applies and saves the choice; Esc or Ctrl+C cancels. Default (Auto) follows your terminal. The 22 dark and light choices include Catppuccin, Dracula/Alucard, Gruvbox, Solarized, Nord, Tokyo Night, One, Rosé Pine, Everforest, Kanagawa, and Ayu. The setting is terminal-wide and saves from any agent tab. The browser's pinned prompt follows the theme's accent color and background.")
-    figure(pdf, images["theme"], "Figure 10: /theme previews colors for responses, diffs, and status. Enter applies and saves; Esc or Ctrl+C leaves the current choice.")
+    figure(pdf, images["theme"], "Figure 11: /theme previews colors for responses, diffs, and status. Enter applies and saves; Esc or Ctrl+C leaves the current choice.")
     body(pdf, "WS uses available status bar space and keeps the final two complete folders when possible, using a second row as needed. Home-relative paths retain ~/; omitted parents appear as an ellipsis folder, for example ~/.../work/foo. If the final folder name must be clipped, its ending gets an ellipsis: ~/workspace/this-folder-is... (the final dots shorten the name).")
     body(pdf, "TOK shows provider-reported session input/output counts. The combined total uses a sigma marker, or T: in ASCII mode, whenever it fits one or two status rows. If usage is missing, unknown or a question mark indicates incomplete counts. /new resets the active agent's totals; changing models keeps them.")
     body(pdf, "Open /statusline, move with Up/Down, toggle with Space, and apply with Enter. Or type /statusline tok off, /statusline show, or /statusline reset. Changes on main save statusline_hidden in your user config while preserving comments and unrelated tables, including redaction and skills settings.")

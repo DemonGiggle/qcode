@@ -16,8 +16,9 @@ autoloading and companion files, official skills, and sandbox command directorie
 - **PDF:** [`qcode-user-manual.pdf`](qcode-user-manual.pdf)
 - **Screenshots:** [`assets/`](assets/) — illustrative terminal screens
   rendered for print clarity (TUI layout, `/help`, `/model` names only,
-  agents, Plan mode, `/remote` QR, diff/export, `/interactive` question,
-  `/theme` live preview, and `/resume` with pins and transcript preview).
+  agents, Plan mode, Skill Plan question, `/remote` QR, diff/export,
+  `/interactive` question, `/theme` live preview, and `/resume` with pins
+  and transcript preview).
 
 ## Regenerate
 
