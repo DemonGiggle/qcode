@@ -29,9 +29,62 @@ type Learning struct {
 
 // Skills configures additional directories containing skill folders. Each
 // directory should contain <name>/SKILL.md entries.
+//
+// AutoloadPaths is the legacy lazy-only form: every valid skill in those
+// directories is selected at startup but stays lazy (catalog only).
+// Autoload is the new representation: each entry marks a directory as
+// lazy or always-load (full text eagerly injected). Both forms are
+// additive across configuration layers.
 type Skills struct {
-	Paths         []string `toml:"paths"`
-	AutoloadPaths []string `toml:"autoload_paths"`
+	Paths         []string        `toml:"paths"`
+	AutoloadPaths []string        `toml:"autoload_paths"`
+	Autoload      []AutoloadEntry `toml:"autoload"`
+}
+
+// AutoloadEntry marks one autoload directory with its load mode.
+type AutoloadEntry struct {
+	Path       string `toml:"path"`
+	AlwaysLoad bool   `toml:"always_load"`
+}
+
+// AutoloadPathsByMode splits the merged autoload configuration into lazy
+// directories and always-load directories. Legacy autoload_paths entries
+// are always lazy. Entries are trimmed, deduped, and order-stable.
+func (s Skills) AutoloadPathsByMode() (lazy []string, always []string) {
+	seenLazy := map[string]bool{}
+	seenAlways := map[string]bool{}
+	add := func(dst *[]string, seen map[string]bool, path string) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return
+		}
+		if seen[path] {
+			return
+		}
+		seen[path] = true
+		*dst = append(*dst, path)
+	}
+	for _, path := range s.AutoloadPaths {
+		add(&lazy, seenLazy, path)
+	}
+	for _, entry := range s.Autoload {
+		if strings.TrimSpace(entry.Path) == "" {
+			continue
+		}
+		if entry.AlwaysLoad {
+			add(&always, seenAlways, entry.Path)
+		} else {
+			add(&lazy, seenLazy, entry.Path)
+		}
+	}
+	return lazy, always
+}
+
+// AllAutoloadPaths returns every autoload directory (lazy + always) in
+// discovery order: legacy lazy paths first, then the new table entries.
+func (s Skills) AllAutoloadPaths() []string {
+	lazy, always := s.AutoloadPathsByMode()
+	return append(append([]string(nil), lazy...), always...)
 }
 
 // Config contains settings that may be supplied by a qcode config file.
@@ -266,6 +319,7 @@ func merge(dst *Config, incoming Config) {
 	}
 	dst.Skills.Paths = appendUniquePaths(dst.Skills.Paths, incoming.Skills.Paths)
 	dst.Skills.AutoloadPaths = appendUniquePaths(dst.Skills.AutoloadPaths, incoming.Skills.AutoloadPaths)
+	dst.Skills.Autoload = appendUniqueAutoload(dst.Skills.Autoload, incoming.Skills.Autoload)
 }
 
 func appendUniquePaths(existing, incoming []string) []string {
@@ -283,6 +337,27 @@ func appendUniquePaths(existing, incoming []string) []string {
 		}
 		seen[path] = struct{}{}
 		existing = append(existing, path)
+	}
+	return existing
+}
+
+func appendUniqueAutoload(existing, incoming []AutoloadEntry) []AutoloadEntry {
+	seen := make(map[string]int, len(existing))
+	for i, entry := range existing {
+		seen[strings.TrimSpace(entry.Path)] = i
+	}
+	for _, entry := range incoming {
+		entry.Path = strings.TrimSpace(entry.Path)
+		if entry.Path == "" {
+			continue
+		}
+		if idx, ok := seen[entry.Path]; ok {
+			// An always-load mark is sticky across layers.
+			existing[idx].AlwaysLoad = existing[idx].AlwaysLoad || entry.AlwaysLoad
+			continue
+		}
+		seen[entry.Path] = len(existing)
+		existing = append(existing, entry)
 	}
 	return existing
 }

@@ -152,7 +152,14 @@ func (r *Registry) loadSkill(_ context.Context, arguments json.RawMessage) (stri
 	if args.Name == "" {
 		return "", fmt.Errorf("skill name must not be empty")
 	}
-	return r.skills.Load(args.Name)
+	loaded, err := r.skills.Load(args.Name)
+	if err != nil {
+		return "", err
+	}
+	if checker, ok := r.skills.(interface{ IsAlways(string) bool }); ok && checker.IsAlways(args.Name) {
+		return "Note: this skill is already always-loaded in the system prompt; the same text follows without loading anything new.\n\n" + loaded, nil
+	}
+	return loaded, nil
 }
 
 func (r *Registry) SetDirectoryApprover(approver DirectoryApprover) { r.approver = approver }

@@ -88,7 +88,18 @@ context_budget = 1200
 # the selected workspace; a directory contains <name>/SKILL.md.
 # [skills]
 # paths = ["~/.config/my-skills", ".team/skills"]
+# Legacy lazy autoload: every valid skill in these directories is selected
+# at startup but stays lazy (catalog only).
 # autoload_paths = [".team/always-on-skills"]
+# New representation: mark autoload directories as lazy or always-load
+# (full text eagerly injected). always_load directories win on duplicate
+# skill names for the mode decision.
+# [[skills.autoload]]
+# path = ".team/always-on-skills"
+# always_load = true
+# [[skills.autoload]]
+# path = ".team/lazy-skills"
+# always_load = false
 
 # Local text filtering is enabled at every output boundary by default.
 # Saved sessions are permanently redacted; legacy sessions are rewritten on resume.

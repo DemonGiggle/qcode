@@ -64,6 +64,7 @@ type Agent struct {
 	system                   string
 	endpoint                 string
 	selectedSkills           []prompt.SkillSummary
+	alwaysContents           map[string]string
 	pendingImages            []llm.Image
 	planMode                 atomic.Bool
 	skillPlanMode            atomic.Bool
@@ -78,13 +79,19 @@ type Agent struct {
 	latestSkillDraft         *SkillDraft
 	planDecisionPending      bool
 	skillPlanDecisionPending bool
-	activityRecorder         func(session.WorkActivity)
-	directoryRecorder        func(string)
-	creationRollback         func()
-	progressRecorder         func(*session.Progress)
-	progress                 *session.Progress
-	progressTask             *trace.Task
-	checkpoint               atomic.Pointer[[]byte]
+	// warnedSuspicious records content hashes already surfaced as
+	// prompt-injection warnings so repeated runs do not re-warn (and
+	// re-gate) the same history. Denied fingerprints persist so a denied
+	// action stays denied for the agent lifetime without re-prompting.
+	warnedSuspicious   map[string]string
+	deniedFingerprints map[string]bool
+	activityRecorder   func(session.WorkActivity)
+	directoryRecorder  func(string)
+	creationRollback   func()
+	progressRecorder   func(*session.Progress)
+	progress           *session.Progress
+	progressTask       *trace.Task
+	checkpoint         atomic.Pointer[[]byte]
 }
 
 // Toolset is the complete tool boundary used by the agent loop. Production and
@@ -303,13 +310,83 @@ func thinkingLevelAllowed(capability llm.ThinkingCapability, level string) bool 
 }
 
 // SetSkills replaces the user-selected skills advertised to the model.
+// Always-loaded bodies already cached are kept for skills that remain
+// marked AlwaysLoad; others are pruned.
 func (a *Agent) SetSkills(skills []prompt.SkillSummary) {
 	a.selectedSkills = append([]prompt.SkillSummary(nil), skills...)
+	keep := map[string]bool{}
+	for _, skill := range skills {
+		if skill.AlwaysLoad {
+			keep[skill.Name] = true
+		}
+	}
+	if len(keep) == 0 {
+		a.alwaysContents = nil
+	} else if a.alwaysContents != nil {
+		pruned := make(map[string]string, len(keep))
+		for name, body := range a.alwaysContents {
+			if keep[name] {
+				pruned[name] = body
+			}
+		}
+		a.alwaysContents = pruned
+	}
 	defer a.invalidateContextUsage()
 	a.system = a.modeSystem(skills)
 	if len(a.messages) > 0 && a.messages[0].Role == "system" {
 		a.messages[0].Content = a.system
 	}
+}
+
+// SetSkillsWithContents replaces the selection and the cached always-loaded
+// bodies atomically.
+func (a *Agent) SetSkillsWithContents(skills []prompt.SkillSummary, contents map[string]string) {
+	a.selectedSkills = append([]prompt.SkillSummary(nil), skills...)
+	if len(contents) == 0 {
+		a.alwaysContents = nil
+	} else {
+		cloned := make(map[string]string, len(contents))
+		for name, body := range contents {
+			cloned[name] = body
+		}
+		a.alwaysContents = cloned
+	}
+	defer a.invalidateContextUsage()
+	a.system = a.modeSystem(a.selectedSkills)
+	if len(a.messages) > 0 && a.messages[0].Role == "system" {
+		a.messages[0].Content = a.system
+	}
+}
+
+// SetAlwaysContents replaces the cached always-loaded bodies and rebuilds
+// the system prompt. Bodies must use the skill tool header format.
+func (a *Agent) SetAlwaysContents(contents map[string]string) {
+	if len(contents) == 0 {
+		a.alwaysContents = nil
+	} else {
+		cloned := make(map[string]string, len(contents))
+		for name, body := range contents {
+			cloned[name] = body
+		}
+		a.alwaysContents = cloned
+	}
+	defer a.invalidateContextUsage()
+	a.system = a.modeSystem(a.selectedSkills)
+	if len(a.messages) > 0 && a.messages[0].Role == "system" {
+		a.messages[0].Content = a.system
+	}
+}
+
+// AlwaysContents returns the cached always-loaded skill bodies.
+func (a *Agent) AlwaysContents() map[string]string {
+	if len(a.alwaysContents) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(a.alwaysContents))
+	for name, body := range a.alwaysContents {
+		cloned[name] = body
+	}
+	return cloned
 }
 
 // SelectedSkills returns the skills currently advertised to the model.
@@ -332,7 +409,7 @@ func (a *Agent) InheritCapabilitiesFrom(source *Agent) error {
 			}
 		}
 	}
-	a.SetSkills(source.SelectedSkills())
+	a.SetSkillsWithContents(source.SelectedSkills(), source.AlwaysContents())
 	a.SetInteractiveMode(source.InteractiveMode())
 	a.SetMaxSteps(source.MaxSteps())
 	return nil
@@ -500,31 +577,44 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 	injectionSeen := false
 	injectionApprovedForRun := false
 	deniedCalls := map[string]bool{}
-	warnInjection := func() {
+	warnInjection := func(source, content string) {
+		if !a.noteSuspicious(source, content) {
+			return
+		}
 		if injectionSeen {
 			return
 		}
 		injectionSeen = true
-		message := "[!] POSSIBLE PROMPT INJECTION: Untrusted content contains an instruction-like request. qcode is treating it as data. Further tool actions that can access data or cause side effects require your approval."
+		message := fmt.Sprintf("[!] POSSIBLE PROMPT INJECTION in %s: Untrusted content contains an instruction-like request. qcode is treating it as data. Further tool actions that can access data or cause side effects require your approval.", source)
 		if transcript.Grouped(a.out) {
 			fmt.Fprintln(transcript.NewGroup(a.out), message)
 		} else {
 			fmt.Fprint(a.out, "\n"+message+"\n\n")
 		}
 	}
+	historySource := func(message llm.Message) string {
+		if message.Origin != "" {
+			return "history " + message.Origin
+		}
+		if message.Name != "" {
+			return "history tool:" + message.Name
+		}
+		if message.Role != "" {
+			return "history " + message.Role
+		}
+		return "history"
+	}
 	for _, message := range a.messages[1 : len(a.messages)-1] {
 		if message.Untrusted && trust.Suspicious(message.Content) {
-			warnInjection()
-			break
+			warnInjection(historySource(message), message.Content)
 		}
 	}
 	if trust.Suspicious(a.taskContext) {
-		warnInjection()
+		warnInjection("task context", a.taskContext)
 	}
 	for _, skill := range a.selectedSkills {
 		if trust.Suspicious(skill.Name + " " + skill.Description) {
-			warnInjection()
-			break
+			warnInjection("skill:"+skill.Name, skill.Name+" "+skill.Description)
 		}
 	}
 	recoveryInstruction := ""
@@ -569,8 +659,11 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		if a.InteractiveMode() && a.interactiveAvailable.Load() && !a.PlanMode() && !a.SkillPlanMode() && len(requestMessages) > 0 {
 			requestMessages[0].Content += fmt.Sprintf("\n\nInteractive questions remaining for this request: %d.", max(0, 3-a.questionsAsked))
 		}
-		if trust.Suspicious(a.learningContext) || trust.Suspicious(a.dynamicContext) {
-			warnInjection()
+		if trust.Suspicious(a.learningContext) {
+			warnInjection("learning context", a.learningContext)
+		}
+		if trust.Suspicious(a.dynamicContext) {
+			warnInjection("additional context", a.dynamicContext)
 		}
 		if recoveryInstruction != "" && len(requestMessages) > 0 && requestMessages[0].Role == "system" {
 			// Keep the recovery notice ephemeral. It helps the next model turn
@@ -731,26 +824,20 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			displayCall := call
 			displayCall.Arguments = a.trace.RedactArguments(call.Arguments)
 			activityDetails := toolActivity(displayCall)
-			if injectionSeen {
-				activityDetails = trace.Activity{Action: call.Name, Start: "Reviewing tool action after prompt-injection warning", Completed: "Reviewed tool action after prompt-injection warning", Category: trace.ActivityOther}
-			}
 			task.Suspend()
 			activity := a.trace.StartActivity(activityDetails)
-			traceArguments := arguments
-			if injectionSeen {
-				traceArguments = "[redacted after prompt-injection warning]"
-			}
-			toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": traceArguments})
+			toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": arguments})
 			var execution llm.ToolResult
 			var toolErr error
 			if userAnswer != "" {
 				toolErr = fmt.Errorf("tool deferred until after the user answer is processed")
 			} else if injectionSeen && !injectionApprovedForRun && requiresInjectionApproval(call.Name) {
-				if deniedCalls[fingerprint] {
+				if deniedCalls[fingerprint] || a.deniedFingerprint(fingerprint) {
 					toolErr = fmt.Errorf("action remains denied after a prompt-injection warning")
 				} else if approvedForRun, err := a.approveInjectionAction(ctx, call); err != nil {
 					if !errors.Is(err, session.ErrInteractionWithdrawn) {
 						deniedCalls[fingerprint] = true
+						a.denyFingerprint(fingerprint)
 					}
 					toolErr = err
 				} else {
@@ -797,7 +884,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 				}
 			}
 			if trust.Suspicious(result) {
-				warnInjection()
+				warnInjection("tool:"+call.Name, result)
 			}
 			a.messages = append(a.messages, llm.Message{Role: "tool", Content: trust.Wrap(call.Name, result), Origin: call.Name, Untrusted: true, Name: call.Name, ToolCallID: call.ID})
 			if toolErr == nil && execution.UserAnswer != "" {

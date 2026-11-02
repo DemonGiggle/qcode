@@ -43,6 +43,7 @@ type SavedState struct {
 	LearningContext, LearningSessionID              string
 	LearningBudget                                  int
 	Skills                                          []prompt.SkillSummary
+	AlwaysContents                                  map[string]string `json:"always_contents,omitempty"`
 	PlanMode                                        bool
 	LatestPlan                                      *Plan
 	SkillPlanMode                                   bool
@@ -96,7 +97,7 @@ func (a *Agent) publishCheckpoint() {
 		ContextWindow: a.contextWindow, ContextOverride: a.contextOverride, ContextMessages: a.contextMessages,
 		ContextUsage: a.contextUsage, AutoCompact: a.autoCompact, AutoCompactThreshold: a.autoCompactThreshold,
 		MaxSteps: a.MaxSteps(), LearningContext: a.learningContext, LearningSessionID: a.learningSessionID,
-		LearningBudget: a.learningBudget, Skills: a.selectedSkills, PendingImages: a.pendingImages,
+		LearningBudget: a.learningBudget, Skills: a.selectedSkills, AlwaysContents: a.alwaysContents, PendingImages: a.pendingImages,
 		PlanMode: a.PlanMode(), SkillPlanMode: a.SkillPlanMode(), InteractiveMode: a.InteractiveMode()}
 	if plan, ok := a.LatestPlan(); ok {
 		s.LatestPlan = &plan
@@ -180,7 +181,7 @@ func (a *Agent) RestoreFreshState(data json.RawMessage) error {
 		ContextWindow: saved.ContextWindow, ContextOverride: saved.ContextOverride,
 		AutoCompact: saved.AutoCompact, AutoCompactThreshold: saved.AutoCompactThreshold,
 		MaxSteps: saved.MaxSteps, LearningBudget: saved.LearningBudget,
-		Skills: saved.Skills, InteractiveMode: saved.InteractiveMode,
+		Skills: saved.Skills, AlwaysContents: saved.AlwaysContents, InteractiveMode: saved.InteractiveMode,
 	}
 	settings, err := json.Marshal(fresh)
 	if err != nil {
@@ -277,6 +278,7 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 	a.maxSteps.Store(int64(s.MaxSteps))
 	a.learningContext, a.learningSessionID, a.learningBudget = s.LearningContext, s.LearningSessionID, s.LearningBudget
 	a.selectedSkills = s.Skills
+	a.alwaysContents = s.AlwaysContents
 	a.updateModeSystem()
 	a.pendingImages = s.PendingImages
 	a.contextStatus.Store(&contextStatus{remaining: s.Remaining, known: s.Known, estimated: s.Estimated})

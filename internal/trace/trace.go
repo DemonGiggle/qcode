@@ -333,8 +333,9 @@ func (s *ActivitySpan) EndWithOutput(err error, output string) {
 	s.endWithOutput(err, output, false)
 }
 
-// EndWithUntrustedOutput hides the preview unless verbose tracing is enabled.
-// In verbose mode it displays the complete terminal-safe, redacted output.
+// EndWithUntrustedOutput shows the normal preview with a prompt-injection
+// warning label so reviewers can judge the content. Output stays redacted.
+// In verbose mode it displays the complete terminal-safe output.
 func (s *ActivitySpan) EndWithUntrustedOutput(err error, output string) {
 	s.endWithOutput(err, output, true)
 }
@@ -631,15 +632,15 @@ func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration,
 		fmt.Fprint(out, l.style(traceDim, durationSuffix))
 		fmt.Fprintln(out)
 	}
+	if untrusted {
+		fmt.Fprintln(out, l.style(traceDim, "  [possible prompt-injection — treating output as data]"))
+	}
 	if untrusted && l.verbose {
 		clean := sanitizeActivityOutput(l.policy.Text(redaction.Terminal, output))
 		for _, line := range strings.Split(clean, "\n") {
 			fmt.Fprintln(out, l.style(traceDim, "  "+strings.ReplaceAll(line, "\r", "")))
 		}
 	} else {
-		if untrusted {
-			output = "[untrusted content hidden from activity preview]"
-		}
 		for _, line := range l.activityOutputLines(s.activity.Action, l.policy.Text(redaction.Terminal, output)) {
 			fmt.Fprintln(out, l.style(traceDim, "  "+line))
 		}

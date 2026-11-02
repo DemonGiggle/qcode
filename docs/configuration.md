@@ -90,8 +90,32 @@ collisions. The setting is additive across configuration layers, with the same
 path expansion and deduplication rules as `skills.paths`. Only skill names and
 descriptions enter the initial prompt; full `SKILL.md` files are loaded on
 demand. `/skill` can change the selection for the active agent tab. Resumed
-sessions keep their saved skill selection. A missing directory contributes no
-skills; a discovery error produces a startup warning.
+sessions keep their saved skill selection, including always-load flags and
+cached bodies. A missing directory contributes no skills; a discovery error
+produces a startup warning. Legacy `autoload_paths` entries are always lazy.
+
+The new representation `[[skills.autoload]]` marks autoload directories as
+lazy or always-load (full text eagerly injected):
+
+```toml
+[[skills.autoload]]
+path = ".team/always-on-skills"
+always_load = true
+
+[[skills.autoload]]
+path = ".team/lazy-skills"
+always_load = false
+```
+
+`always_load = true` directories behave like `autoload_paths` except their
+valid skills start as always-loaded: the full `SKILL.md` (same header format
+as the `skill` tool, wrapped as untrusted reference data with no extra
+authority) is prepended after the system prompt and those skills are excluded
+from the lazy catalog so no skill is counted twice. Oversize or unreadable
+always skills warn and fall back to lazy. Both forms are additive across
+layers; an `always_load = true` mark is sticky. In `/skill`, autoloaded
+skills show an `(auto)` / `(auto-always)` badge, and the stacked context bar
+splits system vs must-load vs lazy vs other vs remaining with no duplication.
 
 `interactive` defaults to `false`. When enabled in a terminal session, normal
 mode may ask up to three distinct, focused questions per submitted prompt.

@@ -175,27 +175,39 @@ files must already exist or be created separately.
 ## Discovery, selection, and loading
 
 In interactive mode, `/skill` refreshes the catalog and displays each
-discovered skill's name and summary. The user can filter the list, toggle
-skills, and press Enter to apply the selection. The selection is associated
-with the active agent tab.
+discovered skill's name, summary, size, and autoload badge. The user can
+filter the list, cycle modes with Space (off -> lazy -> always-load), and
+press Enter to apply the selection. The selection is associated with the
+active agent tab.
 
-Selecting a skill does not immediately add its full document to the model
-context. qcode adds only the selected name and summary to the agent's system
-prompt. When the selected skill applies, the agent is expected to call the
-`skill` tool with the exact directory name. qcode then returns the complete
-`SKILL.md` content after the context header described above. Interactive
-selection and autoloaded skills use the same loading format.
+Selecting a skill lazily does not immediately add its full document to the
+model context. qcode adds only the selected name and summary to the agent's
+system prompt. When the selected skill applies, the agent is expected to call
+the `skill` tool with the exact directory name. qcode then returns the
+complete `SKILL.md` content after the context header described above.
+Interactive selection and autoloaded skills use the same loading format.
+Promoting a skill to always-load instead injects its full document eagerly in
+a separate block after the system prompt (same header format, wrapped as
+untrusted reference data). The `skill` tool still accepts always-loaded names
+but returns the same text with an already-loaded note.
 
 The `skill` tool refuses to load a name that was not selected for the current
 agent. Removing a skill from the selection therefore prevents its instructions
-from being loaded, even if the skill is still present on disk.
+from being loaded, even if the skill is still present on disk. Always-load is
+per-tab, inherited by sub-agents like the current selection, and persisted in
+`SavedState`/remote resume with cached bodies.
 
 One-shot and piped invocations do not provide the interactive `/skill`
-selection step. Use `skills.autoload_paths` to enable skills in those runs:
+selection step. Use `skills.autoload_paths` (lazy) or `[[skills.autoload]]`
+with `always_load = true` to enable skills in those runs:
 
 ```toml
 [skills]
 autoload_paths = [".team/skills"]
+
+[[skills.autoload]]
+path = ".team/always"
+always_load = true
 ```
 
 New interactive runs also start with these skills selected. Resumed sessions

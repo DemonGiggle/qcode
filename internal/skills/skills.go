@@ -20,9 +20,11 @@ const (
 
 // Skill is a discovered instruction bundle. Name and Description are safe to
 // show in the system prompt; the document itself is only returned on demand.
+// SizeBytes is the on-disk SKILL.md size for context estimates.
 type Skill struct {
 	Name        string
 	Description string
+	SizeBytes   int
 	path        string
 	root        string
 }
@@ -35,23 +37,26 @@ type Catalog struct {
 }
 
 // Selection makes only user-enabled skills available to the tool.
+// Enabled covers both lazy and always-loaded skills; Always is the subset
+// whose full text is eagerly injected into the system prompt.
 type Selection struct {
 	catalog     *Catalog
 	root        string
 	customPaths []string
 	mu          sync.RWMutex
 	enabled     map[string]bool
+	always      map[string]bool
 }
 
 func NewSelection(catalog *Catalog) *Selection {
-	return &Selection{catalog: catalog, enabled: map[string]bool{}}
+	return &Selection{catalog: catalog, enabled: map[string]bool{}, always: map[string]bool{}}
 }
 
 // NewLazySelection defers skill discovery until a selected skill is loaded.
 // This keeps application startup independent of the number and size of skill
 // files.
 func NewLazySelection(root string, customPaths ...string) *Selection {
-	return &Selection{root: root, customPaths: append([]string(nil), customPaths...), enabled: map[string]bool{}}
+	return &Selection{root: root, customPaths: append([]string(nil), customPaths...), enabled: map[string]bool{}, always: map[string]bool{}}
 }
 
 func (s *Selection) Selected() []string {
@@ -65,6 +70,67 @@ func (s *Selection) Selected() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// Always returns the sorted subset of selected skills marked always-load.
+func (s *Selection) Always() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var names []string
+	for name := range s.always {
+		if s.enabled[name] {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// IsAlways reports whether a selected skill is marked always-load.
+func (s *Selection) IsAlways(name string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.enabled[name] && s.always[name]
+}
+
+// SetAlways replaces the always-load subset. Names are also enabled, so an
+// always skill remains loadable via the skill tool (which then dedups).
+func (s *Selection) SetAlways(names []string) {
+	s.mu.RLock()
+	catalog := s.catalog
+	s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := map[string]bool{}
+	for _, name := range names {
+		if catalog == nil {
+			next[name] = true
+			continue
+		}
+		for _, skill := range catalog.skills {
+			if name == skill.Name {
+				next[name] = true
+				break
+			}
+		}
+	}
+	s.always = next
+	for name := range next {
+		s.enabled[name] = true
+	}
+}
+
+// SetSelection replaces both the enabled set and the always-load subset.
+func (s *Selection) SetSelection(names, alwaysNames []string) {
+	s.Set(names)
+	s.SetAlways(alwaysNames)
+	// Set cleared always above; re-enable any always name dropped by Set
+	// when the catalog was available at Set time.
+	s.mu.Lock()
+	for name := range s.always {
+		s.enabled[name] = true
+	}
+	s.mu.Unlock()
 }
 
 func (s *Selection) Set(names []string) {
@@ -85,6 +151,15 @@ func (s *Selection) Set(names []string) {
 				break
 			}
 		}
+	}
+	// Prune always flags for deselected skills; keep the rest.
+	for name := range s.always {
+		if !s.enabled[name] {
+			delete(s.always, name)
+		}
+	}
+	if s.always == nil {
+		s.always = map[string]bool{}
 	}
 }
 
@@ -273,7 +348,7 @@ func Discover(root string, customPaths ...string) (*Catalog, error) {
 			if err != nil {
 				return nil, fmt.Errorf("read skill %q: %w", entry.Name(), err)
 			}
-			byName[entry.Name()] = Skill{Name: entry.Name(), Description: description, path: resolved, root: base}
+			byName[entry.Name()] = Skill{Name: entry.Name(), Description: description, SizeBytes: int(min(int64(maxFileSize+1), info.Size())), path: resolved, root: base}
 		}
 	}
 	items := make([]Skill, 0, len(byName))

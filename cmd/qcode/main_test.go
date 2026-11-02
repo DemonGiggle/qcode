@@ -44,15 +44,29 @@ func TestAutoloadSkillDataAndOneShotPrompt(t *testing.T) {
 	}
 	paths := []string{"manual"}
 	auto := []string{"automatic", "missing"}
-	summaries, err := autoloadSkillData(root, paths, auto)
+	summaries, alwaysBodies, err := autoloadSkillData(root, paths, auto, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(alwaysBodies) != 0 {
+		t.Fatalf("always bodies = %#v, want none", alwaysBodies)
 	}
 	if len(summaries) != 2 || summaries[0].Name != "manual" || summaries[0].Description != "Automatic override" || summaries[1].Name != "review" {
 		t.Fatalf("autoload summaries = %#v", summaries)
 	}
+	for _, summary := range summaries {
+		if !summary.Autoload {
+			t.Fatalf("autoload flag missing in %#v", summary)
+		}
+		if summary.AlwaysLoad {
+			t.Fatalf("unexpected always-load in %#v", summary)
+		}
+		if summary.SizeBytes <= 0 {
+			t.Fatalf("size missing in %#v", summary)
+		}
+	}
 	selection := skills.NewLazySelection(root, append(paths, auto...)...)
-	selection.Set(skillNames(summaries))
+	selection.SetSelection(skillNames(summaries), skillAlwaysNames(summaries))
 	if _, err := selection.Load("optional"); err == nil {
 		t.Fatal("non-autoloaded skill was enabled")
 	}
@@ -83,7 +97,7 @@ func TestAutoloadSkillDataAndOneShotPrompt(t *testing.T) {
 	}
 	defer stderr.Close()
 	provider := &autoloadProvider{}
-	if err := runOneShot(context.Background(), "hello", provider, "test-model", "", registry, stderr, stdout, false, 3, prompt.System, nil, 0, summaries); err != nil {
+	if err := runOneShot(context.Background(), "hello", provider, "test-model", "", registry, stderr, stdout, false, 3, prompt.System, nil, 0, summaries, nil); err != nil {
 		t.Fatal(err)
 	}
 	system := provider.request.Messages[0].Content

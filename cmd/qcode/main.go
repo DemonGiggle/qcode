@@ -103,6 +103,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	var configPaths []string
 	var configuredSkillPaths []string
 	var configuredAutoloadPaths []string
+	var configuredAlwaysAutoloadPaths []string
 	var configuredStatuslineHidden []string
 	var configuredTheme string
 	var sandboxCommandPathFlags sandboxCommandPathsFlag
@@ -158,7 +159,10 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			fmt.Fprintln(diagnosticsOut, "WARNING:", diagnostic, "Skipping file.")
 		}
 		configuredSkillPaths = append([]string(nil), cfg.Skills.Paths...)
-		configuredAutoloadPaths = append([]string(nil), cfg.Skills.AutoloadPaths...)
+		lazyAutoload, alwaysAutoload := cfg.Skills.AutoloadPathsByMode()
+		// Legacy autoload_paths entries are lazy; merge both forms.
+		configuredAutoloadPaths = append(append([]string(nil), lazyAutoload...), alwaysAutoload...)
+		configuredAlwaysAutoloadPaths = append([]string(nil), alwaysAutoload...)
 		configuredStatuslineHidden = append([]string(nil), cfg.StatuslineHidden...)
 		configuredTheme = cfg.Theme
 		redactionConfig = cfg.Redaction
@@ -243,19 +247,24 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	allSkillPaths := append(append([]string(nil), configuredSkillPaths...), configuredAutoloadPaths...)
 	skillLocations := skills.Locations(root, allSkillPaths...)
 	loadSkills := func() ([]prompt.SkillSummary, error) {
-		return skillCatalogData(root, allSkillPaths...)
+		return skillCatalogData(root, allSkillPaths, configuredAutoloadPaths, configuredAlwaysAutoloadPaths)
+	}
+	loadSkillBodies := func(names []string) (map[string]string, error) {
+		return skillBodiesData(root, allSkillPaths, names)
 	}
 	var autoloadSkills []prompt.SkillSummary
+	var autoloadAlwaysBodies map[string]string
 	if len(configuredAutoloadPaths) > 0 {
-		loaded, discoverErr := autoloadSkillData(root, configuredSkillPaths, configuredAutoloadPaths)
+		loaded, alwaysBodies, discoverErr := autoloadSkillData(root, configuredSkillPaths, configuredAutoloadPaths, configuredAlwaysAutoloadPaths)
 		if discoverErr != nil {
 			fmt.Fprintln(diagnosticsOut, "WARNING: cannot autoload skills:", discoverErr)
 		} else {
 			autoloadSkills = loaded
+			autoloadAlwaysBodies = alwaysBodies
 		}
 	}
 	skillSelection := skills.NewLazySelection(root, allSkillPaths...)
-	skillSelection.Set(skillNames(autoloadSkills))
+	skillSelection.SetSelection(skillNames(autoloadSkills), skillAlwaysNames(autoloadSkills))
 	registry, err := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, SandboxCommandPaths: sandboxCommandPaths, Skills: skillSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
 	if err != nil {
 		return err
@@ -317,7 +326,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	if promptText != "" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
-		return runOneShot(ctx, promptText, provider, opts.model, opts.thinking, toolset, stderr, stdout, opts.jsonEvents, opts.maxSteps, system, learningStore, opts.learningBudget, autoloadSkills, policy)
+		return runOneShot(ctx, promptText, provider, opts.model, opts.thinking, toolset, stderr, stdout, opts.jsonEvents, opts.maxSteps, system, learningStore, opts.learningBudget, autoloadSkills, autoloadAlwaysBodies, policy)
 	}
 
 	// Terminal output must go through term.Terminal so asynchronous-looking stream
@@ -341,6 +350,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		}
 	}
 	ui.SetSkillCatalogLoader(loadSkills)
+	ui.SetSkillBodyLoader(loadSkillBodies)
 	ui.SetSkillLocations(skillLocations)
 	if opts.demo {
 		ui.SetDemoPromptScript(demo.InteractivePrompts(), demo.InteractivePromptDelay, demo.InteractiveQueueDelay)
@@ -409,8 +419,8 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 				runner.SetInteractiveMode(opts.interactive)
 			}
 			if saved == nil && len(autoloadSkills) > 0 {
-				currentSelection.Set(skillNames(autoloadSkills))
-				runner.SetSkills(autoloadSkills)
+				currentSelection.SetSelection(skillNames(autoloadSkills), skillAlwaysNames(autoloadSkills))
+				runner.SetSkillsWithContents(autoloadSkills, autoloadAlwaysBodies)
 			}
 			runner.SetVerbose(ui.VerboseEnabled())
 			runner.SetQuestioner(ui.AgentQuestioner(id))
@@ -424,7 +434,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			}
 			runner.SetAutoCompact(!opts.disableAutoCompact, opts.autoCompactThreshold)
 			runner.SetEndpoint(currentEndpoint)
-			ui.SetAgentSkillHandler(id, currentSelection.Set)
+			ui.SetAgentSkillHandler(id, func(names, always []string) {
+				currentSelection.SetSelection(names, always)
+			})
 			if sandboxActive {
 				currentRegistry.SetDirectoryApprover(ui.AgentDirectoryApprover(id))
 			}
@@ -465,6 +477,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			}
 			staged.SetRuntimePreferenceWriter(runtimePreferences)
 			staged.SetSkillCatalogLoader(loadSkills)
+			staged.SetSkillBodyLoader(loadSkillBodies)
 			staged.SetSkillLocations(skillLocations)
 			return staged, nil
 		}
@@ -527,7 +540,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	return ui.Run(context.Background())
 }
 
-func runOneShot(ctx context.Context, promptText string, provider llm.Provider, model, thinking string, toolset agent.Toolset, stderr, stdout *os.File, jsonEvents bool, maxSteps int, system string, learningStore learning.Store, learningBudget int, autoloadSkills []prompt.SkillSummary, policies ...*redaction.Policy) error {
+func runOneShot(ctx context.Context, promptText string, provider llm.Provider, model, thinking string, toolset agent.Toolset, stderr, stdout *os.File, jsonEvents bool, maxSteps int, system string, learningStore learning.Store, learningBudget int, autoloadSkills []prompt.SkillSummary, autoloadAlwaysBodies map[string]string, policies ...*redaction.Policy) error {
 	var policy *redaction.Policy
 	if len(policies) > 0 {
 		policy = policies[0]
@@ -542,7 +555,7 @@ func runOneShot(ctx context.Context, promptText string, provider llm.Provider, m
 		runner.SetRedaction(policy)
 		runner.SetInteractiveAvailable(false)
 		if len(autoloadSkills) > 0 {
-			runner.SetSkills(autoloadSkills)
+			runner.SetSkillsWithContents(autoloadSkills, autoloadAlwaysBodies)
 		}
 		if err := runner.SetThinking(thinking); err != nil {
 			return nil, err
@@ -564,7 +577,7 @@ func skillSummaries(catalog *skills.Catalog) []prompt.SkillSummary {
 func summariesForSkills(available []skills.Skill) []prompt.SkillSummary {
 	summaries := make([]prompt.SkillSummary, len(available))
 	for i, skill := range available {
-		summaries[i] = prompt.SkillSummary{Name: skill.Name, Description: skill.Description}
+		summaries[i] = prompt.SkillSummary{Name: skill.Name, Description: skill.Description, SizeBytes: skill.SizeBytes}
 	}
 	return summaries
 }
@@ -577,21 +590,92 @@ func skillNames(summaries []prompt.SkillSummary) []string {
 	return names
 }
 
-func skillCatalogData(root string, customPaths ...string) ([]prompt.SkillSummary, error) {
+func skillAlwaysNames(summaries []prompt.SkillSummary) []string {
+	var names []string
+	for _, skill := range summaries {
+		if skill.AlwaysLoad {
+			names = append(names, skill.Name)
+		}
+	}
+	return names
+}
+
+func markAutoloadFlags(summaries []prompt.SkillSummary, catalog *skills.Catalog, autoloadPaths, alwaysPaths []string) []prompt.SkillSummary {
+	autoloadSet := map[string]bool{}
+	if catalog != nil {
+		for _, skill := range catalog.SkillsInPaths(autoloadPaths...) {
+			autoloadSet[skill.Name] = true
+		}
+	}
+	alwaysSet := map[string]bool{}
+	if catalog != nil {
+		for _, skill := range catalog.SkillsInPaths(alwaysPaths...) {
+			alwaysSet[skill.Name] = true
+		}
+	}
+	for i, summary := range summaries {
+		if autoloadSet[summary.Name] {
+			summaries[i].Autoload = true
+		}
+		if alwaysSet[summary.Name] {
+			summaries[i].Autoload = true
+			summaries[i].AlwaysLoad = true
+		}
+	}
+	return summaries
+}
+
+func skillCatalogData(root string, customPaths, autoloadPaths, alwaysPaths []string) ([]prompt.SkillSummary, error) {
 	catalog, err := skills.Discover(root, customPaths...)
 	if err != nil {
 		return nil, err
 	}
-	return skillSummaries(catalog), nil
+	summaries := skillSummaries(catalog)
+	return markAutoloadFlags(summaries, catalog, autoloadPaths, alwaysPaths), nil
 }
 
-func autoloadSkillData(root string, configuredPaths, autoloadPaths []string) ([]prompt.SkillSummary, error) {
-	allPaths := append(append([]string(nil), configuredPaths...), autoloadPaths...)
-	catalog, err := skills.Discover(root, allPaths...)
+func skillBodiesData(root string, customPaths, names []string) (map[string]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	catalog, err := skills.Discover(root, customPaths...)
 	if err != nil {
 		return nil, err
 	}
-	return summariesForSkills(catalog.SkillsInPaths(autoloadPaths...)), nil
+	bodies := make(map[string]string, len(names))
+	for _, name := range names {
+		body, err := catalog.Load(name)
+		if err != nil {
+			return nil, err
+		}
+		bodies[name] = body
+	}
+	return bodies, nil
+}
+
+func autoloadSkillData(root string, configuredPaths, autoloadPaths, alwaysPaths []string) ([]prompt.SkillSummary, map[string]string, error) {
+	allPaths := append(append([]string(nil), configuredPaths...), autoloadPaths...)
+	catalog, err := skills.Discover(root, allPaths...)
+	if err != nil {
+		return nil, nil, err
+	}
+	autoloaded := catalog.SkillsInPaths(autoloadPaths...)
+	summaries := summariesForSkills(autoloaded)
+	summaries = markAutoloadFlags(summaries, catalog, autoloadPaths, alwaysPaths)
+	bodies := make(map[string]string)
+	for i, summary := range summaries {
+		if !summary.AlwaysLoad {
+			continue
+		}
+		body, err := catalog.Load(summary.Name)
+		if err != nil {
+			// Warn-and-fallback to lazy on oversize or read errors.
+			summaries[i].AlwaysLoad = false
+			continue
+		}
+		bodies[summary.Name] = body
+	}
+	return summaries, bodies, nil
 }
 
 func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {

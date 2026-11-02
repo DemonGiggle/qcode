@@ -980,15 +980,15 @@ def build_pdf(images: dict[str, Path]):
     # 8 Skills
     h1(pdf, "8. Skills and SkillPlan")
     h2(pdf, "Using skills")
-    body(pdf, "Skills are reusable instruction bundles, for example a team review checklist. Turn them on per tab with `/skill`. Selected skills initially add only names and summaries to context; the agent loads the full SKILL.md when needed. You can also run `/skill name1,name2` directly, or `/skill none` to clear them.")
+    body(pdf, "Skills are reusable instruction bundles, for example a team review checklist. Turn them on per tab with `/skill`. Lazy skills initially add only names and summaries to context; the agent loads the full SKILL.md when needed. Always-loaded skills inject the full SKILL.md eagerly. You can also run `/skill name1,name2` directly, `/skill name!` for always-load, or `/skill none` to clear them.")
     bullets(
         pdf,
         [
-            "Type `/skill` to see names plus one-line summaries. Type to filter, Up/Down or PgUp/PgDn to move, Space to toggle, Enter to apply, Esc to leave, Ctrl+C to cancel.",
+            "Type `/skill` to see names plus one-line summaries, sizes, and autoload badges. Type to filter, Up/Down or PgUp/PgDn to move, Space to cycle off -> lazy ([x]) -> always ([*]), Enter to apply, Esc to leave, Ctrl+C to cancel. The header shows lazy/always counts plus a stacked context bar (always vs catalog over base + always + catalog).",
             "Your account, workspace, and configured folders can each provide skills.",
             "New files appear in `/skill` without restarting.",
             "The source repository's docs/skills collection is optional. Add its absolute directory to [skills] paths in config.toml, or copy a chosen folder into a built-in root; release binaries do not bundle these files.",
-            "Use [skills] autoload_paths to select every valid skill in a directory for new runs, including one-shot and piped prompts. Resumed tabs retain their saved selection.",
+            "Use [skills] autoload_paths (lazy) or [[skills.autoload]] with always_load = true to select every valid skill in a directory for new runs, including one-shot and piped prompts. Resumed tabs retain their saved selection, including always-load flags.",
             "The bundled collection includes bounded-verification (stop re-checking once no unresolved fact could change the answer), pdf-read (parse, chunk, retrieve, and reason over long PDFs), and skill-creator (turn a workflow brief into a focused SKILL.md). Enable any of them with /skill after adding the collection to [skills] paths.",
             "A skill can ship companion files (scripts, templates, data) beside SKILL.md. The agent is told the skill\u2019s base directory and loads companions only when needed with read, view_image, or shell; loading a skill does not change the working directory or grant directory access.",
         ],

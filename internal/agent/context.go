@@ -249,6 +249,19 @@ func (a *Agent) ContextRemaining() (int, bool, bool) {
 	return 0, false, false
 }
 
+// ContextCapacity reports the model context window in tokens for display
+// only. It mirrors publishContext's limit resolution (override wins).
+func (a *Agent) ContextCapacity() (int, bool) {
+	limit := a.contextWindow
+	if a.contextOverride > 0 {
+		limit = a.contextOverride
+	}
+	if limit <= 0 {
+		return 0, false
+	}
+	return limit, true
+}
+
 // SetContextWindow overrides capacity for the selected model, for display only.
 func (a *Agent) SetContextWindow(tokens int) {
 	a.contextOverride = max(0, tokens)
