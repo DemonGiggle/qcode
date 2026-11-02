@@ -49,6 +49,7 @@ type SavedState struct {
 	SkillPlanMode                                   bool
 	InteractiveMode                                 bool
 	LatestSkillDraft                                *SkillDraft
+	LatestTodo                                      *Todo
 	Tools                                           json.RawMessage
 }
 
@@ -104,6 +105,9 @@ func (a *Agent) publishCheckpoint() {
 	}
 	if draft, ok := a.LatestSkillDraft(); ok {
 		s.LatestSkillDraft = &draft
+	}
+	if todo, ok := a.LatestTodo(); ok {
+		s.LatestTodo = &todo
 	}
 	a.stateMu.RLock()
 	s.LastResponse, s.Usage = a.lastResponse, a.sessionUsage
@@ -274,6 +278,10 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 	if s.LatestSkillDraft != nil {
 		draft := s.LatestSkillDraft.clone()
 		a.latestSkillDraft = &draft
+	}
+	if s.LatestTodo != nil {
+		todo := s.LatestTodo.clone()
+		a.latestTodo = &todo
 	}
 	a.maxSteps.Store(int64(s.MaxSteps))
 	a.learningContext, a.learningSessionID, a.learningBudget = s.LearningContext, s.LearningSessionID, s.LearningBudget

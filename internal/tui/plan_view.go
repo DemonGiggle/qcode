@@ -10,6 +10,7 @@ import (
 
 const planViewHint = "Plan view | PgUp/PgDn or Up/Down to scroll | q/Esc/Ctrl+C to close"
 const skillPlanViewHint = "Skill draft | /skillplan create to approve | Up/Down PgUp/PgDn scroll | q close"
+const todoViewHint = "Todo | PgUp/PgDn or Up/Down to scroll | q/Esc/Ctrl+C to close"
 
 type planPager struct {
 	lines   []string
@@ -24,6 +25,13 @@ func newPlanPager(plan string, width int) planPager {
 	plan = strings.ReplaceAll(plan, "\r", "\n")
 	wrapped := wrapANSI(plan, max(1, width), "")
 	return planPager{lines: strings.Split(wrapped, "\n"), hint: planViewHint}
+}
+
+func newTodoPager(todo string, width int) planPager {
+	todo = strings.ReplaceAll(todo, "\r\n", "\n")
+	todo = strings.ReplaceAll(todo, "\r", "\n")
+	wrapped := wrapANSI(todo, max(1, width), "")
+	return planPager{lines: strings.Split(wrapped, "\n"), hint: todoViewHint}
 }
 
 func newSkillPlanPager(draft string, width int, unicodeEnabled bool) planPager {
@@ -68,6 +76,14 @@ func (p *planPager) end(visible int) {
 func showPlanPager(in io.Reader, out io.Writer, plan string, width, height int, color bool) error {
 	height = max(1, height)
 	pager := newPlanPager(plan, width)
+	return runPlanPager(in, out, pager, width, height, color)
+}
+
+// showTodoPager renders a todo checklist without touching the history writer.
+// The caller owns the terminal's raw-mode and screen-region setup.
+func showTodoPager(in io.Reader, out io.Writer, todo string, width, height int, color bool) error {
+	height = max(1, height)
+	pager := newTodoPager(todo, width)
 	return runPlanPager(in, out, pager, width, height, color)
 }
 
@@ -180,6 +196,28 @@ func (u *UI) showPlanView(ctx context.Context, plan string) error {
 
 func (u *UI) showSkillPlanView(ctx context.Context, draft string) error {
 	return u.showPlanViewWith(ctx, draft, true)
+}
+
+func (u *UI) showTodoView(ctx context.Context, todo string) error {
+	todo = u.redaction.Text(redaction.Terminal, todo)
+	if u.input == nil || u.out == nil || !u.fixedInput {
+		return fmt.Errorf("todo view requires an interactive terminal")
+	}
+
+	u.input.setRaw(true)
+	u.beginRawSelector()
+	defer func() {
+		u.input.setRaw(false)
+		u.endRawSelector()
+	}()
+
+	u.screenMu.Lock()
+	width := u.width
+	start := u.latestPromptStartLocked()
+	visible := u.commandViewHeightLocked()
+	u.screenMu.Unlock()
+	writer := planViewWriter{ui: u, start: start}
+	return showTodoPager(u.input, writer, todo, width, visible, ColorEnabled(u.out))
 }
 
 func (u *UI) showPlanViewWith(ctx context.Context, plan string, skillDraft bool) error {

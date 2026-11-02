@@ -383,7 +383,7 @@ func TestAgentResetSessionDiscardsConversationHistory(t *testing.T) {
 				}
 			}
 
-			if len(runner.messages) != 1 || runner.messages[0].Role != "system" || runner.messages[0].Content != prompt.System {
+			if len(runner.messages) != 1 || runner.messages[0].Role != "system" || runner.messages[0].Content != prompt.System+prompt.TodoSuffix {
 				t.Fatalf("messages after reset = %#v, want only the system prompt", runner.messages)
 			}
 		})

@@ -79,6 +79,12 @@ func toolActivity(call llm.ToolCall) trace.Activity {
 		return activity("ask_questions", "Asking the user", "Received user answers", trace.ActivityAgent)
 	case "propose_skill":
 		return activity("propose_skill", "Preparing skill draft", "Saved skill draft for review", trace.ActivityAgent)
+	case "todo_add":
+		return activity("todo_add", "Adding todo "+target(activityArgument(call.Arguments, "title"), "item"), "Added todo "+target(activityArgument(call.Arguments, "title"), "item"), trace.ActivityAgent)
+	case "todo_update":
+		return activity("todo_update", "Updating todo "+target(activityArgument(call.Arguments, "id"), "item"), "Updated todo "+target(activityArgument(call.Arguments, "id"), "item"), trace.ActivityAgent)
+	case "todo_done":
+		return activity("todo_done", "Completing todo "+target(activityArgument(call.Arguments, "id"), "item"), "Completed todo "+target(activityArgument(call.Arguments, "id"), "item"), trace.ActivityAgent)
 	case "request_directory_access":
 		return activity("request_directory_access", "Requesting access to "+target(path, "directory"), "Requested access to "+target(path, "directory"), trace.ActivityWrite)
 	case "change_directory":

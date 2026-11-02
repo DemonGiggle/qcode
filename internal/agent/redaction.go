@@ -41,5 +41,9 @@ func FilterSavedState(p *redaction.Policy, data json.RawMessage) (json.RawMessag
 		s.LatestSkillDraft.Name = text(s.LatestSkillDraft.Name)
 		s.LatestSkillDraft.Content = text(s.LatestSkillDraft.Content)
 	}
+	if s.LatestTodo != nil {
+		filtered := redaction.Copy(p, redaction.Persistence, *s.LatestTodo)
+		s.LatestTodo = &filtered
+	}
 	return json.Marshal(s)
 }

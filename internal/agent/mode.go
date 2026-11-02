@@ -251,6 +251,7 @@ func (a *Agent) TakePlanDecision() (string, bool) {
 func (a *Agent) enabledSchemas() []llm.Tool {
 	if !a.PlanMode() && !a.SkillPlanMode() {
 		base := a.tools.EnabledSchemas()
+		base = append(base, todoAddSchema(), todoUpdateSchema(), todoDoneSchema())
 		if a.InteractiveMode() && a.interactiveAvailable.Load() && a.questionsAsked < 3 {
 			return append(base, askQuestionsSchema(1))
 		}
@@ -281,6 +282,14 @@ func (a *Agent) executeDetailed(ctx context.Context, call llm.ToolCall) (result 
 				return llm.ToolResult{}, fmt.Errorf("ask_questions is unavailable; enable /interactive in a terminal session")
 			}
 			return a.askQuestions(ctx, call.Arguments)
+		}
+		switch call.Name {
+		case "todo_add":
+			return a.todoAdd(call.Arguments)
+		case "todo_update":
+			return a.todoUpdate(call.Arguments)
+		case "todo_done":
+			return a.todoDone(call.Arguments)
 		}
 		return a.tools.ExecuteDetailed(ctx, call)
 	}

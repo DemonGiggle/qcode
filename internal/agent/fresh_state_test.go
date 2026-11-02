@@ -63,6 +63,7 @@ func TestRestoreFreshStatePreservesSettingsAndClearsConversation(t *testing.T) {
 	a.sessionUsage = llm.SessionUsage{InputTokens: 1000, OutputTokens: 500, TotalTokens: 1500}
 	a.learningBudget, a.learningContext, a.learningSessionID = 345, "old learning", "old-learning-session"
 	a.latestPlan, a.latestSkillDraft = &Plan{Title: "old plan"}, &SkillDraft{Name: "old draft"}
+	a.latestTodo = &Todo{Items: []TodoItem{{ID: "old", Title: "old todo", Status: TodoStatusTodo}}}
 	a.planMode.Store(true)
 	a.skillPlanMode.Store(true)
 	a.artifactVersion = 14
@@ -92,7 +93,7 @@ func TestRestoreFreshStatePreservesSettingsAndClearsConversation(t *testing.T) {
 	if len(saved.Messages) != 1 || saved.Messages[0].Role != "system" || saved.Messages[0].Content != b.system || strings.Contains(saved.Messages[0].Content, "old conversation") || !strings.Contains(saved.Messages[0].Content, "Review changes") {
 		t.Fatal("fresh system conversation not prepared", saved.Messages)
 	}
-	if saved.PlanMode || saved.SkillPlanMode || saved.LatestPlan != nil || saved.LatestSkillDraft != nil || saved.ArtifactVersion != 0 || saved.LastResponse != "" || len(saved.PendingImages) != 0 || saved.Usage != (llm.SessionUsage{}) || saved.ContextUsage != nil || saved.ContextMessages != 0 || saved.LearningContext != "" || saved.LearningSessionID != "" || saved.ProviderSession != "fresh-provider-session" {
+	if saved.PlanMode || saved.SkillPlanMode || saved.LatestPlan != nil || saved.LatestSkillDraft != nil || saved.LatestTodo != nil || saved.ArtifactVersion != 0 || saved.LastResponse != "" || len(saved.PendingImages) != 0 || saved.Usage != (llm.SessionUsage{}) || saved.ContextUsage != nil || saved.ContextMessages != 0 || saved.LearningContext != "" || saved.LearningSessionID != "" || saved.ProviderSession != "fresh-provider-session" {
 		t.Fatalf("retained conversation state: %+v", saved)
 	}
 	var selected struct {
