@@ -96,6 +96,13 @@ files must already exist or be created separately.
 
 Workspace-local `.qcode/skills` takes precedence over `.agents/skills`, which takes precedence over user-level skills. Like `/model` and `/tool`, `/skill` affects only the active agent tab.
 
+Explicit `/skill` choices on the `main` tab are also saved to the user
+config as `[skills] selected` and `selected_always`. New runs start with that
+saved selection unioned with `autoload_paths`/`[[skills.autoload]]`; unknown
+skills warn and are skipped. Resumed sessions keep their saved selection,
+including always-load flags and cached bodies, and `/new` keeps the active
+tab selection.
+
 ## Security
 
 Symlink resolution and path checks prevent skill files from escaping their directory. `/skill` rediscovers the catalog when invoked, so newly added skills appear without a restart.

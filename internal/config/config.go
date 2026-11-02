@@ -35,10 +35,21 @@ type Learning struct {
 // Autoload is the new representation: each entry marks a directory as
 // lazy or always-load (full text eagerly injected). Both forms are
 // additive across configuration layers.
+//
+// Selected is the persisted explicit /skill selection: skill names that
+// start selected (lazy catalog only). SelectedAlways is the persisted
+// always-load subset whose full SKILL.md is eagerly injected. Both use
+// override semantics across layers: a higher-priority layer with a
+// non-nil list (including an explicit empty list) replaces lower layers,
+// so a user can narrow or clear system-wide defaults. An empty list is an
+// explicit none; a missing key inherits. Every always name is also
+// treated as selected.
 type Skills struct {
-	Paths         []string        `toml:"paths"`
-	AutoloadPaths []string        `toml:"autoload_paths"`
-	Autoload      []AutoloadEntry `toml:"autoload"`
+	Paths          []string        `toml:"paths"`
+	AutoloadPaths  []string        `toml:"autoload_paths"`
+	Autoload       []AutoloadEntry `toml:"autoload"`
+	Selected       []string        `toml:"selected"`
+	SelectedAlways []string        `toml:"selected_always"`
 }
 
 // AutoloadEntry marks one autoload directory with its load mode.
@@ -85,6 +96,93 @@ func (s Skills) AutoloadPathsByMode() (lazy []string, always []string) {
 func (s Skills) AllAutoloadPaths() []string {
 	lazy, always := s.AutoloadPathsByMode()
 	return append(append([]string(nil), lazy...), always...)
+}
+
+// validSkillSelectionName reports whether a persisted skill selection name
+// matches the skill directory shape [a-z0-9-_]{1,64}. It mirrors skills
+// discovery without importing that package.
+func validSkillSelectionName(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// normalizeSkillSelection trims, drops blanks, dedupes, and sorts skill
+// names. It returns the normalized list and the first invalid name, if any.
+func normalizeSkillSelection(names []string) ([]string, string, bool) {
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		if !validSkillSelectionName(name) {
+			return nil, raw, false
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	// Deterministic order for config comparisons and persistence.
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j] < out[j-1]; j-- {
+			out[j], out[j-1] = out[j-1], out[j]
+		}
+	}
+	return out, "", true
+}
+
+// NormalizedSelection returns the merged explicit selection with always
+// names included in the selected set. Names are trimmed, deduped, and
+// sorted; invalid names are dropped for startup tolerance.
+func (s Skills) NormalizedSelection() (selected []string, always []string) {
+	seenSelected := map[string]bool{}
+	for _, raw := range s.Selected {
+		name := strings.TrimSpace(raw)
+		if name == "" || !validSkillSelectionName(name) {
+			continue
+		}
+		if !seenSelected[name] {
+			seenSelected[name] = true
+			selected = append(selected, name)
+		}
+	}
+	seenAlways := map[string]bool{}
+	for _, raw := range s.SelectedAlways {
+		name := strings.TrimSpace(raw)
+		if name == "" || !validSkillSelectionName(name) {
+			continue
+		}
+		if !seenAlways[name] {
+			seenAlways[name] = true
+			always = append(always, name)
+		}
+		if !seenSelected[name] {
+			seenSelected[name] = true
+			selected = append(selected, name)
+		}
+	}
+	// Sort for deterministic startup and comparisons.
+	for i := 1; i < len(selected); i++ {
+		for j := i; j > 0 && selected[j] < selected[j-1]; j-- {
+			selected[j], selected[j-1] = selected[j-1], selected[j]
+		}
+	}
+	for i := 1; i < len(always); i++ {
+		for j := i; j > 0 && always[j] < always[j-1]; j-- {
+			always[j], always[j-1] = always[j-1], always[j]
+		}
+	}
+	return selected, always
 }
 
 // Config contains settings that may be supplied by a qcode config file.
@@ -241,6 +339,9 @@ func validate(path string, cfg Config) error {
 		}
 		return fmt.Errorf("parse config %s: theme must be one of %s", path, strings.Join(ids, ", "))
 	}
+	if err := validateSkillSelection(path, cfg.Skills); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -255,11 +356,39 @@ func validStatuslineSegment(segment string) bool {
 	return false
 }
 
+func validateSkillSelection(path string, skills Skills) error {
+	selected := map[string]bool{}
+	for _, raw := range skills.Selected {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		if !validSkillSelectionName(name) {
+			return fmt.Errorf("parse config %s: skills.selected contains invalid skill name %q (want 1-64 lowercase letters, digits, hyphens, or underscores)", path, raw)
+		}
+		selected[name] = true
+	}
+	for _, raw := range skills.SelectedAlways {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		if !validSkillSelectionName(name) {
+			return fmt.Errorf("parse config %s: skills.selected_always contains invalid skill name %q (want 1-64 lowercase letters, digits, hyphens, or underscores)", path, raw)
+		}
+		if !selected[name] {
+			return fmt.Errorf("parse config %s: skills.selected_always contains %q without matching skills.selected entry", path, name)
+		}
+	}
+	return nil
+}
+
 // merge overlays values supplied by incoming onto dst. Empty string fields are
 // intentionally unset, while skill paths are additive across layers.
-// Sandbox command paths use override semantics: a higher-priority layer with a
+// Skill selection uses override semantics: a higher-priority layer with a
 // non-nil list (including an explicit empty list) replaces lower layers, so a
-// user can narrow or clear system-wide defaults. Repeatable
+// user can narrow or clear system-wide defaults. Every always name stays
+// selected. Repeatable
 // --sandbox-command-path flags override the merged configuration entirely.
 func merge(dst *Config, incoming Config) {
 	mergeRedaction(&dst.Redaction, incoming.Redaction)
@@ -320,6 +449,7 @@ func merge(dst *Config, incoming Config) {
 	dst.Skills.Paths = appendUniquePaths(dst.Skills.Paths, incoming.Skills.Paths)
 	dst.Skills.AutoloadPaths = appendUniquePaths(dst.Skills.AutoloadPaths, incoming.Skills.AutoloadPaths)
 	dst.Skills.Autoload = appendUniqueAutoload(dst.Skills.Autoload, incoming.Skills.Autoload)
+	mergeSkillSelection(&dst.Skills, incoming.Skills)
 }
 
 func appendUniquePaths(existing, incoming []string) []string {
@@ -360,6 +490,62 @@ func appendUniqueAutoload(existing, incoming []AutoloadEntry) []AutoloadEntry {
 		existing = append(existing, entry)
 	}
 	return existing
+}
+
+// mergeSkillSelection overlays an incoming explicit skill selection with
+// override semantics. A non-nil incoming list replaces the merged value,
+// preserving an explicit empty list as "none". Missing keys inherit. Every
+// always name stays selected.
+func mergeSkillSelection(dst *Skills, incoming Skills) {
+	if incoming.Selected != nil {
+		normalized, _, ok := normalizeSkillSelection(incoming.Selected)
+		if ok {
+			if len(normalized) == 0 {
+				dst.Selected = []string{}
+			} else {
+				dst.Selected = append([]string(nil), normalized...)
+			}
+		} else {
+			// Validation rejects the layer before merge; keep the prior
+			// value rather than merging invalid names.
+			return
+		}
+	}
+	if incoming.SelectedAlways != nil {
+		normalized, _, ok := normalizeSkillSelection(incoming.SelectedAlways)
+		if ok {
+			if len(normalized) == 0 {
+				dst.SelectedAlways = []string{}
+			} else {
+				dst.SelectedAlways = append([]string(nil), normalized...)
+			}
+		} else {
+			return
+		}
+	}
+	if dst.SelectedAlways == nil {
+		return
+	}
+	if dst.Selected == nil {
+		dst.Selected = append([]string(nil), dst.SelectedAlways...)
+		return
+	}
+	selectedSet := map[string]bool{}
+	for _, name := range dst.Selected {
+		selectedSet[strings.TrimSpace(name)] = true
+	}
+	for _, name := range dst.SelectedAlways {
+		if !selectedSet[name] {
+			dst.Selected = append(dst.Selected, name)
+			selectedSet[name] = true
+		}
+	}
+	// Keep the selected list deterministic after sticky inclusion.
+	for i := 1; i < len(dst.Selected); i++ {
+		for j := i; j > 0 && dst.Selected[j] < dst.Selected[j-1]; j-- {
+			dst.Selected[j], dst.Selected[j-1] = dst.Selected[j-1], dst.Selected[j]
+		}
+	}
 }
 
 func mergeRedaction(dst *redaction.Config, src redaction.Config) {

@@ -43,8 +43,8 @@ Repeatable `--sandbox-command-path` overrides the configured list. Omitting
 the key preserves the existing sandbox behaviour without migration.
 
 In the normal interactive UI, `/model` (including its explicit thinking
-level), `/maxsteps`, and `/statusline` update the user-level file synchronously
-when issued from the `main` tab. On Linux this is `~/.local/etc/qcode/config.toml`; other
+level), `/maxsteps`, `/statusline`, and `/skill` update the user-level file
+synchronously when issued from the `main` tab. On Linux this is `~/.local/etc/qcode/config.toml`; other
 platforms use the user configuration path shown below. Existing comments and
 unrelated settings, including nested tables such as `[redaction]` and `[skills]`,
 are preserved. `/statusline` saves the hidden segment list as the top-level
@@ -116,6 +116,25 @@ always skills warn and fall back to lazy. Both forms are additive across
 layers; an `always_load = true` mark is sticky. In `/skill`, autoloaded
 skills show an `(auto)` / `(auto-always)` badge, and the stacked context bar
 splits system vs must-load vs lazy vs other vs remaining with no duplication.
+
+`skills.selected` and `skills.selected_always` persist an explicit `/skill`
+selection for new runs:
+
+```toml
+[skills]
+selected = ["review-go"]
+selected_always = []
+```
+
+`/skill`, `/skill name`, `/skill name!`, and `/skill none` on the `main` tab
+save the active selection here, preserving comments and unrelated tables.
+`selected_always` entries must also appear in `selected`. The lists use
+override semantics: a higher-priority layer with a non-nil list (including an
+explicit `[]`) replaces lower layers, unlike additive `paths`/`autoload`.
+At startup the persisted selection is unioned with autoload (always wins);
+unknown or missing skills warn and are skipped. Resumed sessions keep their
+saved skill selection, including always-load flags and cached bodies, and
+`/new` keeps the active tab selection.
 
 `interactive` defaults to `false`. When enabled in a terminal session, normal
 mode may ask up to three distinct, focused questions per submitted prompt.

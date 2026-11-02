@@ -74,6 +74,10 @@ type runtimePreferenceRecorder struct {
 	interactive      bool
 	interactiveCalls int
 	interactiveErr   error
+	selected         []string
+	selectedAlways   []string
+	skillsCalls      int
+	skillsErr        error
 }
 
 func (r *runtimePreferenceRecorder) PersistModel(model, thinking string) error {
@@ -104,6 +108,13 @@ func (r *runtimePreferenceRecorder) PersistInteractive(enabled bool) error {
 	r.interactiveCalls++
 	r.interactive = enabled
 	return r.interactiveErr
+}
+
+func (r *runtimePreferenceRecorder) PersistSelectedSkills(selected, always []string) error {
+	r.skillsCalls++
+	r.selected = append([]string(nil), selected...)
+	r.selectedAlways = append([]string(nil), always...)
+	return r.skillsErr
 }
 
 func TestInteractiveCommandPersistsFromEveryTab(t *testing.T) {

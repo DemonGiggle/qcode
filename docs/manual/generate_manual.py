@@ -988,7 +988,7 @@ def build_pdf(images: dict[str, Path]):
             "Your account, workspace, and configured folders can each provide skills.",
             "New files appear in `/skill` without restarting.",
             "The source repository's docs/skills collection is optional. Add its absolute directory to [skills] paths in config.toml, or copy a chosen folder into a built-in root; release binaries do not bundle these files.",
-            "Use [skills] autoload_paths (lazy) or [[skills.autoload]] with always_load = true to select every valid skill in a directory for new runs, including one-shot and piped prompts. Resumed tabs retain their saved selection, including always-load flags.",
+            "Use [skills] autoload_paths (lazy) or [[skills.autoload]] with always_load = true to select every valid skill in a directory for new runs, including one-shot and piped prompts. /skill on main also saves [skills] selected/selected_always in the user config for new runs. Resumed tabs retain their saved selection, including always-load flags.",
             "The bundled collection includes bounded-verification (stop re-checking once no unresolved fact could change the answer), pdf-read (parse, chunk, retrieve, and reason over long PDFs), and skill-creator (turn a workflow brief into a focused SKILL.md). Enable any of them with /skill after adding the collection to [skills] paths.",
             "A skill can ship companion files (scripts, templates, data) beside SKILL.md. The agent is told the skill\u2019s base directory and loads companions only when needed with read, view_image, or shell; loading a skill does not change the working directory or grant directory access.",
         ],
@@ -1136,8 +1136,8 @@ def build_pdf(images: dict[str, Path]):
             "Copy `config.toml.example` to your user config location; missing files are ignored. Priority, highest first: file beside the program, user config (~/.local/etc/qcode on Linux, ~/Library/Application Support on macOS, %AppData% on Windows), system config (/usr/local/etc/qcode), then etc/ beside the program.",
             "Command flags beat environment variables. Both beat config files. Config files beat built-ins. `--api-key` beats config and environment keys.",
             "Prefer environment variables for keys: QCODE_API_KEY or OPENAI_API_KEY. Keep key files private (mode 0600).",
-            "Common knobs: thinking level, agent_timeout like \"5m\", interactive true/false, statusline_hidden, web_search backend, learning context_budget, skills paths and autoload_paths, redaction sinks/patterns, context_window and auto_compact_threshold.",
-            "Restart after changing the web backend. /model, /maxsteps, and /statusline on main save automatically; worker-tab changes to these settings stay within the session.",
+            "Common knobs: thinking level, agent_timeout like \"5m\", interactive true/false, statusline_hidden, web_search backend, learning context_budget, skills paths, autoload_paths, selected/selected_always, redaction sinks/patterns, context_window and auto_compact_threshold.",
+            "Restart after changing the web backend. /model, /maxsteps, /statusline, and /skill on main save automatically; worker-tab changes to these settings stay within the session.",
         ],
     )
     h2(pdf, "Working directories under the sandbox")

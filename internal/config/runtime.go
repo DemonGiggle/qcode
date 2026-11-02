@@ -176,6 +176,68 @@ func (w *RuntimePreferenceWriter) PersistTheme(id string) error {
 	return w.persist(map[string]*string{"theme": &value})
 }
 
+// PersistSelectedSkills records the explicit /skill selection in the user
+// config's [skills] table. Both lists are normalized (trimmed, deduped,
+// sorted); every always name is also treated as selected. Empty lists are
+// stored as explicit [] so a cleared selection overrides lower layers.
+func (w *RuntimePreferenceWriter) PersistSelectedSkills(selected, always []string) error {
+	if w == nil {
+		return errors.New("runtime preference writer is nil")
+	}
+	normalizedSelected, normalizedAlways, err := normalizeSelectedSkillsPreference(selected, always)
+	if err != nil {
+		return err
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.persistSkills(normalizedSelected, normalizedAlways)
+}
+
+func normalizeSelectedSkillsPreference(selected, always []string) ([]string, []string, error) {
+	for _, raw := range append(append([]string(nil), selected...), always...) {
+		if !utf8.ValidString(raw) {
+			return nil, nil, errors.New("skill selection contains invalid UTF-8")
+		}
+	}
+	normalizedSelected, invalid, ok := normalizeSkillSelection(selected)
+	if !ok {
+		return nil, nil, fmt.Errorf("invalid skill name %q (want 1-64 lowercase letters, digits, hyphens, or underscores)", invalid)
+	}
+	normalizedAlways, invalid, ok := normalizeSkillSelection(always)
+	if !ok {
+		return nil, nil, fmt.Errorf("invalid skill name %q (want 1-64 lowercase letters, digits, hyphens, or underscores)", invalid)
+	}
+	// Every always name stays selected for a valid [skills] document.
+	selectedSet := map[string]bool{}
+	for _, name := range normalizedSelected {
+		selectedSet[name] = true
+	}
+	for _, name := range normalizedAlways {
+		if !selectedSet[name] {
+			normalizedSelected = append(normalizedSelected, name)
+			selectedSet[name] = true
+		}
+	}
+	for i := 1; i < len(normalizedSelected); i++ {
+		for j := i; j > 0 && normalizedSelected[j] < normalizedSelected[j-1]; j-- {
+			normalizedSelected[j], normalizedSelected[j-1] = normalizedSelected[j-1], normalizedSelected[j]
+		}
+	}
+	return normalizedSelected, normalizedAlways, nil
+}
+
+func encodeSkillSelectionList(names []string) string {
+	if len(names) == 0 {
+		return "[]"
+	}
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		parts = append(parts, tomlString(name))
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
 func normalizeStatuslineHidden(hidden []string) ([]string, error) {
 	seen := make(map[string]bool, len(hidden))
 	for _, segment := range hidden {
@@ -240,6 +302,35 @@ func (w *RuntimePreferenceWriter) persist(changes map[string]*string) error {
 		return err
 	}
 	updated, changed, err := patchRuntimeConfig(data, changes)
+	if err != nil {
+		return fmt.Errorf("update config %s: %w", path, err)
+	}
+	if !changed {
+		return nil
+	}
+	if !exists {
+		mode = 0o600
+	}
+	if err := writeRuntimeConfigAtomically(path, updated, mode); err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	return nil
+}
+
+func (w *RuntimePreferenceWriter) persistSkills(selected, always []string) error {
+	if strings.TrimSpace(w.path) == "" {
+		return errors.New("runtime preference path is empty")
+	}
+	path := filepath.Clean(w.path)
+	parent := filepath.Dir(path)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return fmt.Errorf("create user config directory %s: %w", parent, err)
+	}
+	data, mode, exists, err := readRuntimeConfig(path)
+	if err != nil {
+		return err
+	}
+	updated, changed, err := patchSkillsSelection(data, encodeSkillSelectionList(selected), encodeSkillSelectionList(always))
 	if err != nil {
 		return fmt.Errorf("update config %s: %w", path, err)
 	}
@@ -421,6 +512,197 @@ func renderRuntimeKeys(changes map[string]*string, newline string) []byte {
 		output.WriteString(newline)
 	}
 	return output.Bytes()
+}
+
+func patchSkillsSelection(data []byte, selectedValue, alwaysValue string) ([]byte, bool, error) {
+	if len(data) == 0 {
+		newline := "\n"
+		var output bytes.Buffer
+		output.WriteString("[skills]")
+		output.WriteString(newline)
+		output.WriteString("selected = ")
+		output.WriteString(selectedValue)
+		output.WriteString(newline)
+		output.WriteString("selected_always = ")
+		output.WriteString(alwaysValue)
+		output.WriteString(newline)
+		return output.Bytes(), true, nil
+	}
+	var document map[string]any
+	if err := toml.Unmarshal(data, &document); err != nil {
+		return nil, false, err
+	}
+	entries, hasSkills, skillsEnd, err := skillsConfigEntries(data)
+	if err != nil {
+		return nil, false, err
+	}
+	desired := map[string]string{
+		"selected":        selectedValue,
+		"selected_always": alwaysValue,
+	}
+	var edits []runtimeConfigEdit
+	var missing []string
+	for _, key := range []string{"selected", "selected_always"} {
+		want := desired[key]
+		entry, found := entries[key]
+		if found {
+			if bytes.Equal(data[entry.valueStart:entry.valueEnd], []byte(want)) {
+				continue
+			}
+			edits = append(edits, runtimeConfigEdit{
+				start:       entry.valueStart,
+				end:         entry.valueEnd,
+				replacement: []byte(want),
+			})
+			continue
+		}
+		missing = append(missing, key)
+	}
+	if len(missing) != 0 {
+		newline := detectedNewline(data)
+		var inserted bytes.Buffer
+		if !hasSkills {
+			if len(data) > 0 && !endsInNewline(data) {
+				inserted.WriteString(newline)
+			}
+			if len(bytes.TrimSpace(data)) > 0 {
+				inserted.WriteString(newline)
+			}
+			inserted.WriteString("[skills]")
+			inserted.WriteString(newline)
+			for _, key := range []string{"selected", "selected_always"} {
+				inserted.WriteString(key)
+				inserted.WriteString(" = ")
+				inserted.WriteString(desired[key])
+				inserted.WriteString(newline)
+			}
+			edits = append(edits, runtimeConfigEdit{start: len(data), end: len(data), replacement: inserted.Bytes()})
+		} else {
+			insertAt := skillsEnd
+			if insertAt < 0 {
+				insertAt = len(data)
+			}
+			for _, key := range missing {
+				inserted.WriteString(key)
+				inserted.WriteString(" = ")
+				inserted.WriteString(desired[key])
+				inserted.WriteString(newline)
+			}
+			// Ensure the inserted block starts on its own line.
+			if insertAt > 0 && insertAt < len(data) && data[insertAt-1] != '\n' && data[insertAt-1] != '\r' {
+				prefix := []byte(newline)
+				prefix = append(prefix, inserted.Bytes()...)
+				inserted.Reset()
+				inserted.Write(prefix)
+			}
+			edits = append(edits, runtimeConfigEdit{start: insertAt, end: insertAt, replacement: inserted.Bytes()})
+		}
+	}
+	if len(edits) == 0 {
+		return append([]byte(nil), data...), false, nil
+	}
+	return applyRuntimeConfigEdits(data, edits), true, nil
+}
+
+func skillsConfigEntries(data []byte) (map[string]runtimeConfigEntry, bool, int, error) {
+	parser := unstable.Parser{}
+	parser.Reset(data)
+	entries := make(map[string]runtimeConfigEntry)
+	hasSkills := false
+	inSkills := false
+	inRoot := true
+	skillsEnd := -1
+	for parser.NextExpression() {
+		expression := parser.Expression()
+		switch expression.Kind {
+		case unstable.Table, unstable.ArrayTable:
+			path := expressionKeyPath(expression)
+			if expression.Kind == unstable.Table && len(path) == 1 && path[0] == "skills" {
+				hasSkills = true
+				inSkills = true
+				inRoot = false
+				continue
+			}
+			if hasSkills && skillsEnd < 0 && (inSkills || inRoot) {
+				if offset := expressionTableOffset(data, expression); offset >= 0 {
+					skillsEnd = lineStart(data, offset)
+				}
+			}
+			inSkills = false
+			inRoot = false
+		case unstable.KeyValue:
+			path := expressionKeyPath(expression)
+			var name string
+			var isSkillsKey bool
+			if inSkills && len(path) == 1 && (path[0] == "selected" || path[0] == "selected_always") {
+				name = path[0]
+				isSkillsKey = true
+			} else if inRoot && len(path) == 2 && path[0] == "skills" && (path[1] == "selected" || path[1] == "selected_always") {
+				name = path[1]
+				isSkillsKey = true
+			}
+			if !isSkillsKey {
+				continue
+			}
+			if _, exists := entries[name]; exists {
+				continue
+			}
+			exprStart := int(expression.Raw.Offset)
+			exprEnd := exprStart + int(expression.Raw.Length)
+			if exprStart < 0 || exprEnd > len(data) || exprStart >= exprEnd {
+				continue
+			}
+			eq := bytes.IndexByte(data[exprStart:exprEnd], '=')
+			if eq < 0 {
+				continue
+			}
+			valueStart := exprStart + eq + 1
+			for valueStart < exprEnd && (data[valueStart] == ' ' || data[valueStart] == '\t') {
+				valueStart++
+			}
+			entries[name] = runtimeConfigEntry{
+				keyValueStart: exprStart,
+				keyValueEnd:   exprEnd,
+				valueStart:    valueStart,
+				valueEnd:      exprEnd,
+			}
+		}
+	}
+	if err := parser.Error(); err != nil {
+		return nil, false, -1, err
+	}
+	return entries, hasSkills, skillsEnd, nil
+}
+
+func expressionKeyPath(expression *unstable.Node) []string {
+	var path []string
+	iter := expression.Key()
+	for iter.Next() {
+		node := iter.Node()
+		if node == nil {
+			continue
+		}
+		for n := node; n != nil; n = n.Next() {
+			path = append(path, string(n.Data))
+		}
+	}
+	return path
+}
+
+func expressionTableOffset(data []byte, expression *unstable.Node) int {
+	iter := expression.Key()
+	if !iter.Next() {
+		return -1
+	}
+	node := iter.Node()
+	if node == nil {
+		return -1
+	}
+	offset := int(node.Raw.Offset)
+	if offset < 0 || offset > len(data) {
+		return -1
+	}
+	return offset
 }
 
 func applyRuntimeConfigEdits(data []byte, edits []runtimeConfigEdit) []byte {

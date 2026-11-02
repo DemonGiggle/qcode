@@ -362,3 +362,21 @@ func TestSelectSkillsEscapeLeavesSelector(t *testing.T) {
 		t.Fatalf("escape result = names %v, always %v, summaries %v, accepted %v, err %v", names, always, summaries, accepted, err)
 	}
 }
+
+func TestSkillsPreferenceMainTabOnly(t *testing.T) {
+	recorder := &runtimePreferenceRecorder{}
+	u := &UI{manager: &preferenceAgentController{}, activeAgent: "agent-1", display: newHistoryWriter(&bytes.Buffer{}), runtimePreferences: recorder}
+	u.persistSkillsPreference([]string{"review"}, nil)
+	if recorder.skillsCalls != 0 {
+		t.Fatalf("child tab persisted skills: %+v", recorder)
+	}
+	u.activeAgent = "main"
+	u.persistSkillsPreference([]string{"review"}, []string{"review"})
+	if recorder.skillsCalls != 1 || len(recorder.selected) != 1 || recorder.selected[0] != "review" || len(recorder.selectedAlways) != 1 {
+		t.Fatalf("main tab persistence = %+v", recorder)
+	}
+	u.persistSkillsPreference(nil, nil)
+	if recorder.skillsCalls != 2 || len(recorder.selected) != 0 || len(recorder.selectedAlways) != 0 {
+		t.Fatalf("cleared selection persistence = %+v", recorder)
+	}
+}

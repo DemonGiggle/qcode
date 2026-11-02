@@ -305,6 +305,70 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 }
 
+func TestPersistSelectedSkillsCreatesSkillsTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "qcode", "config.toml")
+	writer := newRuntimePreferenceWriter(path)
+	if err := writer.PersistSelectedSkills([]string{"review-go", "alpha"}, []string{"alpha"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{"[skills]", `selected = ["alpha", "review-go"]`, `selected_always = ["alpha"]`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("config missing %q: %s", want, text)
+		}
+	}
+	var parsed Config
+	if err := loadAndDecodeForTest(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(parsed.Skills.Selected, ","), "alpha,review-go"; got != want {
+		t.Fatalf("selected = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(parsed.Skills.SelectedAlways, ","), "alpha"; got != want {
+		t.Fatalf("selected_always = %q, want %q", got, want)
+	}
+}
+
+func TestPersistSelectedSkillsPreservesAndUpdates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	original := "# keep this comment\nprovider = \"openai\"\n\n[skills]\npaths = [\"local\"]\nselected = [\"old\"]\nselected_always = []\n\n[learning]\ncontext_budget = 1200\n"
+	if err := os.WriteFile(path, []byte(original), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	writer := newRuntimePreferenceWriter(path)
+	if err := writer.PersistSelectedSkills(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{"# keep this comment", `provider = "openai"`, "[skills]", `paths = ["local"]`, "selected = []", "selected_always = []", "[learning]"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("config lost %q: %s", want, text)
+		}
+	}
+	var parsed Config
+	if err := loadAndDecodeForTest(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Skills.Selected == nil || len(parsed.Skills.Selected) != 0 {
+		t.Fatalf("cleared selected not explicit empty: %#v", parsed.Skills.Selected)
+	}
+}
+
+func TestPersistSelectedSkillsRejectsInvalid(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := newRuntimePreferenceWriter(path).PersistSelectedSkills([]string{"Bad Name"}, nil); err == nil {
+		t.Fatal("PersistSelectedSkills accepted an invalid skill name")
+	}
+}
+
 func loadAndDecodeForTest(data []byte, cfg *Config) error {
 	return toml.Unmarshal(data, cfg)
 }

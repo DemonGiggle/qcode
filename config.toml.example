@@ -100,6 +100,12 @@ context_budget = 1200
 # [[skills.autoload]]
 # path = ".team/lazy-skills"
 # always_load = false
+# Persisted explicit selection: /skill on the main tab saves here.
+# Selected skills start enabled for new runs and are unioned with autoload;
+# selected_always skills are eagerly injected and must also appear in
+# selected. Resumed sessions keep their saved selection instead.
+# selected = ["review-go"]
+# selected_always = []
 
 # Local text filtering is enabled at every output boundary by default.
 # Saved sessions are permanently redacted; legacy sessions are rewritten on resume.

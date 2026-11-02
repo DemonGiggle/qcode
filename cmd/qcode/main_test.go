@@ -327,3 +327,43 @@ func TestSandboxCommandPathsConfigPrecedence(t *testing.T) {
 		t.Fatalf("missing key changed default: %q", opts.sandboxCommandPaths)
 	}
 }
+
+func TestStartupSkillDataUnionsSelectedAndAutoload(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	for path, content := range map[string]string{
+		"manual/manual/SKILL.md":    "# Manual\nManual body",
+		"automatic/review/SKILL.md": "---\ndescription: Review code\n---\nReview body",
+	} {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summaries, bodies, err := startupSkillData(root, []string{"manual"}, []string{"automatic"}, nil, []string{"manual", "missing"}, []string{"manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("summaries = %#v, want manual+review", summaries)
+	}
+	byName := map[string]prompt.SkillSummary{}
+	for _, s := range summaries {
+		byName[s.Name] = s
+	}
+	if !byName["manual"].AlwaysLoad || len(bodies) != 1 || bodies["manual"] == "" {
+		t.Fatalf("manual should be always-loaded with body: %#v %v", byName["manual"], bodies)
+	}
+	if byName["review"].AlwaysLoad {
+		t.Fatalf("review should stay lazy: %#v", byName["review"])
+	}
+	if !byName["review"].Autoload {
+		t.Fatalf("review should keep autoload badge: %#v", byName["review"])
+	}
+	if byName["manual"].Autoload {
+		t.Fatalf("explicit selected manual should not show autoload badge: %#v", byName["manual"])
+	}
+}

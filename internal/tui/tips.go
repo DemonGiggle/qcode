@@ -102,6 +102,7 @@ var tipTexts = []string{
 	"Add `paths = [\".team/skills\"]` under `[skills]` in config.toml to discover extra skill directories.",
 	"Add `autoload_paths = [\".team/skills\"]` under `[skills]` to enable team skills at startup.",
 	"Use `[[skills.autoload]]` with `always_load = true` for eager full-text skills.",
+	"`/skill` on main saves `[skills] selected`/`selected_always` in your user config for new runs; resume keeps saved skills.",
 	"For duplicate skill names, `.qcode/skills` overrides `.agents/skills` and user skills; configured paths take priority.",
 	"Run `/skill name1,name2` to select skills directly, `/skill name!` for always-load, or `/skill none` to clear the active agent's selection.",
 	"Run `/skill` again after adding a skill; discovery refreshes without restarting qcode.",

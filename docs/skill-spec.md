@@ -199,19 +199,25 @@ per-tab, inherited by sub-agents like the current selection, and persisted in
 
 One-shot and piped invocations do not provide the interactive `/skill`
 selection step. Use `skills.autoload_paths` (lazy) or `[[skills.autoload]]`
-with `always_load = true` to enable skills in those runs:
+with `always_load = true` to enable skills in those runs. `skills.selected`
+and `skills.selected_always` also apply to one-shot runs:
 
 ```toml
 [skills]
 autoload_paths = [".team/skills"]
+selected = ["review-go"]
+selected_always = []
 
 [[skills.autoload]]
 path = ".team/always"
 always_load = true
 ```
 
-New interactive runs also start with these skills selected. Resumed sessions
-retain their saved selection, and `/skill` can change the active tab's selection.
+New interactive runs also start with these skills selected: the persisted
+`selected`/`selected_always` unioned with autoload (always wins). Resumed
+sessions retain their saved selection, and `/skill` can change the active
+tab's selection. `/skill` on the main tab updates `selected` and
+`selected_always` in the user config.
 
 ## Precedence and overrides
 

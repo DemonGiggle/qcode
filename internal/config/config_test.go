@@ -273,3 +273,57 @@ custom_patterns = ['fine', 'private-regex[']
 		t.Fatalf("unsafe diagnostic: %v", diagnostics)
 	}
 }
+
+func TestSelectedMergeOverride(t *testing.T) {
+	dir := t.TempDir()
+	low := writeConfig(t, dir, "low.toml", "[skills]\nselected = [\"beta\", \"alpha\"]\nselected_always = [\"alpha\"]\n")
+	high := writeConfig(t, dir, "high.toml", "[skills]\nselected = [\"gamma\"]\n")
+	cfg, _, diagnostics := load([]string{high, low})
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %v", diagnostics)
+	}
+	// selected_always is inherited (nil) so the sticky always mark stays
+	// and its skill remains selected.
+	if got, want := strings.Join(cfg.Skills.Selected, ","), "alpha,gamma"; got != want {
+		t.Fatalf("selected = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(cfg.Skills.SelectedAlways, ","), "alpha"; got != want {
+		t.Fatalf("selected_always = %q, want %q", got, want)
+	}
+	cleared := writeConfig(t, dir, "cleared.toml", "[skills]\nselected = [\"gamma\"]\nselected_always = []\n")
+	cfg, _, diagnostics = load([]string{cleared, low})
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %v", diagnostics)
+	}
+	if got, want := strings.Join(cfg.Skills.Selected, ","), "gamma"; got != want {
+		t.Fatalf("cleared selected = %q, want %q", got, want)
+	}
+	if len(cfg.Skills.SelectedAlways) != 0 {
+		t.Fatalf("cleared selected_always = %q, want empty", cfg.Skills.SelectedAlways)
+	}
+	explicitNone := writeConfig(t, dir, "none.toml", "[skills]\nselected = []\nselected_always = []\n")
+	cfg, _, diagnostics = load([]string{explicitNone, low})
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %v", diagnostics)
+	}
+	if cfg.Skills.Selected == nil || len(cfg.Skills.Selected) != 0 {
+		t.Fatalf("explicit empty selected not preserved: %#v", cfg.Skills.Selected)
+	}
+	if cfg.Skills.SelectedAlways == nil || len(cfg.Skills.SelectedAlways) != 0 {
+		t.Fatalf("explicit empty selected_always not preserved: %#v", cfg.Skills.SelectedAlways)
+	}
+}
+
+func TestSelectedValidation(t *testing.T) {
+	for _, tc := range []struct{ content, message string }{
+		{"[skills]\nselected = [\"Bad Name\"]\n", "invalid skill name"},
+		{"[skills]\nselected_always = [\"good\"]\nselected = [\"other\"]\n", "without matching"},
+		{"[skills]\nselected = [\"good\"]\nselected_always = [\"BAD\"]\n", "invalid skill name"},
+	} {
+		path := writeConfig(t, t.TempDir(), "config.toml", tc.content)
+		_, _, diagnostics := load([]string{path})
+		if len(diagnostics) != 1 || !strings.Contains(diagnostics[0].Error(), tc.message) {
+			t.Fatalf("content %q diagnostics = %v, want %q", tc.content, diagnostics, tc.message)
+		}
+	}
+}

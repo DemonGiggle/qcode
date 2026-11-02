@@ -104,6 +104,8 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	var configuredSkillPaths []string
 	var configuredAutoloadPaths []string
 	var configuredAlwaysAutoloadPaths []string
+	var configuredSelectedSkills []string
+	var configuredSelectedAlwaysSkills []string
 	var configuredStatuslineHidden []string
 	var configuredTheme string
 	var sandboxCommandPathFlags sandboxCommandPathsFlag
@@ -163,6 +165,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		// Legacy autoload_paths entries are lazy; merge both forms.
 		configuredAutoloadPaths = append(append([]string(nil), lazyAutoload...), alwaysAutoload...)
 		configuredAlwaysAutoloadPaths = append([]string(nil), alwaysAutoload...)
+		configuredSelectedSkills, configuredSelectedAlwaysSkills = cfg.Skills.NormalizedSelection()
 		configuredStatuslineHidden = append([]string(nil), cfg.StatuslineHidden...)
 		configuredTheme = cfg.Theme
 		redactionConfig = cfg.Redaction
@@ -254,13 +257,25 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	}
 	var autoloadSkills []prompt.SkillSummary
 	var autoloadAlwaysBodies map[string]string
-	if len(configuredAutoloadPaths) > 0 {
-		loaded, alwaysBodies, discoverErr := autoloadSkillData(root, configuredSkillPaths, configuredAutoloadPaths, configuredAlwaysAutoloadPaths)
+	if len(configuredAutoloadPaths) > 0 || len(configuredSelectedSkills) > 0 {
+		loaded, alwaysBodies, discoverErr := startupSkillData(root, configuredSkillPaths, configuredAutoloadPaths, configuredAlwaysAutoloadPaths, configuredSelectedSkills, configuredSelectedAlwaysSkills)
 		if discoverErr != nil {
 			fmt.Fprintln(diagnosticsOut, "WARNING: cannot autoload skills:", discoverErr)
 		} else {
 			autoloadSkills = loaded
 			autoloadAlwaysBodies = alwaysBodies
+			for _, name := range configuredSelectedSkills {
+				found := false
+				for _, summary := range autoloadSkills {
+					if summary.Name == name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					fmt.Fprintln(diagnosticsOut, "WARNING: configured skill selection not found, skipping:", name)
+				}
+			}
 		}
 	}
 	skillSelection := skills.NewLazySelection(root, allSkillPaths...)
@@ -670,6 +685,66 @@ func autoloadSkillData(root string, configuredPaths, autoloadPaths, alwaysPaths 
 		body, err := catalog.Load(summary.Name)
 		if err != nil {
 			// Warn-and-fallback to lazy on oversize or read errors.
+			summaries[i].AlwaysLoad = false
+			continue
+		}
+		bodies[summary.Name] = body
+	}
+	return summaries, bodies, nil
+}
+
+func startupSkillData(root string, configuredPaths, autoloadPaths, alwaysPaths, selected, selectedAlways []string) ([]prompt.SkillSummary, map[string]string, error) {
+	allPaths := append(append([]string(nil), configuredPaths...), autoloadPaths...)
+	catalog, err := skills.Discover(root, allPaths...)
+	if err != nil {
+		return nil, nil, err
+	}
+	byName := map[string]skills.Skill{}
+	for _, skill := range catalog.Skills() {
+		byName[skill.Name] = skill
+	}
+	autoloadSet := map[string]bool{}
+	for _, skill := range catalog.SkillsInPaths(autoloadPaths...) {
+		autoloadSet[skill.Name] = true
+	}
+	alwaysAutoloadSet := map[string]bool{}
+	for _, skill := range catalog.SkillsInPaths(alwaysPaths...) {
+		alwaysAutoloadSet[skill.Name] = true
+	}
+	selectedSet := map[string]bool{}
+	for _, name := range selected {
+		if _, ok := byName[name]; ok {
+			selectedSet[name] = true
+		}
+	}
+	selectedAlwaysSet := map[string]bool{}
+	for _, name := range selectedAlways {
+		if _, ok := byName[name]; ok {
+			selectedAlwaysSet[name] = true
+			selectedSet[name] = true
+		}
+	}
+	var summaries []prompt.SkillSummary
+	for _, skill := range catalog.Skills() {
+		if !autoloadSet[skill.Name] && !selectedSet[skill.Name] {
+			continue
+		}
+		summary := prompt.SkillSummary{Name: skill.Name, Description: skill.Description, SizeBytes: skill.SizeBytes}
+		if autoloadSet[skill.Name] || alwaysAutoloadSet[skill.Name] {
+			summary.Autoload = true
+		}
+		if alwaysAutoloadSet[skill.Name] || selectedAlwaysSet[skill.Name] {
+			summary.AlwaysLoad = true
+		}
+		summaries = append(summaries, summary)
+	}
+	bodies := make(map[string]string)
+	for i, summary := range summaries {
+		if !summary.AlwaysLoad {
+			continue
+		}
+		body, err := catalog.Load(summary.Name)
+		if err != nil {
 			summaries[i].AlwaysLoad = false
 			continue
 		}

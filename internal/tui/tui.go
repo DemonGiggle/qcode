@@ -134,14 +134,15 @@ type maxStepsReader interface {
 }
 
 // RuntimePreferenceWriter persists preferences changed by the TUI. Model,
-// step-limit, and statusline controls save from main; theme and interactive
-// preferences can be saved from any tab.
+// step-limit, statusline, and skills controls save from main; theme and
+// interactive preferences can be saved from any tab.
 type RuntimePreferenceWriter interface {
 	PersistModel(model, thinking string) error
 	PersistMaxSteps(maxSteps int) error
 	PersistInteractive(enabled bool) error
 	PersistStatuslineHidden(hidden []string) error
 	PersistTheme(id string) error
+	PersistSelectedSkills(selected, always []string) error
 }
 
 type planController interface {

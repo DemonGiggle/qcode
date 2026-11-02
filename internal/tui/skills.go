@@ -101,6 +101,7 @@ func (u *UI) chooseSkills() {
 	}) {
 		return
 	}
+	u.persistSkillsPreference(names, alwaysNames)
 	u.printSystemMessage(formatSkillSelectionModes("Skills enabled", names, alwaysNames, u.width, u.unicode, ColorEnabled(u.out), green))
 }
 
@@ -197,6 +198,7 @@ func (u *UI) setSkillCommand(fields []string) {
 	}) {
 		return
 	}
+	u.persistSkillsPreference(names, alwaysNames)
 	u.drawStatusBar()
 	u.printSystemMessage(formatSkillSelectionModes("Skills enabled", names, alwaysNames, u.width, u.unicode, ColorEnabled(u.out), green))
 }
@@ -244,6 +246,16 @@ func setRunnerSkills(runner skillRunner, summaries []prompt.SkillSummary, bodies
 		return
 	}
 	runner.SetSkills(summaries)
+}
+
+func (u *UI) persistSkillsPreference(selected, always []string) {
+	writer, main := u.runtimePreferenceTarget()
+	if writer == nil || !main {
+		return
+	}
+	if err := writer.PersistSelectedSkills(selected, always); err != nil {
+		u.printSystemMessage(yellow + "Warning: unable to persist skill selection: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+	}
 }
 
 func (u *UI) skillLocationHint(color bool) string {
