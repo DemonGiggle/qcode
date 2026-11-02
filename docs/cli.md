@@ -19,8 +19,8 @@ only when no nonempty positional prompt was provided; empty piped input is an
 error. Assistant text goes to stdout and activity or diagnostics go to stderr.
 One-shot and piped runs do not save sessions or wait for interactive questions
 or directory approvals. Both web tools start enabled outside the sandbox and
-disabled when sandbox isolation is active. Configured skill autoloading and
-learning retrieval still apply.
+disabled when sandbox isolation is active. Configured skill autoloading
+(lazy or `always_load`) and learning retrieval still apply.
 
 ## Startup flags
 

@@ -59,16 +59,28 @@ autoload_paths = [".team/skills", "~/.config/my-skills"]
 
 A skill is a directory whose name matches `[a-z0-9-_]{1,64}` containing a regular `SKILL.md` file. The file must be within its skill root and ≤ 64 KiB. qcode reads a simple `description:` line from an initial front-matter block, or the first non-empty heading/line, for a one-line summary truncated to 160 bytes. See the [skill specification](skill-spec.md) for the authoring format.
 
-## Selection and lazy loading
+## Selection, lazy loading, and always-load
 
-Use `/skill` to choose skills from a checkbox list showing each name and short description. The command first shows every built-in and configured location it checks. Only selected skills are shared with the model or available to its `skill` tool.
+Use `/skill` to choose skills from a list showing each name, short
+description, size, and autoload badge. The command first shows every built-in
+and configured location it checks. Only selected skills are shared with the
+model or available to its `skill` tool. Space cycles off -> lazy (`[x]` /
+`☑`) -> always-load (`[*]` / `★`) -> off; Unicode terminals use `☐/☑/★`,
+ASCII uses `[ ]/[x]/[*]`. The header shows lazy/always counts plus a stacked
+context bar (`[████░░░░········]`): always-loaded bytes vs lazy catalog bytes
+over the total (base system prompt + always + catalog). `/skill name`,
+`/skill name!` (or `name:always`), and `/skill none` are the CLI equivalents.
 
 Skill discovery runs when `/skill` is used, and at startup when
-`skills.autoload_paths` is set. It reads a small prefix of each `SKILL.md` to
-obtain its description. Skill bodies never enter the prompt unless the model
-calls the `skill` tool—this keeps context small. The system prompt includes a
-compact catalog of selected skill names and descriptions; full instructions
-are loaded on demand.
+`skills.autoload_paths` or `[[skills.autoload]]` is set. It reads a small
+prefix of each `SKILL.md` to obtain its description. Lazy skill bodies never
+enter the prompt unless the model calls the `skill` tool—this keeps context
+small. The system prompt includes a compact catalog of selected skill names
+and descriptions; full instructions are loaded on demand. Always-loaded
+skills additionally inject their full `SKILL.md` (same header format as the
+`skill` tool) in a separate block after the system prompt, wrapped as
+untrusted reference data with no extra authority; calling `skill` for them
+returns the same text with an already-loaded note instead of loading anew.
 
 Each `skill` result starts with the skill name, absolute resolved `SKILL.md`
 path, and base directory, followed by the original Markdown unchanged. This

@@ -171,11 +171,22 @@ type stepRunner interface {
 
 type skillRunner interface{ SetSkills([]prompt.SkillSummary) }
 
+type skillAlwaysRunner interface {
+	SetSkillsWithContents([]prompt.SkillSummary, map[string]string)
+}
+
 type selectedSkillsRunner interface {
 	SelectedSkills() []prompt.SkillSummary
 }
 
 type skillCatalogLoader func() ([]prompt.SkillSummary, error)
+
+type skillBodyLoader func([]string) (map[string]string, error)
+
+// skillChangeFunc updates both the tool selection (all names) and the
+// always-load subset. It replaces the legacy func([]string) handler so
+// lazy and always modes stay in sync between tools and the agent.
+type skillChangeFunc func(names []string, always []string)
 
 type toolRunner interface {
 	ToggleTool(name string, enabled bool)
@@ -257,7 +268,8 @@ type UI struct {
 	skills               []prompt.SkillSummary
 	skillLocations       []string
 	skillCatalogLoader   skillCatalogLoader
-	onSkills             func([]string)
+	skillBodyLoader      skillBodyLoader
+	onSkills             skillChangeFunc
 	consultationCursor   uint64
 	steeringCursor       uint64 // Guarded by screenMu; persisted with the transcript.
 	manager              agentController
@@ -305,7 +317,7 @@ type UI struct {
 }
 
 // SetSkillCatalog configures the optional /skill selector.
-func (u *UI) SetSkillCatalog(skills []prompt.SkillSummary, onChange func([]string)) {
+func (u *UI) SetSkillCatalog(skills []prompt.SkillSummary, onChange skillChangeFunc) {
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
 	u.skills = append([]prompt.SkillSummary(nil), skills...)
@@ -326,6 +338,14 @@ func (u *UI) SetSkillCatalogLoader(loader skillCatalogLoader) {
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
 	u.skillCatalogLoader = loader
+}
+
+// SetSkillBodyLoader provides full SKILL.md bodies for always-load skills.
+// It is consulted when the user promotes a skill to always-load.
+func (u *UI) SetSkillBodyLoader(loader skillBodyLoader) {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	u.skillBodyLoader = loader
 }
 
 func (u *UI) ensureSkillCatalog() bool {
@@ -463,7 +483,7 @@ func (u *UI) AddAgentView(id, provider, model string) (io.Writer, io.Writer) {
 	return display, response
 }
 
-func (u *UI) SetAgentSkillHandler(id string, onChange func([]string)) {
+func (u *UI) SetAgentSkillHandler(id string, onChange skillChangeFunc) {
 	if u.sessionHost != nil {
 		u.sessionHost.SetAgentSkillHandler(id, onChange)
 		return

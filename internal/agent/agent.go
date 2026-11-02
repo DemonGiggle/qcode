@@ -64,6 +64,7 @@ type Agent struct {
 	system                   string
 	endpoint                 string
 	selectedSkills           []prompt.SkillSummary
+	alwaysContents           map[string]string
 	pendingImages            []llm.Image
 	planMode                 atomic.Bool
 	skillPlanMode            atomic.Bool
@@ -303,13 +304,83 @@ func thinkingLevelAllowed(capability llm.ThinkingCapability, level string) bool 
 }
 
 // SetSkills replaces the user-selected skills advertised to the model.
+// Always-loaded bodies already cached are kept for skills that remain
+// marked AlwaysLoad; others are pruned.
 func (a *Agent) SetSkills(skills []prompt.SkillSummary) {
 	a.selectedSkills = append([]prompt.SkillSummary(nil), skills...)
+	keep := map[string]bool{}
+	for _, skill := range skills {
+		if skill.AlwaysLoad {
+			keep[skill.Name] = true
+		}
+	}
+	if len(keep) == 0 {
+		a.alwaysContents = nil
+	} else if a.alwaysContents != nil {
+		pruned := make(map[string]string, len(keep))
+		for name, body := range a.alwaysContents {
+			if keep[name] {
+				pruned[name] = body
+			}
+		}
+		a.alwaysContents = pruned
+	}
 	defer a.invalidateContextUsage()
 	a.system = a.modeSystem(skills)
 	if len(a.messages) > 0 && a.messages[0].Role == "system" {
 		a.messages[0].Content = a.system
 	}
+}
+
+// SetSkillsWithContents replaces the selection and the cached always-loaded
+// bodies atomically.
+func (a *Agent) SetSkillsWithContents(skills []prompt.SkillSummary, contents map[string]string) {
+	a.selectedSkills = append([]prompt.SkillSummary(nil), skills...)
+	if len(contents) == 0 {
+		a.alwaysContents = nil
+	} else {
+		cloned := make(map[string]string, len(contents))
+		for name, body := range contents {
+			cloned[name] = body
+		}
+		a.alwaysContents = cloned
+	}
+	defer a.invalidateContextUsage()
+	a.system = a.modeSystem(a.selectedSkills)
+	if len(a.messages) > 0 && a.messages[0].Role == "system" {
+		a.messages[0].Content = a.system
+	}
+}
+
+// SetAlwaysContents replaces the cached always-loaded bodies and rebuilds
+// the system prompt. Bodies must use the skill tool header format.
+func (a *Agent) SetAlwaysContents(contents map[string]string) {
+	if len(contents) == 0 {
+		a.alwaysContents = nil
+	} else {
+		cloned := make(map[string]string, len(contents))
+		for name, body := range contents {
+			cloned[name] = body
+		}
+		a.alwaysContents = cloned
+	}
+	defer a.invalidateContextUsage()
+	a.system = a.modeSystem(a.selectedSkills)
+	if len(a.messages) > 0 && a.messages[0].Role == "system" {
+		a.messages[0].Content = a.system
+	}
+}
+
+// AlwaysContents returns the cached always-loaded skill bodies.
+func (a *Agent) AlwaysContents() map[string]string {
+	if len(a.alwaysContents) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(a.alwaysContents))
+	for name, body := range a.alwaysContents {
+		cloned[name] = body
+	}
+	return cloned
 }
 
 // SelectedSkills returns the skills currently advertised to the model.
@@ -332,7 +403,7 @@ func (a *Agent) InheritCapabilitiesFrom(source *Agent) error {
 			}
 		}
 	}
-	a.SetSkills(source.SelectedSkills())
+	a.SetSkillsWithContents(source.SelectedSkills(), source.AlwaysContents())
 	a.SetInteractiveMode(source.InteractiveMode())
 	a.SetMaxSteps(source.MaxSteps())
 	return nil

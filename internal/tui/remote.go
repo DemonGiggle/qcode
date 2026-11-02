@@ -76,6 +76,9 @@ type RemoteSkillState struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Selected    bool   `json:"selected"`
+	Always      bool   `json:"always,omitempty"`
+	Autoload    bool   `json:"autoload,omitempty"`
+	SizeBytes   int    `json:"size_bytes,omitempty"`
 }
 
 // RemoteSessionState exposes every saved session in the same order as the TUI.
@@ -318,15 +321,21 @@ func (u *UI) RemoteCatalog(ctx context.Context) RemoteCatalog {
 			skillSummaries = loaded
 		}
 	}
-	selectedSkills := map[string]bool{}
+	selectedSkills := map[string]prompt.SkillSummary{}
 	if selectedRunner, ok := runner.(selectedSkillsRunner); ok {
 		for _, skill := range selectedRunner.SelectedSkills() {
-			selectedSkills[skill.Name] = true
+			selectedSkills[skill.Name] = skill
 		}
 	}
 	for _, skill := range skillSummaries {
+		selected, always := false, false
+		if current, ok := selectedSkills[skill.Name]; ok {
+			selected = true
+			always = current.AlwaysLoad
+		}
 		result.Skills = append(result.Skills, RemoteSkillState{
-			Name: skill.Name, Description: skill.Description, Selected: selectedSkills[skill.Name],
+			Name: skill.Name, Description: skill.Description, Selected: selected,
+			Always: always, Autoload: skill.Autoload, SizeBytes: skill.SizeBytes,
 		})
 	}
 	if modelRunner, ok := runner.(modelRunner); ok {

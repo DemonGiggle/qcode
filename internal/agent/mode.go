@@ -94,7 +94,16 @@ func (a *Agent) SetInteractiveAvailable(available bool) {
 }
 
 func (a *Agent) modeSystem(skills []prompt.SkillSummary) string {
-	base := prompt.SystemForInteractive(skills, a.PlanMode(), a.SkillPlanMode(), a.InteractiveMode(), a.interactiveAvailable.Load())
+	filtered := make(map[string]string, len(a.alwaysContents))
+	for name, body := range a.alwaysContents {
+		for _, skill := range skills {
+			if skill.Name == name && skill.AlwaysLoad {
+				filtered[name] = body
+				break
+			}
+		}
+	}
+	base := prompt.SystemForInteractiveWithAlways(skills, filtered, a.PlanMode(), a.SkillPlanMode(), a.InteractiveMode(), a.interactiveAvailable.Load())
 	if !a.PlanMode() && !a.SkillPlanMode() && a.nonInteractiveNotice.Load() {
 		base += prompt.NonInteractiveSuffix
 	}

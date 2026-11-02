@@ -99,11 +99,12 @@ var tipTexts = []string{
 	"Use lowercase letters, digits, hyphens, or underscores in skill names; keep each SKILL.md within 64 KiB.",
 	"Start SKILL.md with a short heading or a front-matter `description:` line so the picker explains its purpose.",
 	"Add `paths = [\".team/skills\"]` under `[skills]` in config.toml to discover extra skill directories.",
-	"Add `autoload_paths = [\".team/skills\"]` under `[skills]` in config.toml to enable team skills at startup.",
+	"Add `autoload_paths = [\".team/skills\"]` under `[skills]` to enable team skills at startup.",
+	"Use `[[skills.autoload]]` with `always_load = true` for eager full-text skills.",
 	"For duplicate skill names, `.qcode/skills` overrides `.agents/skills` and user skills; configured paths take priority.",
-	"Run `/skill name1,name2` to select skills directly, or `/skill none` to clear the active agent's selection.",
+	"Run `/skill name1,name2` to select skills directly, `/skill name!` for always-load, or `/skill none` to clear the active agent's selection.",
 	"Run `/skill` again after adding a skill; discovery refreshes without restarting qcode.",
-	"Selected skills initially add only names and summaries to context; the agent loads full instructions when needed.",
+	"Lazy skills add names and summaries; `[*]` skills inject full text. Space cycles off -> lazy -> always.",
 
 	// Durable learning.
 	"Run `/learn` after useful work to propose reusable preferences; review the preview and answer yes to save.",

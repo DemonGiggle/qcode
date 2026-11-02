@@ -208,6 +208,37 @@ func writeConfig(t *testing.T, dir, name, content string) string {
 	return path
 }
 
+func TestAutoloadTableMarksAlwaysAndMergesLayers(t *testing.T) {
+	dir := t.TempDir()
+	low := writeConfig(t, dir, "low.toml", "[skills]\nautoload_paths = [\"lazy-dir\"]\n[[skills.autoload]]\npath = \"shared\"\n")
+	high := writeConfig(t, dir, "high.toml", "[[skills.autoload]]\npath = \"shared\"\nalways_load = true\n[[skills.autoload]]\npath = \"always-dir\"\nalways_load = true\n")
+	cfg, _, diagnostics := load([]string{high, low})
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %v", diagnostics)
+	}
+	lazy, always := cfg.Skills.AutoloadPathsByMode()
+	if got, want := strings.Join(lazy, ","), "lazy-dir"; got != want {
+		t.Fatalf("lazy = %q, want %q", got, want)
+	}
+	// shared is lazy in the low layer and always in the high layer; the
+	// always_load mark is sticky across merges.
+	hasSharedAlways := false
+	for _, entry := range cfg.Skills.Autoload {
+		if entry.Path == "shared" && entry.AlwaysLoad {
+			hasSharedAlways = true
+		}
+	}
+	if !hasSharedAlways {
+		t.Fatalf("shared autoload entry missing sticky always_load: %+v", cfg.Skills.Autoload)
+	}
+	if got := strings.Join(always, ","); got != "shared,always-dir" {
+		t.Fatalf("always = %q, want shared,always-dir", got)
+	}
+	if got := strings.Join(cfg.Skills.AllAutoloadPaths(), ","); !strings.Contains(got, "lazy-dir") || !strings.Contains(got, "always-dir") {
+		t.Fatalf("all autoload = %q", got)
+	}
+}
+
 func TestRedactionLayersAndInvalidRegex(t *testing.T) {
 	dir := t.TempDir()
 	low := writeConfig(t, dir, "low.toml", `[redaction]

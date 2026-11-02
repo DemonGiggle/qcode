@@ -271,7 +271,7 @@ type agentView struct {
 	rowCache historyRowCache
 	queue    queuePanel
 	unseen   bool
-	onSkills func([]string)
+	onSkills skillChangeFunc
 }
 
 type approvalResult struct {

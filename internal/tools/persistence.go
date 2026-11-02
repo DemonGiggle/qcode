@@ -9,9 +9,11 @@ import (
 )
 
 type savedTools struct {
-	Cwd            string `json:"cwd,omitempty"`
-	Disabled       map[string]bool
-	Grants, Skills []string
+	Cwd      string `json:"cwd,omitempty"`
+	Disabled map[string]bool
+	Grants   []string
+	Skills   []string
+	Always   []string `json:"always,omitempty"`
 }
 
 func (r *Registry) SaveTools() json.RawMessage {
@@ -22,6 +24,9 @@ func (r *Registry) SaveTools() json.RawMessage {
 	s := savedTools{Disabled: r.disabled, Grants: grants, Cwd: cwd}
 	if selection, ok := r.skills.(interface{ Selected() []string }); ok {
 		s.Skills = selection.Selected()
+	}
+	if selection, ok := r.skills.(interface{ Always() []string }); ok {
+		s.Always = selection.Always()
 	}
 	data, _ := json.Marshal(s)
 	return data
@@ -93,6 +98,9 @@ func (r *Registry) restoreTools(s savedTools) error {
 	}
 	if selection, ok := r.skills.(interface{ Set([]string) }); ok {
 		selection.Set(s.Skills)
+	}
+	if selection, ok := r.skills.(interface{ SetAlways([]string) }); ok {
+		selection.SetAlways(s.Always)
 	}
 	return nil
 }
