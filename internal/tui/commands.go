@@ -164,6 +164,13 @@ var slashCommands = []slashCommand{
 		examples: []string{"/theme"},
 	},
 	{
+		name: "/todo", usage: "/todo show", description: "Review the agent's execution checklist",
+		arguments: []helpArgument{
+			{name: "show", description: "Open the latest todo checklist."},
+		},
+		examples: []string{"/todo show"},
+	},
+	{
 		name: "/tool", usage: "/tool [<name> <on|off>]", description: "Enable or disable tools",
 		arguments: []helpArgument{
 			{name: "name", description: "Tool to change; omit both arguments to open the tool picker."},

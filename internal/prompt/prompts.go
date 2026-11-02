@@ -62,6 +62,22 @@ const NonInteractiveSuffix = `
 Interactive questions are unavailable in this run. Continue using available
 context and tools, and state any unresolved assumption in your answer.`
 
+// TodoSuffix explains the execution-checklist contract in normal mode. It is
+// independent of /plan: plans are one-shot handoffs, while the todo list is
+// the stateful checklist used while implementing.
+const TodoSuffix = `
+
+Execution checklist: for multi-step work, maintain a short todo list with the
+todo_add, todo_update, and todo_done tools. Each tab owns its own list;
+sub-agents keep their own lists and never inherit the caller's. Keep titles
+short (one line each) and statuses current: add items as the work grows, flip
+an item to doing when you start it, and mark it done (todo_done, or
+todo_update with status done) when finished. Call these tools only when the
+list changes (add, remove, rename, or status flip); do not resend unchanged
+state every turn. Use /todo show expectations: the latest checklist is
+reviewable by the user at any time, so keep it accurate. These tools are
+unavailable in Plan and Skill Plan modes.`
+
 // ConversationCompact is used to summarize a conversation before replacing
 // older turns. Like the system prompt, it remains deliberately visible here
 // so users can audit and tune every model-facing instruction.
@@ -199,6 +215,7 @@ func SystemForInteractive(skills []SkillSummary, plan, skillPlan, enabled, avail
 	if plan || skillPlan {
 		return base
 	}
+	base += TodoSuffix
 	if !available {
 		return base
 	}
@@ -218,6 +235,7 @@ func SystemForInteractiveWithAlways(skills []SkillSummary, always map[string]str
 	if skillPlan {
 		return base + SkillPlanModeSuffix
 	}
+	base += TodoSuffix
 	if !available {
 		return base
 	}
@@ -243,6 +261,9 @@ const (
 	ProposeSkillTool         = "Save a complete qcode SKILL.md draft for the user to review and refine before creation. This tool is available only in Skill Plan mode."
 	AskQuestionsTool         = "Ask the user a small blocking questionnaire about unresolved design decisions. Use this only when the answers materially affect the current plan or skill draft; the tool returns one answer per question and then work continues."
 	InteractiveQuestionsTool = "Ask the user one focused blocking question when its answer will avoid several broad workspace searches or resolve an important ambiguity. The answer is returned so you can continue the current request."
+	TodoAddTool              = "Add one execution checklist item in status todo. Use it when multi-step work grows; keep titles short. The updated checklist is returned."
+	TodoUpdateTool           = "Rename an execution checklist item and/or flip its status. Call it only when the title or status actually changes; the updated checklist is returned."
+	TodoDoneTool             = "Mark one execution checklist item as done. Call it once per finished item; the updated checklist is returned."
 	ListAgentsTool           = "List the other agent sessions and their current task status. Available only to the main agent."
 	SearchAgentWorkTool      = "Search all recorded agent tasks and findings in this session, including earlier work and closed agents. Results are excerpts of reference data. Use an empty query to browse, agent_id to filter, and next_offset for further pages. Available only to the main agent."
 	ConsultAgentsTool        = "Ask several distinct agents focused questions about their previous work. All requests are submitted asynchronously before waiting for their specific replies. The configured agent timeout includes queue time. Returns individual completed, timed_out, failed, or cancelled outcomes; use successful replies and continue despite other failures. Available only to the main agent."
@@ -286,6 +307,9 @@ const (
 	SkillContentParameter    = "Complete UTF-8 SKILL.md content, including a concise description near the top and all required instructions"
 	QuestionTextParameter    = "A focused design question for the user"
 	QuestionOptionsParameter = "Provide 2-6 mutually exclusive choices as plain strings when there are concrete alternatives, including yes/no decisions. Keep choices in this options array rather than only in the question text. Omit only for an open-ended answer such as a path, name, or detailed description; users can always type a custom answer."
+	TodoIDParameter          = "Stable item reference: 1-32 lowercase letters, digits, hyphens, or underscores"
+	TodoTitleParameter       = "Short checklist title, at most 120 characters"
+	TodoStatusParameter      = "New lifecycle state for the item: todo, doing, or done"
 	AgentIDParameter         = "Exact agent ID from list_agents, work history, or the injected roster"
 	AgentModelParameter      = "Model name for the new agent; omit to use the main agent's current model"
 	AgentPromptParameter     = "Focused task or follow-up to send to the target agent"

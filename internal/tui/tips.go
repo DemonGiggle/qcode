@@ -93,6 +93,7 @@ var tipTexts = []string{
 	"Plan and skill-design questions accept a listed choice or a custom answer; Ctrl+C cancels the request.",
 	"Run `/interactive on` for up to three questions per prompt; it saves the startup default from any tab. `/interactive` shows it.",
 	"Use `/plan show` to scroll through the latest submitted plan, then `/plan act` to start implementation.",
+	"For multi-step work, ask qcode to track a todo checklist, then run `/todo show` to review its progress.",
 	"Run `/plan off` to leave planning without executing the plan; `/new` clears the saved plan.",
 	"Create `.qcode/skills/<name>/SKILL.md` for workspace instructions, then run `/skill` to discover and select them.",
 	"Put shared personal skills in `~/.qcode/skills/<name>/SKILL.md`; `.agents/skills` also works inside a workspace.",

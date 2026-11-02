@@ -79,6 +79,8 @@ type Agent struct {
 	latestSkillDraft         *SkillDraft
 	planDecisionPending      bool
 	skillPlanDecisionPending bool
+	latestTodo               *Todo
+	todoVersion              uint64
 	// warnedSuspicious records content hashes already surfaced as
 	// prompt-injection warnings so repeated runs do not re-warn (and
 	// re-gate) the same history. Denied fingerprints persist so a denied
@@ -113,6 +115,8 @@ func (a *Agent) releaseContext() {
 	a.stateMu.Lock()
 	a.lastResponse = ""
 	a.latestPlan, a.latestSkillDraft = nil, nil
+	a.latestTodo = nil
+	a.todoVersion = 0
 	a.stateMu.Unlock()
 }
 
@@ -437,6 +441,7 @@ func (a *Agent) resetSession() {
 	a.stateMu.Lock()
 	a.latestPlan = nil
 	a.latestSkillDraft = nil
+	a.latestTodo = nil
 	a.stateMu.Unlock()
 	a.system = a.modeSystem(a.selectedSkills)
 	a.messages = []llm.Message{{Role: "system", Content: a.system}}
@@ -473,6 +478,7 @@ func (a *Agent) ToolNames() []string {
 	if a.InteractiveMode() && a.interactiveAvailable.Load() {
 		names = append(names, "ask_questions")
 	}
+	names = append(names, "todo_add", "todo_update", "todo_done")
 	sort.Strings(names)
 	return names
 }
@@ -480,6 +486,9 @@ func (a *Agent) ToolNames() []string {
 // ToggleTool enables or disables a tool by name.
 func (a *Agent) ToggleTool(name string, enabled bool) {
 	if name == "ask_questions" {
+		return
+	}
+	if isTodoTool(name) {
 		return
 	}
 	if (a.PlanMode() || a.SkillPlanMode()) && !a.modeAllowedTool(name) {
@@ -507,6 +516,9 @@ func (a *Agent) ToolEnabled(name string) bool {
 	}
 	if (a.PlanMode() || a.SkillPlanMode()) && !a.modeAllowedTool(name) {
 		return false
+	}
+	if isTodoTool(name) {
+		return !a.PlanMode() && !a.SkillPlanMode()
 	}
 	if name == "ask_questions" {
 		return a.InteractiveMode() && a.interactiveAvailable.Load()

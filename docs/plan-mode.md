@@ -32,3 +32,10 @@ Commands:
 
 Plan commands are accepted only when the active agent has no running or queued
 work. `/new` clears the saved plan and returns the agent to normal mode.
+
+`/plan` is a one-shot handoff; the execution checklist (`/todo`) is the
+stateful counterpart used while implementing. The model maintains one todo
+list per agent tab with its `todo_add`, `todo_update`, and `todo_done` tools,
+and `/todo show` opens the latest checklist in a scrollable view. Todo state
+is separate from plan state: `/plan act` keeps the todo list, `/new` clears
+both, and sub-agents start with their own empty lists.

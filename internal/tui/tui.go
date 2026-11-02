@@ -151,6 +151,10 @@ type planController interface {
 	ClearLatestPlan()
 }
 
+type todoController interface {
+	LatestTodoText() (string, bool)
+}
+
 type interactiveController interface {
 	InteractiveMode() bool
 	InteractiveAvailable() bool
@@ -922,6 +926,10 @@ func (u *UI) Run(ctx context.Context) error {
 			u.handlePlanCommand(ctx, fields)
 			continue
 		}
+		if len(fields) > 0 && fields[0] == "/todo" {
+			u.handleTodoCommand(ctx, fields)
+			continue
+		}
 		if len(fields) > 0 && fields[0] == "/interactive" {
 			u.handleInteractiveCommand(fields)
 			continue
@@ -1617,6 +1625,26 @@ func (u *UI) handlePlanCommand(ctx context.Context, fields []string) {
 		u.printSystemMessage(green + "Plan approved; implementation started." + reset)
 	default:
 		u.printSystemMessage(yellow + "Usage: /plan [off|show|act]" + reset)
+	}
+}
+
+func (u *UI) handleTodoCommand(ctx context.Context, fields []string) {
+	if len(fields) != 2 || fields[1] != "show" {
+		u.printSystemMessage(yellow + "Usage: /todo show" + reset)
+		return
+	}
+	controller, ok := u.runner.(todoController)
+	if !ok {
+		u.printSystemMessage(yellow + "Todo is unavailable." + reset)
+		return
+	}
+	todo, exists := controller.LatestTodoText()
+	if !exists {
+		u.printSystemMessage(yellow + "No todo list yet. Ask qcode to track multi-step work with its todo tools first." + reset)
+		return
+	}
+	if err := u.showTodoView(ctx, todo); err != nil && !errors.Is(err, context.Canceled) {
+		u.printSystemMessage(yellow + "Unable to show todo: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
 	}
 }
 

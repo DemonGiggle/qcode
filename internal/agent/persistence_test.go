@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"qcode/internal/llm"
+	"qcode/internal/prompt"
 	"qcode/internal/trace"
 )
 
@@ -119,6 +120,9 @@ func TestCheckpointPreservesMalformedToolArgumentsAndPendingImages(t *testing.T)
 	}
 	wantMessages := append([]llm.Message(nil), a.messages...)
 	wantMessages[1].Origin, wantMessages[1].Untrusted = "restored_assistant", true
+	// Restoring recomposes the system prompt for the current mode, which in
+	// normal mode carries the execution-checklist guidance.
+	wantMessages[0].Content = prompt.System + prompt.TodoSuffix
 	if !reflect.DeepEqual(wantMessages, b.messages) || !reflect.DeepEqual(a.pendingImages, b.pendingImages) {
 		t.Fatal("lost malformed call or loaded images")
 	}
