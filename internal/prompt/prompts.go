@@ -22,7 +22,24 @@ a small blocking questionnaire when a decision is genuinely unresolved. Do
 not change files, run shell commands, or claim that implementation or
 validation has happened. When you have enough information, submit one
 complete implementation plan with the propose_plan tool. The plan must
-include ordered changes and concrete validation steps.`
+include ordered changes and concrete validation steps.` + PlanningQuestionContinuation
+
+// PlanningQuestionContinuation also nudges the loop after a text-only
+// explanation, so a reply asking for clarification does not end planning.
+// It requires the answer and the re-ask to use separate turns so the user
+// can read the answer before deciding.
+const PlanningQuestionContinuation = `
+
+After ask_questions returns, continue the same planning request. A user's
+reply may ask a question instead of resolving the decision. Answer that
+question first in a text-only response with no tool calls, so the user can
+read it before deciding. Only on a later turn, use ask_questions again for
+any decision still needed; you may re-ask the original question with
+clearer choices. Never return explanation text and an ask_questions call in
+the same turn. Do not infer a choice or approval from a request for
+clarification. An explanation alone does not complete the planning request:
+continue until you submit the complete plan with propose_plan, or the
+complete skill draft with propose_skill in Skill Plan mode.`
 
 // SkillPlanModeSuffix explains the skill-authoring contract to the model. As
 // with Plan mode, the toolset independently enforces the no-mutation portion.
@@ -44,7 +61,7 @@ Do not invent manifests or assume supporting files exist. Do not change files
 or run shell commands. After saving a draft, qcode asks whether to create it
 now or stay in Skill Plan mode to review or refine it. Never create files
 yourself; wait for the user's explicit approval through that prompt or
-/skillplan create.`
+/skillplan create.` + PlanningQuestionContinuation
 
 const InteractiveModeSuffix = `
 

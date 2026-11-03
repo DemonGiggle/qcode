@@ -22,6 +22,10 @@ Commands:
   design decisions. Questions are presented one at a time; choose an option or
   type a custom answer to let the same planning request continue. Ctrl+C
   cancels it.
+- A custom reply can ask for clarification about the question or its choices.
+  The agent answers it in text first so you can read it before deciding, then
+  asks again for any unresolved decision, continuing the same planning request
+  until a complete plan is submitted. The normal model step limit still applies.
 - After a complete plan is submitted, qcode asks whether to start
   implementation (the same action as `/plan act`) or stay in Plan mode.
 - `/plan show` opens the latest submitted plan in a temporary, scrollable view.

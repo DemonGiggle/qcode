@@ -630,6 +630,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		}
 	}
 	recoveryInstruction := ""
+	planningQuestionsActive := false
 	var replanning []*session.SteeringInput
 	applySteer := func(item *session.SteeringInput) {
 		a.messages = append(a.messages, llm.Message{Role: "user", Content: item.Text})
@@ -644,6 +645,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		a.askedQuestions = make(map[string]bool)
 		identicalToolCalls = map[string]int{}
 		recoveryInstruction = ""
+		planningQuestionsActive = false
 		if contextual, ok := a.tools.(interface{ TaskContext(string) string }); ok {
 			a.taskContext = contextual.TaskContext(item.Text)
 		}
@@ -793,6 +795,13 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		a.contextMessages = len(a.messages)
 		a.RefreshContext(ctx)
 		if len(response.Message.ToolCalls) == 0 {
+			if planningQuestionsActive && (a.PlanMode() || a.SkillPlanMode()) {
+				// Explaining a choice does not finish the planning request. Give
+				// the model another turn to collect the decision or submit the
+				// artifact, while preserving the normal step limit and steering.
+				recoveryInstruction = prompt.PlanningQuestionContinuation
+				continue
+			}
 			a.stateMu.Lock()
 			a.lastResponse = response.Message.Content
 			a.stateMu.Unlock()
@@ -809,6 +818,24 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		endTurnResponse := ""
 		userAnswer := ""
 		var nextSteer *session.SteeringInput
+		// In planning flows a clarification answer and its re-ask must use
+		// separate turns. If the model returns both visible text and a
+		// questionnaire in one turn after a reply, the questionnaire would
+		// pop up immediately (e.g. a "let me answer, then re-confirm" teaser
+		// followed at once by the unanswered question) before the user has
+		// read the real answer. Defer the questionnaire so the text is shown
+		// first and the re-ask happens on the next turn.
+		deferPlanningAsk := planningQuestionsActive && (a.PlanMode() || a.SkillPlanMode()) && strings.TrimSpace(response.Message.Content) != ""
+		if deferPlanningAsk {
+			hasAsk := false
+			for _, call := range response.Message.ToolCalls {
+				if call.Name == "ask_questions" {
+					hasAsk = true
+					break
+				}
+			}
+			deferPlanningAsk = hasAsk
+		}
 		for index, call := range response.Message.ToolCalls {
 			if nextSteer == nil {
 				nextSteer = input.take(false)
@@ -819,6 +846,30 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			}
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			if deferPlanningAsk && call.Name == "ask_questions" {
+				if call.ID == "" {
+					call.ID = fmt.Sprintf("call_%d_%d", step+1, index+1)
+				}
+				arguments := compactJSON(a.trace.RedactArguments(call.Arguments))
+				displayCall := call
+				displayCall.Arguments = a.trace.RedactArguments(call.Arguments)
+				activityDetails := toolActivity(displayCall)
+				task.Suspend()
+				activity := a.trace.StartActivity(activityDetails)
+				toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": arguments})
+				toolErr := errors.New("Questionnaire deferred: explanation text was returned in the same turn. The visible text is shown first; re-ask any unresolved decision on the next turn with ask_questions and no accompanying text")
+				toolSpan.End(toolErr)
+				activity.EndWithOutput(toolErr, "")
+				a.recordActivity(session.WorkActivity{Action: activityDetails.Action, Summary: activityDetails.Completed, Success: false})
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				a.messages = append(a.messages, llm.Message{Role: "tool", Content: "ERROR: " + toolErr.Error(), Name: call.Name, ToolCallID: call.ID})
+				a.publishContext()
+				input.setToolCall("")
+				recoveryInstruction = prompt.PlanningQuestionContinuation + "\n\nReturn the full answer as text-only first; call ask_questions again only on the next turn."
+				continue
 			}
 			input.setToolCall(call.ID)
 			fingerprint := a.WorkingDirectory() + "\x00" + toolFingerprint(call)
@@ -923,6 +974,12 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		}
 		if userAnswer != "" {
 			a.messages = append(a.messages, llm.Message{Role: "user", Content: userAnswer})
+			// A new reply changes the context even if the model needs to ask
+			// the same question again after explaining its choices.
+			identicalToolCalls = map[string]int{}
+			if a.PlanMode() || a.SkillPlanMode() {
+				planningQuestionsActive = true
+			}
 			a.publishContext()
 		}
 		if nextSteer == nil {
