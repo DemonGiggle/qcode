@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -168,5 +169,63 @@ func TestRefreshAndSaveWithStaleReusesFresh(t *testing.T) {
 	}
 	if got.AccessToken != "fresh-access" {
 		t.Fatalf("got %q", got.AccessToken)
+	}
+}
+
+func TestSecretHookBeforeSaveFailure(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force=%t", force), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "oauth.json")
+			writeTokens(t, path, Tokens{AccessToken: "old-access", RefreshToken: "old-refresh", ExpiresAt: time.Now().Add(-time.Hour).Unix()})
+			seen := map[string]bool{}
+			register := func(values ...string) {
+				for _, value := range values {
+					seen[value] = true
+				}
+			}
+			do := stubDoer(func(r *http.Request) (*http.Response, error) {
+				if !seen["old-access"] || !seen["old-refresh"] {
+					t.Fatal("refresh started before registration")
+				}
+				// An unsafe destination makes Save fail after a successful refresh.
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+				return &http.Response{StatusCode: 200, Status: "200 OK", Body: io.NopCloser(strings.NewReader(`{"access_token":"rotated-access","refresh_token":"rotated-refresh"}`))}, nil
+			})
+			var err error
+			if force {
+				_, err = RefreshAndSaveWithStaleWithSecrets(context.Background(), do, path, "old-access", register)
+			} else {
+				_, err = GetValidTokensWithSecrets(context.Background(), do, path, register)
+			}
+			if err == nil {
+				t.Fatal("expected Save failure")
+			}
+			if !seen["rotated-access"] || !seen["rotated-refresh"] {
+				t.Fatal("rotated tokens not registered before Save failure")
+			}
+		})
+	}
+}
+
+func TestSecretHookRegistersReusedTokens(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oauth.json")
+	writeTokens(t, path, Tokens{AccessToken: "sibling-access", RefreshToken: "sibling-refresh", ExpiresAt: time.Now().Add(time.Hour).Unix()})
+	seen := map[string]bool{}
+	do := stubDoer(func(*http.Request) (*http.Response, error) { t.Fatal("unexpected HTTP request"); return nil, nil })
+	_, err := RefreshAndSaveWithStaleWithSecrets(context.Background(), do, path, "stale-access", func(values ...string) {
+		for _, value := range values {
+			seen[value] = true
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !seen["sibling-access"] || !seen["sibling-refresh"] {
+		t.Fatal("reused tokens not registered")
 	}
 }

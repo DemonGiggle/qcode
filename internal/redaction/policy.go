@@ -1,5 +1,6 @@
 // Package redaction filters copies of text crossing local output boundaries.
-// Policies are immutable and safe to share. Streams belong to one writer.
+// Policy configuration is immutable; literal secrets can be registered concurrently.
+// Policies are safe to share. Streams belong to one writer.
 package redaction
 
 import (
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
 
 const Marker = "[REDACTED]"
@@ -39,7 +41,7 @@ type Config struct {
 type Policy struct {
 	enabled    [5]bool
 	patterns   []*regexp.Regexp
-	literals   []string
+	literals   *literalRegistry
 	fields     map[string]bool
 	assignment *regexp.Regexp
 }
@@ -84,7 +86,7 @@ func New(c Config, exactValues []string) (*Policy, error) {
 	if err := Validate(c); err != nil {
 		return nil, err
 	}
-	p := &Policy{enabled: [5]bool{true, true, true, true, true}, fields: map[string]bool{}}
+	p := &Policy{enabled: [5]bool{true, true, true, true, true}, fields: map[string]bool{}, literals: &literalRegistry{}}
 	for i, value := range []*bool{c.Terminal, c.Persistence, c.Exports, c.JSONEvents, c.Remote} {
 		if value != nil {
 			p.enabled[i] = *value
@@ -122,22 +124,67 @@ func New(c Config, exactValues []string) (*Policy, error) {
 		}
 		literals = append(literals, expanded)
 	}
-	seen := map[string]bool{}
-	for _, value := range literals {
-		if value != "" && value != Marker && !seen[value] {
-			p.literals = append(p.literals, value)
-			seen[value] = true
-			encoded, _ := json.Marshal(value)
-			escaped := string(encoded[1 : len(encoded)-1])
-			if escaped != value && !seen[escaped] {
-				p.literals = append(p.literals, escaped)
-				seen[escaped] = true
-			}
-		}
-	}
-	sort.Slice(p.literals, func(i, j int) bool { return len(p.literals[i]) > len(p.literals[j]) })
+	p.RegisterSecrets(literals...)
 	return p, nil
 }
+
+// literalRegistry publishes immutable slices. Policy copies (including Redact's
+// detector) share the registry rather than copying a lock or freezing secrets.
+type literalRegistry struct {
+	mu     sync.RWMutex
+	values []string
+}
+
+// RegisterSecrets adds non-empty literal credentials and their JSON-escaped
+// forms. It is safe alongside all Policy consumers, including existing Streams.
+// Registration affects subsequent filtering, not text already emitted. A nil
+// policy is a no-op; it must not mutate the process-wide fallback policy.
+func (p *Policy) RegisterSecrets(values ...string) {
+	if p == nil {
+		return
+	}
+	r := p.literals
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	seen := make(map[string]bool, len(r.values))
+	for _, value := range r.values {
+		seen[value] = true
+	}
+	next := append([]string(nil), r.values...)
+	add := func(value string) {
+		if value != "" && value != Marker && !seen[value] {
+			seen[value] = true
+			next = append(next, value)
+		}
+	}
+	for _, value := range values {
+		if value == "" || value == Marker {
+			continue
+		}
+		add(value)
+		encoded, _ := json.Marshal(value)
+		add(string(encoded[1 : len(encoded)-1]))
+	}
+	if len(next) == len(r.values) {
+		return
+	}
+	sort.Slice(next, func(i, j int) bool {
+		if len(next[i]) != len(next[j]) {
+			return len(next[i]) > len(next[j])
+		}
+		return next[i] < next[j]
+	})
+	r.values = next
+}
+
+func (p *Policy) literalSnapshot() []string {
+	r := p.literals
+	r.mu.RLock()
+	values := r.values
+	r.mu.RUnlock()
+	return values
+}
+
 func effective(p *Policy) *Policy {
 	if p == nil {
 		return defaultPolicy
@@ -179,7 +226,7 @@ func (p *Policy) line(line string) string {
 		return prefix + " " + Marker
 	})
 	return protect(line, func(part string) string {
-		for _, literal := range p.literals {
+		for _, literal := range p.literalSnapshot() {
 			part = protect(part, func(piece string) string { return strings.ReplaceAll(piece, literal, Marker) })
 		}
 		part = tokens.ReplaceAllString(part, Marker)

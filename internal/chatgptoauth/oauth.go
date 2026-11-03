@@ -541,12 +541,20 @@ func withRefreshFileLockContext(ctx context.Context, resolved string, fn func() 
 // under the cancellable per-path + file locks so concurrent callers share one
 // refresh and startup/task deadlines stay effective.
 func GetValidTokens(ctx context.Context, do Doer, path string) (Tokens, error) {
+	return GetValidTokensWithSecrets(ctx, do, path, nil)
+}
+
+// GetValidTokensWithSecrets is GetValidTokens with an optional concurrency-safe
+// callback invoked for loaded tokens before refresh and rotated tokens before
+// persistence, including when refresh or persistence subsequently fails.
+func GetValidTokensWithSecrets(ctx context.Context, do Doer, path string, register func(...string)) (Tokens, error) {
 	if err := ctx.Err(); err != nil {
 		return Tokens{}, err
 	}
 	// Fast path: no locks, so a stuck sibling cannot block fresh credentials
 	// and cannot wedge EnsureValid / Models deadlines.
 	if t, err := Load(path); err == nil {
+		registerTokenSecrets(register, t)
 		if !t.NeedsRefresh(time.Now()) {
 			return t, nil
 		}
@@ -582,6 +590,7 @@ func GetValidTokens(ctx context.Context, do Doer, path string) (Tokens, error) {
 		if err != nil {
 			return err
 		}
+		registerTokenSecrets(register, t)
 		if !t.NeedsRefresh(time.Now()) {
 			out = t
 			return nil
@@ -593,6 +602,7 @@ func GetValidTokens(ctx context.Context, do Doer, path string) (Tokens, error) {
 		if err != nil {
 			return fmt.Errorf("chatgpt token refresh failed; run `qcode login chatgpt` again: %w", err)
 		}
+		registerTokenSecrets(register, next)
 		if next.AccountID == "" {
 			next.AccountID = t.AccountID
 		}
@@ -627,11 +637,19 @@ func GetValidToken(ctx context.Context, do Doer, path string) (string, error) {
 // new refresh. A lock-free fast path covers that reuse case so 401 retries do
 // not block on a stuck holder when the file is already fresh.
 func RefreshAndSaveWithStale(ctx context.Context, do Doer, path, staleAccess string) (Tokens, error) {
+	return RefreshAndSaveWithStaleWithSecrets(ctx, do, path, staleAccess, nil)
+}
+
+// RefreshAndSaveWithStaleWithSecrets is RefreshAndSaveWithStale with an optional concurrency-safe
+// callback invoked for loaded tokens before refresh and rotated tokens before
+// persistence, including when refresh or persistence subsequently fails.
+func RefreshAndSaveWithStaleWithSecrets(ctx context.Context, do Doer, path, staleAccess string, register func(...string)) (Tokens, error) {
 	if err := ctx.Err(); err != nil {
 		return Tokens{}, err
 	}
 	if staleAccess != "" {
 		if t, err := Load(path); err == nil {
+			registerTokenSecrets(register, t)
 			if t.AccessToken != staleAccess && !t.NeedsRefresh(time.Now()) {
 				return t, nil
 			}
@@ -655,6 +673,7 @@ func RefreshAndSaveWithStale(ctx context.Context, do Doer, path, staleAccess str
 		if err != nil {
 			return err
 		}
+		registerTokenSecrets(register, t)
 		if staleAccess != "" && t.AccessToken != staleAccess && !t.NeedsRefresh(time.Now()) {
 			out = t
 			return nil
@@ -666,6 +685,7 @@ func RefreshAndSaveWithStale(ctx context.Context, do Doer, path, staleAccess str
 		if err != nil {
 			return fmt.Errorf("chatgpt token refresh failed; run `qcode login chatgpt` again: %w", err)
 		}
+		registerTokenSecrets(register, next)
 		if next.AccountID == "" {
 			next.AccountID = t.AccountID
 		}
@@ -706,4 +726,10 @@ func EnsureValid(ctx context.Context, do Doer, path string) (Tokens, error) {
 		return Tokens{}, fmt.Errorf("chatgpt oauth file has no access token; run `qcode login chatgpt` again")
 	}
 	return t, nil
+}
+
+func registerTokenSecrets(register func(...string), t Tokens) {
+	if register != nil {
+		register(t.AccessToken, t.RefreshToken)
+	}
 }

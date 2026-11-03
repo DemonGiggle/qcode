@@ -24,9 +24,10 @@ const chatGPTBaseURL = "https://chatgpt.com/backend-api/codex"
 const chatGPTClientVersion = "0.166.0"
 
 type chatGPTProvider struct {
-	baseURL    string
-	tokensPath string
-	client     HTTPDoer
+	baseURL         string
+	tokensPath      string
+	client          HTTPDoer
+	registerSecrets func(...string)
 }
 
 func init() {
@@ -38,7 +39,7 @@ func newChatGPT(config Config) (Provider, error) {
 	if baseURL == "" {
 		baseURL = chatGPTBaseURL
 	}
-	return &chatGPTProvider{baseURL: baseURL, tokensPath: config.ChatGPTOAuthPath, client: httpClient(config)}, nil
+	return &chatGPTProvider{baseURL: baseURL, tokensPath: config.ChatGPTOAuthPath, client: httpClient(config), registerSecrets: config.RegisterSecrets}, nil
 }
 
 // Name returns the registry name.
@@ -57,7 +58,7 @@ func (p *chatGPTProvider) ValidateModel(model string) error {
 // for custom baseURLs. Auth failures (401/403) are retried once after a
 // serialized refresh before giving up.
 func (p *chatGPTProvider) Models(ctx context.Context) ([]string, error) {
-	creds, err := chatgptoauth.GetValidTokens(ctx, p.client, p.tokensPath)
+	creds, err := chatgptoauth.GetValidTokensWithSecrets(ctx, p.client, p.tokensPath, p.registerSecrets)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +69,7 @@ func (p *chatGPTProvider) Models(ctx context.Context) ([]string, error) {
 	if !isChatGPTUnauthorized(err) {
 		return nil, err
 	}
-	fresh, err := chatgptoauth.RefreshAndSaveWithStale(ctx, p.client, p.tokensPath, creds.AccessToken)
+	fresh, err := chatgptoauth.RefreshAndSaveWithStaleWithSecrets(ctx, p.client, p.tokensPath, creds.AccessToken, p.registerSecrets)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +169,7 @@ func splitChatGPTMessages(messages []Message) (string, []Message) {
 // unsupported in this first integration: the request omits optional thinking
 // fields and preserves the provider default.
 func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
-	creds, err := chatgptoauth.GetValidTokens(ctx, p.client, p.tokensPath)
+	creds, err := chatgptoauth.GetValidTokensWithSecrets(ctx, p.client, p.tokensPath, p.registerSecrets)
 	if err != nil {
 		return Response{}, err
 	}
@@ -179,7 +180,7 @@ func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText St
 	if !isChatGPTUnauthorized(err) {
 		return Response{}, err
 	}
-	fresh, err := chatgptoauth.RefreshAndSaveWithStale(ctx, p.client, p.tokensPath, creds.AccessToken)
+	fresh, err := chatgptoauth.RefreshAndSaveWithStaleWithSecrets(ctx, p.client, p.tokensPath, creds.AccessToken, p.registerSecrets)
 	if err != nil {
 		return Response{}, err
 	}
