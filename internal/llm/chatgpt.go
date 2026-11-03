@@ -12,16 +12,29 @@ import (
 	"qcode/internal/chatgptoauth"
 )
 
-// chatGPTBaseURL is the subscription (Codex) endpoint, not the platform
-// api.openai.com API. The Responses wire format is reused with a Codex
-// request contract: top-level instructions, store:false, and the
-// ChatGPT-Account-Id header.
-const chatGPTBaseURL = "https://chatgpt.com/backend-api/codex"
+// chatGPTBaseURL is the Sign in with ChatGPT (token-sharing) Responses
+// endpoint. Per https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference
+// ChatGPT plan usage must go to https://api.openai.com/v1 (POST /responses,
+// GET /models) with the OAuth access token as Bearer auth. Do not point it
+// at ChatGPT's backend-api endpoints: backend-api/codex is a private Codex
+// route whose access enforcement rejects third-party OAuth clients with
+// 401 rejected_by_access_enforcement/no_matching_rule.
+// The Responses wire format is shared with a subscription contract:
+// top-level instructions, store:false, stream:true, no system role in input.
+const chatGPTBaseURL = "https://api.openai.com/v1"
 
-// chatGPTClientVersion is sent as ?client_version= on the Codex models
-// catalog request. The backend gates the catalog behind this query param
-// (400 without it) and keys defaults to the requesting Codex version.
+// chatGPTClientVersion is kept for custom baseURLs that still target the
+// legacy Codex backend (chatgpt.com/backend-api/codex), which gates its
+// catalog behind ?client_version=. It is not sent to api.openai.com/v1.
 const chatGPTClientVersion = "0.166.0"
+
+// isLegacyChatGPTBaseURL reports whether baseURL targets the deprecated
+// chatgpt.com/backend-api Codex route, which needs the ChatGPT-Account-Id
+// header and client_version query param. The supported SIWC route
+// (api.openai.com/v1) needs neither.
+func isLegacyChatGPTBaseURL(baseURL string) bool {
+	return strings.Contains(baseURL, "chatgpt.com/backend-api")
+}
 
 type chatGPTProvider struct {
 	baseURL         string
@@ -53,10 +66,12 @@ func (p *chatGPTProvider) ValidateModel(model string) error {
 	return nil
 }
 
-// Models lists models from the Codex catalog (models[].slug), preserving
-// server order. A legacy platform shape (data[].id) is accepted as a fallback
-// for custom baseURLs. Auth failures (401/403) are retried once after a
-// serialized refresh before giving up.
+// Models lists models from the SIWC catalog (models[].slug), preserving
+// server order. Entries with visibility set to anything other than "list"
+// are hidden (per the SIWC models-and-inference example). A legacy platform
+// shape (data[].id) is accepted as a fallback for custom baseURLs. Auth
+// failures (401/403) are retried once after a serialized refresh before
+// giving up.
 func (p *chatGPTProvider) Models(ctx context.Context) ([]string, error) {
 	creds, err := chatgptoauth.GetValidTokensWithSecrets(ctx, p.client, p.tokensPath, p.registerSecrets)
 	if err != nil {
@@ -73,22 +88,28 @@ func (p *chatGPTProvider) Models(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return p.fetchModels(ctx, fresh)
+	models, err = p.fetchModels(ctx, fresh)
+	if err != nil {
+		return nil, annotateChatGPTAuthError(err)
+	}
+	return models, nil
 }
 
 func (p *chatGPTProvider) fetchModels(ctx context.Context, creds chatgptoauth.Tokens) ([]string, error) {
 	modelsURL := p.baseURL + "/models"
-	sep := "?"
-	if strings.Contains(modelsURL, "?") {
-		sep = "&"
+	if isLegacyChatGPTBaseURL(p.baseURL) {
+		sep := "?"
+		if strings.Contains(modelsURL, "?") {
+			sep = "&"
+		}
+		modelsURL += sep + "client_version=" + chatGPTClientVersion
 	}
-	modelsURL += sep + "client_version=" + chatGPTClientVersion
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+creds.AccessToken)
-	if creds.AccountID != "" {
+	if isLegacyChatGPTBaseURL(p.baseURL) && creds.AccountID != "" {
 		req.Header.Set("ChatGPT-Account-Id", creds.AccountID)
 	}
 	resp, err := p.client.Do(req)
@@ -110,13 +131,20 @@ func (p *chatGPTProvider) fetchModels(ctx context.Context, creds chatgptoauth.To
 func decodeChatGPTModels(data []byte) ([]string, error) {
 	var codex struct {
 		Models []struct {
-			Slug string `json:"slug"`
-			ID   string `json:"id"`
+			Slug       string `json:"slug"`
+			ID         string `json:"id"`
+			Visibility string `json:"visibility"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(data, &codex); err == nil && len(codex.Models) > 0 {
 		models := make([]string, 0, len(codex.Models))
 		for _, m := range codex.Models {
+			// Per SIWC models-and-inference, only visibility=="list" models
+			// are display candidates. Entries without a visibility field
+			// (legacy Codex catalog) are kept.
+			if m.Visibility != "" && m.Visibility != "list" {
+				continue
+			}
 			id := m.Slug
 			if id == "" {
 				id = m.ID
@@ -147,8 +175,8 @@ func decodeChatGPTModels(data []byte) ([]string, error) {
 }
 
 // splitChatGPTMessages lifts system messages into top-level instructions. The
-// Codex backend rejects system roles inside input, so they must not be sent
-// there.
+// SIWC Responses route rejects system roles inside input (use instructions
+// or developer messages), so they must not be sent there.
 func splitChatGPTMessages(messages []Message) (string, []Message) {
 	var systems []string
 	rest := make([]Message, 0, len(messages))
@@ -164,7 +192,7 @@ func splitChatGPTMessages(messages []Message) (string, []Message) {
 	return strings.Join(systems, "\n\n"), rest
 }
 
-// Complete sends a Codex Responses request with the OAuth access token,
+// Complete sends a SIWC Responses request with the OAuth access token,
 // refreshing once on 401 before giving up. Thinking levels are intentionally
 // unsupported in this first integration: the request omits optional thinking
 // fields and preserves the provider default.
@@ -184,7 +212,11 @@ func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText St
 	if err != nil {
 		return Response{}, err
 	}
-	return p.doCodex(ctx, input, fresh, onText)
+	resp, err = p.doCodex(ctx, input, fresh, onText)
+	if err != nil {
+		return Response{}, annotateChatGPTAuthError(err)
+	}
+	return resp, nil
 }
 
 func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chatgptoauth.Tokens, onText StreamCallback) (Response, error) {
@@ -215,7 +247,7 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+creds.AccessToken)
-	if creds.AccountID != "" {
+	if isLegacyChatGPTBaseURL(p.baseURL) && creds.AccountID != "" {
 		req.Header.Set("ChatGPT-Account-Id", creds.AccountID)
 	}
 	resp, err := p.client.Do(req)
@@ -236,4 +268,23 @@ func isChatGPTUnauthorized(err error) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, " 401") || strings.Contains(msg, "401 Unauthorized")
+}
+
+// annotateChatGPTAuthError adds recovery guidance to a final 401/403 after
+// the refresh retry. The legacy chatgpt.com/backend-api/codex route rejects
+// third-party OAuth clients with
+// rejected_by_access_enforcement/no_matching_rule; the supported SIWC route
+// is https://api.openai.com/v1.
+func annotateChatGPTAuthError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "rejected_by_access_enforcement") || strings.Contains(msg, "no_matching_rule") {
+		return fmt.Errorf("%w; ChatGPT plan request rejected (no_matching_rule): use the default SIWC endpoint https://api.openai.com/v1 (remove any chatgpt base_url override pointing at chatgpt.com/backend-api) and run `qcode login chatgpt` again", err)
+	}
+	if isChatGPTUnauthorized(err) {
+		return fmt.Errorf("%w; run `qcode login chatgpt` again and confirm ChatGPT plan access", err)
+	}
+	return err
 }

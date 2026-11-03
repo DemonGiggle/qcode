@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -40,7 +41,7 @@ func responsesStream(text string) string {
 
 func TestChatGPTCompleteSendsCodexContract(t *testing.T) {
 	path := writeChatGPTOAuth(t, chatgptoauth.Tokens{AccessToken: "test-access", RefreshToken: "test-refresh", AccountID: "acct-1"})
-	var gotAuth, gotAccount string
+	var gotAuth, gotAccount, gotURL string
 	var body map[string]any
 	client := doerFunc(func(r *http.Request) (*http.Response, error) {
 		if !strings.HasSuffix(r.URL.Path, "/responses") {
@@ -48,6 +49,7 @@ func TestChatGPTCompleteSendsCodexContract(t *testing.T) {
 		}
 		gotAuth = r.Header.Get("Authorization")
 		gotAccount = r.Header.Get("ChatGPT-Account-Id")
+		gotURL = r.URL.String()
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
@@ -64,8 +66,15 @@ func TestChatGPTCompleteSendsCodexContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotAuth != "Bearer test-access" || gotAccount != "acct-1" {
-		t.Fatalf("auth headers = %q / %q", gotAuth, gotAccount)
+	if gotAuth != "Bearer test-access" {
+		t.Fatalf("auth header = %q, want Bearer test-access", gotAuth)
+	}
+	// SIWC route (api.openai.com/v1) must not send the legacy Codex header.
+	if gotAccount != "" {
+		t.Fatalf("ChatGPT-Account-Id must be empty on SIWC route, got %q", gotAccount)
+	}
+	if !strings.HasPrefix(gotURL, "https://api.openai.com/v1/responses") {
+		t.Fatalf("url = %q, want SIWC https://api.openai.com/v1/responses", gotURL)
 	}
 	if body["store"] != false || body["stream"] != true || body["instructions"] != "be brief" {
 		t.Fatalf("codex contract body = %v", body)
@@ -76,6 +85,28 @@ func TestChatGPTCompleteSendsCodexContract(t *testing.T) {
 	}
 	if resp.Message.Content != "hi" {
 		t.Fatalf("content = %q", resp.Message.Content)
+	}
+}
+
+func TestChatGPTCompleteLegacyBaseURLKeepsAccountHeader(t *testing.T) {
+	path := writeChatGPTOAuth(t, chatgptoauth.Tokens{AccessToken: "test-access", RefreshToken: "test-refresh", AccountID: "acct-1"})
+	var gotAccount string
+	client := doerFunc(func(r *http.Request) (*http.Response, error) {
+		gotAccount = r.Header.Get("ChatGPT-Account-Id")
+		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(responsesStream("hi")))}, nil
+	})
+	provider, err := newChatGPT(Config{HTTP: client, ChatGPTOAuthPath: path, BaseURL: "https://chatgpt.com/backend-api/codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.Complete(context.Background(), Request{
+		Model:    "gpt-5.6-codex",
+		Messages: []Message{{Role: "user", Content: "hello"}},
+	}, func(StreamEvent) {}); err != nil {
+		t.Fatal(err)
+	}
+	if gotAccount != "acct-1" {
+		t.Fatalf("legacy account header = %q, want acct-1", gotAccount)
 	}
 }
 
@@ -113,14 +144,20 @@ func TestChatGPTCompleteRefreshesOnceOn401(t *testing.T) {
 func TestChatGPTModelsDecodesCodexCatalog(t *testing.T) {
 	path := writeChatGPTOAuth(t, chatgptoauth.Tokens{AccessToken: "a", RefreshToken: "r", AccountID: "acct-1"})
 	client := doerFunc(func(r *http.Request) (*http.Response, error) {
-		if r.Header.Get("Authorization") != "Bearer a" || r.Header.Get("ChatGPT-Account-Id") != "acct-1" {
-			t.Errorf("headers = %#v", r.Header)
+		if r.Header.Get("Authorization") != "Bearer a" {
+			t.Errorf("auth header = %q", r.Header.Get("Authorization"))
 		}
-		if got := r.URL.Query().Get("client_version"); got == "" {
-			t.Errorf("client_version query missing in %q", r.URL.String())
+		if got := r.Header.Get("ChatGPT-Account-Id"); got != "" {
+			t.Errorf("ChatGPT-Account-Id must be empty on SIWC route, got %q", got)
+		}
+		if got := r.URL.Query().Get("client_version"); got != "" {
+			t.Errorf("client_version must be empty on SIWC route, got %q in %q", got, r.URL.String())
+		}
+		if !strings.HasPrefix(r.URL.String(), "https://api.openai.com/v1/models") {
+			t.Errorf("url = %q, want SIWC https://api.openai.com/v1/models", r.URL.String())
 		}
 		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header),
-			Body: io.NopCloser(strings.NewReader(`{"models":[{"slug":"gpt-5.6-codex"},{"slug":"gpt-5.5-codex"}]}`))}, nil
+			Body: io.NopCloser(strings.NewReader(`{"models":[{"slug":"gpt-5.6-codex","visibility":"list"},{"slug":"gpt-5.5-codex","visibility":"list"}]}`))}, nil
 	})
 	provider, err := newChatGPT(Config{HTTP: client, ChatGPTOAuthPath: path})
 	if err != nil {
@@ -136,6 +173,48 @@ func TestChatGPTModelsDecodesCodexCatalog(t *testing.T) {
 	}
 	if len(models) != 2 || models[0] != "gpt-5.6-codex" || models[1] != "gpt-5.5-codex" {
 		t.Fatalf("models = %v", models)
+	}
+}
+
+func TestChatGPTModelsFiltersVisibility(t *testing.T) {
+	models, err := decodeChatGPTModels([]byte(`{"models":[{"slug":"gpt-5.6-codex","visibility":"list"},{"slug":"hidden","visibility":"internal"},{"slug":"legacy-no-visibility"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || models[0] != "gpt-5.6-codex" || models[1] != "legacy-no-visibility" {
+		t.Fatalf("models = %v", models)
+	}
+}
+
+func TestChatGPTModelsLegacyBaseURLKeepsClientVersion(t *testing.T) {
+	path := writeChatGPTOAuth(t, chatgptoauth.Tokens{AccessToken: "a", RefreshToken: "r", AccountID: "acct-1"})
+	client := doerFunc(func(r *http.Request) (*http.Response, error) {
+		if got := r.URL.Query().Get("client_version"); got == "" {
+			t.Errorf("client_version query missing in %q", r.URL.String())
+		}
+		if got := r.Header.Get("ChatGPT-Account-Id"); got != "acct-1" {
+			t.Errorf("legacy account header = %q", got)
+		}
+		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header),
+			Body: io.NopCloser(strings.NewReader(`{"models":[{"slug":"gpt-5.6-codex"}]}`))}, nil
+	})
+	provider, err := newChatGPT(Config{HTTP: client, ChatGPTOAuthPath: path, BaseURL: "https://chatgpt.com/backend-api/codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := provider.(ModelLister).Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0] != "gpt-5.6-codex" {
+		t.Fatalf("models = %v", models)
+	}
+}
+
+func TestChatGPTAnnotatesAccessEnforcement(t *testing.T) {
+	err := annotateChatGPTAuthError(fmt.Errorf(`provider returned 401 Unauthorized: {"error": {"message": "Unauthorized", "type": "rejected_by_access_enforcement", "code": "no_matching_rule"}}`))
+	if err == nil || !strings.Contains(err.Error(), "no_matching_rule") || !strings.Contains(err.Error(), "api.openai.com/v1") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

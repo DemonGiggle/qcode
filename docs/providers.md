@@ -171,8 +171,8 @@ qcode login chatgpt
 qcode --provider chatgpt --model gpt-5.6-codex "explain this repository"
 ```
 
-The `chatgpt` provider talks to the Codex subscription endpoint
-(`https://chatgpt.com/backend-api/codex`) with the OAuth file written by
+The `chatgpt` provider talks to the Sign in with ChatGPT Responses endpoint
+(`https://api.openai.com/v1`) with the OAuth file written by
 `qcode login chatgpt` — no API key. The login follows the open-source Sign in
 with ChatGPT flow: first registration uses `client_id=dynamic_agent_client`
 with `agent_name_hint=qcode` and a stable `ext_agent_host_id`, then reuses the
@@ -180,8 +180,13 @@ issued client; open the printed URL, approve, and the `127.0.0.1/auth/callback`
 loopback completes (paste back only for remote browsers).
 Tokens live at `~/.config/qcode/chatgpt-oauth.json` (`[chatgpt] oauth_path`
 overrides) with `0600` owner-only rules, refresh automatically with a 5-minute
-margin, and retry once on 401. Requests send the Codex contract
-(`instructions`, `store: false`) and the `ChatGPT-Account-Id` header. Thinking
+margin, and retry once on 401. Requests send the SIWC contract
+(`instructions`, `store: false`, `stream: true`) with plain Bearer auth and no
+`ChatGPT-Account-Id` header. A `401 rejected_by_access_enforcement /
+no_matching_rule` means the request went to the private
+`chatgpt.com/backend-api` route: remove any chatgpt `base_url` override so the
+default `https://api.openai.com/v1` is used, then run `qcode login chatgpt`
+again. Thinking
 levels are not yet selectable for this provider; the request preserves the
 provider default.
 
