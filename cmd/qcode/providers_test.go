@@ -152,7 +152,7 @@ func TestProviderBuilderCredentialErrorsAndOAuthRedaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "oauth.json")
-	if err := chatgptoauth.Save(path, chatgptoauth.Tokens{AccessToken: "old-access-test-secret", RefreshToken: "old-refresh-test-secret", ExpiresAt: time.Now().Add(-time.Hour).Unix()}); err != nil {
+	if err := chatgptoauth.Save(path, chatgptoauth.Tokens{AccessToken: "old-access-test-secret", RefreshToken: "old-refresh-test-secret", ExpiresAt: time.Now().Add(-time.Hour).Unix(), ClientID: "oaiapp_test123", ExtAgentHostID: "urn:uuid:host-test"}); err != nil {
 		t.Fatal(err)
 	}
 	builder.config.ChatGPT.OAuthPath = path
@@ -164,7 +164,7 @@ func TestProviderBuilderCredentialErrorsAndOAuthRedaction(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "old-access-test-secret") || strings.Contains(err.Error(), "old-refresh-test-secret") {
 		t.Fatal("OAuth preflight error leaked stored credentials")
 	}
-	if err := chatgptoauth.Save(path, chatgptoauth.Tokens{AccessToken: "valid-access-test-secret", RefreshToken: "valid-refresh-test-secret", ExpiresAt: time.Now().Add(time.Hour).Unix()}); err != nil {
+	if err := chatgptoauth.Save(path, chatgptoauth.Tokens{AccessToken: "valid-access-test-secret", RefreshToken: "valid-refresh-test-secret", ExpiresAt: time.Now().Add(time.Hour).Unix(), ClientID: "oaiapp_test123", ExtAgentHostID: "urn:uuid:host-test"}); err != nil {
 		t.Fatal(err)
 	}
 	prepared, err := builder.prepare(context.Background(), "chatgpt", nil)

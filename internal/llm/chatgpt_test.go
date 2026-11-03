@@ -16,7 +16,13 @@ import (
 func writeChatGPTOAuth(t *testing.T, tok chatgptoauth.Tokens) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "chatgpt-oauth.json")
-	if tok.ExpiresAt == 0 {
+	if tok.ClientID == "" {
+		tok.ClientID = "oaiapp_test123"
+	}
+	if tok.ExtAgentHostID == "" {
+		tok.ExtAgentHostID = "urn:uuid:host-test"
+	}
+	if tok.ExpiresAt == 0 && tok.ExpiresIn == 0 && tok.SavedAt == "" {
 		tok.ExpiresAt = time.Now().Add(time.Hour).Unix()
 	}
 	if err := chatgptoauth.Save(path, tok); err != nil {

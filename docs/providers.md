@@ -173,8 +173,11 @@ qcode --provider chatgpt --model gpt-5.6-codex "explain this repository"
 
 The `chatgpt` provider talks to the Codex subscription endpoint
 (`https://chatgpt.com/backend-api/codex`) with the OAuth file written by
-`qcode login chatgpt` — no API key. The login reuses the Codex CLI PKCE flow:
-open the printed URL, approve, paste the `localhost:1455` callback URL back.
+`qcode login chatgpt` — no API key. The login follows the open-source Sign in
+with ChatGPT flow: first registration uses `client_id=dynamic_agent_client`
+with `agent_name_hint=qcode` and a stable `ext_agent_host_id`, then reuses the
+issued client; open the printed URL, approve, and the `127.0.0.1/auth/callback`
+loopback completes (paste back only for remote browsers).
 Tokens live at `~/.config/qcode/chatgpt-oauth.json` (`[chatgpt] oauth_path`
 overrides) with `0600` owner-only rules, refresh automatically with a 5-minute
 margin, and retry once on 401. Requests send the Codex contract

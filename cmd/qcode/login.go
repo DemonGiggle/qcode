@@ -5,7 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -13,12 +16,16 @@ import (
 	"qcode/internal/config"
 )
 
-// loginExchange swaps an authorization code for tokens. It is a variable so
-// tests can stub the token endpoint.
+// loginExchange swaps a code for tokens. Variable so tests can stub the token
+// endpoint. clientID is the issued client from the callback.
 var loginExchange = chatgptoauth.Exchange
 
-// runLogin handles `qcode login chatgpt`: console-only, terminal-required,
-// manual paste-back with no localhost listener.
+// loginVerify checks the ID token against the published JWKS. Variable so
+// tests can stub network verification.
+var loginVerify = chatgptoauth.VerifyIDTokenWithFetch
+
+// runLogin handles `qcode login chatgpt`: terminal-required loopback flow per
+// the open-source Sign in with ChatGPT page.
 func runLogin(args []string, stdin io.Reader, stdout, stderr io.Writer, isTerminal bool) error {
 	if len(args) != 1 || args[0] != "chatgpt" {
 		return fmt.Errorf("usage: qcode login chatgpt")
@@ -38,48 +45,194 @@ func runLogin(args []string, stdin io.Reader, stdout, stderr io.Writer, isTermin
 	return chatGPTLoginFlow(oauthPath, stdin, stdout, httpClient)
 }
 
-// chatGPTLoginFlow prints the authorize URL, reads the pasted callback URL,
-// exchanges the code, and saves the tokens with 0600 file rules.
+// chatGPTLoginFlow performs dynamic registration (or reauthorization when a
+// registration already exists), exchanges the code, validates the ID token and
+// plan scope, and saves the doc-shaped credential record.
 func chatGPTLoginFlow(oauthPath string, stdin io.Reader, stdout io.Writer, doer chatgptoauth.Doer) error {
-	verifier, err := chatgptoauth.NewVerifier()
+	hostPath, err := chatgptoauth.HostPathForOAuth(oauthPath)
 	if err != nil {
 		return err
 	}
-	state, err := chatgptoauth.NewState()
+	hostID, err := chatgptoauth.GetOrCreateHostID(hostPath)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(stdout, "ChatGPT login (console only).")
-	fmt.Fprintln(stdout, "")
-	fmt.Fprintln(stdout, "1. Open this URL in your browser and approve:")
-	fmt.Fprintln(stdout, "")
-	fmt.Fprintln(stdout, "   "+chatgptoauth.AuthorizeURL(verifier, state))
-	fmt.Fprintln(stdout, "")
-	fmt.Fprintln(stdout, "2. Your browser will try to reach http://localhost:1455/auth/callback")
-	fmt.Fprintln(stdout, "   and fail to connect. That is expected.")
-	fmt.Fprintln(stdout, "3. Paste the full URL from the address bar below.")
-	fmt.Fprintln(stdout, "")
-	fmt.Fprint(stdout, "Callback URL> ")
-	pasted, err := bufio.NewReader(stdin).ReadString('\n')
-	if err != nil && len(strings.TrimSpace(pasted)) == 0 {
-		return fmt.Errorf("read callback URL: %w", err)
+	var existing chatgptoauth.Tokens
+	hasRegistration := false
+	if t, err := chatgptoauth.Load(oauthPath); err == nil && !t.IsLegacy() && t.ClientID != "" {
+		existing = t
+		hasRegistration = true
 	}
-	code, err := chatgptoauth.ParseCallback(pasted, state)
-	if err != nil {
-		return err
+
+	fmt.Fprintln(stdout, "ChatGPT login (Sign in with ChatGPT).")
+	fmt.Fprintln(stdout, "")
+	fmt.Fprintln(stdout, "Continue with ChatGPT in the browser to connect your ChatGPT plan.")
+	fmt.Fprintln(stdout, "")
+
+	// Up to two attempts: a stale code returns invalid_grant and must be
+	// discarded for a fresh authorization with the issued client retained.
+	var lastErr error
+	attempts := 2
+	reauth := hasRegistration
+	pendingExisting := existing
+	for attempt := 0; attempt < attempts; attempt++ {
+		verifier, err := chatgptoauth.NewVerifier()
+		if err != nil {
+			return err
+		}
+		state, err := chatgptoauth.NewState()
+		if err != nil {
+			return err
+		}
+		nonce, err := chatgptoauth.NewNonce()
+		if err != nil {
+			return err
+		}
+		preferred := chatgptoauth.DefaultRedirectPort
+		if attempt > 0 {
+			preferred = 0
+		}
+		ln, redirectURI, err := chatgptoauth.StartLoopbackListener(preferred)
+		if err != nil {
+			return err
+		}
+		var authURL string
+		var pendingClient string
+		if reauth {
+			authURL = chatgptoauth.ReauthAuthorizeURLForTokens(pendingExisting, hostID, verifier, state, nonce, redirectURI)
+			pendingClient = pendingExisting.ClientID
+		} else {
+			authURL = chatgptoauth.RegistrationAuthorizeURL(verifier, state, nonce, redirectURI, hostID)
+		}
+		fmt.Fprintln(stdout, "1. Open this URL in your browser and approve:")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "   "+authURL)
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintf(stdout, "2. Waiting for the callback on %s ...\n", redirectURI)
+		fmt.Fprintln(stdout, "   If your browser is on another machine, paste the full callback URL below.")
+		fmt.Fprintln(stdout, "")
+		tryBrowser(authURL)
+		fmt.Fprint(stdout, "Callback URL> ")
+
+		cb, err := awaitCallback(ln, stdin, state)
+		_ = ln.Close()
+		if err != nil {
+			return err
+		}
+		issued := pendingClient
+		if !reauth {
+			if cb.ClientID == "" || cb.ClientID == chatgptoauth.DynamicClientID {
+				return fmt.Errorf("registration incomplete: callback did not return an issued client_id")
+			}
+			issued = cb.ClientID
+		} else {
+			if cb.ClientID != "" && cb.ClientID != pendingExisting.ClientID {
+				return fmt.Errorf("callback client_id does not match the saved ChatGPT account; refusing to overwrite it")
+			}
+			issued = pendingExisting.ClientID
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		tokens, err := loginExchange(ctx, doer, cb.Code, verifier, redirectURI, issued)
+		cancel()
+		if err != nil {
+			if chatgptoauth.IsInvalidGrant(err) && attempt+1 < attempts {
+				lastErr = err
+				// Retain the issued client and try a fresh authorization.
+				if !reauth {
+					pendingExisting = chatgptoauth.Tokens{ClientID: issued, ExtAgentHostID: hostID}
+				}
+				reauth = true
+				fmt.Fprintln(stdout, "That code expired; starting a fresh authorization ...")
+				continue
+			}
+			return fmt.Errorf("login failed: %w", err)
+		}
+		tokens.ClientID = issued
+		tokens.ExtAgentHostID = hostID
+
+		ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+		claims, err := loginVerify(ctx2, doer, tokens.IDToken, nonce, issued)
+		cancel2()
+		if err != nil {
+			return fmt.Errorf("login failed: ID token validation: %w", err)
+		}
+		if reauth && pendingExisting.Subject != "" && claims.Subject != pendingExisting.Subject {
+			return fmt.Errorf("login failed: returned account does not match the saved ChatGPT account")
+		}
+		tokens.Issuer = claims.Issuer
+		tokens.Subject = claims.Subject
+		if claims.Email != "" {
+			tokens.Email = claims.Email
+		}
+		if !tokens.HasPlanScope() {
+			return fmt.Errorf("login failed: ChatGPT plan use isn't enabled (missing %s scope); re-approve with plan access", chatgptoauth.PlanScope)
+		}
+		if err := chatgptoauth.Save(oauthPath, tokens); err != nil {
+			return err
+		}
+		resolved, _ := chatgptoauth.ResolvePath(oauthPath)
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintf(stdout, "Saved %s (0600).\n", resolved)
+		fmt.Fprintln(stdout, "Next: qcode --provider chatgpt --model gpt-5.6-codex")
+		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if lastErr != nil {
+		return fmt.Errorf("login failed: %w", lastErr)
+	}
+	return fmt.Errorf("login failed")
+}
+
+// awaitCallback races the loopback listener against a pasted callback URL so
+// same-machine browsers complete automatically while remote browsers can still
+// paste the 127.0.0.1 URL back.
+func awaitCallback(ln net.Listener, stdin io.Reader, wantState string) (chatgptoauth.CallbackResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	tokens, err := loginExchange(ctx, doer, code, verifier)
-	if err != nil {
-		return fmt.Errorf("login failed: %w", err)
+	type res struct {
+		cb  chatgptoauth.CallbackResult
+		err error
 	}
-	if err := chatgptoauth.Save(oauthPath, tokens); err != nil {
-		return err
+	ch := make(chan res, 2)
+	go func() {
+		cb, err := chatgptoauth.WaitForCallback(ctx, ln, wantState)
+		select {
+		case ch <- res{cb, err}:
+		case <-ctx.Done():
+		}
+	}()
+	go func() {
+		line, err := bufio.NewReader(stdin).ReadString('\n')
+		if err != nil && len(strings.TrimSpace(line)) == 0 {
+			select {
+			case ch <- res{err: fmt.Errorf("read callback URL: %w", err)}:
+			case <-ctx.Done():
+			}
+			return
+		}
+		cb, perr := chatgptoauth.ParseCallbackFull(line, wantState)
+		select {
+		case ch <- res{cb, perr}:
+		case <-ctx.Done():
+		}
+	}()
+	select {
+	case <-ctx.Done():
+		return chatgptoauth.CallbackResult{}, ctx.Err()
+	case out := <-ch:
+		return out.cb, out.err
 	}
-	resolved, _ := chatgptoauth.ResolvePath(oauthPath)
-	fmt.Fprintln(stdout, "")
-	fmt.Fprintf(stdout, "Saved %s (0600).\n", resolved)
-	fmt.Fprintln(stdout, "Next: qcode --provider chatgpt --model gpt-5.6-codex")
-	return nil
+}
+
+func tryBrowser(target string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", target)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", target)
+	default:
+		cmd = exec.Command("xdg-open", target)
+	}
+	_ = cmd.Start()
 }
