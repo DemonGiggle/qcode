@@ -177,12 +177,16 @@ Profiles merge **field by field** through the usual config layers. An omitted
 field inherits; an explicit empty string clears a lower-priority profile value
 and lets the provider use its built-in endpoint or no configured key. Higher
 priority flags/environment still win. ChatGPT uses `[chatgpt].oauth_path`, not
-an API key; a nonempty `providers.chatgpt.api_key` is invalid. Edit profiles in
+an API key; a nonempty `providers.chatgpt.api_key` or root `api_key` with
+`provider = "chatgpt"` is invalid and fails startup (use OAuth). Edit profiles in
 config and restart to load changes; `/provider` does not prompt for or edit keys.
 
 Legacy root `base_url` and `api_key` remain accepted. Each legacy connection is
 bound to the provider declared in that config layer, otherwise to the provider
-inherited from lower layers, otherwise to `ollama`. A later layer changing the
+inherited from lower layers, otherwise to `ollama` (for migration provenance).
+For backward compatibility, provider-less legacy credentials also act as global
+defaults: when no provider is known yet, they apply to any `--provider` selection
+until an explicit `[providers.*]` profile overrides them. A later layer changing the
 default does not reassign those credentials. Explicit profile fields win over
 legacy values in the same layer. On a successful main-tab `/provider` save,
 legacy assignments in the **user file only** move into that original provider's

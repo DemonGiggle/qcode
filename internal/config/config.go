@@ -20,6 +20,11 @@ import (
 
 const fileName = "config.toml"
 
+// errFatalProviderConfig marks validation failures that must fail startup
+// instead of silently skipping the file (e.g. chatgpt + api_key, which
+// previously failed fast in main). Load returns these as fatal errors.
+var errFatalProviderConfig = errors.New("invalid provider credentials")
+
 // WebSearch selects the search backend at startup.
 type WebSearch struct {
 	Backend string `toml:"backend"`
@@ -206,6 +211,8 @@ type Config struct {
 	Providers              map[string]ProviderProfile `toml:"providers"`
 	connectionsLoaded      bool
 	legacyConnectionOwners map[string]string
+	globalBaseURL          string
+	globalAPIKey           string
 
 	Redaction            redaction.Config `toml:"redaction"`
 	Learning             Learning         `toml:"learning"`
@@ -259,6 +266,9 @@ func Load() (Config, []string, []error, error) {
 	for _, diagnostic := range diagnostics {
 		var invalid *redaction.InvalidPatternError
 		if errors.As(diagnostic, &invalid) {
+			return Config{}, paths, diagnostics, diagnostic
+		}
+		if errors.Is(diagnostic, errFatalProviderConfig) {
 			return Config{}, paths, diagnostics, diagnostic
 		}
 	}
@@ -320,11 +330,15 @@ func load(paths []string) (Config, []string, []error) {
 			continue
 		}
 		// Bind legacy fields at their original layer, before later defaults change.
+		// When no provider is known yet (global), also track them as global
+		// defaults so provider-less configs keep working for any --provider.
+		// Scoped profiles still own their layer for migration provenance.
 		var raw struct {
 			BaseURL *string `toml:"base_url"`
 			APIKey  *string `toml:"api_key"`
 		}
 		_ = toml.Unmarshal(data, &raw)
+		isGlobal := cfg.Provider == "" && merged.Provider == ""
 		owner := cfg.Provider
 		if owner == "" {
 			owner = merged.Provider
@@ -342,6 +356,14 @@ func load(paths []string) (Config, []string, []error) {
 		}
 		merge(&merged, legacy)
 		merge(&merged, cfg)
+		if isGlobal {
+			if cfg.BaseURL != "" {
+				merged.globalBaseURL = cfg.BaseURL
+			}
+			if cfg.APIKey != "" {
+				merged.globalAPIKey = cfg.APIKey
+			}
+		}
 		if raw.BaseURL != nil || raw.APIKey != nil {
 			if merged.legacyConnectionOwners == nil {
 				merged.legacyConnectionOwners = make(map[string]string)
@@ -359,11 +381,11 @@ func validate(path string, cfg Config) error {
 			return fmt.Errorf("parse config %s: unknown provider profile %q", path, name)
 		}
 		if name == "chatgpt" && profile.APIKey != nil && *profile.APIKey != "" {
-			return fmt.Errorf("parse config %s: providers.chatgpt.api_key is unsupported (use OAuth)", path)
+			return fmt.Errorf("parse config %s: providers.chatgpt.api_key is unsupported (use OAuth): %w", path, errFatalProviderConfig)
 		}
 	}
 	if cfg.Provider == "chatgpt" && cfg.APIKey != "" {
-		return fmt.Errorf("parse config %s: chatgpt api_key is unsupported (use OAuth)", path)
+		return fmt.Errorf("parse config %s: chatgpt api_key is unsupported (use OAuth): %w", path, errFatalProviderConfig)
 	}
 	if err := redaction.Validate(cfg.Redaction); err != nil {
 		return fmt.Errorf("parse config %s: %w", path, err)
@@ -675,11 +697,14 @@ func validProvider(name string) bool {
 
 // ProviderConnection resolves a provider's merged connection. Directly constructed
 // legacy Config values still use flat fields for their selected provider (or
-// the caller's provider when Provider is omitted). Loaded configs never reassign
-// legacy credentials.
+// the caller's provider when Provider is omitted). Loaded configs use explicit
+// profiles first, then global provider-less defaults, and never reassign
+// scoped legacy credentials to another provider.
 func (c Config) ProviderConnection(name string) (baseURL, apiKey string) {
 	if !c.connectionsLoaded && (c.Provider == "" || name == c.Provider) {
 		baseURL, apiKey = c.BaseURL, c.APIKey
+	} else if c.connectionsLoaded {
+		baseURL, apiKey = c.globalBaseURL, c.globalAPIKey
 	}
 	p := c.Providers[name]
 	if p.BaseURL != nil {
@@ -691,12 +716,16 @@ func (c Config) ProviderConnection(name string) (baseURL, apiKey string) {
 	return
 }
 
-// Secrets returns all configured nonempty API keys, including inactive profiles
-// and legacy fields, for startup redaction. Values are deduplicated and sorted.
+// Secrets returns all configured nonempty API keys, including inactive profiles,
+// legacy fields, and global provider-less defaults, for startup redaction.
+// Values are deduplicated and sorted.
 func (c Config) Secrets() []string {
 	seen := map[string]bool{}
 	if c.APIKey != "" {
 		seen[c.APIKey] = true
+	}
+	if c.globalAPIKey != "" {
+		seen[c.globalAPIKey] = true
 	}
 	for _, p := range c.Providers {
 		if p.APIKey != nil && *p.APIKey != "" {
