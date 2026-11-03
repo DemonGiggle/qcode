@@ -263,6 +263,28 @@ func TestInterruptReaderTogglesQueuePanelWithoutEatingTyping(t *testing.T) {
 	}
 }
 
+func TestInterruptReaderTogglesTodoPanelWithoutEatingTyping(t *testing.T) {
+	reader := newInterruptReader(nil)
+	called := 0
+	reader.setTodoHandler(func() { called++ })
+	for _, key := range []byte(altTodoPanel + altTodoPanelUpper + "draft") {
+		reader.route([]byte{key})
+	}
+	if called != 2 {
+		t.Fatalf("todo toggled %d times, want 2", called)
+	}
+	buffer := make([]byte, len("draft"))
+	if _, err := io.ReadFull(reader, buffer); err != nil || string(buffer) != "draft" {
+		t.Fatalf("editor input = %q, %v", buffer, err)
+	}
+	reader.setRaw(true)
+	reader.route([]byte(altTodoPanel))
+	buffer = make([]byte, len(altTodoPanel))
+	if _, err := io.ReadFull(reader, buffer); err != nil || string(buffer) != altTodoPanel || called != 2 {
+		t.Fatalf("raw input = %q, toggles = %d, err = %v", buffer, called, err)
+	}
+}
+
 func TestInterruptReaderRoutesTabKeysAndTypingDuringTask(t *testing.T) {
 	reader := newInterruptReader(nil)
 	var directions []int

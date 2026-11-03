@@ -133,6 +133,25 @@ func (u *UI) paintFixedLocked(direction int) {
 		}
 		queueRows = queueDisplayRows(queued, queueWidth, u.unicode)
 	}
+	// The live todo panel sits above the steer/queue section. It is driven by
+	// the active agent's checklist snapshot; a finished list (all done) never
+	// shows because the write path archives it to the transcript instead.
+	todo := u.activeTodoLocked()
+	var todoItems []todoItem
+	todoDoneCount := 0
+	todoLive := false
+	if !u.questionnaireActive {
+		if items, done, _, ok := u.todoSnapshotLocked(); ok && len(items) > 0 && !todoAllDone(items) {
+			todoItems, todoDoneCount, todoLive = items, done, true
+		}
+	}
+	if !todoLive {
+		todo.expanded, todo.anchor = false, 0
+	}
+	var todoRows []todoDisplayRow
+	if todoLive {
+		todoRows = todoDisplayRows(todoItems, u.width, u.unicode)
+	}
 	bar := u.statusBar()
 	statusN := statusBarLineCount(bar)
 	if u.height < 5 {
@@ -161,6 +180,9 @@ func (u *UI) paintFixedLocked(direction int) {
 	}
 	historyDirection := direction
 	if queue.expanded && len(queued) > 0 {
+		historyDirection = 0
+	}
+	if todo.expanded && todoLive {
 		historyDirection = 0
 	}
 	matches := matchingSlashCommands(u.inputText)
@@ -311,6 +333,30 @@ func (u *UI) paintFixedLocked(direction int) {
 		outputHeight = max(0, panelEnd-count-queueHeight-outputStart)
 		sepO, sepS = 0, 0
 	}
+	// Carve the todo block out of the transcript area, above the suggestions
+	// and queue blocks. The collapsed preview is the header plus up to three
+	// rows; an expanded panel pages through every row. Transcript minimums
+	// win on cramped screens, hiding the panel until there is room.
+	todoHeight := 0
+	sepT := 0
+	todoDesired := 0
+	if todoLive {
+		if todo.expanded {
+			todoDesired = 1 + len(todoRows)
+		} else {
+			todoDesired = 1 + min(todoPreviewRows, len(todoRows))
+		}
+	}
+	if todoDesired > 0 && outputHeight > minOutput {
+		room := outputHeight - minOutput
+		if room > todoDesired {
+			todoHeight, sepT = todoDesired, 1
+		} else {
+			// Cramped: prefer panel content over its separator.
+			todoHeight = room
+		}
+	}
+	outputHeight -= todoHeight + sepT
 	u.activeViewportLocked().visibleRows = outputHeight
 	screenRows := make([]string, u.height+1)
 	if u.manager != nil && u.height > 3 {
@@ -345,6 +391,37 @@ func (u *UI) paintFixedLocked(direction int) {
 			text += " (type to filter)"
 		}
 		screenRows[panelEnd-queueHeight-sepS-count+i] = truncateDiffLine(text, u.width, u.unicode)
+	}
+	if todoHeight > 0 {
+		todoStart := panelEnd - queueHeight - sepS - count - todoHeight
+		header := todoHeader(todoDoneCount, len(todoItems), u.width, todo.expanded)
+		if ColorEnabled(u.out) {
+			header = dim + header + reset
+		}
+		screenRows[todoStart] = truncateDiffLine(header, u.width, u.unicode)
+		visible := todoRows
+		if todo.expanded {
+			size := max(1, todoHeight-1)
+			if direction != 0 {
+				todo.anchor = max(0, min(max(0, len(todoRows)-size), todo.anchor-direction*size))
+			}
+			start := max(0, min(todo.anchor, max(0, len(todoRows)-size)))
+			todo.anchor = start
+			visible = nil
+			if start < len(todoRows) {
+				visible = todoRows[start:min(len(todoRows), start+size)]
+			}
+		} else if len(visible) > max(0, todoHeight-1) {
+			visible = visible[:max(0, todoHeight-1)]
+		}
+		color := ColorEnabled(u.out)
+		for i, row := range visible {
+			text := row.text
+			if row.done && color {
+				text = dim + text + reset
+			}
+			screenRows[todoStart+1+i] = truncateDiffLine(text, u.width, u.unicode)
+		}
 	}
 	if queueHeight > 0 {
 		queueStart := panelEnd - queueHeight

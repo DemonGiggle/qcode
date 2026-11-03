@@ -154,6 +154,26 @@ func (a *Agent) LatestTodoText() (string, bool) {
 	return renderTodo(todo), true
 }
 
+// TodoSnapshot exposes the checklist as parallel id/title/status slices for
+// the TUI's live todo panel. It uses only plain string slices so terminal
+// code can consume it through a narrow interface without importing the agent
+// package. Statuses are one of "todo", "doing", or "done".
+func (a *Agent) TodoSnapshot() (ids, titles, statuses []string, version uint64, ok bool) {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	if a.latestTodo == nil {
+		return nil, nil, nil, a.todoVersion, false
+	}
+	items := a.latestTodo.Items
+	ids = make([]string, len(items))
+	titles = make([]string, len(items))
+	statuses = make([]string, len(items))
+	for i, item := range items {
+		ids[i], titles[i], statuses[i] = item.ID, item.Title, string(item.Status)
+	}
+	return ids, titles, statuses, a.todoVersion, true
+}
+
 // TodoVersion reports how many todo mutations this agent has applied. It is
 // informational only; ordering across saves rides on the checkpoint payload.
 func (a *Agent) TodoVersion() uint64 {

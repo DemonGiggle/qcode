@@ -166,7 +166,7 @@ func (u *UI) handlePendingPanelKey(key rune) bool {
 	panel := u.activeQueueLocked()
 	if !panel.expanded {
 		u.screenMu.Unlock()
-		return false
+		return u.handleTodoPanelKey(key)
 	}
 	items := u.queuedPromptsLocked()
 	if len(items) == 0 {

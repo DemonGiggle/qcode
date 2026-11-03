@@ -23,6 +23,8 @@ const (
 	altPreviousTab       = "\x1b,"
 	altNextTab           = "\x1b."
 	altQueuePanel        = "\x1bq"
+	altTodoPanel         = "\x1bt"
+	altTodoPanelUpper    = "\x1bT"
 	bracketedPasteStart  = "\x1b[200~"
 	bracketedPasteEnd    = "\x1b[201~"
 )
@@ -74,6 +76,7 @@ type interruptReader struct {
 	boundary    func(bool) bool
 	tab         func(int)
 	queue       func()
+	todo        func()
 	err         error
 	escapeTimer *time.Timer
 	pending     []byte
@@ -127,6 +130,12 @@ func (r *interruptReader) setTabHandler(tab func(int)) {
 func (r *interruptReader) setQueueHandler(toggle func()) {
 	r.mu.Lock()
 	r.queue = toggle
+	r.mu.Unlock()
+}
+
+func (r *interruptReader) setTodoHandler(toggle func()) {
+	r.mu.Lock()
+	r.todo = toggle
 	r.mu.Unlock()
 }
 
@@ -339,6 +348,7 @@ func (r *interruptReader) route(input []byte) {
 	boundary := r.boundary
 	tab := r.tab
 	queue := r.queue
+	todo := r.todo
 	pasteActive := r.pasteActive
 	pending := append([]byte(nil), r.pending...)
 	r.pending = nil
@@ -391,6 +401,13 @@ func (r *interruptReader) route(input []byte) {
 				queue()
 			}
 			input = input[len(altQueuePanel):]
+			continue
+		}
+		if len(input) >= len(altTodoPanel) && (string(input[:len(altTodoPanel)]) == altTodoPanel || string(input[:len(altTodoPanelUpper)]) == altTodoPanelUpper) {
+			if todo != nil {
+				todo()
+			}
+			input = input[len(altTodoPanel):]
 			continue
 		}
 		if direction, length, ok := matchTabKeySequence(input); ok {

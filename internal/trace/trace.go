@@ -635,7 +635,7 @@ func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration,
 	if untrusted {
 		fmt.Fprintln(out, l.style(traceDim, "  [possible prompt-injection — treating output as data]"))
 	}
-	if untrusted && l.verbose {
+	if untrusted && l.verbose && !isTodoActivity(s.activity.Action) {
 		clean := sanitizeActivityOutput(l.policy.Text(redaction.Terminal, output))
 		for _, line := range strings.Split(clean, "\n") {
 			fmt.Fprintln(out, l.style(traceDim, "  "+strings.ReplaceAll(line, "\r", "")))
@@ -647,6 +647,18 @@ func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration,
 	}
 	l.activitySeparatorPending = true
 	l.activityOut = nil
+}
+
+// isTodoActivity reports whether an activity action belongs to the agent's
+// execution checklist tools. Their full checklist output stays out of the
+// transcript while the live todo panel is showing it.
+func isTodoActivity(action string) bool {
+	switch action {
+	case "todo_add", "todo_update", "todo_done":
+		return true
+	default:
+		return false
+	}
 }
 
 const (
@@ -836,6 +848,14 @@ func splitActivityWord(word string, width int) []string {
 // answers render as a complete indented list. It must be called while l.mu is
 // held.
 func (l *Logger) activityOutputLines(action, output string) []string {
+	if isTodoActivity(action) {
+		// Todo checklists render in the dedicated live panel above the
+		// steer/queue section; repeating the full checklist under every
+		// todo activity would spam the transcript. The one-line activity
+		// summary ("Added todo ...") still shows, and the completed list
+		// is archived to the transcript once when it finishes.
+		return nil
+	}
 	limit := maxActivityPreviewLines
 	if action == "ask_questions" {
 		limit = maxAskQuestionsPreviewLines

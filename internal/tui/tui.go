@@ -266,6 +266,8 @@ type UI struct {
 	viewport             viewport
 	rowCache             historyRowCache
 	queue                queuePanel
+	todo                 todoPanel
+	todoArchiving        bool
 	statusActive         bool
 	statusBarText        string
 	startupNotice        string
@@ -417,6 +419,7 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	u.terminal.SubmitOnEscape = func() bool { return true }
 	u.terminal.KeyHandler = func(key rune) bool { u.observeComposerTask(); return u.handlePendingPanelKey(key) }
 	input.setQueueHandler(u.toggleQueuePanel)
+	input.setTodoHandler(u.toggleTodoPanel)
 	input.setTabHandler(u.requestTabSwitch)
 	u.SetRunner(runner)
 	return u
@@ -2492,6 +2495,12 @@ func (u *UI) showPage(direction int) {
 	if u.fixedInput && u.activeQueueLocked().expanded && len(u.queuedPromptsLocked()) > 0 {
 		u.paintFixedLocked(direction)
 		return
+	}
+	if u.fixedInput && u.activeTodoLocked().expanded {
+		if items, _, _, ok := u.todoSnapshotLocked(); ok && len(items) > 0 && !todoAllDone(items) {
+			u.paintFixedLocked(direction)
+			return
+		}
 	}
 	previous := *u.activeViewportLocked()
 	u.repaintActiveLocked(direction)

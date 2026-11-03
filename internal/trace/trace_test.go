@@ -405,3 +405,19 @@ func TestTaskIndicatorCanBeDisabledForManagedUI(t *testing.T) {
 		t.Fatalf("disabled task indicator output = %q", got)
 	}
 }
+
+func TestTodoActivityOmitsChecklistPreview(t *testing.T) {
+	for _, action := range []string{"todo_add", "todo_update", "todo_done"} {
+		var output bytes.Buffer
+		logger := New(&output, false)
+		activity := logger.StartActivity(Activity{Action: action, Start: "Adding todo item", Completed: "Added todo item", Category: ActivityAgent})
+		activity.EndWithOutput(nil, "# Todo (0/1 done)\n\n- [ ] First (one)")
+		got := output.String()
+		if !strings.Contains(got, "Added todo item") {
+			t.Fatalf("%s activity line missing: %q", action, got)
+		}
+		if strings.Contains(got, "# Todo") || strings.Contains(got, "First (one)") {
+			t.Fatalf("%s checklist leaked into transcript: %q", action, got)
+		}
+	}
+}

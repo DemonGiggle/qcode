@@ -74,6 +74,48 @@ func TestTodoAddUpdateDoneFlow(t *testing.T) {
 	}
 }
 
+func TestTodoSnapshotExposesPanelData(t *testing.T) {
+	a := todoTestAgent()
+	if _, _, _, _, ok := a.TodoSnapshot(); ok {
+		t.Fatal("empty snapshot reported a list")
+	}
+	mustTodoAdd(t, a, "setup", "Set up workspace")
+	mustTodoAdd(t, a, "impl", "Implement changes")
+	if _, err := a.executeDetailed(context.Background(), llm.ToolCall{
+		Name:      "todo_update",
+		Arguments: json.RawMessage(`{"id":"impl","status":"doing"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ids, titles, statuses, firstVersion, ok := a.TodoSnapshot()
+	if !ok {
+		t.Fatal("snapshot went missing")
+	}
+	if len(ids) != 2 || ids[0] != "setup" || ids[1] != "impl" {
+		t.Fatalf("ids = %q", ids)
+	}
+	if len(titles) != 2 || titles[0] != "Set up workspace" || titles[1] != "Implement changes" {
+		t.Fatalf("titles = %q", titles)
+	}
+	if len(statuses) != 2 || statuses[0] != "todo" || statuses[1] != "doing" {
+		t.Fatalf("statuses = %q", statuses)
+	}
+	if _, err := a.executeDetailed(context.Background(), llm.ToolCall{
+		Name:      "todo_done",
+		Arguments: json.RawMessage(`{"id":"setup"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, secondVersion, ok := a.TodoSnapshot()
+	if !ok || secondVersion != firstVersion+1 {
+		t.Fatalf("version did not advance: %d -> %d, ok=%v", firstVersion, secondVersion, ok)
+	}
+	a.ClearTodo()
+	if _, _, _, _, ok := a.TodoSnapshot(); ok {
+		t.Fatal("cleared snapshot still reported a list")
+	}
+}
+
 func TestTodoUpdateRenamesTitles(t *testing.T) {
 	a := todoTestAgent()
 	mustTodoAdd(t, a, "item", "Old title")
