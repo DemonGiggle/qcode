@@ -93,6 +93,10 @@ var openCodeGoThinkingCatalog = map[string]ThinkingCapability{
 	// knob qcode exposes. Effort sets are model-specific and were verified
 	// against the live endpoint on 2026-09-16. Muse Spark 1.3 lists "max" in
 	// some upstream error text but rejects it, so it stays hidden.
+	"gpt-6.1-sol": {
+		Supported: true, Adjustable: true, Levels: []string{"low", "medium", "high", "xhigh", "max", "ultra"},
+		RequestFormat: ThinkingRequestResponsesReasoning, ReplayFormat: ThinkingReplayReasoningDetails,
+	},
 	"gpt-5.6-luna": {
 		Supported: true, Adjustable: true, Levels: []string{"none", "low", "medium", "high", "xhigh", "max"}, Default: "medium",
 		RequestFormat: ThinkingRequestResponsesReasoning, ReplayFormat: ThinkingReplayReasoningDetails,
@@ -142,7 +146,9 @@ func (p *openAIProvider) ThinkingCapability(model string) ThinkingCapability {
 		return ThinkingCapability{RequestFormat: ThinkingRequestNone, ReplayFormat: ThinkingReplayNone}
 	}
 	if p.modelMeta != nil && p.modelMeta.Provider == "opencode-go" {
-		capability = syncedOpenCodeGoCapability(capability, p.modelMeta.Models[model])
+		if options, exists := p.modelMeta.Models[model]; exists {
+			capability = syncedOpenCodeGoCapability(capability, options)
+		}
 	}
 	capability.Levels = append([]string(nil), capability.Levels...)
 	return capability

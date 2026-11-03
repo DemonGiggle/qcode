@@ -318,6 +318,7 @@ func TestOpenCodeGoResponsesThinkingCatalog(t *testing.T) {
 		model  string
 		levels []string
 	}{
+		{"gpt-6.1-sol", []string{"low", "medium", "high", "xhigh", "max", "ultra"}},
 		{"gpt-5.6-luna", []string{"none", "low", "medium", "high", "xhigh", "max"}},
 		{"grok-4.6", []string{"minimal", "low", "medium", "high", "xhigh"}},
 		{"muse-spark-1.2-contributor", []string{"minimal", "low", "medium", "high", "xhigh"}},
@@ -346,5 +347,13 @@ func TestOpenCodeGoRouteMatchesCompleteRouting(t *testing.T) {
 	}
 	if OpenCodeGoRoute("unknown-future-model") != openCodeGoChatRoute {
 		t.Errorf("unknown route = %q", OpenCodeGoRoute("unknown-future-model"))
+	}
+}
+
+func TestOpenCodeGoMissingMetadataKeepsKnownModelChoices(t *testing.T) {
+	p := &openAIProvider{name: "opencode-go", baseURL: openCodeGoBaseURL, modelMeta: &ProviderModelMeta{Provider: "opencode-go", Models: map[string]ProviderModelOptions{}}}
+	capability := p.ThinkingCapability("gpt-6.1-sol")
+	if !containsChoice(capability.Levels, "xhigh") {
+		t.Fatalf("missing xhigh: %+v", capability)
 	}
 }
