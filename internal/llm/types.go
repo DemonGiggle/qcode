@@ -128,9 +128,13 @@ type ModelValidator interface {
 type Factory func(Config) (Provider, error)
 
 type Config struct {
-	BaseURL            string
-	APIKey             string
-	HTTP               HTTPDoer
+	BaseURL string
+	APIKey  string
+	HTTP    HTTPDoer
+	// ChatGPTOAuthPath points at the JSON file written by `qcode login
+	// chatgpt`. Empty selects the default path. Only used by the chatgpt
+	// provider; other providers ignore it.
+	ChatGPTOAuthPath   string
 	InsecureSkipVerify bool
 	// ModelMeta supplies exact-model reasoning choices from Models.dev. Request
 	// and replay formats remain in qcode's provider adapters.

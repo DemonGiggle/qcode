@@ -186,7 +186,7 @@ Explicit command-line flags take precedence over environment variables, which ta
 
 When a flag or environment variable selects a provider different from the configured provider, the configured `model`, `thinking`, `base_url`, `api_key`, and `context_window` are not inherited; set any of them explicitly if they should apply to the selected provider. A configured `context_window` also applies only when the configured model is unset or matches the selected model.
 
-API keys can be set with `api_key` in this file, though `QCODE_API_KEY` or `OPENAI_API_KEY` is preferable on shared systems. `--api-key` takes precedence over both environment variables and the configuration file. Keep configuration files containing a key private (for example, mode `0600` on Unix-like systems).
+API keys can be set with `api_key` in this file, though `QCODE_API_KEY` or `OPENAI_API_KEY` is preferable on shared systems. `--api-key` takes precedence over both environment variables and the configuration file. Keep configuration files containing a key private (for example, mode `0600` on Unix-like systems). The `chatgpt` provider uses `qcode login chatgpt` OAuth instead of an API key; set its file with `[chatgpt] oauth_path` (default `~/.config/qcode/chatgpt-oauth.json`).
 
 `thinking` (or `--thinking` / `QCODE_THINKING`) is an optional level such as
 `off`, `low`, `high`, or `max`. It is validated against the selected provider

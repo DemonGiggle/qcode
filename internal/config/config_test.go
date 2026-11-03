@@ -327,3 +327,16 @@ func TestSelectedValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadMergesChatGPTOAuthPath(t *testing.T) {
+	dir := t.TempDir()
+	high := writeConfig(t, dir, "high.toml", "[chatgpt]\noauth_path = \"/tmp/high-oauth.json\"\n")
+	low := writeConfig(t, dir, "low.toml", "provider = \"chatgpt\"\n[chatgpt]\noauth_path = \"/tmp/low-oauth.json\"\n")
+	cfg, _, diagnostics := load([]string{high, low})
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %v", diagnostics)
+	}
+	if cfg.ChatGPT.OAuthPath != "/tmp/high-oauth.json" {
+		t.Fatalf("oauth_path = %q, want high override", cfg.ChatGPT.OAuthPath)
+	}
+}
