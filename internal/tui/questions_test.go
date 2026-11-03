@@ -171,7 +171,7 @@ func TestFormatQuestionPreservesNewlinesAndEscapesControls(t *testing.T) {
 	}
 }
 
-func TestQuestionPanelKeepsChineseOptionsOnTheirOwnLines(t *testing.T) {
+func TestInlineQuestionKeepsChineseOptionsOnTheirOwnLines(t *testing.T) {
 	item := question.Question{
 		Text: "三種陀螺外觀差異要到什麼程度？",
 		Options: []string{
@@ -180,8 +180,8 @@ func TestQuestionPanelKeepsChineseOptionsOnTheirOwnLines(t *testing.T) {
 		},
 		AllowCustom: true,
 	}
-	panel := questionPanel{item: item, total: 1, footer: "Ctrl+C cancels this request."}
-	rows := panel.rows(80, 24, 0, true)
+	formatted := formatQuestionWithFooter(item, 0, 1, 80, "Ctrl+C cancels this request.")
+	rows := strings.Split(formatted, "\n")
 	for _, want := range []string{item.Text, "   1) " + item.Options[0], "   2) " + item.Options[1]} {
 		found := false
 		for _, row := range rows {
@@ -278,10 +278,8 @@ func TestQuestionnaireHistoryReflowsNumberedChoices(t *testing.T) {
 	}
 }
 
-func TestQuestionPanelWrapsDocumentationChoices(t *testing.T) {
-	panel := questionPanel{
-		index: 1, total: 4, footer: "Ctrl+C cancels these questions.",
-		item: question.Question{
+func TestInlineQuestionWrapsDocumentationChoices(t *testing.T) {
+	item := question.Question{
 			Text: "Should the skill instruct qcode to search the docs directory first, or does it know specific file paths/structure to navigate directly?",
 			Options: []string{
 				"Search/grep the docs directory for relevant content",
@@ -289,7 +287,6 @@ func TestQuestionPanelWrapsDocumentationChoices(t *testing.T) {
 				"Both: try known structure first, fall back to search",
 			},
 			AllowCustom: true,
-		},
 	}
 	const want = `Question 2/4:
 Should the skill instruct qcode to search the docs directory
@@ -302,7 +299,7 @@ Should the skill instruct qcode to search the docs directory
 
 Choose an option or type your own answer. Ctrl+C cancels
 these questions.`
-	if got := strings.Join(panel.rows(60, 24, 0, true), "\n"); got != want {
+	if got := formatQuestionWithFooter(item, 1, 4, 60, "Ctrl+C cancels these questions."); got != want {
 		t.Fatalf("documentation question layout:\n%s\nwant:\n%s", got, want)
 	}
 }
@@ -396,7 +393,7 @@ func waitQuestionnaireFrame(t *testing.T, frames <-chan string, text string) str
 	}
 }
 
-func TestQuestionnaireVisibleWhileHistoryPaused(t *testing.T) {
+func TestInlineQuestionVisibleWhileHistoryPaused(t *testing.T) {
 	u, _ := layoutFixture(t)
 	manager := u.manager.(*layoutManager)
 	manager.states["main"] = session.StatusWaitingForApproval
@@ -441,7 +438,7 @@ func TestQuestionnaireVisibleWhileHistoryPaused(t *testing.T) {
 	}
 }
 
-func TestQuestionnaireScrollsLongChoicesOnShortTerminal(t *testing.T) {
+func TestInlineQuestionShowsLongChoicesOnShortTerminal(t *testing.T) {
 	u, _ := layoutFixture(t)
 	u.height, u.width = 12, 40
 	item := question.Question{Text: "Which database?", Options: []string{"SQLite", "Postgres", "MySQL", "MongoDB", "Redis", "DynamoDB"}, AllowCustom: true}
@@ -449,53 +446,36 @@ func TestQuestionnaireScrollsLongChoicesOnShortTerminal(t *testing.T) {
 		item.OptionDescriptions = append(item.OptionDescriptions, strings.Repeat("A longer description of this database. ", 3))
 	}
 	result, frames := startQuestionnaire(t, u, []question.Question{item})
-	frame := waitQuestionnaireFrame(t, frames, "Answer 1/1>")
-	if !strings.Contains(frame, "Which database?") || !strings.Contains(frame, "PgUp/PgDn") {
-		t.Fatalf("short terminal did not show question and scroll hint:\n%s", frame)
+	waitQuestionnaireFrame(t, frames, "Answer 1/1>")
+	// Inline questions live in the transcript: the full text must be recorded
+	// even when the short screen only shows its tail.
+	transcript := strings.Join(u.display.Lines(), "\n")
+	for _, want := range append([]string{"Which database?"}, item.Options...) {
+		if !strings.Contains(transcript, want) {
+			t.Fatalf("short terminal did not record %q in output:\n%s", want, transcript)
+		}
 	}
 	u.input.route([]byte("6"))
 	waitQuestionnaireFrame(t, frames, "Answer 1/1> 6")
-	seen := frame
-	for i := 0; i < 40; i++ {
-		u.input.route([]byte(pageDownSequence))
-		next := questionnaireFrame(u)
-		if next == frame {
-			break
-		}
-		frame = next
-		if !strings.Contains(frame, "Question 1/1") || !strings.Contains(frame, "Answer 1/1> 6") {
-			t.Fatalf("paging lost the question heading or answer draft:\n%s", frame)
-		}
-		seen += "\n" + frame
-	}
-	for _, option := range item.Options {
-		if !strings.Contains(seen, option) {
-			t.Fatalf("option %q could not be reached by paging", option)
-		}
-	}
-	for i := 0; i < 40; i++ {
+	// History paging must keep the answer draft while reviewing the output.
+	for i := 0; i < 5; i++ {
 		u.input.route([]byte(pageUpSequence))
-		next := questionnaireFrame(u)
-		if next == frame {
-			break
-		}
-		frame = next
 	}
-	if !strings.Contains(questionnaireFrame(u), "Which database?") {
-		t.Fatal("Page Up did not return to question text")
+	if !strings.Contains(questionnaireFrame(u), "Answer 1/1> 6") {
+		t.Fatalf("paging lost the answer draft:\n%s", questionnaireFrame(u))
+	}
+	for i := 0; i < 5; i++ {
+		u.input.route([]byte(pageDownSequence))
 	}
 	u.screenMu.Lock()
 	u.width, u.height = 20, 18
 	u.paintFixedLocked(0)
 	for _, row := range u.inputScreenRows {
 		if visibleWidth(row) > u.width {
-			t.Errorf("resized panel row is too wide: %q", row)
+			t.Errorf("resized row is too wide: %q", row)
 		}
 	}
 	u.screenMu.Unlock()
-	if !strings.Contains(questionnaireFrame(u), "Which database?") {
-		t.Fatal("resize hid the question text")
-	}
 	u.input.route([]byte("\r"))
 	select {
 	case got := <-result:
@@ -507,7 +487,7 @@ func TestQuestionnaireScrollsLongChoicesOnShortTerminal(t *testing.T) {
 	}
 }
 
-func TestQuestionnairePanelShowsValidationFeedback(t *testing.T) {
+func TestInlineQuestionShowsValidationFeedback(t *testing.T) {
 	u, _ := layoutFixture(t)
 	result, frames := startQuestionnaire(t, u, []question.Question{{Text: "Which database?", Options: []string{"SQLite", "Postgres"}}})
 	waitQuestionnaireFrame(t, frames, "Answer 1/1>")
@@ -532,7 +512,7 @@ func TestQuestionnairePanelShowsValidationFeedback(t *testing.T) {
 	}
 }
 
-func TestQuestionnairePanelClearsOnCancelAndDeferral(t *testing.T) {
+func TestInlineQuestionClearsOnCancelAndDeferral(t *testing.T) {
 	for _, action := range []struct {
 		name, input string
 		want        error
@@ -556,14 +536,14 @@ func TestQuestionnairePanelClearsOnCancelAndDeferral(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("questionnaire did not release the input")
 			}
-			if u.questionPanel != nil || strings.Contains(questionnaireFrame(u), "Answer 1/1>") || !u.queue.expanded {
+			if strings.Contains(questionnaireFrame(u), "Answer 1/1>") || !u.queue.expanded {
 				t.Fatal("question panel or prompt remained, or previous queue state was lost")
 			}
 		})
 	}
 }
 
-func TestQuestionnairePanelRedactsBeforeWrappingAndKeepsOriginalAnswer(t *testing.T) {
+func TestInlineQuestionRedactsBeforeWrappingAndKeepsOriginalAnswer(t *testing.T) {
 	u, _ := layoutFixture(t)
 	u.width = 30
 	policy, err := redaction.New(redaction.Config{}, []string{tuiTestSecret})

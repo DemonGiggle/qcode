@@ -119,9 +119,8 @@ func (u *UI) paintFixedLocked(direction int) {
 		}
 	}
 	rows, cy, cx := inputRows(label+u.inputDisplay, utf8.RuneCountInString(label)+u.inputDisplayPosition, u.width)
-	question := u.activeQuestionPanelLocked()
 	queued := u.queuedPromptsLocked()
-	if question != nil {
+	if u.questionnaireActive {
 		queued = nil
 	}
 	queue := u.activeQueueLocked()
@@ -143,9 +142,6 @@ func (u *UI) paintFixedLocked(direction int) {
 	// The pin yields space to the composer, its separator, and two transcript
 	// rows on short screens. Its height does not move a paused history anchor.
 	latest := u.latestPromptRegionRowsLocked(u.height - footer - 5)
-	if question != nil {
-		latest = nil
-	}
 	// Keep a cursor-centered window for drafts taller than the terminal.
 	inputLimit := u.height - 5 - statusN - len(latest)
 	if len(queued) > 0 {
@@ -160,7 +156,7 @@ func (u *UI) paintFixedLocked(direction int) {
 	// All content panels end before this row, leaving exactly one separator
 	// above the first composer row, including while output is unfinished.
 	panelEnd := max(1, promptRow-1)
-	if len(queued) == 0 && question == nil {
+	if len(queued) == 0 && !u.questionnaireActive {
 		queue.expanded, queue.anchorID, queue.anchorRow = false, "", 0
 	}
 	historyDirection := direction
@@ -315,9 +311,7 @@ func (u *UI) paintFixedLocked(direction int) {
 		outputHeight = max(0, panelEnd-count-queueHeight-outputStart)
 		sepO, sepS = 0, 0
 	}
-	if question == nil {
-		u.activeViewportLocked().visibleRows = outputHeight
-	}
+	u.activeViewportLocked().visibleRows = outputHeight
 	screenRows := make([]string, u.height+1)
 	if u.manager != nil && u.height > 3 {
 		screenRows[1] = tabBar(u.manager.List(), u.activeAgent, u.views, u.width, u.unicode, ColorEnabled(u.out))
@@ -325,17 +319,13 @@ func (u *UI) paintFixedLocked(direction int) {
 	for i, row := range latest {
 		screenRows[i+2] = row
 	}
-	if question != nil {
-		for i, row := range question.rows(u.width, outputHeight, direction, u.unicode) {
-			screenRows[i+outputStart] = u.themeOutput(row)
-		}
-	} else if outputHeight > 0 && u.display != nil {
+	if outputHeight > 0 && u.display != nil {
 		page := u.activeViewportLocked().page(u.renderHistoryRowsLocked(u.display.Snapshot()), outputHeight, historyDirection)
 		for i, row := range page {
 			screenRows[i+outputStart] = row.text
 		}
 	}
-	if question == nil && u.remoteLogin != nil && outputHeight > 0 {
+	if u.remoteLogin != nil && outputHeight > 0 {
 		for i := 0; i < outputHeight; i++ {
 			screenRows[i+outputStart] = ""
 		}

@@ -106,9 +106,7 @@ func (u *UI) drawTaskIndicator() {
 
 func (u *UI) fixedTaskIndicatorMessageLocked(summary session.Summary, now time.Time) string {
 	message := taskIndicatorMessage(summary, u.unicode, now)
-	if u.activeQuestionPanelLocked() != nil {
-		message = "PgUp/PgDn scroll question | Ctrl+C cancel"
-	} else if u.activeViewportLocked().browsing {
+	if u.activeViewportLocked().browsing {
 		message = "History paused | Up/Down PgUp/PgDn | PgDn to bottom resumes"
 	}
 	return truncateDiffLine(message, u.width, u.unicode)

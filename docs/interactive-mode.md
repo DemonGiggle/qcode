@@ -25,10 +25,10 @@ answer. It can ask at most three distinct questions per submitted prompt. Your
 answer becomes user context in that agent's conversation. It is not saved to
 global learning automatically; `/learn` retains its review and approval flow.
 
-While answering, the question takes over the transcript area so it stays visible
-even when history is paused. Use PgUp/PgDn to scroll long questions and choices.
-Your answer stays in the input field while scrolling. After answering, cancelling,
-or deferring, the previous history position is restored.
+While answering, the question is shown in the output and the view follows to it.
+Use PgUp/PgDn to review earlier output while answering. Your answer stays in the
+input field while scrolling. After answering, cancelling, or deferring, the
+previous history position is restored.
 
 If a question arrives while you are typing, qcode saves your unfinished prompt
 and restores it after the answer. Questions for other tabs wait there; switching

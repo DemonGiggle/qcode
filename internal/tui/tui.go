@@ -286,7 +286,7 @@ type UI struct {
 	approvals            map[string][]*approvalRequest
 	questionMu           sync.Mutex
 	questions            []*questionRequest
-	questionPanel        *questionPanel // Guarded by screenMu; only the displayed questionnaire.
+	questionnaireActive  bool // Guarded by screenMu; blocks queue while answering inline.
 	modeDecisionMu       sync.Mutex
 	modeDecisions        []*modeDecisionRequest
 	tabMu                sync.Mutex
@@ -507,9 +507,6 @@ func (u *UI) RemoveAgentView(id string) {
 	u.screenMu.Lock()
 	delete(u.views, id)
 	delete(u.drafts, id)
-	if u.questionPanel != nil && u.questionPanel.agentID == id {
-		u.questionPanel = nil
-	}
 	u.screenMu.Unlock()
 	u.approvalMu.Lock()
 	for _, request := range u.approvals[id] {
@@ -2514,9 +2511,6 @@ func (u *UI) showScroll(direction int) bool {
 	if u.commandViewActive {
 		return false
 	}
-	if u.activeQuestionPanelLocked() != nil {
-		return false
-	}
 	if u.fixedInput {
 		if queue := u.activeQueueLocked(); queue.expanded && len(u.queuedPromptsLocked()) > 0 {
 			return false
@@ -2555,9 +2549,6 @@ func (u *UI) showScroll(direction int) bool {
 func (u *UI) showHistoryBoundary(beginning bool) bool {
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
-	if u.activeQuestionPanelLocked() != nil {
-		return false // Home/End continue to edit the answer.
-	}
 	v := u.activeViewportLocked()
 	if u.display == nil {
 		return false

@@ -321,13 +321,16 @@ func (u *UI) runQuestionnaireProgress(ctx context.Context, questions []question.
 		defer u.input.setCancel(nil)
 	}
 	u.screenMu.Lock()
-	panel := &questionPanel{agentID: u.activeAgent, total: len(questions), footer: footer}
+	savedBrowsing := u.activeViewportLocked().browsing
+	savedAnchor := u.activeViewportLocked().anchor
+	u.activeViewportLocked().browsing = false
+	u.questionnaireActive = true
 	u.screenMu.Unlock()
 	defer func() {
 		u.screenMu.Lock()
-		if u.questionPanel == panel {
-			u.questionPanel = nil
-		}
+		u.questionnaireActive = false
+		u.activeViewportLocked().browsing = savedBrowsing
+		u.activeViewportLocked().anchor = savedAnchor
 		u.screenMu.Unlock()
 		u.restorePlanPrompt()
 	}()
@@ -336,14 +339,8 @@ func (u *UI) runQuestionnaireProgress(ctx context.Context, questions []question.
 	for i := start; i < len(questions); i++ {
 		question := questions[i]
 		displayed := redaction.Copy(u.redaction, redaction.Terminal, question)
-		u.screenMu.Lock()
-		panel.item, panel.index, panel.top = displayed, i, 0
-		panel.feedback = ""
-		u.questionPanel = panel
 		width := u.width
-		u.screenMu.Unlock()
-		// The fixed panel formats the question at the current width. Retain
-		// logical lines in history so resizing does not wrap old breaks again.
+		// Retain logical lines in history so resizing does not wrap old breaks again.
 		if u.fixedInput {
 			width = 0
 		}
@@ -373,12 +370,12 @@ func (u *UI) runQuestionnaireProgress(ctx context.Context, questions []question.
 			}
 			answer = strings.TrimSpace(answer)
 			if answer == "" {
-				u.showQuestionFeedback(panel, yellow+"Please enter an answer, or press Ctrl+C to cancel."+reset)
+				u.printSystemMessage(yellow+"Please enter an answer, or press Ctrl+C to cancel."+reset)
 				continue
 			}
 			answer, valid := normalizeQuestionAnswerWithCustom(answer, question.Options, question.AllowCustom)
 			if !valid {
-				u.showQuestionFeedback(panel, yellow+"Choose one of the listed options."+reset)
+				u.printSystemMessage(yellow+"Choose one of the listed options."+reset)
 				continue
 			}
 			answers = append(answers, answer)
