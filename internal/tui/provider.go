@@ -23,10 +23,6 @@ type backendController interface {
 func (u *UI) SetProviderFactory(factory ProviderFactory) { u.providerFactory = factory }
 
 func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
-	if len(fields) > 2 {
-		u.printSystemMessage(yellow + "Usage: /provider [name]" + reset)
-		return
-	}
 	manager, ok := u.manager.(backendController)
 	if !ok || u.providerFactory == nil {
 		u.printSystemMessage(yellow + "Provider selection is unavailable in this mode." + reset)
@@ -49,19 +45,30 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 		oldThinking = thinking.ThinkingLevel()
 	}
 	names := llm.Names()
+	labels := providerPickerLabels(names)
 	for {
 		name := ""
-		if len(fields) == 2 {
-			name = fields[1]
-			if !containsOption(names, name) {
-				u.printSystemMessage(yellow + "Unknown provider: " + sanitizeDiffLine(name, "<ESC>") + ". Supported: " + strings.Join(names, ", ") + reset)
+		if len(fields) >= 2 {
+			raw := fields[1]
+			if len(fields) > 2 {
+				joined := strings.Join(fields[1:], " ")
+				if _, ok := resolveProviderID(joined, names); ok {
+					raw = joined
+				} else {
+					u.printSystemMessage(yellow + "Usage: /provider [name]" + reset)
+					return
+				}
+			}
+			resolved, ok := resolveProviderID(raw, names)
+			if !ok {
+				u.printSystemMessage(yellow + "Unknown provider: " + sanitizeDiffLine(raw, "<ESC>") + ". Supported: " + strings.Join(labels, ", ") + reset)
 				return
 			}
+			name = resolved
 		} else {
 			u.input.setRaw(true)
 			u.beginRawSelector()
-			var accepted bool
-			name, accepted, err = selectOption(u.input, u.themedSelectorWriter(), names, oldProvider, min(12, max(3, u.height-6)), u.width, ColorEnabled(u.out), "provider", false)
+			selectedDisplay, accepted, err := selectOption(u.input, u.themedSelectorWriter(), labels, providerDisplayName(oldProvider), min(12, max(3, u.height-6)), u.width, ColorEnabled(u.out), "provider", false)
 			u.input.setRaw(false)
 			u.endRawSelector()
 			if err != nil {
@@ -71,6 +78,12 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 			if !accepted {
 				return
 			}
+			resolved, ok := resolveProviderID(selectedDisplay, names)
+			if !ok {
+				u.printSystemMessage(yellow + "Unknown provider: " + sanitizeDiffLine(selectedDisplay, "<ESC>") + ". Supported: " + strings.Join(labels, ", ") + reset)
+				return
+			}
+			name = resolved
 		}
 		// Selecting the current row is idempotent but can still save a launch
 		// override as the user default, just as /model can.
@@ -81,7 +94,7 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 				return
 			}
 			u.persistProviderPreference(writer, id, name, oldModel, oldThinking)
-			u.printSystemMessage(green + "Provider: " + name + " (unchanged)" + reset)
+			u.printSystemMessage(green + "Provider: " + providerDisplayName(name) + " (unchanged)" + reset)
 			return
 		}
 		fetchCtx, cancel := context.WithCancel(ctx)
@@ -100,7 +113,7 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 			} else if lister, ok := provider.(llm.ModelLister); ok {
 				models, err = lister.Models(lookupCtx)
 			} else {
-				err = fmt.Errorf("provider %s does not support model discovery", name)
+				err = fmt.Errorf("provider %s does not support model discovery", providerDisplayName(name))
 			}
 		}
 		stopLookup()
@@ -129,7 +142,7 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 				level = ""
 			}
 		} else if !containsOption(models, oldModel) {
-			u.printSystemMessage(dim + "The current model is unavailable on " + name + "; select a model before switching." + reset)
+			u.printSystemMessage(dim + "The current model is unavailable on " + providerDisplayName(name) + "; select a model before switching." + reset)
 			var accepted bool
 			var back bool
 			model, level, accepted, back, err = u.selectProviderModel(candidate)
@@ -172,7 +185,7 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 		u.persistProviderPreference(writer, id, name, model, level)
 		u.signalPresentation()
 		u.drawStatusBar()
-		u.printSystemMessage(green + "Provider: " + name + interfaceGlyph(u.unicode, " · model: ", " | model: ") + sanitizeDiffLine(model, "<ESC>") + reset)
+		u.printSystemMessage(green + "Provider: " + providerDisplayName(name) + interfaceGlyph(u.unicode, " · model: ", " | model: ") + sanitizeDiffLine(model, "<ESC>") + reset)
 		if oldThinking != "" && level == "" {
 			u.printSystemMessage(dim + "Thinking reset to the target provider/model default." + reset)
 		}

@@ -283,10 +283,46 @@ func TestProviderPickerRegistryHighlightCancellationAndSameProvider(t *testing.T
 	}
 }
 
+func TestProviderDisplayNamesAccepted(t *testing.T) {
+	names := llm.Names()
+	labels := providerPickerLabels(names)
+	want := []string{"ChatGPT", "Ollama", "OpenAI", "OpenCode Go"}
+	if !reflect.DeepEqual(labels, want) {
+		t.Fatalf("picker labels = %q, want %q", labels, want)
+	}
+	for input, wantID := range map[string]string{
+		"OpenAI":      "openai",
+		"OPENAI":      "openai",
+		"openai":      "openai",
+		"OpenCode Go": "opencode-go",
+		"opencode-go": "opencode-go",
+		"ChatGPT":     "chatgpt",
+		"Ollama":      "ollama",
+	} {
+		if got, ok := resolveProviderID(input, names); !ok || got != wantID {
+			t.Fatalf("resolveProviderID(%q) = %q, %v; want %q", input, got, ok, wantID)
+		}
+	}
+
+	u, h, _ := newProviderUI(t, "")
+	u.handleProviderCommand(context.Background(), []string{"/provider", "OpenAI"})
+	if got := providerState(t, h, "main"); got.Provider != "openai" {
+		t.Fatalf("display name switch stored %q, want openai", got.Provider)
+	}
+	if got := providerOutput(u, "main"); !strings.Contains(got, "Provider: OpenAI") {
+		t.Fatalf("switch message missing display name: %q", got)
+	}
+
+	u.handleProviderCommand(context.Background(), []string{"/provider", "OpenCode", "Go"})
+	if got := providerState(t, h, "main"); got.Provider != "opencode-go" {
+		t.Fatalf("spaced display name switch stored %q, want opencode-go", got.Provider)
+	}
+}
+
 func TestProviderUnknownUsageAndUnavailableModes(t *testing.T) {
 	u, _, recorder := newProviderUI(t, "")
 	u.handleProviderCommand(context.Background(), []string{"/provider", "typo"})
-	if got := providerOutput(u, "main"); !strings.Contains(got, "Unknown provider: typo") || !strings.Contains(got, strings.Join(llm.Names(), ", ")) {
+	if got := providerOutput(u, "main"); !strings.Contains(got, "Unknown provider: typo") || !strings.Contains(got, strings.Join(providerPickerLabels(llm.Names()), ", ")) {
 		t.Fatal(got)
 	}
 	u.handleProviderCommand(context.Background(), []string{"/provider", "openai", "extra"})
