@@ -186,6 +186,13 @@ func (s Skills) NormalizedSelection() (selected []string, always []string) {
 }
 
 // Config contains settings that may be supplied by a qcode config file.
+// ChatGPT holds the ChatGPT subscription (OAuth) settings. OAuthPath points
+// at the JSON file written by `qcode login chatgpt`. Empty means the default
+// ~/.config/qcode/chatgpt-oauth.json. It never holds a secret itself.
+type ChatGPT struct {
+	OAuthPath string `toml:"oauth_path"`
+}
+
 type Config struct {
 	Redaction            redaction.Config `toml:"redaction"`
 	Learning             Learning         `toml:"learning"`
@@ -196,6 +203,7 @@ type Config struct {
 	APIKey               string           `toml:"api_key"`
 	Model                string           `toml:"model"`
 	Thinking             string           `toml:"thinking"`
+	ChatGPT              ChatGPT          `toml:"chatgpt"`
 	Interactive          *bool            `toml:"interactive"`
 	ContextWindow        *int             `toml:"context_window"`
 	AutoCompactThreshold *int             `toml:"auto_compact_threshold"`
@@ -412,6 +420,9 @@ func merge(dst *Config, incoming Config) {
 	}
 	if incoming.Thinking != "" {
 		dst.Thinking = incoming.Thinking
+	}
+	if incoming.ChatGPT.OAuthPath != "" {
+		dst.ChatGPT.OAuthPath = incoming.ChatGPT.OAuthPath
 	}
 	if incoming.Interactive != nil {
 		dst.Interactive = incoming.Interactive

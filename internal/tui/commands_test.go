@@ -476,7 +476,7 @@ func TestGradientLineSkipsDarkestPaletteShades(t *testing.T) {
 
 func TestStatusBarPlainFallback(t *testing.T) {
 	got := statusBar("ollama", "qwen", "~/code", 80, true, false)
-	want := "ollama [MODEL qwen] [WS ~/code]"
+	want := "Ollama [MODEL qwen] [WS ~/code]"
 	if got != want {
 		t.Fatalf("status bar = %q, want %q", got, want)
 	}
@@ -484,7 +484,7 @@ func TestStatusBarPlainFallback(t *testing.T) {
 
 func TestStatusBarSegmentOrder(t *testing.T) {
 	got := statusBar("ollama", "qwen", "~/code", 120, true, false, "73% left", "I:1.2K O:340")
-	want := "ollama [MODEL qwen] [WS ~/code] [CTX 73% left] [TOK I:1.2K O:340]"
+	want := "Ollama [MODEL qwen] [WS ~/code] [CTX 73% left] [TOK I:1.2K O:340]"
 	if got != want {
 		t.Fatalf("status bar = %q, want %q", got, want)
 	}
@@ -492,7 +492,7 @@ func TestStatusBarSegmentOrder(t *testing.T) {
 
 func TestStatusBarShowsStepProgress(t *testing.T) {
 	got := statusBar("ollama", "qwen", "~/code", 120, true, false, "73% left", "I:1.2K O:340", "2/32")
-	want := "ollama [MODEL qwen] [WS ~/code] [CTX 73% left] [STEP 2/32] [TOK I:1.2K O:340]"
+	want := "Ollama [MODEL qwen] [WS ~/code] [CTX 73% left] [STEP 2/32] [TOK I:1.2K O:340]"
 	if got != want {
 		t.Fatalf("status bar = %q, want %q", got, want)
 	}
@@ -520,7 +520,7 @@ func TestNarrowStatusBarKeepsStepProgress(t *testing.T) {
 	// Extremely narrow with a long model name keeps the higher-priority
 	// provider/model unit (truncated) and drops the lowest-priority totals.
 	narrow := statusBar("openai", "a-very-long-model-name", "/workspace", 32, true, false, "73% left", "I:1.2K O:340", "2/32")
-	if !strings.Contains(narrow, "openai") || strings.Contains(narrow, "[TOK ") || visibleWidth(narrow) > 32 {
+	if !strings.Contains(narrow, "OpenAI") || strings.Contains(narrow, "[TOK ") || visibleWidth(narrow) > 32 {
 		t.Fatalf("narrow status bar = %q, width = %d", narrow, visibleWidth(narrow))
 	}
 }
@@ -532,7 +532,7 @@ func TestStatusBarUsesColoredSegments(t *testing.T) {
 			t.Fatalf("status bar %q does not contain color %q", got, sequence)
 		}
 	}
-	if !strings.Contains(got, cyan+bold+"ollama"+reset) {
+	if !strings.Contains(got, cyan+bold+"Ollama"+reset) {
 		t.Fatalf("provider is not bold in status bar: %q", got)
 	}
 	for _, background := range []string{"\x1b[40m", "\x1b[41m", "\x1b[42m", "\x1b[43m", "\x1b[44m", "\x1b[45m", "\x1b[46m", "\x1b[47m"} {

@@ -1,6 +1,6 @@
 # Providers and modes
 
-qcode talks to Ollama and OpenAI-compatible APIs, plus OpenCode Go. Provider-specific wire formats stay isolated behind the small `llm.Provider` interface; see [Extending providers](extending-providers.md) to add one.
+qcode talks to Ollama and OpenAI-compatible APIs, plus OpenCode Go and ChatGPT subscriptions. Provider-specific wire formats stay isolated behind the small `llm.Provider` interface; see [Extending providers](extending-providers.md) to add one.
 
 Normal agent turns leave temperature unspecified, preserving the provider's
 model defaults, including parameters stored in an Ollama model.
@@ -111,6 +111,24 @@ contributor models accept `minimal`, `low`, `medium`, `high`, and `xhigh`; they
 can lower reasoning effort but cannot turn it off. qcode shows reasoning
 summaries streamed by these models in its thinking view. These routes omit
 `temperature`; Luna rejects it as an unsupported parameter.
+
+## ChatGPT subscription
+
+```sh
+qcode login chatgpt
+qcode --provider chatgpt --model gpt-5.6-codex "explain this repository"
+```
+
+The `chatgpt` provider talks to the Codex subscription endpoint
+(`https://chatgpt.com/backend-api/codex`) with the OAuth file written by
+`qcode login chatgpt` — no API key. The login reuses the Codex CLI PKCE flow:
+open the printed URL, approve, paste the `localhost:1455` callback URL back.
+Tokens live at `~/.config/qcode/chatgpt-oauth.json` (`[chatgpt] oauth_path`
+overrides) with `0600` owner-only rules, refresh automatically with a 5-minute
+margin, and retry once on 401. Requests send the Codex contract
+(`instructions`, `store: false`) and the `ChatGPT-Account-Id` header. Thinking
+levels are not yet selectable for this provider; the request preserves the
+provider default.
 
 ## Vision
 

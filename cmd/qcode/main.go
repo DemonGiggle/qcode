@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"golang.org/x/term"
 
 	"qcode/internal/agent"
+	"qcode/internal/chatgptoauth"
 	"qcode/internal/config"
 	"qcode/internal/control"
 	"qcode/internal/demo"
@@ -98,6 +100,10 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		}
 		return err
 	}
+	if len(arguments) > 0 && arguments[0] == "login" {
+		isTerminal := term.IsTerminal(int(stdin.Fd())) && term.IsTerminal(int(stdout.Fd()))
+		return runLogin(arguments[1:], stdin, stdout, stderr, isTerminal)
+	}
 
 	opts := options{learningBudget: learning.DefaultBudget, autoCompactThreshold: agent.DefaultAutoCompactThreshold}
 	var configPaths []string
@@ -108,10 +114,11 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	var configuredSelectedAlwaysSkills []string
 	var configuredStatuslineHidden []string
 	var configuredTheme string
+	var configuredChatGPTOAuthPath string
 	var sandboxCommandPathFlags sandboxCommandPathsFlag
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
 	flags.SetOutput(diagnosticsOut)
-	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider: ollama, openai, or opencode-go")
+	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider: ollama, openai, opencode-go, or chatgpt")
 	flags.StringVar(&opts.model, "model", env("QCODE_MODEL", "qwen2.5-coder:7b"), "model identifier")
 	flags.StringVar(&opts.thinking, "thinking", os.Getenv("QCODE_THINKING"), "thinking level for a model that supports it (for example: low, high, max, off)")
 	flags.StringVar(&opts.baseURL, "base-url", os.Getenv("QCODE_BASE_URL"), "provider API base URL")
@@ -131,7 +138,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	flags.Lookup("api-key").DefValue = ""
 	flags.BoolVar(&opts.dangerSkipTLSVerify, "danger-skip-tls-verify", false, "skip TLS certificate verification (insecure)")
 	flags.Usage = func() {
-		fmt.Fprintf(diagnosticsOut, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\nUse 'qcode update' to install the latest release.\n\nOptions:\n")
+		fmt.Fprintf(diagnosticsOut, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\nUse 'qcode update' to install the latest release.\nUse 'qcode login chatgpt' to connect a ChatGPT subscription via OAuth.\n\nOptions:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(arguments); err != nil {
@@ -168,6 +175,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		configuredSelectedSkills, configuredSelectedAlwaysSkills = cfg.Skills.NormalizedSelection()
 		configuredStatuslineHidden = append([]string(nil), cfg.StatuslineHidden...)
 		configuredTheme = cfg.Theme
+		configuredChatGPTOAuthPath = cfg.ChatGPT.OAuthPath
 		redactionConfig = cfg.Redaction
 		setFlags := make(map[string]bool)
 		flags.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
@@ -284,7 +292,24 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	if err != nil {
 		return err
 	}
-	providerConfig := llm.Config{BaseURL: opts.baseURL, APIKey: opts.apiKey, InsecureSkipVerify: opts.dangerSkipTLSVerify}
+	providerConfig := llm.Config{BaseURL: opts.baseURL, APIKey: opts.apiKey, InsecureSkipVerify: opts.dangerSkipTLSVerify, ChatGPTOAuthPath: configuredChatGPTOAuthPath}
+	if !opts.demo && opts.provider == "chatgpt" {
+		if opts.apiKey != "" {
+			return errors.New("provider chatgpt uses ChatGPT OAuth (qcode login chatgpt); clear api-key")
+		}
+		preflightCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		tokens, err := chatgptoauth.EnsureValid(preflightCtx, &http.Client{Timeout: 30 * time.Second}, configuredChatGPTOAuthPath)
+		cancel()
+		if err != nil {
+			return err
+		}
+		rebuilt, err := redaction.New(redactionConfig, append(append(redaction.EnvironmentValues(), opts.apiKey), tokens.AccessToken, tokens.RefreshToken))
+		if err != nil {
+			return err
+		}
+		policy = rebuilt
+		diagnosticsOut.Policy = policy
+	}
 	loadModelMeta := !opts.demo && ((opts.provider == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(opts.baseURL)) || (opts.provider == "openai" && llm.IsOfficialOpenAIEndpoint(opts.baseURL)))
 	if loadModelMeta {
 		cachePath, cachePathErr := llm.ProviderModelMetaCachePath(opts.provider)

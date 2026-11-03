@@ -6,6 +6,26 @@ import (
 	"testing"
 )
 
+func TestChatGPTProviderStatusLabel(t *testing.T) {
+	for _, provider := range []string{"chatgpt", "ChatGPT"} {
+		got := statusBarWithStatuslineHidden(provider, "gpt", "~/code", 120, true, false, false, nil, magenta, blue)
+		if !strings.Contains(got, "ChatGPT") {
+			t.Fatalf("status bar = %q, want ChatGPT provider label", got)
+		}
+	}
+}
+
+func TestProviderDisplayNames(t *testing.T) {
+	for _, tc := range []struct{ id, want string }{
+		{"Ollama", "Ollama"}, {"openai", "OpenAI"}, {"opencode-go", "OpenCode Go"}, {"chatgpt", "ChatGPT"},
+		{"custom-provider", "custom-provider"},
+	} {
+		if got := providerDisplayName(tc.id); got != tc.want {
+			t.Errorf("providerDisplayName(%q) = %q, want %q", tc.id, got, tc.want)
+		}
+	}
+}
+
 func TestStatusSeparatorGlyphs(t *testing.T) {
 	if got := statusSeparator(true); got != " · " {
 		t.Fatalf("unicode separator = %q, want %q", got, " · ")
@@ -21,7 +41,7 @@ func TestStatusSeparatorGlyphs(t *testing.T) {
 func TestStatuslineTwoLineAlignment(t *testing.T) {
 	// Overflow wraps to a second left-aligned line: high priority first,
 	// remainder second, each fitting its own width.
-	got := statusBar("ollama", "qwen", "/w", 40, true, false, "73% left", "I:1 O:2", "2/32")
+	got := statusBar("Ollama", "qwen", "/w", 40, true, false, "73% left", "I:1 O:2", "2/32")
 	lines := strings.Split(got, "\n")
 	if len(lines) != 2 {
 		t.Fatalf("want two lines, got %q", got)
@@ -34,19 +54,19 @@ func TestStatuslineTwoLineAlignment(t *testing.T) {
 			t.Fatalf("line not left-aligned: %q", line)
 		}
 	}
-	if !strings.Contains(lines[0], "ollama") || !strings.Contains(lines[1], "[TOK I:1 O:2]") {
+	if !strings.Contains(lines[0], "Ollama") || !strings.Contains(lines[1], "[TOK I:1 O:2]") {
 		t.Fatalf("priority split wrong: %q", got)
 	}
 }
 
 func TestStatuslineHiddenFiltering(t *testing.T) {
-	full := statusBarWithStatuslineHidden("ollama", "qwen", "~/code", 120, true, false, false, nil, magenta, blue, "73% left", "I:1 O:2", "2/32", "PLAN", "high")
-	for _, want := range []string{"ollama", "[MODEL qwen]", "[CTX 73% left]", "[WS ~/code]", "[TOK I:1 O:2]", "[STEP 2/32]", "[MODE PLAN]", "[THINK high]"} {
+	full := statusBarWithStatuslineHidden("Ollama", "qwen", "~/code", 120, true, false, false, nil, magenta, blue, "73% left", "I:1 O:2", "2/32", "PLAN", "high")
+	for _, want := range []string{"Ollama", "[MODEL qwen]", "[CTX 73% left]", "[WS ~/code]", "[TOK I:1 O:2]", "[STEP 2/32]", "[MODE PLAN]", "[THINK high]"} {
 		if !strings.Contains(full, want) {
 			t.Fatalf("full bar missing %q: %q", want, full)
 		}
 	}
-	hidden := statusBarWithStatuslineHidden("ollama", "qwen", "~/code", 120, true, false, false, []string{"tok", "think"}, magenta, blue, "73% left", "I:1 O:2", "2/32", "PLAN", "high")
+	hidden := statusBarWithStatuslineHidden("Ollama", "qwen", "~/code", 120, true, false, false, []string{"tok", "think"}, magenta, blue, "73% left", "I:1 O:2", "2/32", "PLAN", "high")
 	if strings.Contains(hidden, "[TOK ") || strings.Contains(hidden, "[THINK ") {
 		t.Fatalf("hidden segments remain: %q", hidden)
 	}
@@ -54,15 +74,15 @@ func TestStatuslineHiddenFiltering(t *testing.T) {
 		t.Fatalf("visible segments missing: %q", hidden)
 	}
 	// The model toggle controls the combined provider prefix and MODEL unit.
-	modelHidden := statusBarWithStatuslineHidden("ollama", "qwen", "~/code", 120, true, false, false, []string{"model"}, magenta, blue, "73% left")
-	if strings.Contains(modelHidden, "ollama") || strings.Contains(modelHidden, "[MODEL ") {
+	modelHidden := statusBarWithStatuslineHidden("Ollama", "qwen", "~/code", 120, true, false, false, []string{"model"}, magenta, blue, "73% left")
+	if strings.Contains(modelHidden, "Ollama") || strings.Contains(modelHidden, "[MODEL ") {
 		t.Fatalf("model unit remains: %q", modelHidden)
 	}
 }
 
 func TestStatuslinePriorityDropsTokBeforeStep(t *testing.T) {
 	// Even two lines can overflow: TOK (lowest) drops before STEP.
-	got := statusBarWithStatuslineHidden("ollama", "qwen", "/w", 30, true, false, false, nil, magenta, blue, "73% left", "I:1 O:2", "2/32")
+	got := statusBarWithStatuslineHidden("Ollama", "qwen", "/w", 30, true, false, false, nil, magenta, blue, "73% left", "I:1 O:2", "2/32")
 	lines := strings.Split(got, "\n")
 	if len(lines) != 2 {
 		t.Fatalf("priority order wrong, want two lines: %q", got)
@@ -81,14 +101,14 @@ func TestStatuslinePriorityDropsTokBeforeStep(t *testing.T) {
 }
 
 func TestStatuslineShortensInteractiveBeforeDropping(t *testing.T) {
-	wide := statusBarWithStatuslineHidden("ollama", "qwen", "~/code", 200, true, false, false, nil, magenta, blue, "73% left", "I:1 O:2", "", "INTERACTIVE")
+	wide := statusBarWithStatuslineHidden("Ollama", "qwen", "~/code", 200, true, false, false, nil, magenta, blue, "73% left", "I:1 O:2", "", "INTERACTIVE")
 	if !strings.Contains(wide, "[MODE INTERACTIVE]") {
 		t.Fatalf("wide bar should keep full label: %q", wide)
 	}
 	// At 36 columns even two lines overflow with the full label, so the
 	// fitter squeezes INTERACTIVE to INT (dropping TOK if needed).
 	const narrowWidth = 36
-	got := statusBarWithStatuslineHidden("ollama", "qwen", "~/code", narrowWidth, true, false, false, nil, magenta, blue, "73% left", "I:1 O:2", "", "INTERACTIVE")
+	got := statusBarWithStatuslineHidden("Ollama", "qwen", "~/code", narrowWidth, true, false, false, nil, magenta, blue, "73% left", "I:1 O:2", "", "INTERACTIVE")
 	lines := strings.Split(got, "\n")
 	for _, line := range lines {
 		if visibleWidth(line) > narrowWidth {
@@ -112,7 +132,7 @@ func TestStatuslineCommandShowHideReset(t *testing.T) {
 	if got := u.StatuslineHidden(); len(got) != 1 || got[0] != "tok" {
 		t.Fatalf("hidden = %q", got)
 	}
-	bar := statusBarWithStatuslineHidden("ollama", "qwen", "~/code", 120, true, false, false, u.StatuslineHidden(), magenta, blue, "73% left", "I:1 O:2")
+	bar := statusBarWithStatuslineHidden("Ollama", "qwen", "~/code", 120, true, false, false, u.StatuslineHidden(), magenta, blue, "73% left", "I:1 O:2")
 	if strings.Contains(bar, "[TOK ") {
 		t.Fatalf("tok remains: %q", bar)
 	}
@@ -160,7 +180,7 @@ func TestStatuslinePreferenceMainTabOnly(t *testing.T) {
 
 func TestFixedLayoutReservesTwoRowsForWrappedStatus(t *testing.T) {
 	u, _ := layoutFixture(t)
-	u.provider, u.model, u.root = "ollama", "qwen", "/w"
+	u.provider, u.model, u.root = "Ollama", "qwen", "/w"
 	u.width, u.height = 40, 24
 	u.renderInput(inputPrompt, "", 0)
 	first, second := u.inputScreenRows[u.height-1], u.inputScreenRows[u.height]
@@ -175,12 +195,12 @@ func TestFixedLayoutReservesTwoRowsForWrappedStatus(t *testing.T) {
 			t.Fatalf("status row not left-aligned: %q", line)
 		}
 	}
-	if !strings.Contains(first, "ollama") || !strings.Contains(second, "[TOK ") {
+	if !strings.Contains(first, "Ollama") || !strings.Contains(second, "[TOK ") {
 		t.Fatalf("priority split wrong: %q | %q", first, second)
 	}
 	// Single-line widths keep a single status row.
 	wide, _ := layoutFixture(t)
-	wide.provider, wide.model, wide.root = "ollama", "qwen", "/w"
+	wide.provider, wide.model, wide.root = "Ollama", "qwen", "/w"
 	wide.width, wide.height = 120, 24
 	wide.renderInput(inputPrompt, "", 0)
 	if wide.inputScreenRows[wide.height] == "" {
@@ -201,7 +221,7 @@ func TestStatuslinePreservesLongWorkspaceTail(t *testing.T) {
 		{"ascii", 68, true, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			bar := statusBar("ollama", "qwen", root, test.width, test.unicode, test.color, "73% left", "I:1 O:2")
+			bar := statusBar("Ollama", "qwen", root, test.width, test.unicode, test.color, "73% left", "I:1 O:2")
 			lines := strings.Split(bar, "\n")
 			if len(lines) != 2 {
 				t.Fatalf("want two status rows: %q", bar)
@@ -221,7 +241,7 @@ func TestStatuslinePreservesLongWorkspaceTail(t *testing.T) {
 }
 
 func TestStatuslineMovesWorkspaceToSecondRow(t *testing.T) {
-	bar := statusBar("ollama", "qwen", "/home/user/source/parent-folder-with-long-name/qcode", 48, true, false)
+	bar := statusBar("Ollama", "qwen", "/home/user/source/parent-folder-with-long-name/qcode", 48, true, false)
 	lines := strings.Split(bar, "\n")
 	if len(lines) != 2 || !strings.Contains(lines[0], "[MODEL qwen]") || !strings.Contains(lines[1], "parent-folder-with-long-name/qcode]") {
 		t.Fatalf("want model and complete workspace tail on separate rows: %q", bar)
@@ -235,15 +255,15 @@ func TestStatuslineMovesWorkspaceToSecondRow(t *testing.T) {
 
 func TestStatuslineWorkspaceTinyRowFallbackAndHidden(t *testing.T) {
 	const root = "/home/user/very-long-parent/very-long-project"
-	bar := statusBarWithStatuslineHidden("ollama", "qwen", root, 18, true, false, false, []string{"model"}, magenta, blue)
+	bar := statusBarWithStatuslineHidden("Ollama", "qwen", root, 18, true, false, false, []string{"model"}, magenta, blue)
 	if !strings.Contains(bar, "[WS ") || !strings.Contains(bar, "…") || visibleWidth(bar) > 18 {
 		t.Fatalf("want WS shortened to fit a tiny row: %q", bar)
 	}
-	hidden := statusBarWithStatuslineHidden("ollama", "qwen", root, 80, true, false, false, []string{"ws"}, magenta, blue)
+	hidden := statusBarWithStatuslineHidden("Ollama", "qwen", root, 80, true, false, false, []string{"ws"}, magenta, blue)
 	if strings.Contains(hidden, "[WS ") || strings.Contains(hidden, "very-long-project") {
 		t.Fatalf("hidden workspace is visible: %q", hidden)
 	}
-	web := statusBarWithRemoteColors("ollama", "qwen", root, 100, true, true, false, webStatusModelColor, webStatusWorkspaceColor)
+	web := statusBarWithRemoteColors("Ollama", "qwen", root, 100, true, true, false, webStatusModelColor, webStatusWorkspaceColor)
 	if !strings.Contains(web, root) || !strings.Contains(web, webStatusWorkspaceColor) {
 		t.Fatalf("browser formatter lost full workspace or styling: %q", web)
 	}
@@ -260,7 +280,7 @@ func TestStatuslinePreservesHomeRelativeWorkspace(t *testing.T) {
 		{"~/source/company/work/foo", 37, true, "~/…/work/foo"},
 		{"~/source/company/work/foo", 39, false, "~/.../work/foo"},
 	} {
-		bar := statusBar("ollama", "qwen", test.root, test.width, test.unicode, false)
+		bar := statusBar("Ollama", "qwen", test.root, test.width, test.unicode, false)
 		if !strings.Contains(bar, "[WS "+test.want+"]") || !strings.Contains(bar, "[MODEL qwen]") {
 			t.Fatalf("want home-relative workspace %q and model: %q", test.want, bar)
 		}
@@ -274,11 +294,11 @@ func TestStatuslinePreservesHomeRelativeWorkspace(t *testing.T) {
 
 func TestStatuslineClipsWorkspaceNameWithoutChangingParent(t *testing.T) {
 	const root = "~/workspace/this-folder-is-very-very-long"
-	bar := statusBarWithStatuslineHidden("ollama", "qwen", root, 30, true, false, false, []string{"model"}, magenta, blue)
+	bar := statusBarWithStatuslineHidden("Ollama", "qwen", root, 30, true, false, false, []string{"model"}, magenta, blue)
 	if bar != "[WS ~/workspace/this-folder-…]" {
 		t.Fatalf("workspace parent must remain intact when clipping the name: %q", bar)
 	}
-	bar = statusBarWithStatuslineHidden("ollama", "qwen", root, 18, true, false, false, []string{"model"}, magenta, blue)
+	bar = statusBarWithStatuslineHidden("Ollama", "qwen", root, 18, true, false, false, []string{"model"}, magenta, blue)
 	if bar != "[WS ~/…/this-fol…]" {
 		t.Fatalf("omitted parent must be marked explicitly: %q", bar)
 	}
@@ -289,7 +309,7 @@ func TestStatuslineTokenTotalFitsWrappedRow(t *testing.T) {
 		for _, unicode := range []bool{false, true} {
 			total := interfaceGlyph(unicode, "Σ:150", "T:150")
 			for _, width := range []int{48, 19} {
-				bar := statusBar("ollama", "qwen", "/w", width, unicode, color, "73% left", "I:120 O:30 "+total)
+				bar := statusBar("Ollama", "qwen", "/w", width, unicode, color, "73% left", "I:120 O:30 "+total)
 				if width == 19 {
 					bar = statusBarWithStatuslineHidden("p", "m", "/w", width, unicode, color, false, []string{"ws", "ctx"}, magenta, blue, "73% left", "I:120 O:30 "+total)
 				}
