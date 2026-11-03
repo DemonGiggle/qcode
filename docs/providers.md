@@ -5,6 +5,58 @@ qcode talks to Ollama and OpenAI-compatible APIs, plus OpenCode Go and ChatGPT s
 Normal agent turns leave temperature unspecified, preserving the provider's
 model defaults, including parameters stored in an Ollama model.
 
+## Switching providers without restarting
+
+In the normal terminal UI:
+
+```text
+/provider
+/provider openai
+/provider opencode-go
+/provider chatgpt
+```
+
+Bare `/provider` lists the same registry as `qcode --list-providers`, highlighting
+this tab's current provider. Up/Down and Enter choose; Esc goes back or leaves the
+picker, and Ctrl+C cancels the command. Direct names are validated against that
+registry. `/help provider` shows usage and examples.
+
+Only the active tab changes. Finish or cancel its work first; running, queued,
+approval-waiting, or closing work cannot be switched. Discovery is cancellable,
+and if new work or configuration changes arrive during selection, the pending
+switch is rejected rather than overwriting them.
+
+qcode associates each provider with its last-used model. Switching restores
+that provider's remembered model when it is still in the target catalog,
+without prompting. If no remembered model exists, the current model is kept
+when the target catalog contains it. Otherwise qcode opens the model picker
+and, when applicable, the target's thinking-level picker. A restored or
+retained model keeps its thinking level only if the target supports it;
+otherwise the level resets to the target default. Provider/model/thinking
+commit together:
+cancelling a picker, failed credentials/discovery, or an empty catalog leaves
+the old selection and saved default unchanged. Selecting the already active
+provider does not rebuild the backend, but main can still save that selection.
+
+History, skills, tools, drafts, modes, and cumulative token totals are kept.
+Context accounting is refreshed for the new backend, clearing the old custom
+capacity override. Because reasoning/tool history can be backend-specific, qcode
+warns that the next request may fail; run `/new` if a fresh conversation is needed.
+
+Configure separate endpoints/keys with [connection profiles](configuration.md#provider-connection-profiles).
+Official OpenAI/OpenCode Go endpoints require API credentials; custom endpoints
+can remain unauthenticated. For ChatGPT, run `qcode login chatgpt` beforehand.
+Missing credentials produce setup guidance rather than changing the live tab.
+On main, provider/model/thinking save to the user config. Worker selections are
+session-local. New tabs inherit their creator's provider, and `/resume` restores
+each saved tab with its own provider and current matching credentials.
+
+`/provider` is terminal-only: browser status reflects switches but browser
+provider commands are rejected. One-shot, piped, JSON-event, and demo runs do not
+support runtime provider switching; continue using startup flags there. There
+are no new provider arguments to `/new`, `/resume`, or `/agent new`, and no
+in-session endpoint/key editor.
+
 ## Ollama (default)
 
 ```sh

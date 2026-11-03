@@ -2,7 +2,7 @@
 
 Interactive mode supports up to 20 concurrent agent tabs, including permanent `main`. Use multiple agents to parallelize independent tasks—for example, one agent writing code while another runs tests, or separate agents exploring different parts of a large codebase.
 
-Use `/agent` or `/agent new` to choose a model for a new tab, or `/agent new <model-id>` to create it directly. The argument is a model ID from the current provider. New tabs receive IDs and initial names such as `agent-1`; use `/agent rename <id> <name>` to set a display name:
+Use `/agent` or `/agent new` to choose a model for a new tab, or `/agent new <model-id>` to create it directly. The argument is a model ID from the current tab's provider. New terminal tabs use that provider and endpoint; switching a tab later does not affect any existing tab. Use `/provider [name]` to switch an idle tab; only main-tab switches save the startup default. Saved sessions retain each tab's provider and resolve its credentials from current configuration. New tabs receive IDs and initial names such as `agent-1`; use `/agent rename <id> <name>` to set a display name:
 
 ```text
 /agent new qwen2.5-coder:7b
@@ -14,7 +14,7 @@ Use `/agent list`, `/agent switch <id>`, `/agent cancel <id>`, and `/agent close
 
 Closing cancels queued prompts, pending steering, and human interactions immediately. A running helper remains `closing` until its run exits, then its live context and tab are removed. Its slot counts toward the agent limit while cancellation is pending. If its tab is selected, the terminal and browser return to main after removal. Recorded work and completed results remain available for searches and exports; closing agents are excluded from saved resumable tabs immediately. Repeated closes are harmless.
 
-The tab bar shows the available switch shortcuts when the row has room: Ctrl+PageUp/PageDown or the Alt+, and Alt+. fallbacks. When all agents do not fit, `main` stays pinned while a moving window keeps the active agent and nearby tabs visible; counters at each edge show how many tabs are hidden in that direction. Each agent keeps independent context, model, output, tool settings, working directory, and sandbox grants while filesystem mutations remain serialized across all agents.
+The tab bar shows the available switch shortcuts when the row has room: Ctrl+PageUp/PageDown or the Alt+, and Alt+. fallbacks. When all agents do not fit, `main` stays pinned while a moving window keeps the active agent and nearby tabs visible; counters at each edge show how many tabs are hidden in that direction. Each agent keeps independent context, provider, model, output, tool settings, working directory, and sandbox grants while filesystem mutations remain serialized across all agents.
 
 ## Working directories
 
@@ -115,7 +115,7 @@ The main agent can create and assign work in one asynchronous call by passing
 an optional `task` to `create_agent`, or can call `create_agent` first and use
 the returned agent ID in a subsequent `delegate_task` call. If `model` is
 omitted, the new agent uses the main agent's current model. Agents created this way inherit the main agent's
-current tool enablement, selected skills, approved directory grants, working directory, and
+current provider/endpoint, tool enablement, selected skills, approved directory grants, working directory, and
 maximum step setting; their conversation and main-only orchestration tools stay
 separate. The interactive `/agent` command remains available when the user wants to
 create or switch agent tabs directly.

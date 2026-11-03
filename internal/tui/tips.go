@@ -20,6 +20,8 @@ var tipTexts = []string{
 	"Alt+Q opens pending work. Use Up/Down to select, Delete to remove, and Esc to return to your draft.",
 	"Type `/` to see matching slash commands, keep typing to filter, and press Tab to complete the first match.",
 	"Run `/help` to list commands, or `/help <command>` (e.g. `/help model`) for arguments and examples.",
+	"Use `/provider` or `/provider openai` to switch an idle tab without restarting; main saves the default.",
+	"Set `[providers.<name>]` connection profiles to keep each backend's endpoint and API key separate.",
 	"Run `/model` to search the provider catalog with Up/Down + Enter, or `/model <id> [thinking]` to set it directly.",
 	"Run `/tool` to toggle tools with Space + Enter, or `/tool <name> on|off`; web tools start enabled outside the sandbox and disabled inside it.",
 	"Run `/skill` to pick reusable instruction bundles; only selected skills reach the model and its `skill` tool.",
@@ -55,7 +57,7 @@ var tipTexts = []string{
 	"Ask main to delegate independent tasks to other agents; all tabs share the workspace, so use clear task boundaries.",
 	"Ask main to consult agents about their findings, or search earlier work, including work from closed tabs.",
 	"Agent work stays searchable within the saved session after `/compact`, `/new`, or closing a tab.",
-	"Agents created by main inherit its model, tools, skills, directory grants, and step limit when created.",
+	"Agents created by main inherit its provider, model, tools, skills, directory grants, and step limit when created.",
 	"Set `--agent-timeout 90s` to change how long main waits for consultations; the deadline includes queue time.",
 
 	// Models, context, and usage.

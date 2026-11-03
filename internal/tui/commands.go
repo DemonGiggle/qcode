@@ -123,6 +123,11 @@ var slashCommands = []slashCommand{
 		examples: []string{"/plan", "/plan show", "/plan act"},
 	},
 	{
+		name: "/provider", usage: "/provider [name]", description: "Switch the active tab's provider (terminal only)",
+		arguments: []helpArgument{{name: "name", description: "Registered provider name; omit to open the picker. Restore the provider's last-used model when available, otherwise keep the model if supported. Main-tab changes save the default; workers stay local."}},
+		examples:  []string{"/provider", "/provider openai", "/provider chatgpt"},
+	},
+	{
 		name: "/resume", usage: "/resume [session-id]", description: "Browse, rename, pin, delete, and continue saved sessions",
 		arguments: []helpArgument{{name: "session-id", description: "Session to restore; omit for the picker with a transcript preview. Tab opens Rename, Pin/Unpin, and Delete; Ctrl+D opens Delete all for this workspace, including entries hidden by the filter. Deletion requires confirmation; deleting the current session starts fresh with the main agent's settings."}},
 		examples:  []string{"/resume", "/resume fead69f5000000000000000000000000"},

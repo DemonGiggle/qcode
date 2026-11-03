@@ -39,6 +39,8 @@ type Agent struct {
 	learningBudget           int
 	learningContext          string
 	learningSessionID        string
+	configurationRevision    atomic.Uint64
+	backendSnapshot          atomic.Pointer[backendSnapshot]
 	provider                 llm.Provider
 	model                    string
 	thinking                 string
@@ -244,9 +246,10 @@ func (a *Agent) LastResponse() string {
 
 // ListModels returns the provider's currently available models.
 func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
-	lister, ok := a.provider.(llm.ModelLister)
+	backend := a.backendSnapshot.Load()
+	lister, ok := backend.provider.(llm.ModelLister)
 	if !ok {
-		return nil, fmt.Errorf("provider %q does not support model discovery", a.provider.Name())
+		return nil, fmt.Errorf("provider %q does not support model discovery", backend.provider.Name())
 	}
 	models, err := lister.Models(ctx)
 	if err != nil {
@@ -264,7 +267,8 @@ func (a *Agent) SetModel(model string) {
 			a.contextUsage = nil
 		}
 		a.model = model
-		if capability := a.ThinkingCapability(); !capability.Adjustable || !thinkingLevelAllowed(capability, a.thinking) {
+		a.configurationRevision.Add(1)
+		if capability := thinkingCapability(a.provider, a.model); !capability.Adjustable || !thinkingLevelAllowed(capability, a.thinking) {
 			a.thinking = ""
 		}
 		a.publishContext()
@@ -275,13 +279,18 @@ func (a *Agent) SetModel(model string) {
 // ThinkingCapability returns the selected model's provider-neutral thinking
 // policy. Providers that do not advertise a policy safely return no control.
 func (a *Agent) ThinkingCapability() llm.ThinkingCapability {
-	return a.ThinkingCapabilityFor(a.model)
+	state := a.backendSnapshot.Load()
+	return thinkingCapability(state.provider, state.model)
 }
 
 // ThinkingCapabilityFor permits a UI to inspect a prospective model before it
 // commits the model selection.
 func (a *Agent) ThinkingCapabilityFor(model string) llm.ThinkingCapability {
-	if provider, ok := a.provider.(llm.ThinkingProvider); ok {
+	return thinkingCapability(a.backendSnapshot.Load().provider, model)
+}
+
+func thinkingCapability(p llm.Provider, model string) llm.ThinkingCapability {
+	if provider, ok := p.(llm.ThinkingProvider); ok {
 		return provider.ThinkingCapability(model)
 	}
 	return llm.ThinkingCapability{RequestFormat: llm.ThinkingRequestNone, ReplayFormat: llm.ThinkingReplayNone}
@@ -291,18 +300,19 @@ func (a *Agent) ThinkingCapabilityFor(model string) llm.ThinkingCapability {
 // use the provider/model default and omit optional request fields.
 func (a *Agent) SetThinking(level string) error {
 	level = strings.ToLower(strings.TrimSpace(level))
-	capability := a.ThinkingCapability()
+	capability := thinkingCapability(a.provider, a.model)
 	if level != "" && (!capability.Adjustable || !thinkingLevelAllowed(capability, level)) {
 		return fmt.Errorf("thinking level %q is not supported by model %q", level, a.model)
 	}
 	a.thinking = level
+	a.configurationRevision.Add(1)
 	a.publishCheckpoint()
 	return nil
 }
 
 // ThinkingLevel returns the explicit level, if any. Empty uses the model
 // default and intentionally results in no optional provider request field.
-func (a *Agent) ThinkingLevel() string { return a.thinking }
+func (a *Agent) ThinkingLevel() string { return a.backendSnapshot.Load().thinking }
 
 func thinkingLevelAllowed(capability llm.ThinkingCapability, level string) bool {
 	for _, allowed := range capability.Levels {

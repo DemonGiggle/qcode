@@ -94,6 +94,7 @@ func (a *Agent) RestoreWarnings() []string {
 // publishCheckpoint runs only on the agent's state-owning goroutine. Readers
 // receive immutable JSON and never access the live conversation.
 func (a *Agent) publishCheckpoint() {
+	a.backendSnapshot.Store(&backendSnapshot{provider: a.provider, model: a.model, thinking: a.thinking})
 	s := SavedState{Provider: a.provider.Name(), Model: a.model, Thinking: a.thinking, Endpoint: a.endpoint, System: a.system,
 		ContextWindow: a.contextWindow, ContextOverride: a.contextOverride, ContextMessages: a.contextMessages,
 		ContextUsage: a.contextUsage, AutoCompact: a.autoCompact, AutoCompactThreshold: a.autoCompactThreshold,
@@ -169,7 +170,11 @@ func (a *Agent) updateCheckpointMaxSteps(maxSteps int) {
 	}
 }
 
-func (a *Agent) SetEndpoint(endpoint string) { a.endpoint = endpoint; a.publishCheckpoint() }
+func (a *Agent) SetEndpoint(endpoint string) {
+	a.endpoint = endpoint
+	a.configurationRevision.Add(1)
+	a.publishCheckpoint()
+}
 
 // RestoreFreshState applies a checkpoint's settings to a detached new agent.
 // Conversation state and provider identity are never imported. Tool selections

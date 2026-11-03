@@ -557,7 +557,7 @@ func (u *UI) SubmitRemote(actor, line string) error {
 	if line == "" {
 		return fmt.Errorf("command must not be empty")
 	}
-	if line == "/exit" || line == "/quit" || strings.HasPrefix(line, "/remote") {
+	if line == "/exit" || line == "/quit" || strings.HasPrefix(line, "/remote") || strings.Fields(line)[0] == "/provider" {
 		return fmt.Errorf("that command is restricted to the local terminal")
 	}
 	u.printSystemMessage(dim + "Remote " + sanitizeDiffLine(actor, "<ESC>") + ": " + sanitizeDiffLine(line, "<ESC>") + reset)

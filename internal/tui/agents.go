@@ -31,7 +31,7 @@ func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 		return
 	}
 	if len(fields) == 3 && fields[1] == "new" {
-		summary, err := u.manager.Create(fields[2])
+		summary, err := u.createAgentWithProvider(fields[2])
 		if err != nil {
 			u.printSystemMessage(yellow + err.Error() + reset)
 			return
@@ -148,7 +148,7 @@ func (u *UI) createAgent(ctx context.Context) {
 		u.printSystemMessage(dim + "Agent creation cancelled." + reset)
 		return
 	}
-	summary, err := u.manager.Create(selected)
+	summary, err := u.createAgentWithProvider(selected)
 	if err != nil {
 		u.printSystemMessage(yellow + err.Error() + reset)
 		return

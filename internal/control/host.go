@@ -165,7 +165,7 @@ func (h *Host) Summary(id string) (session.Summary, error)       { return h.mana
 func (h *Host) Agent(id string) (*agent.Agent, bool)             { return h.manager.Agent(id) }
 func (h *Host) Runner(id string) (any, bool)                     { return h.manager.Runner(id) }
 func (h *Host) LatestPrompt(id string) string                    { return h.manager.LatestPrompt(id) }
-func (h *Host) ClearLatestPrompt(id string)                         { h.manager.ClearLatestPrompt(id) }
+func (h *Host) ClearLatestPrompt(id string)                      { h.manager.ClearLatestPrompt(id) }
 
 func (h *Host) Start(id, task string) error { return h.manager.Start(id, task) }
 func (h *Host) Submit(id, task string) (session.Submission, error) {
@@ -238,3 +238,22 @@ func (h *Host) SteeringEvents(after uint64) []session.SteeringEvent {
 }
 
 func (h *Host) CancelTask(id, observedID string) error { return h.manager.CancelTask(id, observedID) }
+
+// SetProviderFactory enables explicit backend selection for new agents.
+func (h *Host) SetProviderFactory(factory agent.ProviderSessionFactory) {
+	h.manager.SetProviderFactory(factory)
+}
+
+func (h *Host) CreateWithProvider(model string, backend agent.CreationBackend) (session.Summary, error) {
+	return h.manager.CreateWithProvider(model, backend)
+}
+
+func (h *Host) ConfigurationRevision(id string) (uint64, error) {
+	return h.manager.ConfigurationRevision(id)
+}
+
+func (h *Host) SwitchBackend(id string, expectedRevision uint64, next agent.BackendSwitch) error {
+	return h.manager.SwitchBackend(id, expectedRevision, next)
+}
+
+func (h *Host) Backend(id string) (agent.CreationBackend, error) { return h.manager.Backend(id) }

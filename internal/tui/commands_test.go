@@ -58,6 +58,8 @@ func (r *configurableMaxStepsRunner) MaxSteps() int                   { return r
 func (r *configurableMaxStepsRunner) SetMaxSteps(maxSteps int)        { r.maxSteps = maxSteps }
 
 type runtimePreferenceRecorder struct {
+	provider         string
+	providerCalls    int
 	model            string
 	thinking         string
 	maxSteps         int
@@ -80,9 +82,15 @@ type runtimePreferenceRecorder struct {
 	skillsErr        error
 }
 
-func (r *runtimePreferenceRecorder) PersistModel(model, thinking string) error {
+func (r *runtimePreferenceRecorder) PersistProvider(provider, model, thinking string) error {
+	r.providerCalls++
+	r.provider, r.model, r.thinking = provider, model, thinking
+	return r.modelErr
+}
+
+func (r *runtimePreferenceRecorder) PersistModel(provider, model, thinking string) error {
 	r.modelCalls++
-	r.model, r.thinking = model, thinking
+	r.provider, r.model, r.thinking = provider, model, thinking
 	return r.modelErr
 }
 
@@ -184,7 +192,7 @@ func TestMatchingSlashCommands(t *testing.T) {
 		want []string
 	}{
 		{line: "", want: nil},
-		{line: "/", want: []string{"/agent", "/bash", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/history", "/interactive", "/learn", "/maxsteps", "/model", "/new", "/plan", "/resume", "/remote", "/skill", "/skillplan", "/quit", "/statusline", "/theme", "/todo", "/tool", "/verbose"}},
+		{line: "/", want: []string{"/agent", "/bash", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/history", "/interactive", "/learn", "/maxsteps", "/model", "/new", "/plan", "/provider", "/resume", "/remote", "/skill", "/skillplan", "/quit", "/statusline", "/theme", "/todo", "/tool", "/verbose"}},
 		{line: "/d", want: []string{"/diff"}},
 		{line: "/h", want: []string{"/help", "/history"}},
 		{line: "/m", want: []string{"/maxsteps", "/model"}},
@@ -315,16 +323,16 @@ func TestRuntimePreferencesAreMainTabOnly(t *testing.T) {
 		runtimePreferences: recorder,
 	}
 
-	u.persistModelPreference("child-model", "high")
+	u.persistModelPreference("ollama", "child-model", "high")
 	u.persistMaxStepsPreference(64)
 	if recorder.modelCalls != 0 || recorder.stepsCalls != 0 {
 		t.Fatalf("child tab persisted runtime preferences: %+v", recorder)
 	}
 
 	u.activeAgent = "main"
-	u.persistModelPreference("main-model", "low")
+	u.persistModelPreference("ollama", "main-model", "low")
 	u.persistMaxStepsPreference(32)
-	if recorder.modelCalls != 1 || recorder.stepsCalls != 1 || recorder.model != "main-model" || recorder.thinking != "low" || recorder.maxSteps != 32 {
+	if recorder.modelCalls != 1 || recorder.stepsCalls != 1 || recorder.provider != "ollama" || recorder.model != "main-model" || recorder.thinking != "low" || recorder.maxSteps != 32 {
 		t.Fatalf("main tab persistence = %+v", recorder)
 	}
 }
