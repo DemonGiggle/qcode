@@ -519,6 +519,7 @@ func renderStatusBarWithPriority(provider, model, root string, width int, unicod
 }
 
 func statusBarWithStatuslineHidden(provider, model, root string, width int, unicodeEnabled, color, remote bool, hidden []string, modelColor, workspaceColor string, contextLabel ...string) string {
+	provider = providerDisplayName(provider)
 	provider = sanitizeDiffLine(provider, "<ESC>")
 	model = sanitizeDiffLine(model, "<ESC>")
 	root = sanitizeDiffLine(root, "<ESC>")
