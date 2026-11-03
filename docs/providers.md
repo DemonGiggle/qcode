@@ -186,9 +186,11 @@ margin, and retry once on 401. Requests send the SIWC contract
 no_matching_rule` means the request went to the private
 `chatgpt.com/backend-api` route: remove any chatgpt `base_url` override so the
 default `https://api.openai.com/v1` is used, then run `qcode login chatgpt`
-again. Thinking
-levels are not yet selectable for this provider; the request preserves the
-provider default.
+again. Thinking levels (`minimal`, `low`, `medium`, `high`, `xhigh`) are sent
+as the Responses `reasoning` effort when selected; empty preserves the
+provider default (`medium`). Context windows come from the bundled catalog
+with Codex-suffix fallback, so `CTX` shows remaining capacity instead of
+`unknown`.
 
 ## Vision
 

@@ -43,6 +43,81 @@ type chatGPTProvider struct {
 	registerSecrets func(...string)
 }
 
+var (
+	_ ThinkingProvider      = (*chatGPTProvider)(nil)
+	_ ContextWindowProvider = (*chatGPTProvider)(nil)
+)
+
+// chatGPTThinkingLevels are the Codex reasoning-effort tiers selectable through
+// the SIWC Responses endpoint. They match the Codex CLI model_reasoning_effort
+// knob (minimal/low/medium/high/xhigh) and the documented GPT-5.2-Codex effort
+// support (low/medium/high/xhigh). Levels are sent as the Responses reasoning
+// object, the same wire format OpenCode Go Responses models use.
+var chatGPTThinkingLevels = []string{"minimal", "low", "medium", "high", "xhigh"}
+
+// ThinkingCapability reports the Codex reasoning tiers for any ChatGPT model.
+// The SIWC catalog only serves Codex reasoning models, so every non-empty
+// model ID gets the same adjustable selector instead of falling back to
+// "no thinking info". Future slugs keep working without a catalog update.
+func (p *chatGPTProvider) ThinkingCapability(model string) ThinkingCapability {
+	if strings.TrimSpace(model) == "" {
+		return ThinkingCapability{RequestFormat: ThinkingRequestNone, ReplayFormat: ThinkingReplayNone}
+	}
+	return ThinkingCapability{
+		Supported:     true,
+		Adjustable:    true,
+		Levels:        append([]string(nil), chatGPTThinkingLevels...),
+		Default:       "medium",
+		RequestFormat: ThinkingRequestResponsesReasoning,
+		ReplayFormat:  ThinkingReplayReasoningDetails,
+	}
+}
+
+// ContextWindow reports the active ChatGPT model's context capacity, or zero
+// when unknown. Exact chatgpt entries win; otherwise the openai catalog is
+// consulted for the same ID and for the base model behind Codex suffixes
+// (gpt-5.6-codex -> gpt-5.6), so new Codex slugs inherit the matching API
+// window instead of showing CTX unknown. Unlisted Codex slugs fall back to a
+// conservative 400k estimate (the Codex product total); unlisted spark
+// snapshots fall back to 128k.
+func (p *chatGPTProvider) ContextWindow(_ context.Context, model string) (int, error) {
+	var catalog map[string]map[string]int
+	if err := json.Unmarshal(contextCatalog, &catalog); err != nil {
+		return 0, err
+	}
+	if limit := catalog["chatgpt"][model]; limit != 0 {
+		return limit, nil
+	}
+	if limit := catalog["openai"][model]; limit != 0 {
+		return limit, nil
+	}
+	// Spark snapshots are lightweight chat variants (128k), regardless of base.
+	if strings.Contains(strings.ToLower(model), "spark") {
+		return 128000, nil
+	}
+	base := model
+	for _, suffix := range []string{"-codex-spark", "-codex", "-spark"} {
+		if strings.HasSuffix(base, suffix) {
+			base = strings.TrimSuffix(base, suffix)
+			break
+		}
+	}
+	if base != model {
+		if limit := catalog["chatgpt"][base]; limit != 0 {
+			return limit, nil
+		}
+		if limit := catalog["openai"][base]; limit != 0 {
+			return limit, nil
+		}
+	}
+	// Future Codex slugs without a catalog entry still report a usable
+	// estimate instead of CTX unknown; the override flags remain available.
+	if strings.Contains(strings.ToLower(model), "codex") {
+		return 400000, nil
+	}
+	return 0, nil
+}
+
 func init() {
 	Register("chatgpt", newChatGPT)
 }
@@ -193,9 +268,8 @@ func splitChatGPTMessages(messages []Message) (string, []Message) {
 }
 
 // Complete sends a SIWC Responses request with the OAuth access token,
-// refreshing once on 401 before giving up. Thinking levels are intentionally
-// unsupported in this first integration: the request omits optional thinking
-// fields and preserves the provider default.
+// refreshing once on 401 before giving up. An explicit thinking level is sent
+// as the Responses reasoning object; empty preserves the provider default.
 func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
 	creds, err := chatgptoauth.GetValidTokensWithSecrets(ctx, p.client, p.tokensPath, p.registerSecrets)
 	if err != nil {
@@ -226,6 +300,9 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 		"input":  responsesInput(rest),
 		"stream": true,
 		"store":  false,
+	}
+	for field, value := range thinkingFields(p.ThinkingCapability(input.Model), input.Thinking) {
+		body[field] = value
 	}
 	if strings.TrimSpace(instructions) != "" {
 		body["instructions"] = instructions
