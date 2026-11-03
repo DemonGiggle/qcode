@@ -8,8 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pelletier/go-toml/v2"
 	"qcode/internal/redaction"
@@ -193,7 +195,18 @@ type ChatGPT struct {
 	OAuthPath string `toml:"oauth_path"`
 }
 
+// ProviderProfile overrides connection fields independently. A nil field inherits;
+// a pointer to an empty string explicitly clears a lower-priority value.
+type ProviderProfile struct {
+	BaseURL *string `toml:"base_url"`
+	APIKey  *string `toml:"api_key"`
+}
+
 type Config struct {
+	Providers              map[string]ProviderProfile `toml:"providers"`
+	connectionsLoaded      bool
+	legacyConnectionOwners map[string]string
+
 	Redaction            redaction.Config `toml:"redaction"`
 	Learning             Learning         `toml:"learning"`
 	Skills               Skills           `toml:"skills"`
@@ -203,6 +216,8 @@ type Config struct {
 	APIKey               string           `toml:"api_key"`
 	Model                string           `toml:"model"`
 	Thinking             string           `toml:"thinking"`
+	ProviderModels       map[string]string `toml:"provider_models"`
+	ProviderThinking     map[string]string `toml:"provider_thinking"`
 	ChatGPT              ChatGPT          `toml:"chatgpt"`
 	Interactive          *bool            `toml:"interactive"`
 	ContextWindow        *int             `toml:"context_window"`
@@ -295,10 +310,8 @@ func load(paths []string) (Config, []string, []error) {
 			continue
 		}
 
-		var cfg Config
-		decoder := toml.NewDecoder(strings.NewReader(string(data)))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&cfg); err != nil {
+		cfg, err := decodeConfig(data, true)
+		if err != nil {
 			diagnostics = append(diagnostics, fmt.Errorf("parse config %s: %w", path, err))
 			continue
 		}
@@ -306,12 +319,52 @@ func load(paths []string) (Config, []string, []error) {
 			diagnostics = append(diagnostics, err)
 			continue
 		}
+		// Bind legacy fields at their original layer, before later defaults change.
+		var raw struct {
+			BaseURL *string `toml:"base_url"`
+			APIKey  *string `toml:"api_key"`
+		}
+		_ = toml.Unmarshal(data, &raw)
+		owner := cfg.Provider
+		if owner == "" {
+			owner = merged.Provider
+		}
+		if owner == "" {
+			owner = "ollama"
+		}
+		var legacy Config
+		if raw.BaseURL != nil || raw.APIKey != nil {
+			legacy.Providers = map[string]ProviderProfile{owner: {BaseURL: raw.BaseURL, APIKey: raw.APIKey}}
+		}
+		if err := validate(path, legacy); err != nil {
+			diagnostics = append(diagnostics, err)
+			continue
+		}
+		merge(&merged, legacy)
 		merge(&merged, cfg)
+		if raw.BaseURL != nil || raw.APIKey != nil {
+			if merged.legacyConnectionOwners == nil {
+				merged.legacyConnectionOwners = make(map[string]string)
+			}
+			merged.legacyConnectionOwners[filepath.Clean(path)] = owner
+		}
+		merged.connectionsLoaded = true
 	}
 	return merged, inspected, diagnostics
 }
 
 func validate(path string, cfg Config) error {
+	for name, profile := range cfg.Providers {
+		if !validProvider(name) {
+			return fmt.Errorf("parse config %s: unknown provider profile %q", path, name)
+		}
+		if name == "chatgpt" && profile.APIKey != nil && *profile.APIKey != "" {
+			return fmt.Errorf("parse config %s: providers.chatgpt.api_key is unsupported (use OAuth)", path)
+		}
+	}
+	if cfg.Provider == "chatgpt" && cfg.APIKey != "" {
+		return fmt.Errorf("parse config %s: chatgpt api_key is unsupported (use OAuth)", path)
+	}
 	if err := redaction.Validate(cfg.Redaction); err != nil {
 		return fmt.Errorf("parse config %s: %w", path, err)
 	}
@@ -346,6 +399,9 @@ func validate(path string, cfg Config) error {
 			ids = append(ids, palette.ID)
 		}
 		return fmt.Errorf("parse config %s: theme must be one of %s", path, strings.Join(ids, ", "))
+	}
+	if err := validateProviderModels(path, cfg.ProviderModels, cfg.ProviderThinking); err != nil {
+		return err
 	}
 	if err := validateSkillSelection(path, cfg.Skills); err != nil {
 		return err
@@ -399,6 +455,37 @@ func validateSkillSelection(path string, skills Skills) error {
 // selected. Repeatable
 // --sandbox-command-path flags override the merged configuration entirely.
 func merge(dst *Config, incoming Config) {
+	for name, profile := range incoming.Providers {
+		if dst.Providers == nil {
+			dst.Providers = make(map[string]ProviderProfile)
+		}
+		current := dst.Providers[name]
+		if profile.BaseURL != nil {
+			value := *profile.BaseURL
+			current.BaseURL = &value
+		}
+		if profile.APIKey != nil {
+			value := *profile.APIKey
+			current.APIKey = &value
+		}
+		dst.Providers[name] = current
+	}
+	for name, model := range incoming.ProviderModels {
+		if dst.ProviderModels == nil {
+			dst.ProviderModels = make(map[string]string)
+		}
+		dst.ProviderModels[name] = model
+	}
+	for name, thinking := range incoming.ProviderThinking {
+		if dst.ProviderThinking == nil {
+			dst.ProviderThinking = make(map[string]string)
+		}
+		if strings.TrimSpace(thinking) == "" {
+			delete(dst.ProviderThinking, name)
+			continue
+		}
+		dst.ProviderThinking[name] = thinking
+	}
 	mergeRedaction(&dst.Redaction, incoming.Redaction)
 	if incoming.Learning.ContextBudget != nil {
 		dst.Learning.ContextBudget = incoming.Learning.ContextBudget
@@ -576,4 +663,90 @@ func mergeRedaction(dst *redaction.Config, src redaction.Config) {
 			*pair.dst = append([]string{}, pair.src...)
 		}
 	}
+}
+
+func validProvider(name string) bool {
+	switch name {
+	case "ollama", "openai", "opencode-go", "chatgpt":
+		return true
+	}
+	return false
+}
+
+// ProviderConnection resolves a provider's merged connection. Directly constructed
+// legacy Config values still use flat fields for their selected provider (or
+// the caller's provider when Provider is omitted). Loaded configs never reassign
+// legacy credentials.
+func (c Config) ProviderConnection(name string) (baseURL, apiKey string) {
+	if !c.connectionsLoaded && (c.Provider == "" || name == c.Provider) {
+		baseURL, apiKey = c.BaseURL, c.APIKey
+	}
+	p := c.Providers[name]
+	if p.BaseURL != nil {
+		baseURL = *p.BaseURL
+	}
+	if p.APIKey != nil {
+		apiKey = *p.APIKey
+	}
+	return
+}
+
+// Secrets returns all configured nonempty API keys, including inactive profiles
+// and legacy fields, for startup redaction. Values are deduplicated and sorted.
+func (c Config) Secrets() []string {
+	seen := map[string]bool{}
+	if c.APIKey != "" {
+		seen[c.APIKey] = true
+	}
+	for _, p := range c.Providers {
+		if p.APIKey != nil && *p.APIKey != "" {
+			seen[*p.APIKey] = true
+		}
+	}
+	values := make([]string, 0, len(seen))
+	for value := range seen {
+		values = append(values, value)
+	}
+	sort.Strings(values)
+	return values
+}
+
+func validateProviderModels(path string, models, thinking map[string]string) error {
+	for name, model := range models {
+		if !validProvider(name) {
+			return fmt.Errorf("parse config %s: unknown provider_models entry %q", path, name)
+		}
+		if strings.TrimSpace(model) == "" {
+			return fmt.Errorf("parse config %s: provider_models.%s must not be empty", path, name)
+		}
+		if !utf8.ValidString(model) {
+			return fmt.Errorf("parse config %s: provider_models.%s contains invalid UTF-8", path, name)
+		}
+	}
+	for name, level := range thinking {
+		if !validProvider(name) {
+			return fmt.Errorf("parse config %s: unknown provider_thinking entry %q", path, name)
+		}
+		if !utf8.ValidString(level) {
+			return fmt.Errorf("parse config %s: provider_thinking.%s contains invalid UTF-8", path, name)
+		}
+	}
+	return nil
+}
+
+// RememberedProviderModel returns the last model (and thinking level) recorded
+// for a provider. The second result reports whether a model was remembered.
+// An empty thinking level means the provider/model default.
+func (c Config) RememberedProviderModel(provider string) (model, thinking string, ok bool) {
+	if c.ProviderModels == nil {
+		return "", "", false
+	}
+	model, ok = c.ProviderModels[provider]
+	if !ok || strings.TrimSpace(model) == "" {
+		return "", "", false
+	}
+	if c.ProviderThinking != nil {
+		thinking = c.ProviderThinking[provider]
+	}
+	return model, thinking, true
 }

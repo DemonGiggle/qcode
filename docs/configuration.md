@@ -4,8 +4,6 @@ qcode loads every existing `config.toml` file in the locations below. Lower-prio
 
 ```toml
 provider = "openai"
-base_url = "http://localhost:8000/v1"
-api_key = "your-api-key"
 model = "my-model"
 thinking = "high"
 max_steps = 32
@@ -16,6 +14,13 @@ sandbox_command_paths = ["~/.local/bin", "~/go/bin"]
 auto_compact_threshold = 80
 disable_auto_compact = false
 interactive = false
+
+[providers.openai]
+base_url = "http://localhost:8000/v1"
+api_key = "your-api-key"
+
+[providers.ollama]
+base_url = "http://127.0.0.1:11434"
 
 [skills]
 paths = ["/opt/qcode/team-skills", ".team/skills"]
@@ -43,7 +48,8 @@ Repeatable `--sandbox-command-path` overrides the configured list. Omitting
 the key preserves the existing sandbox behaviour without migration.
 
 In the normal interactive UI, `/model` (including its explicit thinking
-level), `/maxsteps`, `/statusline`, and `/skill` update the user-level file
+level), `/provider` (provider, model, and thinking together), `/maxsteps`,
+`/statusline`, and `/skill` update the user-level file
 synchronously when issued from the `main` tab. On Linux this is `~/.local/etc/qcode/config.toml`; other
 platforms use the user configuration path shown below. Existing comments and
 unrelated settings, including nested tables such as `[redaction]` and `[skills]`,
@@ -159,6 +165,50 @@ Completed replies are kept; failed or expired consultations are reported and
 skipped. This setting applies to `consult_agents`, not ordinary user prompts or
 background tasks submitted through `delegate_task`.
 
+## Provider connection profiles
+
+Each provider can have its own optional `[providers.<name>]` table containing
+`base_url` and `api_key`. Supported names match the built-in registry: `ollama`,
+`openai`, `opencode-go`, and `chatgpt`. Connection profiles do not add providers
+or change the active provider by themselves; the root `provider` selects the
+startup default, and `/provider` changes the active terminal tab.
+
+Profiles merge **field by field** through the usual config layers. An omitted
+field inherits; an explicit empty string clears a lower-priority profile value
+and lets the provider use its built-in endpoint or no configured key. Higher
+priority flags/environment still win. ChatGPT uses `[chatgpt].oauth_path`, not
+an API key; a nonempty `providers.chatgpt.api_key` is invalid. Edit profiles in
+config and restart to load changes; `/provider` does not prompt for or edit keys.
+
+Legacy root `base_url` and `api_key` remain accepted. Each legacy connection is
+bound to the provider declared in that config layer, otherwise to the provider
+inherited from lower layers, otherwise to `ollama`. A later layer changing the
+default does not reassign those credentials. Explicit profile fields win over
+legacy values in the same layer. On a successful main-tab `/provider` save,
+legacy assignments in the **user file only** move into that original provider's
+profile before the default changes. Existing profile fields and comments are
+preserved. System/executable layers are not rewritten, and resolved environment
+or flag credentials are never copied into config.
+
+Launch `--base-url`, `--api-key`, `QCODE_BASE_URL`, and `QCODE_API_KEY` overrides
+stay associated with the provider selected at launch, including when switching
+back to it. Switching to another provider uses its own profile/defaults instead
+of forwarding the old connection. `OPENAI_API_KEY` is also available when
+switching to OpenAI. At startup the existing `--api-key` > `QCODE_API_KEY` >
+`OPENAI_API_KEY` > config precedence remains in effect.
+
+Main-tab `/provider` writes root `provider`, `model`, and explicit `thinking`
+together atomically, and remembers the model/thinking under that provider in
+`[provider_models]` and `[provider_thinking]` so switching back restores it;
+an empty thinking selection removes the user thinking override, as `/model`
+does. Main-tab `/model` likewise refreshes the current provider's remembered
+entry. Other tabs stay session-local. If saving fails, the
+live switch remains active and a warning says the default was not saved.
+`--provider`, `QCODE_PROVIDER`, and executable-adjacent config can still override
+the saved default at the next startup. New terminal tabs use the creating tab's
+provider; existing tabs are never switched implicitly. Saved sessions restore
+individual providers but get credentials from current config, not checkpoints.
+
 ## Lookup order
 
 The lookup order is platform-specific. Priority 1 is highest: it overrides
@@ -182,11 +232,11 @@ startup warning, skips that file, and continues loading the remaining layers.
 
 ## Precedence
 
-Explicit command-line flags take precedence over environment variables, which take precedence over the merged configuration, which takes precedence over built-in defaults. Within the configuration, non-empty scalar settings and supplied numeric, duration, and boolean settings override lower-priority values. Empty string settings remain unset and inherit a lower-priority value.
+Explicit command-line flags take precedence over environment variables, which take precedence over the merged configuration, which takes precedence over built-in defaults. Within the configuration, non-empty scalar settings and supplied numeric, duration, and boolean settings override lower-priority values. Empty root string settings remain unset and inherit a lower-priority value; profile connection fields are the exception, with explicit empty overrides as described above.
 
-When a flag or environment variable selects a provider different from the configured provider, the configured `model`, `thinking`, `base_url`, `api_key`, and `context_window` are not inherited; set any of them explicitly if they should apply to the selected provider. A configured `context_window` also applies only when the configured model is unset or matches the selected model.
+When a flag or environment variable selects a provider different from the configured provider, the configured `model`, `thinking`, and `context_window` are not inherited; set them explicitly if they should apply to the selected provider. The provider's remembered entry in `[provider_models]` / `[provider_thinking]` still applies when no explicit `--model` / `--thinking` override is given. The selected provider's own connection profile is used; legacy credentials owned by another provider are not inherited. A configured `context_window` also applies only when the configured model is unset or matches the selected model.
 
-API keys can be set with `api_key` in this file, though `QCODE_API_KEY` or `OPENAI_API_KEY` is preferable on shared systems. `--api-key` takes precedence over both environment variables and the configuration file. Keep configuration files containing a key private (for example, mode `0600` on Unix-like systems). The `chatgpt` provider uses `qcode login chatgpt` OAuth instead of an API key; set its file with `[chatgpt] oauth_path` (default `~/.config/qcode/chatgpt-oauth.json`).
+API keys can be set with `[providers.<name>].api_key` (or legacy root `api_key`) in this file, though `QCODE_API_KEY` or `OPENAI_API_KEY` is preferable on shared systems. `--api-key` takes precedence over both environment variables and the configuration file. Keep configuration files containing a key private (for example, mode `0600` on Unix-like systems). The `chatgpt` provider uses `qcode login chatgpt` OAuth instead of an API key; set its file with `[chatgpt] oauth_path` (default `~/.config/qcode/chatgpt-oauth.json`).
 
 `thinking` (or `--thinking` / `QCODE_THINKING`) is an optional level such as
 `off`, `low`, `high`, or `max`. It is validated against the selected provider

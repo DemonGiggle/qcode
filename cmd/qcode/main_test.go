@@ -229,6 +229,34 @@ func TestApplyConfigDoesNotMixSettingsFromAnotherProvider(t *testing.T) {
 	}
 }
 
+func TestApplyConfigUsesRememberedProviderModel(t *testing.T) {
+	t.Setenv("QCODE_PROVIDER", "")
+	t.Setenv("QCODE_MODEL", "")
+	t.Setenv("QCODE_THINKING", "")
+	t.Setenv("QCODE_BASE_URL", "")
+	t.Setenv("QCODE_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	opts := options{provider: "opencode-go", model: "default-model"}
+	applyConfig(&opts, config.Config{
+		Provider:         "chatgpt",
+		Model:            "gpt-6-luna",
+		Thinking:         "high",
+		ProviderModels:   map[string]string{"opencode-go": "muse-spark-1.3-contributor", "chatgpt": "gpt-6-luna"},
+		ProviderThinking: map[string]string{"opencode-go": "high"},
+	}, map[string]bool{"provider": true})
+	if opts.model != "muse-spark-1.3-contributor" || opts.thinking != "high" {
+		t.Fatalf("remembered not applied: %+v", opts)
+	}
+	// Explicit model flag wins over remembered.
+	opts = options{provider: "opencode-go", model: "flag-model"}
+	applyConfig(&opts, config.Config{
+		ProviderModels: map[string]string{"opencode-go": "muse-spark-1.3-contributor"},
+	}, map[string]bool{"provider": true, "model": true})
+	if opts.model != "flag-model" {
+		t.Fatalf("flag model lost: %+v", opts)
+	}
+}
+
 func TestApplyConfigSandboxPrecedence(t *testing.T) {
 	enabled := true
 	opts := options{}

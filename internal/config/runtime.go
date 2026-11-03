@@ -22,8 +22,9 @@ import (
 // It deliberately writes only the user configuration layer; normal config
 // precedence still decides whether those values are effective next startup.
 type RuntimePreferenceWriter struct {
-	mu   sync.Mutex
-	path string
+	mu             sync.Mutex
+	path           string
+	legacyProvider string
 }
 
 // RuntimePreferences is kept as a descriptive alias for callers that refer
@@ -81,14 +82,19 @@ func userConfigPath(goos, home, userConfigDir string) string {
 }
 
 // PersistModel records a model selection and its optional explicit thinking
-// level. An empty thinking value removes the user-level thinking override so
-// lower-priority configuration can be inherited.
-func (w *RuntimePreferenceWriter) PersistModel(model, thinking string) error {
+// level. The model is associated with the given provider: the root model and
+// thinking are updated and the provider's last-used entry in provider_models
+// and provider_thinking is refreshed. An empty thinking value removes the
+// user-level thinking override so lower-priority configuration can be
+// inherited.
+func (w *RuntimePreferenceWriter) PersistModel(provider, model, thinking string) error {
 	if w == nil {
 		return errors.New("runtime preference writer is nil")
 	}
-	model = strings.TrimSpace(model)
-	thinking = strings.TrimSpace(thinking)
+	provider, model, thinking = strings.TrimSpace(provider), strings.TrimSpace(model), strings.TrimSpace(thinking)
+	if !validProvider(provider) {
+		return fmt.Errorf("unknown provider %q", provider)
+	}
 	if model == "" {
 		return errors.New("model must not be empty")
 	}
@@ -98,10 +104,10 @@ func (w *RuntimePreferenceWriter) PersistModel(model, thinking string) error {
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.persist(map[string]*string{
+	return w.persistWithProviderMemory(map[string]*string{
 		"model":    stringPointer(tomlString(model)),
 		"thinking": optionalTOMLString(thinking),
-	})
+	}, provider, stringPointer(tomlString(model)), optionalTOMLString(thinking))
 }
 
 // PersistMaxSteps records the positive model-turn limit in the user config.
@@ -301,7 +307,15 @@ func (w *RuntimePreferenceWriter) persist(changes map[string]*string) error {
 	if err != nil {
 		return err
 	}
+	original := append([]byte(nil), data...)
+	if _, switching := changes["provider"]; switching {
+		data, err = migrateLegacyConnection(data, w.legacyProvider)
+		if err != nil {
+			return fmt.Errorf("update config %s: %w", path, err)
+		}
+	}
 	updated, changed, err := patchRuntimeConfig(data, changes)
+	changed = changed || !bytes.Equal(original, data)
 	if err != nil {
 		return fmt.Errorf("update config %s: %w", path, err)
 	}
@@ -315,6 +329,232 @@ func (w *RuntimePreferenceWriter) persist(changes map[string]*string) error {
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
 	return nil
+}
+
+// persistWithProviderMemory writes root preference changes and refreshes the
+// provider's last-used model/thinking in provider_models and provider_thinking.
+// modelLiteral and thinkingLiteral are TOML values (nil removes the thinking
+// entry). The caller must hold w.mu.
+func (w *RuntimePreferenceWriter) persistWithProviderMemory(changes map[string]*string, provider string, modelLiteral, thinkingLiteral *string) error {
+	if strings.TrimSpace(w.path) == "" {
+		return errors.New("runtime preference path is empty")
+	}
+	path := filepath.Clean(w.path)
+	parent := filepath.Dir(path)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return fmt.Errorf("create user config directory %s: %w", parent, err)
+	}
+	data, mode, exists, err := readRuntimeConfig(path)
+	if err != nil {
+		return err
+	}
+	original := append([]byte(nil), data...)
+	if _, switching := changes["provider"]; switching {
+		data, err = migrateLegacyConnection(data, w.legacyProvider)
+		if err != nil {
+			return fmt.Errorf("update config %s: %w", path, err)
+		}
+	}
+	updated, changed, err := patchRuntimeConfig(data, changes)
+	if err != nil {
+		return fmt.Errorf("update config %s: %w", path, err)
+	}
+	data = updated
+	if modelLiteral != nil {
+		updated, modelChanged, err := patchProviderMemoryTable(data, "provider_models", provider, modelLiteral)
+		if err != nil {
+			return fmt.Errorf("update config %s: %w", path, err)
+		}
+		data = updated
+		changed = changed || modelChanged
+	}
+	updated, thinkingChanged, err := patchProviderMemoryTable(data, "provider_thinking", provider, thinkingLiteral)
+	if err != nil {
+		return fmt.Errorf("update config %s: %w", path, err)
+	}
+	data = updated
+	changed = changed || thinkingChanged
+	changed = changed || !bytes.Equal(original, data)
+	if !changed {
+		return nil
+	}
+	if !exists {
+		mode = 0o600
+	}
+	if err := writeRuntimeConfigAtomically(path, data, mode); err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	return nil
+}
+
+// patchProviderMemoryTable upserts or removes a single provider entry in a
+// [provider_models] or [provider_thinking] table while preserving comments.
+// A nil literal removes the entry; otherwise the TOML value replaces it.
+func patchProviderMemoryTable(data []byte, table, key string, literal *string) ([]byte, bool, error) {
+	if len(data) == 0 {
+		if literal == nil {
+			return data, false, nil
+		}
+		newline := "\n"
+		var output bytes.Buffer
+		output.WriteString("[" + table + "]")
+		output.WriteString(newline)
+		output.WriteString(providerMemoryKey(key))
+		output.WriteString(" = ")
+		output.WriteString(*literal)
+		output.WriteString(newline)
+		return output.Bytes(), true, nil
+	}
+	var document map[string]any
+	if err := toml.Unmarshal(data, &document); err != nil {
+		return nil, false, err
+	}
+	entries, hasTable, tableEnd, err := providerMemoryEntries(data, table)
+	if err != nil {
+		return nil, false, err
+	}
+	if entry, found := entries[key]; found {
+		if literal == nil {
+			removeStart, removeEnd := lineStart(data, entry.keyValueStart), lineEnd(data, entry.keyValueEnd)
+			return applyRuntimeConfigEdits(data, []runtimeConfigEdit{{start: removeStart, end: removeEnd}}), true, nil
+		}
+		if bytes.Equal(data[entry.valueStart:entry.valueEnd], []byte(*literal)) {
+			return append([]byte(nil), data...), false, nil
+		}
+		return applyRuntimeConfigEdits(data, []runtimeConfigEdit{{start: entry.valueStart, end: entry.valueEnd, replacement: []byte(*literal)}}), true, nil
+	}
+	if literal == nil {
+		return append([]byte(nil), data...), false, nil
+	}
+	if !hasTable {
+		newline := detectedNewline(data)
+		var inserted bytes.Buffer
+		if len(bytes.TrimSpace(data)) > 0 {
+			if !endsInNewline(data) {
+				inserted.WriteString(newline)
+			}
+			inserted.WriteString(newline)
+		}
+		inserted.WriteString("[" + table + "]")
+		inserted.WriteString(newline)
+		inserted.WriteString(providerMemoryKey(key))
+		inserted.WriteString(" = ")
+		inserted.WriteString(*literal)
+		inserted.WriteString(newline)
+		return append(data, inserted.Bytes()...), true, nil
+	}
+	insertAt := tableEnd
+	if insertAt < 0 {
+		insertAt = len(data)
+	}
+	newline := detectedNewline(data)
+	var inserted bytes.Buffer
+	inserted.WriteString(providerMemoryKey(key))
+	inserted.WriteString(" = ")
+	inserted.WriteString(*literal)
+	inserted.WriteString(newline)
+	if insertAt > 0 && data[insertAt-1] != '\n' && data[insertAt-1] != '\r' {
+		prefix := []byte(newline)
+		prefix = append(prefix, inserted.Bytes()...)
+		inserted.Reset()
+		inserted.Write(prefix)
+	}
+	return applyRuntimeConfigEdits(data, []runtimeConfigEdit{{start: insertAt, end: insertAt, replacement: inserted.Bytes()}}), true, nil
+}
+
+func providerMemoryKey(key string) string {
+	// Provider IDs use only bare-key characters; keep the file readable.
+	// Quote anything unexpected so the table stays valid TOML.
+	for _, r := range key {
+		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return tomlString(key)
+		}
+	}
+	if key == "" {
+		return tomlString(key)
+	}
+	return key
+}
+
+func providerMemoryEntries(data []byte, table string) (map[string]runtimeConfigEntry, bool, int, error) {
+	parser := unstable.Parser{}
+	parser.Reset(data)
+	entries := make(map[string]runtimeConfigEntry)
+	hasTable := false
+	inTable := false
+	inRoot := true
+	tableEnd := -1
+	for parser.NextExpression() {
+		expression := parser.Expression()
+		switch expression.Kind {
+		case unstable.Table, unstable.ArrayTable:
+			path := expressionKeyPath(expression)
+			if expression.Kind == unstable.Table && len(path) == 1 && stripKeyQuotes(path[0]) == table {
+				hasTable = true
+				inTable = true
+				inRoot = false
+				continue
+			}
+			if hasTable && tableEnd < 0 && (inTable || inRoot) {
+				if offset := expressionTableOffset(data, expression); offset >= 0 {
+					tableEnd = lineStart(data, offset)
+				}
+			}
+			inTable = false
+			inRoot = false
+		case unstable.KeyValue:
+			path := expressionKeyPath(expression)
+			var name string
+			var isMemoryKey bool
+			if inTable && len(path) == 1 {
+				name = stripKeyQuotes(path[0])
+				isMemoryKey = true
+			} else if inRoot && len(path) == 2 && stripKeyQuotes(path[0]) == table {
+				name = stripKeyQuotes(path[1])
+				isMemoryKey = true
+			}
+			if !isMemoryKey {
+				continue
+			}
+			if _, exists := entries[name]; exists {
+				continue
+			}
+			exprStart := int(expression.Raw.Offset)
+			exprEnd := exprStart + int(expression.Raw.Length)
+			if exprStart < 0 || exprEnd > len(data) || exprStart >= exprEnd {
+				continue
+			}
+			eq := bytes.IndexByte(data[exprStart:exprEnd], '=')
+			if eq < 0 {
+				continue
+			}
+			valueStart := exprStart + eq + 1
+			for valueStart < exprEnd && (data[valueStart] == ' ' || data[valueStart] == '\t') {
+				valueStart++
+			}
+			entries[name] = runtimeConfigEntry{
+				keyValueStart: exprStart,
+				keyValueEnd:   exprEnd,
+				valueStart:    valueStart,
+				valueEnd:      exprEnd,
+			}
+		}
+	}
+	if err := parser.Error(); err != nil {
+		return nil, false, -1, err
+	}
+	return entries, hasTable, tableEnd, nil
+}
+
+func stripKeyQuotes(key string) string {
+	if len(key) >= 2 {
+		if (key[0] == '"' && key[len(key)-1] == '"') || (key[0] == '\'' && key[len(key)-1] == '\'') {
+			// Best effort: quoted TOML keys decode to their inner value; the
+			// parser preserves the quotes in Data for some forms.
+			return key[1 : len(key)-1]
+		}
+	}
+	return key
 }
 
 func (w *RuntimePreferenceWriter) persistSkills(selected, always []string) error {
@@ -473,7 +713,7 @@ func runtimeConfigEntries(data []byte) (map[string]runtimeConfigEntry, int, erro
 				continue
 			}
 			name := string(key.Data)
-			if name != "model" && name != "thinking" && name != "max_steps" && name != "interactive" && name != "statusline_hidden" && name != "theme" {
+			if name != "provider" && name != "base_url" && name != "api_key" && name != "model" && name != "thinking" && name != "max_steps" && name != "interactive" && name != "statusline_hidden" && name != "theme" {
 				continue
 			}
 			// Array nodes do not carry a Raw range. Derive the value span
@@ -501,7 +741,7 @@ func runtimeConfigEntries(data []byte) (map[string]runtimeConfigEntry, int, erro
 
 func renderRuntimeKeys(changes map[string]*string, newline string) []byte {
 	var output bytes.Buffer
-	for _, key := range []string{"model", "thinking", "max_steps", "interactive", "statusline_hidden", "theme"} {
+	for _, key := range []string{"provider", "model", "thinking", "max_steps", "interactive", "statusline_hidden", "theme"} {
 		value, ok := changes[key]
 		if !ok || value == nil {
 			continue
@@ -682,9 +922,7 @@ func expressionKeyPath(expression *unstable.Node) []string {
 		if node == nil {
 			continue
 		}
-		for n := node; n != nil; n = n.Next() {
-			path = append(path, string(n.Data))
-		}
+		path = append(path, string(node.Data))
 	}
 	return path
 }
