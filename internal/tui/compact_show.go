@@ -154,7 +154,7 @@ func compactContextLines(msgs []llm.Message, width int, color bool, redact func(
 		if msg.Thinking != "" {
 			thinking := sanitizeDiffLine(redact(msg.Thinking), "<ESC>")
 			thinking = strings.ReplaceAll(strings.ReplaceAll(thinking, "\r\n", "\n"), "\r", "\n")
-			lines = append(lines, dim+"thinking:" +reset)
+			lines = append(lines, dim+"thinking:"+reset)
 			for _, line := range strings.Split(thinking, "\n") {
 				lines = append(lines, strings.Split(wrapANSI(line, width, ""), "\n")...)
 			}

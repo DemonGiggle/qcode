@@ -54,7 +54,7 @@ var slashCommands = []slashCommand{
 	{
 		name: "/compact", usage: "/compact [show]", description: "Summarize old context to make room for new work",
 		arguments: []helpArgument{{name: "show", description: "Show the compacted context (system + summary + recent tail) in a history-style view for debugging compaction quality."}},
-		examples: []string{"/compact", "/compact show"},
+		examples:  []string{"/compact", "/compact show"},
 	},
 	{
 		name: "/diff", usage: "/diff [number]", description: "View more lines of a recent file change",

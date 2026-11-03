@@ -18,6 +18,11 @@ import (
 // ChatGPT-Account-Id header.
 const chatGPTBaseURL = "https://chatgpt.com/backend-api/codex"
 
+// chatGPTClientVersion is sent as ?client_version= on the Codex models
+// catalog request. The backend gates the catalog behind this query param
+// (400 without it) and keys defaults to the requesting Codex version.
+const chatGPTClientVersion = "0.166.0"
+
 type chatGPTProvider struct {
 	baseURL    string
 	tokensPath string
@@ -71,7 +76,13 @@ func (p *chatGPTProvider) Models(ctx context.Context) ([]string, error) {
 }
 
 func (p *chatGPTProvider) fetchModels(ctx context.Context, creds chatgptoauth.Tokens) ([]string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/models", nil)
+	modelsURL := p.baseURL + "/models"
+	sep := "?"
+	if strings.Contains(modelsURL, "?") {
+		sep = "&"
+	}
+	modelsURL += sep + "client_version=" + chatGPTClientVersion
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
 	if err != nil {
 		return nil, err
 	}

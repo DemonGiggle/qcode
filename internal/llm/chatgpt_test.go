@@ -110,6 +110,9 @@ func TestChatGPTModelsDecodesCodexCatalog(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer a" || r.Header.Get("ChatGPT-Account-Id") != "acct-1" {
 			t.Errorf("headers = %#v", r.Header)
 		}
+		if got := r.URL.Query().Get("client_version"); got == "" {
+			t.Errorf("client_version query missing in %q", r.URL.String())
+		}
 		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header),
 			Body: io.NopCloser(strings.NewReader(`{"models":[{"slug":"gpt-5.6-codex"},{"slug":"gpt-5.5-codex"}]}`))}, nil
 	})

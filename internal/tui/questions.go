@@ -370,12 +370,12 @@ func (u *UI) runQuestionnaireProgress(ctx context.Context, questions []question.
 			}
 			answer = strings.TrimSpace(answer)
 			if answer == "" {
-				u.printSystemMessage(yellow+"Please enter an answer, or press Ctrl+C to cancel."+reset)
+				u.printSystemMessage(yellow + "Please enter an answer, or press Ctrl+C to cancel." + reset)
 				continue
 			}
 			answer, valid := normalizeQuestionAnswerWithCustom(answer, question.Options, question.AllowCustom)
 			if !valid {
-				u.printSystemMessage(yellow+"Choose one of the listed options."+reset)
+				u.printSystemMessage(yellow + "Choose one of the listed options." + reset)
 				continue
 			}
 			answers = append(answers, answer)

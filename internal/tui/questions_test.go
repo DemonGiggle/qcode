@@ -280,13 +280,13 @@ func TestQuestionnaireHistoryReflowsNumberedChoices(t *testing.T) {
 
 func TestInlineQuestionWrapsDocumentationChoices(t *testing.T) {
 	item := question.Question{
-			Text: "Should the skill instruct qcode to search the docs directory first, or does it know specific file paths/structure to navigate directly?",
-			Options: []string{
-				"Search/grep the docs directory for relevant content",
-				"Navigate a known directory structure (I'll describe it)",
-				"Both: try known structure first, fall back to search",
-			},
-			AllowCustom: true,
+		Text: "Should the skill instruct qcode to search the docs directory first, or does it know specific file paths/structure to navigate directly?",
+		Options: []string{
+			"Search/grep the docs directory for relevant content",
+			"Navigate a known directory structure (I'll describe it)",
+			"Both: try known structure first, fall back to search",
+		},
+		AllowCustom: true,
 	}
 	const want = `Question 2/4:
 Should the skill instruct qcode to search the docs directory
