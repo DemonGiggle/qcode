@@ -100,7 +100,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	}
 	if len(arguments) > 0 && arguments[0] == "login" {
 		isTerminal := term.IsTerminal(int(stdin.Fd())) && term.IsTerminal(int(stdout.Fd()))
-		return runLogin(arguments[1:], stdin, stdout, stderr, isTerminal)
+		return runLogin(arguments[1:], stdin, stdout, diagnosticsOut, isTerminal)
 	}
 
 	opts := options{learningBudget: learning.DefaultBudget, autoCompactThreshold: agent.DefaultAutoCompactThreshold}
@@ -158,15 +158,13 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	}
 	if !opts.demo {
 		cfg, inspectedPaths, diagnostics, err := config.Load()
+		policy.RegisterSecrets(cfg.Secrets()...)
+		writeConfigDiagnostics(diagnosticsOut, diagnostics, err)
 		if err != nil {
 			return err
 		}
 		loadedConfig = cfg
-		policy.RegisterSecrets(cfg.Secrets()...)
 		configPaths = inspectedPaths
-		for _, diagnostic := range diagnostics {
-			fmt.Fprintln(diagnosticsOut, "WARNING:", diagnostic, "Skipping file.")
-		}
 		configuredSkillPaths = append([]string(nil), cfg.Skills.Paths...)
 		lazyAutoload, alwaysAutoload := cfg.Skills.AutoloadPathsByMode()
 		// Legacy autoload_paths entries are lazy; merge both forms.

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -14,6 +15,7 @@ import (
 
 	"qcode/internal/chatgptoauth"
 	"qcode/internal/config"
+	"qcode/internal/redaction"
 )
 
 // loginExchange swaps a code for tokens. Variable so tests can stub the token
@@ -33,7 +35,11 @@ func runLogin(args []string, stdin io.Reader, stdout, stderr io.Writer, isTermin
 	if !isTerminal {
 		return fmt.Errorf("login requires an interactive terminal")
 	}
-	cfg, _, _, err := config.Load()
+	cfg, _, diagnostics, err := config.Load()
+	if writer, ok := stderr.(*redaction.DiagnosticWriter); ok {
+		writer.Policy.RegisterSecrets(cfg.Secrets()...)
+	}
+	writeConfigDiagnostics(stderr, diagnostics, err)
 	if err != nil {
 		return err
 	}
@@ -43,6 +49,17 @@ func runLogin(args []string, stdin io.Reader, stdout, stderr io.Writer, isTermin
 	}
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	return chatGPTLoginFlow(oauthPath, stdin, stdout, httpClient)
+}
+
+// writeConfigDiagnostics reports skipped files; a fatal diagnostic is returned
+// to the caller and printed separately by the CLI entry point.
+func writeConfigDiagnostics(out io.Writer, diagnostics []error, fatal error) {
+	for _, diagnostic := range diagnostics {
+		if fatal != nil && errors.Is(diagnostic, fatal) {
+			continue
+		}
+		fmt.Fprintln(out, "WARNING:", diagnostic, "Skipping file.")
+	}
 }
 
 // chatGPTLoginFlow performs dynamic registration (or reauthorization when a

@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +67,41 @@ func TestRunLoginRequiresTerminal(t *testing.T) {
 	err := runLogin([]string{"chatgpt"}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, false)
 	if err == nil || !strings.Contains(err.Error(), "interactive terminal") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRunLoginReportsInvalidConfig(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux configuration lookup fixture")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".local", "etc", "qcode", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("max_steps = 0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Stop before opening a browser or a network listener.
+	if err := os.WriteFile(filepath.Join(home, ".config"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	if err := runLogin([]string{"chatgpt"}, strings.NewReader(""), &bytes.Buffer{}, &stderr, true); err == nil {
+		t.Fatal("expected host ID creation to fail")
+	}
+	if got := stderr.String(); !strings.Contains(got, path) || !strings.Contains(got, "max_steps must be greater than zero") || !strings.Contains(got, "Skipping file") {
+		t.Fatalf("missing config diagnostic: %q", got)
+	}
+}
+
+func TestConfigDiagnosticsIncludeOtherWarningsOnFatalError(t *testing.T) {
+	fatal := errors.New("invalid redaction pattern")
+	var output bytes.Buffer
+	writeConfigDiagnostics(&output, []error{errors.New("parse config other.toml: invalid value"), fatal}, fatal)
+	if got := output.String(); !strings.Contains(got, "other.toml: invalid value") || strings.Contains(got, fatal.Error()) {
+		t.Fatalf("diagnostics = %q", got)
 	}
 }
 
