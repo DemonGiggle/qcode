@@ -220,7 +220,7 @@ func (m *AgentManager) WorkRecords() []session.WorkRecord {
 }
 
 func (m *AgentManager) saveWorkHistoryLocked() *session.WorkHistory {
-	state := &session.WorkHistory{NextRequestID: m.nextRequestID, Events: append([]session.ConsultationEvent(nil), m.consultationEvents...), SteeringEvents: append([]session.SteeringEvent(nil), m.steeringEvents...)}
+	state := &session.WorkHistory{NextRequestID: m.nextRequestID, Events: append([]session.ConsultationEvent(nil), m.consultationEvents...), SteeringEvents: append([]session.SteeringEvent(nil), m.steeringEvents...), Delegations: append([]session.DelegationEvent(nil), m.delegationEvents...)}
 	for _, work := range m.work {
 		work.ChangedFiles = append([]string(nil), work.ChangedFiles...)
 		work.Steers = append([]session.SteeringInput(nil), work.Steers...)
@@ -280,6 +280,11 @@ func (m *AgentManager) RestoreWorkHistory(saved *session.WorkHistory) error {
 			return fmt.Errorf("invalid steering event sequence")
 		}
 	}
+	for i, event := range saved.Delegations {
+		if event.Sequence != uint64(i+1) {
+			return fmt.Errorf("invalid delegation event sequence")
+		}
+	}
 	for i := range records {
 		for _, item := range records[i].Steers {
 			n, err := strconv.ParseUint(strings.TrimPrefix(item.ID, "request-"), 10, 64)
@@ -297,6 +302,7 @@ func (m *AgentManager) RestoreWorkHistory(saved *session.WorkHistory) error {
 	m.work, m.nextRequestID = records, saved.NextRequestID
 	m.steeringEvents = append([]session.SteeringEvent(nil), saved.SteeringEvents...)
 	m.consultationEvents = append([]session.ConsultationEvent(nil), saved.Events...)
+	m.delegationEvents = append([]session.DelegationEvent(nil), saved.Delegations...)
 	for i := range m.work {
 		work := &m.work[i]
 		for j := range work.Steers {

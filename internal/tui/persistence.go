@@ -47,6 +47,7 @@ type savedPresentation struct {
 	Verbose            bool
 	Views              []savedView
 	ConsultationCursor uint64
+	DelegationCursor   uint64
 	SteeringCursor     uint64
 }
 type sessionPersistence struct {
@@ -103,6 +104,7 @@ func (u *UI) snapshotPresentation() savedPresentation {
 		h.mu.Lock()
 		if v.id == "main" {
 			s.ConsultationCursor = u.consultationCursor
+			s.DelegationCursor = u.delegationCursor
 			s.SteeringCursor = u.steeringCursor
 		}
 		sv := savedView{ID: v.id, Provider: v.provider, Model: v.model, Unseen: v.unseen,
@@ -179,6 +181,7 @@ func (u *UI) RestorePresentation(data json.RawMessage) error {
 	}
 	u.verbose = s.Verbose
 	u.consultationCursor = s.ConsultationCursor
+	u.delegationCursor = s.DelegationCursor
 	u.steeringCursor = s.SteeringCursor
 	for id, v := range u.views {
 		if runner, ok := u.manager.Runner(id); ok {
@@ -646,6 +649,7 @@ func (u *UI) installSessionLocked(staged *UI, snap session.Snapshot) {
 	u.drafts = staged.drafts
 	u.verbose = staged.verbose
 	u.consultationCursor = staged.consultationCursor
+	u.delegationCursor = staged.delegationCursor
 	u.steeringCursor = staged.steeringCursor
 	for _, v := range u.views {
 		v.display.ui = u

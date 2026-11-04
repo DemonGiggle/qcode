@@ -71,7 +71,7 @@ func TestDeleteCurrentSessionPickerReturnsFreshComposerAndOnlySavesNewID(t *test
 	u.activeAgent, u.verbose = "agent-1", true
 	u.drafts["main"], u.drafts["agent-1"] = "main draft", "tab draft"
 	u.views["main"].display.AddLine("old transcript")
-	u.consultationCursor, u.steeringCursor = 7, 9
+	u.consultationCursor, u.delegationCursor, u.steeringCursor = 7, 8, 9
 	u.queue.expanded, u.pendingTab = true, 1
 	store, err := session.Open(t.TempDir(), u.root)
 	if err != nil {
@@ -104,7 +104,7 @@ func TestDeleteCurrentSessionPickerReturnsFreshComposerAndOnlySavesNewID(t *test
 	u.resumeSession()
 	defer u.shutdownAgentManager()
 	newID := u.persistence.current.ID
-	if newID == oldID || u.activeAgent != "main" || len(u.views) != 1 || len(u.drafts) != 0 || u.consultationCursor != 0 || u.steeringCursor != 0 || u.pendingTab != 0 || u.queue.expanded || !u.verbose || u.inputLabel != inputPrompt || u.model != "fresh-model" {
+	if newID == oldID || u.activeAgent != "main" || len(u.views) != 1 || len(u.drafts) != 0 || u.consultationCursor != 0 || u.delegationCursor != 0 || u.steeringCursor != 0 || u.pendingTab != 0 || u.queue.expanded || !u.verbose || u.inputLabel != inputPrompt || u.model != "fresh-model" {
 		t.Fatal("fresh composer retained departing state")
 	}
 	select {

@@ -283,6 +283,7 @@ type UI struct {
 	skillBodyLoader      skillBodyLoader
 	onSkills             skillChangeFunc
 	consultationCursor   uint64
+	delegationCursor     uint64
 	steeringCursor       uint64 // Guarded by screenMu; persisted with the transcript.
 	manager              agentController
 	activeAgent          string

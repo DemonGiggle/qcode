@@ -22,6 +22,11 @@ const (
 	DefaultResultLimit      = 128
 	maxHandoffBytes         = 4 * 1024
 	maxRosterBytes          = 2 * 1024
+	// delegationSource marks prompts accepted via create_agent/delegate_task.
+	delegationSource = "delegation"
+	// delegationCallbackSource marks automatic main callbacks queued when a
+	// delegated sub-agent task finishes. It never triggers a further callback.
+	delegationCallbackSource = "delegation-callback"
 )
 
 var (
@@ -113,6 +118,7 @@ type AgentManager struct {
 	consultationTimeout time.Duration
 	work                []session.WorkRecord
 	consultationEvents  []session.ConsultationEvent
+	delegationEvents    []session.DelegationEvent
 	steeringEvents      []session.SteeringEvent
 }
 
@@ -636,6 +642,13 @@ func (m *AgentManager) finish(id string, req *promptRequest, err error, outcome 
 	s.cancel = nil
 	duration := time.Since(s.started)
 	if closing {
+		// A closing sub-agent still owes main its completion callback.
+		callbackStatus := requestStatus(err)
+		var callbackErr string
+		if err != nil {
+			callbackErr = err.Error()
+		}
+		m.enqueueDelegationCallbackLocked(req, callbackStatus, "", callbackErr, s.summary.ChangedFiles, duration)
 		m.finalizeCloseLocked(id, s)
 		m.mu.Unlock()
 		return
@@ -659,6 +672,21 @@ func (m *AgentManager) finish(id string, req *promptRequest, err error, outcome 
 	}
 	s.summary.QueueDepth = len(s.queue)
 	m.emitLocked(s.summary, duration)
+	// Notify main about delegated sub-agent completion (success or fail) so it
+	// can gather details and decide next steps. Idle main starts the callback
+	// immediately; busy main queues it behind current work.
+	{
+		callbackStatus := requestStatus(err)
+		var callbackErr string
+		if err != nil {
+			callbackErr = err.Error()
+		}
+		var callbackResponse string
+		if err == nil {
+			callbackResponse = fullOutcome
+		}
+		m.enqueueDelegationCallbackLocked(req, callbackStatus, callbackResponse, callbackErr, s.summary.ChangedFiles, duration)
+	}
 	for !m.shutdown && len(s.queue) > 0 {
 		next := s.queue[0]
 		s.queue = s.queue[1:]
@@ -731,6 +759,9 @@ func (m *AgentManager) close(ctx context.Context, id string) error {
 	s.summary.Progress = nil
 	for _, req := range s.queue {
 		m.completeRequestLocked(req, "", context.Canceled, nil)
+		if req.source == delegationSource {
+			m.enqueueDelegationCallbackLocked(req, requestStatus(context.Canceled), "", context.Canceled.Error(), nil, 0)
+		}
 	}
 	s.queue = nil
 	s.summary.QueueDepth = 0
@@ -889,6 +920,157 @@ func (m *AgentManager) emitLocked(summary AgentSummary, duration time.Duration) 
 	case m.events <- ManagerEvent{Agent: cloneSummary(summary), Duration: duration}:
 	default:
 	}
+}
+
+
+// DelegationEvents returns durable sub-agent completion callbacks after a cursor.
+// Consumers replay the log instead of relying on the buffered event channel.
+func (m *AgentManager) DelegationEvents(after uint64) []session.DelegationEvent {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if after >= uint64(len(m.delegationEvents)) {
+		return nil
+	}
+	return append([]session.DelegationEvent(nil), m.delegationEvents[after:]...)
+}
+
+func (m *AgentManager) recordDelegationEventLocked(event session.DelegationEvent) {
+	event.Sequence = uint64(len(m.delegationEvents)) + 1
+	event.Time = time.Now().UTC()
+	m.delegationEvents = append(m.delegationEvents, event)
+	// The channel is only a wakeup. Consumers replay the durable log after
+	// every event, so saturation cannot lose delegation outcomes.
+	select {
+	case m.events <- ManagerEvent{Delegation: true}:
+	default:
+	}
+}
+
+// formatDelegationCallback builds the bounded automatic prompt queued for main
+// when a delegated sub-agent task finishes. The text is framed as untrusted
+// reference data; full findings stay in the work journal for search/consult.
+func formatDelegationCallback(agentID, requestID, status, task, response, errText string, files []string) string {
+	var b strings.Builder
+	b.WriteString(prompt.DelegationCallbackReference)
+	b.WriteString("\nAgent: ")
+	b.WriteString(agentID)
+	b.WriteString(" Request: ")
+	b.WriteString(requestID)
+	b.WriteString(" Status: ")
+	b.WriteString(status)
+	if task != "" {
+		b.WriteString("\nTask: ")
+		b.WriteString(truncateUTF8(task, 512))
+	}
+	if status == "completed" {
+		if response != "" {
+			b.WriteString("\nOutcome: ")
+			b.WriteString(truncateUTF8(strings.TrimSpace(response), maxHandoffBytes))
+		}
+	} else if errText != "" {
+		b.WriteString("\nError: ")
+		b.WriteString(truncateUTF8(errText, 1024))
+	}
+	if len(files) > 0 {
+		joined := truncateUTF8(strings.Join(files, ","), 256)
+		if strings.TrimSpace(joined) != "" {
+			b.WriteString("\nFiles: ")
+			b.WriteString(joined)
+		}
+	}
+	return truncateUTF8(b.String(), 2*maxHandoffBytes)
+}
+
+// enqueueDelegationCallbackLocked queues one automatic callback for main when a
+// delegated sub-agent request finishes. It must be called with m.mu held.
+// Idle main starts immediately via the normal FIFO path; busy main queues
+// behind current work. Consecutive completions merge into the last pending
+// callback to avoid filling the queue one-by-one.
+func (m *AgentManager) enqueueDelegationCallbackLocked(completed *promptRequest, status, response, errText string, files []string, elapsed time.Duration) {
+	if completed == nil || completed.source != delegationSource {
+		return
+	}
+	if completed.targetID == "main" {
+		return
+	}
+	if m.shutdown {
+		return
+	}
+	main, ok := m.sessions["main"]
+	if !ok {
+		m.recordDelegationEventLocked(session.DelegationEvent{
+			AgentID: completed.targetID, RequestID: completed.id,
+			Status: status, Error: truncateUTF8(errText, 1024), Elapsed: elapsed,
+		})
+		return
+	}
+	callbackText := formatDelegationCallback(completed.targetID, completed.id, status, completed.prompt, response, errText, files)
+	// Coalesce into the last pending callback so a burst of completions
+	// produces one main wakeup instead of one queue entry per sub-agent.
+	for i := len(main.queue) - 1; i >= 0; i-- {
+		pending := main.queue[i]
+		if pending.source != delegationCallbackSource || pending.finished {
+			continue
+		}
+		// Only merge into the tail callback; older entries keep FIFO order.
+		if i != len(main.queue)-1 {
+			break
+		}
+		merged := pending.prompt + "\n\n---\n\n" + callbackText
+		merged = truncateUTF8(merged, 2*maxHandoffBytes)
+		pending.prompt = merged
+		m.work[pending.journalIndex].Prompt = merged
+		m.recordDelegationEventLocked(session.DelegationEvent{
+			AgentID: completed.targetID, RequestID: completed.id,
+			CallbackID: pending.id, Status: status,
+			Error: truncateUTF8(errText, 1024), Elapsed: elapsed,
+		})
+		main.summary.QueueDepth = len(main.queue)
+		m.emitLocked(main.summary, 0)
+		return
+	}
+	// Also merge into a currently queued tail when main is busy but the
+	// active task itself is a callback being processed? No: active work is
+	// already running, so queue a new FIFO entry instead.
+	if m.nextRequestID == ^uint64(0) {
+		return
+	}
+	m.nextRequestID++
+	req := &promptRequest{
+		id: fmt.Sprintf("request-%d", m.nextRequestID), targetID: "main",
+		prompt: callbackText, source: delegationCallbackSource, actor: completed.targetID,
+		done: make(chan struct{}), journalIndex: len(m.work),
+	}
+	m.work = append(m.work, session.WorkRecord{
+		Source: req.source, Actor: req.actor, RequestID: req.id, AgentID: "main", AgentName: main.summary.Name, Model: main.summary.Model,
+		Prompt: req.prompt, Status: "queued", Created: time.Now().UTC(),
+	})
+	if main.active == nil {
+		m.startRequestLocked("main", main, req)
+	} else {
+		if len(main.queue) >= m.queueLimit {
+			// Queue full: keep the completion searchable via the journal and
+			// the delegation event log instead of dropping it silently.
+			// Mark the callback record as failed so resume does not revive it.
+			m.work[req.journalIndex].Status = "failed"
+			m.work[req.journalIndex].Error = fmt.Sprintf("main queue is full (limit %d)", m.queueLimit)
+			m.work[req.journalIndex].Finished = time.Now().UTC()
+			m.recordDelegationEventLocked(session.DelegationEvent{
+				AgentID: completed.targetID, RequestID: completed.id,
+				CallbackID: req.id, Status: status,
+				Error: truncateUTF8(errText, 1024), Elapsed: elapsed,
+			})
+			return
+		}
+		main.queue = append(main.queue, req)
+		main.summary.QueueDepth = len(main.queue)
+		m.emitLocked(main.summary, 0)
+	}
+	m.recordDelegationEventLocked(session.DelegationEvent{
+		AgentID: completed.targetID, RequestID: completed.id,
+		CallbackID: req.id, Status: status,
+		Error: truncateUTF8(errText, 1024), Elapsed: elapsed,
+	})
 }
 
 func (m *AgentManager) Shutdown() {
