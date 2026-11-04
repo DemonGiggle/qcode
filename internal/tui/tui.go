@@ -1177,6 +1177,7 @@ func (u *UI) startNewSession() {
 			u.printSystemMessage(yellow + err.Error() + reset)
 			return
 		}
+		u.discardActiveTodo()
 		u.setInputModePrompt(false)
 		u.drawTabBar()
 		u.drawStatusBar()
@@ -1190,6 +1191,7 @@ func (u *UI) startNewSession() {
 		return
 	}
 	resetter.ResetSession()
+	u.discardActiveTodo()
 	u.setInputModePrompt(false)
 	u.drawStatusBar()
 	u.responseWriter.ResetDiffs()

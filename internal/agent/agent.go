@@ -452,6 +452,7 @@ func (a *Agent) resetSession() {
 	a.latestPlan = nil
 	a.latestSkillDraft = nil
 	a.latestTodo = nil
+	a.todoVersion++
 	a.stateMu.Unlock()
 	a.system = a.modeSystem(a.selectedSkills)
 	a.messages = []llm.Message{{Role: "system", Content: a.system}}

@@ -191,6 +191,21 @@ func (u *UI) maybeArchiveTodo(viewID string) {
 	u.maybeArchiveTodoLocked(viewID)
 }
 
+// discardActiveTodo drops the active tab's checklist panel state without
+// archiving it to the transcript. /new uses it so a fresh session starts
+// with no visible or cached todo.
+func (u *UI) discardActiveTodo() {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	panel := u.activeTodoLocked()
+	panel.hasLive = false
+	panel.completed = false
+	panel.expanded = false
+	panel.anchor = 0
+	panel.lastText = ""
+	panel.lastVersion = 0
+}
+
 // maybeArchiveTodoLocked archives the finished checklist to the transcript
 // once, then hides the panel. A list counts as finished when every item is
 // done or when the list disappears after being visible (cleared via /new).

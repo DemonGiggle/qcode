@@ -209,3 +209,83 @@ func TestTodoPanelHiddenOnCrampedScreen(t *testing.T) {
 		t.Fatalf("panel should yield to transcript minimums: %q", got)
 	}
 }
+
+func TestDiscardActiveTodoRemovesWithoutArchiving(t *testing.T) {
+	ids, titles, statuses := todoFiveItems()
+	runner := &todoPanelRunner{ids: ids, titles: titles, statuses: statuses, version: 2,
+		text: "# Todo (1/5 done)\n\n- [x] First task (one)", hasText: true}
+	u, frame := todoPanelFixture(t, runner)
+	if _, err := u.display.Write([]byte("working\n")); err != nil {
+		t.Fatal(err)
+	}
+	if !u.views["main"].todo.hasLive {
+		t.Fatal("live list was not observed")
+	}
+	u.discardActiveTodo()
+	panel := u.views["main"].todo
+	if panel.hasLive || panel.lastText != "" || panel.expanded || panel.completed || panel.lastVersion != 0 {
+		t.Fatalf("discard kept panel state: %+v", panel)
+	}
+	// Simulate /new clearing the backend checklist.
+	runner.ids, runner.titles, runner.statuses = nil, nil, nil
+	runner.hasText = false
+	if _, err := u.display.Write([]byte("fresh start\n")); err != nil {
+		t.Fatal(err)
+	}
+	if history := strings.Join(u.display.Lines(), "\n"); strings.Contains(history, "# Todo (1/5 done)") {
+		t.Fatalf("discarded list leaked into transcript: %q", history)
+	}
+	u.renderInput(inputPrompt, "", 0)
+	if got := frame(); strings.Contains(got, "Todo 1/5") {
+		t.Fatalf("discarded panel still visible: %q", got)
+	}
+}
+
+type newSessionTodoManager struct {
+	*layoutManager
+	runner *todoPanelRunner
+	reset  bool
+}
+
+func (m *newSessionTodoManager) Reset(id string) error {
+	m.reset = true
+	m.runner.ids, m.runner.titles, m.runner.statuses = nil, nil, nil
+	m.runner.hasText = false
+	m.runner.text = ""
+	return nil
+}
+
+func TestStartNewSessionDiscardsTodoPanel(t *testing.T) {
+	ids, titles, statuses := todoFiveItems()
+	runner := &todoPanelRunner{ids: ids, titles: titles, statuses: statuses, version: 2,
+		text: "# Todo (1/5 done)\n\n- [x] First task (one)", hasText: true}
+	u, frame := todoPanelFixture(t, runner)
+	u.responseWriter = NewMarkdownWriter(io.Discard, false, 80)
+	manager := &newSessionTodoManager{layoutManager: u.manager.(*layoutManager), runner: runner}
+	u.manager = manager
+	if _, err := u.display.Write([]byte("working\n")); err != nil {
+		t.Fatal(err)
+	}
+	if !u.views["main"].todo.hasLive {
+		t.Fatal("live list was not observed")
+	}
+	u.startNewSession()
+	if !manager.reset {
+		t.Fatal("manager session was not reset")
+	}
+	panel := u.views["main"].todo
+	if panel.hasLive || panel.lastText != "" {
+		t.Fatalf("/new kept todo panel state: %+v", panel)
+	}
+	gotHistory := strings.Join(u.display.Lines(), "\n")
+	if strings.Contains(gotHistory, "# Todo (1/5 done)") {
+		t.Fatalf("/new archived todo instead of removing it: %q", gotHistory)
+	}
+	if !strings.Contains(gotHistory, "New session started") {
+		t.Fatalf("missing reset confirmation: %q", gotHistory)
+	}
+	u.renderInput(inputPrompt, "", 0)
+	if got := frame(); strings.Contains(got, "Todo 1/5") {
+		t.Fatalf("/new left todo panel visible: %q", got)
+	}
+}
