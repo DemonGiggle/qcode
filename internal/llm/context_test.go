@@ -58,8 +58,13 @@ func TestContextWindowDiscovery(t *testing.T) {
 		want              int
 	}{
 		{"openai", "gpt-4o", "", 128000}, {"opencode-go", "glm-5", "", 202752},
+		{"openai", "gpt-6-sol", "", 1050000}, {"openai", "gpt-daybreak-red-latest", "", 400000},
+		{"opencode-go", "gpt-6-luna", "", 1050000}, {"opencode-go", "grok-4.7", "", 500000},
 		{"chatgpt", "gpt-5.6-codex", "", 1050000},
 		{"chatgpt", "gpt-6-luna", "", 1050000},
+		{"chatgpt", "gpt-6-sol", "", 1050000},
+		{"chatgpt", "gpt-5.6-sol", "", 1050000},
+		{"chatgpt", "gpt-daybreak-blue-latest", "", 1050000},
 		{"chatgpt", "gpt-5.6-codex", "https://chatgpt.com/backend-api/codex", 1050000},
 		{"openai", "unknown", "", 0}, {"openai", "gpt-4o", "https://custom.test", 0},
 	} {

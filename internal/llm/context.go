@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// Context limits from https://models.dev/api.json, retrieved 2026-09-06.
+// Context limits from https://models.dev/api.json, retrieved 2026-11-04.
 // Exact IDs only: unknown models must not inherit a possibly incorrect limit.
 //
 //go:embed context_windows.json
