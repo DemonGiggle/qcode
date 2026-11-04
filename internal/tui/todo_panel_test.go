@@ -73,6 +73,36 @@ func TestTodoPanelCollapsedShowsThreeRowsAndCount(t *testing.T) {
 	}
 }
 
+func TestTodoDisplayRowsPreservesStatusForThemeColoring(t *testing.T) {
+	items := []todoItem{
+		{id: "one", title: "First", status: "done"},
+		{id: "two", title: "Second", status: "doing"},
+		{id: "three", title: "Third", status: "todo"},
+	}
+	rows := todoDisplayRows(items, 80, false)
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3", len(rows))
+	}
+	if rows[0].status != "done" || !rows[0].done {
+		t.Fatalf("done row = %+v", rows[0])
+	}
+	if rows[1].status != "doing" || rows[1].done {
+		t.Fatalf("doing row = %+v", rows[1])
+	}
+	if rows[2].status != "todo" || rows[2].done {
+		t.Fatalf("todo row = %+v", rows[2])
+	}
+	// Theme governance: panel must use semantic ANSI colors that
+	// TransformANSI maps per palette (cyan->Prompt, green->Success,
+	// yellow->Warning), not dim-only styling.
+	for _, seq := range []string{cyan, green, yellow} {
+		if !strings.Contains(seq, "\x1b[") {
+			t.Fatalf("theme color sequence missing: %q", seq)
+		}
+	}
+}
+
+
 func TestTodoPanelSitsAboveQueue(t *testing.T) {
 	ids, titles, statuses := todoFiveItems()
 	runner := &todoPanelRunner{ids: ids, titles: titles, statuses: statuses, version: 1,

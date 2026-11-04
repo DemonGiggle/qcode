@@ -68,6 +68,46 @@ func TestResponsesInputReplaysOutputAndToolResult(t *testing.T) {
 	}
 }
 
+func TestResponsesInputAssistantUsesOutputText(t *testing.T) {
+	// Regression: assistant history without ReasoningDetails (e.g. the turn
+	// after todo tools when details are missing) must use output_text.
+	// input_text is rejected with:
+	// "Invalid value: 'input_text'. Supported values are: 'output_text' and 'refusal'."
+	items := responsesInput([]Message{
+		{Role: "user", Content: "color the todo panel"},
+		{Role: "assistant", Content: "working on it", ToolCalls: []ToolCall{{ID: "call_1", Name: "todo_add", Arguments: json.RawMessage(`{"id":"a","title":"Task"}`)}}},
+		{Role: "tool", ToolCallID: "call_1", Content: "ok"},
+	})
+	encoded, err := json.Marshal(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(encoded)
+	if strings.Contains(s, `"text":"working on it"`) && strings.Contains(s, `"type":"input_text"`) {
+		// Ensure the assistant turn itself does not use input_text. The user
+		// turn legitimately uses input_text, so check the assistant slice.
+		assistantItems := responsesInput([]Message{{Role: "assistant", Content: "working on it"}})
+		assistantEncoded, _ := json.Marshal(assistantItems)
+		if strings.Contains(string(assistantEncoded), "input_text") {
+			t.Fatalf("assistant text used input_text, want output_text: %s", assistantEncoded)
+		}
+	}
+	assistantOnly := responsesInput([]Message{{Role: "assistant", Content: "working on it"}})
+	assistantOnlyEncoded, _ := json.Marshal(assistantOnly)
+	if !strings.Contains(string(assistantOnlyEncoded), "output_text") || !strings.Contains(string(assistantOnlyEncoded), "working on it") {
+		t.Fatalf("assistant text missing output_text encoding: %s", assistantOnlyEncoded)
+	}
+	// Empty assistant text with tool calls emits only the function_call.
+	empty := responsesInput([]Message{{Role: "assistant", ToolCalls: []ToolCall{{ID: "call_2", Name: "read", Arguments: json.RawMessage(`{}`)}}}})
+	encEmpty, _ := json.Marshal(empty)
+	if strings.Contains(string(encEmpty), "output_text") {
+		t.Fatalf("empty assistant text should not emit output_text: %s", encEmpty)
+	}
+	if !strings.Contains(string(encEmpty), `"type":"function_call"`) {
+		t.Fatalf("empty assistant tool calls missing: %s", encEmpty)
+	}
+}
+
 func TestOpenCodeGoResponsesSendsModelValidReasoningEffort(t *testing.T) {
 	tests := []struct {
 		name, model, level, effort string

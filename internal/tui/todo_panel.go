@@ -102,8 +102,9 @@ func (u *UI) todoTextLocked() (string, bool) {
 }
 
 type todoDisplayRow struct {
-	text string
-	done bool
+	text   string
+	done   bool
+	status string
 }
 
 func todoStatusMarker(status string, unicodeEnabled bool) string {
@@ -118,7 +119,8 @@ func todoStatusMarker(status string, unicodeEnabled bool) string {
 }
 
 // todoDisplayRows wraps checklist items into terminal rows, remembering
-// which rows belong to finished items so the renderer can dim them.
+// each row's status so the renderer can apply theme-governed coloring
+// (done/success, doing/warning) instead of plain dimming.
 func todoDisplayRows(items []todoItem, width int, unicodeEnabled bool) []todoDisplayRow {
 	rows := make([]todoDisplayRow, 0, len(items))
 	for _, item := range items {
@@ -127,7 +129,7 @@ func todoDisplayRows(items []todoItem, width int, unicodeEnabled bool) []todoDis
 		plain = strings.ReplaceAll(plain, "\n", " ")
 		marker := todoStatusMarker(item.status, unicodeEnabled)
 		for _, wrapped := range strings.Split(wrapANSI(marker+plain, max(1, width), "    "), "\n") {
-			rows = append(rows, todoDisplayRow{text: wrapped, done: item.status == "done"})
+			rows = append(rows, todoDisplayRow{text: wrapped, done: item.status == "done", status: item.status})
 		}
 	}
 	return rows

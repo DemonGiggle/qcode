@@ -396,7 +396,9 @@ func (u *UI) paintFixedLocked(direction int) {
 		todoStart := panelEnd - queueHeight - sepS - count - todoHeight
 		header := todoHeader(todoDoneCount, len(todoItems), u.width, todo.expanded)
 		if ColorEnabled(u.out) {
-			header = dim + header + reset
+			// Theme-governed header: cyan maps to the Prompt role so
+			// TransformANSI recolors it per palette (Default keeps ANSI).
+			header = cyan + bold + header + reset
 		}
 		screenRows[todoStart] = truncateDiffLine(header, u.width, u.unicode)
 		visible := todoRows
@@ -417,8 +419,23 @@ func (u *UI) paintFixedLocked(direction int) {
 		color := ColorEnabled(u.out)
 		for i, row := range visible {
 			text := row.text
-			if row.done && color {
-				text = dim + text + reset
+			if color {
+				switch row.status {
+				case "done":
+					// Success (green) keeps completed rows theme-governed;
+				// dim preserves the de-emphasized look.
+					text = dim + green + text + reset
+				case "doing":
+					// Warning (yellow) makes in-progress rows stand out.
+					text = bold + yellow + text + reset
+				default:
+					// Pending rows use the default themed text color.
+					// Fall back to dimming when only the legacy done flag
+					// is set (e.g. statuses missing).
+					if row.done {
+						text = dim + green + text + reset
+					}
+				}
 			}
 			screenRows[todoStart+1+i] = truncateDiffLine(text, u.width, u.unicode)
 		}

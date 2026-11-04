@@ -88,7 +88,12 @@ func responsesInput(messages []Message) []any {
 					continue
 				}
 			}
-			items = append(items, responsesMessage("assistant", message.Content, nil))
+			// Skip empty assistant text when tool calls follow: the
+			// function_call items already carry the turn. Emitting an empty
+			// output_text alongside them is redundant.
+			if strings.TrimSpace(message.Content) != "" || len(message.ToolCalls) == 0 {
+				items = append(items, responsesMessage("assistant", message.Content, nil))
+			}
 			for _, call := range message.ToolCalls {
 				items = append(items, map[string]any{"type": "function_call", "call_id": call.ID, "name": call.Name, "arguments": string(call.Arguments)})
 			}
@@ -100,9 +105,17 @@ func responsesInput(messages []Message) []any {
 }
 
 func responsesMessage(role, text string, images []Image) map[string]any {
+	contentType := "input_text"
+	if role == "assistant" {
+		// The Responses API validates assistant message content strictly:
+		// only output_text (and refusal) are accepted. Sending input_text
+		// here fails the second turn (after tool calls) with
+		// "Invalid value: 'input_text' ... param: input[1].content[0]".
+		contentType = "output_text"
+	}
 	content := make([]map[string]any, 0, len(images)+1)
 	if text != "" || len(images) == 0 {
-		content = append(content, map[string]any{"type": "input_text", "text": text})
+		content = append(content, map[string]any{"type": contentType, "text": text})
 	}
 	for _, image := range images {
 		content = append(content, map[string]any{"type": "input_image", "image_url": "data:" + image.MediaType + ";base64," + base64.StdEncoding.EncodeToString(image.Data)})
