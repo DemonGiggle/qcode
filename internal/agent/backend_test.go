@@ -75,6 +75,9 @@ func TestSwitchBackendPreservesStateAndInvalidatesContext(t *testing.T) {
 		if event.Agent.Model != next.Model {
 			t.Fatal(event)
 		}
+		if !event.DirectoryChanged {
+			t.Fatal("backend switch must refresh without reporting completion")
+		}
 	default:
 		t.Fatal("no change event")
 	}

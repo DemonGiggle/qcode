@@ -102,7 +102,14 @@ func (m *AgentManager) SwitchBackend(id string, expectedRevision uint64, next Ba
 	s.summary.Model = next.Model
 	a.publishContext()
 	a.publishCheckpoint()
-	m.emitLocked(s.summary, 0)
+	// Refresh presentation without reporting task completion. A plain status
+	// event would make handleAgentEvent print the idle/completed status (e.g.
+	// "idle") into the transcript; DirectoryChanged refreshes tab/status bars
+	// while skipping completion output, matching Reset.
+	select {
+	case m.events <- ManagerEvent{Agent: cloneSummary(s.summary), DirectoryChanged: true}:
+	default:
+	}
 	return nil
 }
 
