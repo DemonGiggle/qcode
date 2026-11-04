@@ -317,6 +317,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 				prepared, err := providers.prepare(ctx, name, nil)
 				return prepared.Provider, prepared.Endpoint, err
 			})
+			ui.SetProviderAvailabilityChecker(func(name string) (bool, string) {
+				return providers.availability(name)
+			})
 		}
 	}
 	var learningStore learning.Store

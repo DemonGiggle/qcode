@@ -15,12 +15,53 @@ import (
 // resolver. It is installed only for normal, non-demo terminal sessions.
 type ProviderFactory func(context.Context, string) (llm.Provider, string, error)
 
+// ProviderAvailability reports whether a provider can be selected without
+// additional setup. The hint describes the setup step when unavailable, such
+// as the missing API key or login command.
+type ProviderAvailability func(name string) (available bool, hint string)
+
 type backendController interface {
 	ConfigurationRevision(string) (uint64, error)
 	SwitchBackend(string, uint64, session.BackendSwitch) error
 }
 
 func (u *UI) SetProviderFactory(factory ProviderFactory) { u.providerFactory = factory }
+
+// SetProviderAvailabilityChecker installs the lightweight setup check used to
+// disable unconfigured providers in the /provider picker. A nil checker means
+// every provider is selectable, preserving demo and test behavior.
+func (u *UI) SetProviderAvailabilityChecker(checker ProviderAvailability) {
+	u.providerAvailable = checker
+}
+
+func (u *UI) providerSetupStatus(name string) (bool, string) {
+	if u.providerAvailable == nil {
+		return true, ""
+	}
+	return u.providerAvailable(name)
+}
+
+func (u *UI) isProviderSelectable(name, current string) bool {
+	if name == current {
+		return true
+	}
+	available, _ := u.providerSetupStatus(name)
+	return available
+}
+
+func (u *UI) providerSetupHintMessage(name string) string {
+	available, hint := u.providerSetupStatus(name)
+	if available {
+		return ""
+	}
+	message := "Provider " + providerDisplayName(name) + " needs setup first"
+	if strings.TrimSpace(hint) != "" {
+		message += ": " + strings.TrimSpace(hint)
+	} else {
+		message += "."
+	}
+	return message
+}
 
 func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 	manager, ok := u.manager.(backendController)
@@ -45,7 +86,8 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 		oldThinking = thinking.ThinkingLevel()
 	}
 	names := llm.Names()
-	labels := providerPickerLabels(names)
+	isAvailable := func(name string) bool { return u.isProviderSelectable(name, oldProvider) }
+	labels, disabled := providerPickerLabelsWithAvailability(names, isAvailable)
 	for {
 		name := ""
 		if len(fields) >= 2 {
@@ -64,11 +106,19 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 				u.printSystemMessage(yellow + "Unknown provider: " + sanitizeDiffLine(raw, "<ESC>") + ". Supported: " + strings.Join(labels, ", ") + reset)
 				return
 			}
+			if !isAvailable(resolved) {
+				if message := u.providerSetupHintMessage(resolved); message != "" {
+					u.printSystemMessage(yellow + sanitizeDiffLine(message, "<ESC>") + reset)
+				} else {
+					u.printSystemMessage(yellow + "Provider " + providerDisplayName(resolved) + " needs setup first." + reset)
+				}
+				return
+			}
 			name = resolved
 		} else {
 			u.input.setRaw(true)
 			u.beginRawSelector()
-			selectedDisplay, accepted, err := selectOption(u.input, u.themedSelectorWriter(), labels, providerDisplayName(oldProvider), min(12, max(3, u.height-6)), u.width, ColorEnabled(u.out), "provider", false)
+			selectedDisplay, accepted, err := selectOptionWithDisabled(u.input, u.themedSelectorWriter(), labels, disabled, providerDisplayName(oldProvider), min(12, max(3, u.height-6)), u.width, ColorEnabled(u.out), "provider", false)
 			u.input.setRaw(false)
 			u.endRawSelector()
 			if err != nil {
@@ -78,10 +128,18 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 			if !accepted {
 				return
 			}
-			resolved, ok := resolveProviderID(selectedDisplay, names)
+			resolved, ok := resolveProviderID(stripProviderSetupSuffix(selectedDisplay), names)
 			if !ok {
 				u.printSystemMessage(yellow + "Unknown provider: " + sanitizeDiffLine(selectedDisplay, "<ESC>") + ". Supported: " + strings.Join(labels, ", ") + reset)
 				return
+			}
+			if !isAvailable(resolved) {
+				if message := u.providerSetupHintMessage(resolved); message != "" {
+					u.printSystemMessage(yellow + sanitizeDiffLine(message, "<ESC>") + reset)
+				} else {
+					u.printSystemMessage(yellow + "Provider " + providerDisplayName(resolved) + " needs setup first." + reset)
+				}
+				continue
 			}
 			name = resolved
 		}

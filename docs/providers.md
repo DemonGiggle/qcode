@@ -18,8 +18,10 @@ In the normal terminal UI:
 
 Bare `/provider` lists the same registry as `qcode --list-providers`, highlighting
 this tab's current provider. Up/Down and Enter choose; Esc goes back or leaves the
-picker, and Ctrl+C cancels the command. Direct names are validated against that
-registry. `/help provider` shows usage and examples.
+picker, and Ctrl+C cancels the command. Providers without credentials show
+` (Need Setup First)`, are dimmed, and cannot be chosen with the keyboard:
+configure the key or run `qcode login chatgpt` first. Direct names are validated
+against that registry. `/help provider` shows usage and examples.
 
 Only the active tab changes. Finish or cancel its work first; running, queued,
 approval-waiting, or closing work cannot be switched. Discovery is cancellable,

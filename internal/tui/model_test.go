@@ -102,3 +102,32 @@ func TestSelectorHeaderKeepsLeaveHintVisible(t *testing.T) {
 		t.Fatalf("header = %q, width = %d", header, visibleWidth(header))
 	}
 }
+
+func TestSelectOptionWithDisabledSkipsUnselectable(t *testing.T) {
+	options := []string{"alpha", "beta (Need Setup First)", "gamma"}
+	disabled := map[string]bool{"beta (Need Setup First)": true}
+	var output bytes.Buffer
+	// From alpha, Down must skip disabled beta and land on gamma.
+	selected, accepted, err := selectOptionWithDisabled(strings.NewReader(arrowDownSequence+"\r"), &output, options, disabled, "alpha", 3, 80, false, "provider", false)
+	if err != nil || !accepted || selected != "gamma" {
+		t.Fatalf("down skipped = %q, %v, %v", selected, accepted, err)
+	}
+	// Up from alpha wraps to gamma, skipping disabled.
+	output.Reset()
+	selected, accepted, err = selectOptionWithDisabled(strings.NewReader(arrowUpSequence+"\r"), &output, options, disabled, "alpha", 3, 80, false, "provider", false)
+	if err != nil || !accepted || selected != "gamma" {
+		t.Fatalf("up wrap = %q, %v, %v", selected, accepted, err)
+	}
+	// Enter on a fully disabled list is ignored; Esc then leaves.
+	output.Reset()
+	selected, result, err := selectOptionWithResultAndDisabled(strings.NewReader("\r\x1b"), &output, []string{"a (Need Setup First)"}, map[string]bool{"a (Need Setup First)": true}, "", 1, 80, false, "provider", false)
+	if err != nil || result != selectorBack || selected != "" {
+		t.Fatalf("disabled enter = %q, %v, %v", selected, result, err)
+	}
+	// Disabled rows render without the active highlight.
+	output.Reset()
+	line := renderModelLineWithDisabled(options, []int{0, 1, 2}, disabled, 1, false, 80, false)
+	if !strings.Contains(line, "beta (Need Setup First)") {
+		t.Fatalf("disabled line = %q", line)
+	}
+}

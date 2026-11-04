@@ -288,3 +288,29 @@ func TestProviderBuilderMixedSessionUsesCurrentProfileCredentials(t *testing.T) 
 		}
 	}
 }
+
+func TestProviderAvailabilityMirrorsCredentials(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	policy, _ := redaction.New(redaction.Config{}, nil)
+	builder := &providerBuilder{launchProvider: "ollama", policy: policy}
+	if ok, _ := builder.availability("ollama"); !ok {
+		t.Fatal("ollama should always be selectable")
+	}
+	if ok, hint := builder.availability("openai"); ok || !strings.Contains(hint, "[providers.openai].api_key") {
+		t.Fatalf("openai availability = %v, %q", ok, hint)
+	}
+	if ok, hint := builder.availability("opencode-go"); ok || !strings.Contains(hint, "[providers.opencode-go].api_key") {
+		t.Fatalf("opencode-go availability = %v, %q", ok, hint)
+	}
+	builder.config.ChatGPT.OAuthPath = filepath.Join(t.TempDir(), "missing.json")
+	if ok, hint := builder.availability("chatgpt"); ok || !strings.Contains(hint, "qcode login chatgpt") {
+		t.Fatalf("chatgpt availability = %v, %q", ok, hint)
+	}
+	// Custom endpoints stay selectable without a key.
+	builder.config.Providers = map[string]config.ProviderProfile{
+		"openai": {BaseURL: profileValue("http://local.test/v1")},
+	}
+	if ok, _ := builder.availability("openai"); !ok {
+		t.Fatal("custom openai endpoint should not require a key")
+	}
+}

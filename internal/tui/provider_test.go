@@ -434,3 +434,65 @@ func TestMixedProviderPresentationResumesEachTab(t *testing.T) {
 		t.Fatal("resume enabled browser provider switching")
 	}
 }
+
+func TestProviderPickerLabelsMarkSetupFirst(t *testing.T) {
+	names := []string{"chatgpt", "ollama", "openai"}
+	labels, disabled := providerPickerLabelsWithAvailability(names, func(name string) bool {
+		return name == "ollama"
+	})
+	want := []string{"ChatGPT" + providerNeedsSetupSuffix, "Ollama", "OpenAI" + providerNeedsSetupSuffix}
+	if !reflect.DeepEqual(labels, want) {
+		t.Fatalf("labels = %q, want %q", labels, want)
+	}
+	if len(disabled) != 2 || !disabled[labels[0]] || !disabled[labels[2]] || disabled[labels[1]] {
+		t.Fatalf("disabled = %v", disabled)
+	}
+	if got, ok := resolveProviderID(labels[0], names); !ok || got != "chatgpt" {
+		t.Fatalf("suffixed resolve = %q, %v", got, ok)
+	}
+}
+
+func TestProviderTypedBlocksUnconfiguredWithoutFactory(t *testing.T) {
+	u, h, recorder := newProviderUI(t, "")
+	calls := 0
+	u.SetProviderFactory(func(context.Context, string) (llm.Provider, string, error) {
+		calls++
+		return &providerUIBackend{name: "openai", models: []string{"shared"}}, "", nil
+	})
+	u.SetProviderAvailabilityChecker(func(name string) (bool, string) {
+		if name == "openai" {
+			return false, "configure [providers.openai].api_key"
+		}
+		return true, ""
+	})
+	u.handleProviderCommand(context.Background(), []string{"/provider", "openai"})
+	if calls != 0 {
+		t.Fatal("unconfigured provider reached factory")
+	}
+	if providerState(t, h, "main").Provider != "ollama" || recorder.providerCalls != 0 {
+		t.Fatal("unconfigured switch changed state")
+	}
+	if got := providerOutput(u, "main"); !strings.Contains(got, "needs setup first") || !strings.Contains(got, "configure [providers.openai].api_key") {
+		t.Fatalf("missing setup guidance: %q", got)
+	}
+}
+
+func TestProviderPickerSkipsUnconfigured(t *testing.T) {
+	// Registry order is chatgpt, ollama, openai, opencode-go. Only ollama
+	// (current) and opencode-go are configured; Down from ollama must skip
+	// disabled openai and switch to opencode-go.
+	u, h, _ := newProviderUI(t, arrowDownSequence+"\r")
+	u.SetProviderFactory(func(_ context.Context, name string) (llm.Provider, string, error) {
+		return &providerUIBackend{name: name, models: []string{"shared"}}, "", nil
+	})
+	u.SetProviderAvailabilityChecker(func(name string) (bool, string) {
+		if name == "ollama" || name == "opencode-go" {
+			return true, ""
+		}
+		return false, "setup"
+	})
+	u.handleProviderCommand(context.Background(), []string{"/provider"})
+	if got := providerState(t, h, "main"); got.Provider != "opencode-go" {
+		t.Fatalf("picker did not skip disabled: %+v", got)
+	}
+}
