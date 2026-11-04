@@ -29,7 +29,7 @@ below are the built-in values before configuration and environment overrides.
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--provider NAME` | `ollama` | `ollama`, `openai`, or `opencode-go`. |
+| `--provider NAME` | `ollama` | `ollama`, `openai`, `opencode-go`, or `chatgpt`. |
 | `--model ID` | `qwen2.5-coder:7b` | Model ID for the selected provider. |
 | `--thinking LEVEL` | unset | An explicit level supported by that exact model. |
 | `--base-url URL` | provider default | Override the provider endpoint. |
@@ -96,6 +96,25 @@ qcode update --help
 qcode --provider openai --update-model-meta
 qcode --provider opencode-go --update-model-meta
 ```
+
+## ChatGPT login
+
+```sh
+qcode login chatgpt
+qcode --provider chatgpt --model gpt-5.6-codex "explain this repository"
+```
+
+`login chatgpt` connects a ChatGPT subscription via Sign in with ChatGPT
+(open-source token-sharing flow, interactive terminal required). It prints a
+browser URL, you Continue with ChatGPT and approve, then the loopback callback
+on `http://127.0.0.1:1455/auth/callback` completes automatically (paste the URL
+back if your browser is on another machine); credentials are saved with mode
+`0600` at `~/.config/qcode/chatgpt-oauth.json` (override with `[chatgpt]
+oauth_path`) plus a stable host ID alongside it. The `chatgpt` provider uses
+that file instead of an API key; startup refreshes near-expiry tokens and fails
+fast with `run qcode login chatgpt` when login is missing. First sign-in
+registers with `client_id=dynamic_agent_client`; later sign-ins reuse the
+issued client with `id_token_hint`/`login_hint`.
 
 `update` is a CLI subcommand with its own `--arch` and `--pre` flags. It installs
 the latest release for the current operating system and chosen architecture.

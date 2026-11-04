@@ -133,11 +133,12 @@ type maxStepsReader interface {
 	MaxSteps() int
 }
 
-// RuntimePreferenceWriter persists preferences changed by the TUI. Model,
-// step-limit, statusline, and skills controls save from main; theme and
+// RuntimePreferenceWriter persists preferences changed by the TUI. Provider,
+// model, step-limit, statusline, and skills controls save from main; theme and
 // interactive preferences can be saved from any tab.
 type RuntimePreferenceWriter interface {
-	PersistModel(model, thinking string) error
+	PersistModel(provider, model, thinking string) error
+	PersistProvider(provider, model, thinking string) error
 	PersistMaxSteps(maxSteps int) error
 	PersistInteractive(enabled bool) error
 	PersistStatuslineHidden(hidden []string) error
@@ -256,8 +257,11 @@ type UI struct {
 	in                   *os.File
 	out                  *os.File
 	runner               Runner
+	providerFactory      ProviderFactory
 	provider             string
 	model                string
+	providerModels       map[string]string
+	providerThinking     map[string]string
 	root                 string
 	verbose              bool
 	width                int
@@ -266,6 +270,8 @@ type UI struct {
 	viewport             viewport
 	rowCache             historyRowCache
 	queue                queuePanel
+	todo                 todoPanel
+	todoArchiving        bool
 	statusActive         bool
 	statusBarText        string
 	startupNotice        string
@@ -286,7 +292,7 @@ type UI struct {
 	approvals            map[string][]*approvalRequest
 	questionMu           sync.Mutex
 	questions            []*questionRequest
-	questionPanel        *questionPanel // Guarded by screenMu; only the displayed questionnaire.
+	questionnaireActive  bool // Guarded by screenMu; blocks queue while answering inline.
 	modeDecisionMu       sync.Mutex
 	modeDecisions        []*modeDecisionRequest
 	tabMu                sync.Mutex
@@ -392,6 +398,8 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 		runner:           runner,
 		provider:         provider,
 		model:            model,
+		providerModels:   map[string]string{provider: model},
+		providerThinking: make(map[string]string),
 		root:             root,
 		width:            width,
 		height:           height,
@@ -417,6 +425,7 @@ func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
 	u.terminal.SubmitOnEscape = func() bool { return true }
 	u.terminal.KeyHandler = func(key rune) bool { u.observeComposerTask(); return u.handlePendingPanelKey(key) }
 	input.setQueueHandler(u.toggleQueuePanel)
+	input.setTodoHandler(u.toggleTodoPanel)
 	input.setTabHandler(u.requestTabSwitch)
 	u.SetRunner(runner)
 	return u
@@ -507,9 +516,6 @@ func (u *UI) RemoveAgentView(id string) {
 	u.screenMu.Lock()
 	delete(u.views, id)
 	delete(u.drafts, id)
-	if u.questionPanel != nil && u.questionPanel.agentID == id {
-		u.questionPanel = nil
-	}
 	u.screenMu.Unlock()
 	u.approvalMu.Lock()
 	for _, request := range u.approvals[id] {
@@ -882,6 +888,10 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		if len(fields) > 0 && fields[0] == "/remote" {
 			u.handleRemoteCommand(ctx, fields)
+			continue
+		}
+		if len(fields) > 0 && fields[0] == "/provider" {
+			u.handleProviderCommand(ctx, fields)
 			continue
 		}
 		if len(fields) > 1 && fields[0] == "/model" {
@@ -1322,7 +1332,7 @@ func (u *UI) chooseModel(ctx context.Context) {
 	u.screenMu.Lock()
 	u.model = selected
 	u.screenMu.Unlock()
-	u.persistModelPreference(selected, level)
+	u.persistModelPreference(provider, selected, level)
 	u.drawStatusBar()
 	message := fmt.Sprintf("%sModel: %s", green, selected)
 	if level != "" {
@@ -1414,7 +1424,7 @@ func (u *UI) setModelCommand(ctx context.Context, fields []string) {
 		view.model = fields[1]
 	}
 	u.screenMu.Unlock()
-	u.persistModelPreference(fields[1], level)
+	u.persistModelPreference(provider, fields[1], level)
 	if tracker, ok := u.runner.(contextRunner); ok {
 		if !u.configureActive(func() error { tracker.RefreshContext(ctx); return nil }) {
 			return
@@ -1516,13 +1526,103 @@ func (u *UI) updateMaxSteps(fields []string) {
 	u.printSystemMessage(fmt.Sprintf("%sMax steps: %d%s", green, maxSteps, reset))
 }
 
-func (u *UI) persistModelPreference(model, thinking string) {
+func (u *UI) persistModelPreference(provider, model, thinking string) {
+	u.rememberProviderModel(provider, model, thinking)
 	writer, main := u.runtimePreferenceTarget()
 	if writer == nil || !main {
 		return
 	}
-	if err := writer.PersistModel(model, thinking); err != nil {
+	if err := writer.PersistModel(provider, model, thinking); err != nil {
 		u.printSystemMessage(yellow + "Warning: unable to persist model preference: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+	}
+}
+
+// RememberProviderModel records the last-used model/thinking for a provider.
+// It is used to restore the association when switching providers.
+func (u *UI) RememberProviderModel(provider, model, thinking string) {
+	if provider == "" || model == "" {
+		return
+	}
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	if u.providerModels == nil {
+		u.providerModels = make(map[string]string)
+	}
+	if u.providerThinking == nil {
+		u.providerThinking = make(map[string]string)
+	}
+	u.providerModels[provider] = model
+	if thinking == "" {
+		delete(u.providerThinking, provider)
+	} else {
+		u.providerThinking[provider] = thinking
+	}
+}
+
+func (u *UI) rememberProviderModel(provider, model, thinking string) {
+	u.RememberProviderModel(provider, model, thinking)
+}
+
+func (u *UI) rememberedProviderModel(provider string) (string, string, bool) {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	if u.providerModels == nil {
+		return "", "", false
+	}
+	model, ok := u.providerModels[provider]
+	if !ok || model == "" {
+		return "", "", false
+	}
+	thinking := ""
+	if u.providerThinking != nil {
+		thinking = u.providerThinking[provider]
+	}
+	return model, thinking, true
+}
+
+// SetRememberedProviderModels seeds per-provider last-used models, typically
+// from the merged configuration at startup. Empty maps are ignored. The
+// caller's live selection wins for the active provider; call
+// RememberProviderModel afterwards to record an explicit startup override.
+func (u *UI) SetRememberedProviderModels(models map[string]string, thinking map[string]string) {
+	if len(models) == 0 && len(thinking) == 0 {
+		return
+	}
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	if u.providerModels == nil {
+		u.providerModels = make(map[string]string)
+	}
+	if u.providerThinking == nil {
+		u.providerThinking = make(map[string]string)
+	}
+	activeProvider, activeModel := u.provider, u.model
+	for provider, model := range models {
+		if provider == "" || model == "" {
+			continue
+		}
+		if provider == activeProvider {
+			continue
+		}
+		u.providerModels[provider] = model
+	}
+	for provider, level := range thinking {
+		if provider == "" {
+			continue
+		}
+		if provider == activeProvider {
+			continue
+		}
+		if level == "" {
+			delete(u.providerThinking, provider)
+		} else {
+			u.providerThinking[provider] = level
+		}
+	}
+	if activeProvider != "" && activeModel != "" {
+		if _, ok := u.providerModels[activeProvider]; !ok {
+			u.providerModels[activeProvider] = activeModel
+		}
 	}
 }
 
@@ -2496,6 +2596,12 @@ func (u *UI) showPage(direction int) {
 		u.paintFixedLocked(direction)
 		return
 	}
+	if u.fixedInput && u.activeTodoLocked().expanded {
+		if items, _, _, ok := u.todoSnapshotLocked(); ok && len(items) > 0 && !todoAllDone(items) {
+			u.paintFixedLocked(direction)
+			return
+		}
+	}
 	previous := *u.activeViewportLocked()
 	u.repaintActiveLocked(direction)
 	if *u.activeViewportLocked() != previous {
@@ -2512,9 +2618,6 @@ func (u *UI) showScroll(direction int) bool {
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
 	if u.commandViewActive {
-		return false
-	}
-	if u.activeQuestionPanelLocked() != nil {
 		return false
 	}
 	if u.fixedInput {
@@ -2555,9 +2658,6 @@ func (u *UI) showScroll(direction int) bool {
 func (u *UI) showHistoryBoundary(beginning bool) bool {
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
-	if u.activeQuestionPanelLocked() != nil {
-		return false // Home/End continue to edit the answer.
-	}
 	v := u.activeViewportLocked()
 	if u.display == nil {
 		return false

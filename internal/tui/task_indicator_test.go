@@ -120,13 +120,9 @@ func TestFixedTaskIndicatorAnimatesOnlyItsRow(t *testing.T) {
 	if u.inputCursorRow != row || u.inputCursorColumn != column {
 		t.Fatal("indicator moved the input cursor")
 	}
-	for _, mode := range []string{"history", "question", "raw"} {
+	for _, mode := range []string{"history", "raw"} {
 		t.Run(mode, func(t *testing.T) {
 			u.activeViewportLocked().browsing = mode == "history"
-			u.questionPanel = nil
-			if mode == "question" {
-				u.questionPanel = &questionPanel{agentID: "main"}
-			}
 			if mode == "raw" {
 				u.commandViewActive = true
 			}

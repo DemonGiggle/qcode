@@ -98,6 +98,10 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		}
 		return err
 	}
+	if len(arguments) > 0 && arguments[0] == "login" {
+		isTerminal := term.IsTerminal(int(stdin.Fd())) && term.IsTerminal(int(stdout.Fd()))
+		return runLogin(arguments[1:], stdin, stdout, diagnosticsOut, isTerminal)
+	}
 
 	opts := options{learningBudget: learning.DefaultBudget, autoCompactThreshold: agent.DefaultAutoCompactThreshold}
 	var configPaths []string
@@ -108,10 +112,11 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	var configuredSelectedAlwaysSkills []string
 	var configuredStatuslineHidden []string
 	var configuredTheme string
+	var loadedConfig config.Config
 	var sandboxCommandPathFlags sandboxCommandPathsFlag
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
 	flags.SetOutput(diagnosticsOut)
-	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider: ollama, openai, or opencode-go")
+	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider: ollama, openai, opencode-go, or chatgpt")
 	flags.StringVar(&opts.model, "model", env("QCODE_MODEL", "qwen2.5-coder:7b"), "model identifier")
 	flags.StringVar(&opts.thinking, "thinking", os.Getenv("QCODE_THINKING"), "thinking level for a model that supports it (for example: low, high, max, off)")
 	flags.StringVar(&opts.baseURL, "base-url", os.Getenv("QCODE_BASE_URL"), "provider API base URL")
@@ -131,7 +136,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	flags.Lookup("api-key").DefValue = ""
 	flags.BoolVar(&opts.dangerSkipTLSVerify, "danger-skip-tls-verify", false, "skip TLS certificate verification (insecure)")
 	flags.Usage = func() {
-		fmt.Fprintf(diagnosticsOut, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\nUse 'qcode update' to install the latest release.\n\nOptions:\n")
+		fmt.Fprintf(diagnosticsOut, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\nUse 'qcode update' to install the latest release.\nUse 'qcode login chatgpt' to connect a ChatGPT subscription via OAuth.\n\nOptions:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(arguments); err != nil {
@@ -153,13 +158,13 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	}
 	if !opts.demo {
 		cfg, inspectedPaths, diagnostics, err := config.Load()
+		policy.RegisterSecrets(cfg.Secrets()...)
+		writeConfigDiagnostics(diagnosticsOut, diagnostics, err)
 		if err != nil {
 			return err
 		}
+		loadedConfig = cfg
 		configPaths = inspectedPaths
-		for _, diagnostic := range diagnostics {
-			fmt.Fprintln(diagnosticsOut, "WARNING:", diagnostic, "Skipping file.")
-		}
 		configuredSkillPaths = append([]string(nil), cfg.Skills.Paths...)
 		lazyAutoload, alwaysAutoload := cfg.Skills.AutoloadPathsByMode()
 		// Legacy autoload_paths entries are lazy; merge both forms.
@@ -178,7 +183,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	} else if len(sandboxCommandPathFlags) > 0 {
 		opts.sandboxCommandPaths = append([]string(nil), sandboxCommandPathFlags...)
 	}
-	policy, err := redaction.New(redactionConfig, append(redaction.EnvironmentValues(), opts.apiKey))
+	policy, err := redaction.New(redactionConfig, append(append(redaction.EnvironmentValues(), loadedConfig.Secrets()...), opts.apiKey))
 	if err != nil {
 		return err
 	}
@@ -284,26 +289,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	if err != nil {
 		return err
 	}
-	providerConfig := llm.Config{BaseURL: opts.baseURL, APIKey: opts.apiKey, InsecureSkipVerify: opts.dangerSkipTLSVerify}
-	loadModelMeta := !opts.demo && ((opts.provider == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(opts.baseURL)) || (opts.provider == "openai" && llm.IsOfficialOpenAIEndpoint(opts.baseURL)))
-	if loadModelMeta {
-		cachePath, cachePathErr := llm.ProviderModelMetaCachePath(opts.provider)
-		meta := llm.EmptyProviderModelMeta(opts.provider)
-		metaErr := cachePathErr
-		if metaErr == nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			meta, metaErr = llm.LoadProviderModelMeta(ctx, cachePath, opts.provider, nil)
-			cancel()
-		}
-		providerConfig.ModelMeta = meta
-		if metaErr != nil {
-			fmt.Fprintf(diagnosticsOut, "WARNING: %s thinking metadata unavailable: %v\n", opts.provider, metaErr)
-			if len(meta.Models) == 0 && opts.thinking != "" {
-				fmt.Fprintln(diagnosticsOut, "WARNING: ignoring configured thinking level because no choices are available")
-				opts.thinking = ""
-			}
-		}
-	}
+	providers := &providerBuilder{config: loadedConfig, launchProvider: opts.provider,
+		launch: llm.Config{BaseURL: opts.baseURL, APIKey: opts.apiKey, InsecureSkipVerify: opts.dangerSkipTLSVerify},
+		policy: policy, warnings: diagnosticsOut}
 	var provider llm.Provider
 	var toolset agent.Toolset = registry
 	if opts.demo {
@@ -313,9 +301,22 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		opts.provider = provider.Name()
 		opts.model = demo.Model
 	} else {
-		provider, err = llm.New(opts.provider, providerConfig)
-		if err != nil {
-			return err
+		prepared, prepareErr := providers.prepare(context.Background(), opts.provider, nil)
+		if prepareErr != nil {
+			return prepareErr
+		}
+		provider = prepared.Provider
+		if prepared.MissingThinkingMeta && opts.thinking != "" {
+			fmt.Fprintln(diagnosticsOut, "WARNING: ignoring configured thinking level because no choices are available")
+			opts.thinking = ""
+		}
+	}
+	installProviderFactory := func(ui *tui.UI) {
+		if !opts.demo && !opts.jsonEvents {
+			ui.SetProviderFactory(func(ctx context.Context, name string) (llm.Provider, string, error) {
+				prepared, err := providers.prepare(ctx, name, nil)
+				return prepared.Provider, prepared.Endpoint, err
+			})
 		}
 	}
 	var learningStore learning.Store
@@ -348,6 +349,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	// updates do not corrupt the editable input line.
 	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
 	ui.SetRedaction(policy)
+	installProviderFactory(ui)
+	ui.SetRememberedProviderModels(loadedConfig.ProviderModels, loadedConfig.ProviderThinking)
+	ui.RememberProviderModel(opts.provider, opts.model, opts.thinking)
 	ui.SetStatuslineHidden(configuredStatuslineHidden)
 	if configuredTheme != "" {
 		if err := ui.SetTheme(configuredTheme); err != nil {
@@ -361,6 +365,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		if preferenceErr != nil {
 			fmt.Fprintln(diagnosticsOut, "WARNING: runtime preferences unavailable:", preferenceErr)
 		} else {
+			runtimePreferences.SetLegacyConfig(loadedConfig)
 			ui.SetRuntimePreferenceWriter(runtimePreferences)
 		}
 	}
@@ -385,13 +390,13 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	mainSelection := skillSelection
 	configureFactory := func(ui *tui.UI, host *control.Host, saved map[string]agent.SavedState) {
 		_ = host.SetConsultationTimeout(opts.agentTimeout)
-		host.SetFactory(func(id, name, model string, isMain bool) (*agent.Agent, error) {
+		create := func(id, name, model string, isMain bool, selected *agent.CreationBackend) (*agent.Agent, error) {
 			currentProvider := mainProvider
 			currentToolset := mainToolset
 			currentRegistry := mainRegistry
 			currentSelection := mainSelection
-			currentEndpoint := providerConfig.BaseURL
-			if !isMain || saved != nil {
+			currentEndpoint := opts.baseURL
+			if !isMain || saved != nil || selected != nil {
 				currentSelection = skills.NewLazySelection(root, allSkillPaths...)
 				createdRegistry, createErr := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, SandboxCommandPaths: sandboxCommandPaths, Skills: currentSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
 				if createErr != nil {
@@ -403,21 +408,24 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 					currentProvider = session.Provider
 					currentToolset = session.Tools
 				} else {
-					providerName, connection := opts.provider, providerConfig
-					state, ok := saved[id]
-					if !ok {
-						state, ok = saved["main"]
+					backend := agent.CreationBackend{Provider: opts.provider, Endpoint: opts.baseURL}
+					if selected != nil {
+						backend = *selected
+					} else if state, ok := saved[id]; ok {
+						backend = agent.CreationBackend{Provider: state.Provider, Endpoint: state.Endpoint}
+					} else if !isMain {
+						var backendErr error
+						backend, backendErr = host.Backend("main")
+						if backendErr != nil {
+							return nil, backendErr
+						}
 					}
-					if ok {
-						providerName = state.Provider
-						connection.BaseURL = state.Endpoint
-					}
-					currentEndpoint = connection.BaseURL
-					createdProvider, providerErr := llm.New(providerName, connection)
+					prepared, providerErr := providers.prepare(context.Background(), backend.Provider, &backend.Endpoint)
 					if providerErr != nil {
 						return nil, providerErr
 					}
-					currentProvider = createdProvider
+					currentEndpoint = prepared.Endpoint
+					currentProvider = prepared.Provider
 					currentToolset = createdRegistry
 				}
 			}
@@ -441,7 +449,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			runner.SetQuestioner(ui.AgentQuestioner(id))
 			runner.SetTaskIndicator(false)
 			runner.SetLearning(learningStore, opts.learningBudget)
-			if model == opts.model {
+			if isMain && saved == nil && selected == nil {
 				runner.SetContextWindow(opts.contextWindow)
 				if err := runner.SetThinking(opts.thinking); err != nil {
 					return nil, err
@@ -456,6 +464,12 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 				currentRegistry.SetDirectoryApprover(ui.AgentDirectoryApprover(id))
 			}
 			return runner, nil
+		}
+		host.SetFactory(func(id, name, model string, main bool) (*agent.Agent, error) {
+			return create(id, name, model, main, nil)
+		})
+		host.SetProviderFactory(func(id, name, model string, main bool, backend agent.CreationBackend) (*agent.Agent, error) {
+			return create(id, name, model, main, &backend)
 		})
 	}
 	configureFactory(ui, host, nil)
@@ -484,6 +498,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		newDetachedUI := func() (*tui.UI, error) {
 			staged := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
 			staged.SetRedaction(policy)
+			installProviderFactory(staged)
+			staged.SetRememberedProviderModels(loadedConfig.ProviderModels, loadedConfig.ProviderThinking)
+			staged.RememberProviderModel(opts.provider, opts.model, opts.thinking)
 			staged.SetStatuslineHidden(configuredStatuslineHidden)
 			if configuredTheme != "" {
 				if err := staged.SetTheme(configuredTheme); err != nil {
@@ -770,12 +787,22 @@ func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
 	// A model, base URL, and API key describe the configured provider. Do not
 	// carry them over when a higher-precedence source selects another provider.
 	// They can still be supplied explicitly through their own flag or env var.
+	// Each provider also remembers its last-used model, so switching back
+	// restores it when no explicit model override is given.
 	providerConfigApplies := cfg.Provider == "" || opts.provider == cfg.Provider
-	if providerConfigApplies && !setFlags["model"] && os.Getenv("QCODE_MODEL") == "" && cfg.Model != "" {
-		opts.model = cfg.Model
+	if !setFlags["model"] && os.Getenv("QCODE_MODEL") == "" {
+		if rememberedModel, _, ok := cfg.RememberedProviderModel(opts.provider); ok {
+			opts.model = rememberedModel
+		} else if providerConfigApplies && cfg.Model != "" {
+			opts.model = cfg.Model
+		}
 	}
-	if providerConfigApplies && !setFlags["thinking"] && os.Getenv("QCODE_THINKING") == "" && cfg.Thinking != "" {
-		opts.thinking = cfg.Thinking
+	if !setFlags["thinking"] && os.Getenv("QCODE_THINKING") == "" {
+		if _, rememberedThinking, ok := cfg.RememberedProviderModel(opts.provider); ok {
+			opts.thinking = rememberedThinking
+		} else if providerConfigApplies && cfg.Thinking != "" {
+			opts.thinking = cfg.Thinking
+		}
 	}
 	// A configured capacity belongs to the configured model and provider.
 	if providerConfigApplies && (cfg.Model == "" || cfg.Model == opts.model) && !setFlags["context-window"] && cfg.ContextWindow != nil {
@@ -787,12 +814,7 @@ func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
 	if !setFlags["disable-auto-compact"] && cfg.DisableAutoCompact != nil {
 		opts.disableAutoCompact = *cfg.DisableAutoCompact
 	}
-	if providerConfigApplies && !setFlags["base-url"] && os.Getenv("QCODE_BASE_URL") == "" && cfg.BaseURL != "" {
-		opts.baseURL = cfg.BaseURL
-	}
-	if providerConfigApplies && !setFlags["api-key"] && firstEnv("QCODE_API_KEY", "OPENAI_API_KEY") == "" && cfg.APIKey != "" {
-		opts.apiKey = cfg.APIKey
-	}
+	applyProviderConnection(opts, cfg, setFlags)
 	if !setFlags["max-steps"] && cfg.MaxSteps != nil {
 		opts.maxSteps = *cfg.MaxSteps
 	}

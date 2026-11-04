@@ -39,6 +39,8 @@ type Agent struct {
 	learningBudget           int
 	learningContext          string
 	learningSessionID        string
+	configurationRevision    atomic.Uint64
+	backendSnapshot          atomic.Pointer[backendSnapshot]
 	provider                 llm.Provider
 	model                    string
 	thinking                 string
@@ -244,9 +246,10 @@ func (a *Agent) LastResponse() string {
 
 // ListModels returns the provider's currently available models.
 func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
-	lister, ok := a.provider.(llm.ModelLister)
+	backend := a.backendSnapshot.Load()
+	lister, ok := backend.provider.(llm.ModelLister)
 	if !ok {
-		return nil, fmt.Errorf("provider %q does not support model discovery", a.provider.Name())
+		return nil, fmt.Errorf("provider %q does not support model discovery", backend.provider.Name())
 	}
 	models, err := lister.Models(ctx)
 	if err != nil {
@@ -264,7 +267,8 @@ func (a *Agent) SetModel(model string) {
 			a.contextUsage = nil
 		}
 		a.model = model
-		if capability := a.ThinkingCapability(); !capability.Adjustable || !thinkingLevelAllowed(capability, a.thinking) {
+		a.configurationRevision.Add(1)
+		if capability := thinkingCapability(a.provider, a.model); !capability.Adjustable || !thinkingLevelAllowed(capability, a.thinking) {
 			a.thinking = ""
 		}
 		a.publishContext()
@@ -275,13 +279,18 @@ func (a *Agent) SetModel(model string) {
 // ThinkingCapability returns the selected model's provider-neutral thinking
 // policy. Providers that do not advertise a policy safely return no control.
 func (a *Agent) ThinkingCapability() llm.ThinkingCapability {
-	return a.ThinkingCapabilityFor(a.model)
+	state := a.backendSnapshot.Load()
+	return thinkingCapability(state.provider, state.model)
 }
 
 // ThinkingCapabilityFor permits a UI to inspect a prospective model before it
 // commits the model selection.
 func (a *Agent) ThinkingCapabilityFor(model string) llm.ThinkingCapability {
-	if provider, ok := a.provider.(llm.ThinkingProvider); ok {
+	return thinkingCapability(a.backendSnapshot.Load().provider, model)
+}
+
+func thinkingCapability(p llm.Provider, model string) llm.ThinkingCapability {
+	if provider, ok := p.(llm.ThinkingProvider); ok {
 		return provider.ThinkingCapability(model)
 	}
 	return llm.ThinkingCapability{RequestFormat: llm.ThinkingRequestNone, ReplayFormat: llm.ThinkingReplayNone}
@@ -291,18 +300,19 @@ func (a *Agent) ThinkingCapabilityFor(model string) llm.ThinkingCapability {
 // use the provider/model default and omit optional request fields.
 func (a *Agent) SetThinking(level string) error {
 	level = strings.ToLower(strings.TrimSpace(level))
-	capability := a.ThinkingCapability()
+	capability := thinkingCapability(a.provider, a.model)
 	if level != "" && (!capability.Adjustable || !thinkingLevelAllowed(capability, level)) {
 		return fmt.Errorf("thinking level %q is not supported by model %q", level, a.model)
 	}
 	a.thinking = level
+	a.configurationRevision.Add(1)
 	a.publishCheckpoint()
 	return nil
 }
 
 // ThinkingLevel returns the explicit level, if any. Empty uses the model
 // default and intentionally results in no optional provider request field.
-func (a *Agent) ThinkingLevel() string { return a.thinking }
+func (a *Agent) ThinkingLevel() string { return a.backendSnapshot.Load().thinking }
 
 func thinkingLevelAllowed(capability llm.ThinkingCapability, level string) bool {
 	for _, allowed := range capability.Levels {
@@ -630,6 +640,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		}
 	}
 	recoveryInstruction := ""
+	planningQuestionsActive := false
 	var replanning []*session.SteeringInput
 	applySteer := func(item *session.SteeringInput) {
 		a.messages = append(a.messages, llm.Message{Role: "user", Content: item.Text})
@@ -644,6 +655,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		a.askedQuestions = make(map[string]bool)
 		identicalToolCalls = map[string]int{}
 		recoveryInstruction = ""
+		planningQuestionsActive = false
 		if contextual, ok := a.tools.(interface{ TaskContext(string) string }); ok {
 			a.taskContext = contextual.TaskContext(item.Text)
 		}
@@ -793,6 +805,13 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		a.contextMessages = len(a.messages)
 		a.RefreshContext(ctx)
 		if len(response.Message.ToolCalls) == 0 {
+			if planningQuestionsActive && (a.PlanMode() || a.SkillPlanMode()) {
+				// Explaining a choice does not finish the planning request. Give
+				// the model another turn to collect the decision or submit the
+				// artifact, while preserving the normal step limit and steering.
+				recoveryInstruction = prompt.PlanningQuestionContinuation
+				continue
+			}
 			a.stateMu.Lock()
 			a.lastResponse = response.Message.Content
 			a.stateMu.Unlock()
@@ -809,6 +828,24 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		endTurnResponse := ""
 		userAnswer := ""
 		var nextSteer *session.SteeringInput
+		// In planning flows a clarification answer and its re-ask must use
+		// separate turns. If the model returns both visible text and a
+		// questionnaire in one turn after a reply, the questionnaire would
+		// pop up immediately (e.g. a "let me answer, then re-confirm" teaser
+		// followed at once by the unanswered question) before the user has
+		// read the real answer. Defer the questionnaire so the text is shown
+		// first and the re-ask happens on the next turn.
+		deferPlanningAsk := planningQuestionsActive && (a.PlanMode() || a.SkillPlanMode()) && strings.TrimSpace(response.Message.Content) != ""
+		if deferPlanningAsk {
+			hasAsk := false
+			for _, call := range response.Message.ToolCalls {
+				if call.Name == "ask_questions" {
+					hasAsk = true
+					break
+				}
+			}
+			deferPlanningAsk = hasAsk
+		}
 		for index, call := range response.Message.ToolCalls {
 			if nextSteer == nil {
 				nextSteer = input.take(false)
@@ -819,6 +856,30 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			}
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			if deferPlanningAsk && call.Name == "ask_questions" {
+				if call.ID == "" {
+					call.ID = fmt.Sprintf("call_%d_%d", step+1, index+1)
+				}
+				arguments := compactJSON(a.trace.RedactArguments(call.Arguments))
+				displayCall := call
+				displayCall.Arguments = a.trace.RedactArguments(call.Arguments)
+				activityDetails := toolActivity(displayCall)
+				task.Suspend()
+				activity := a.trace.StartActivity(activityDetails)
+				toolSpan := a.trace.Start("tool", call.Name, map[string]any{"arguments": arguments})
+				toolErr := errors.New("Questionnaire deferred: explanation text was returned in the same turn. The visible text is shown first; re-ask any unresolved decision on the next turn with ask_questions and no accompanying text")
+				toolSpan.End(toolErr)
+				activity.EndWithOutput(toolErr, "")
+				a.recordActivity(session.WorkActivity{Action: activityDetails.Action, Summary: activityDetails.Completed, Success: false})
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				a.messages = append(a.messages, llm.Message{Role: "tool", Content: "ERROR: " + toolErr.Error(), Name: call.Name, ToolCallID: call.ID})
+				a.publishContext()
+				input.setToolCall("")
+				recoveryInstruction = prompt.PlanningQuestionContinuation + "\n\nReturn the full answer as text-only first; call ask_questions again only on the next turn."
+				continue
 			}
 			input.setToolCall(call.ID)
 			fingerprint := a.WorkingDirectory() + "\x00" + toolFingerprint(call)
@@ -923,6 +984,12 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		}
 		if userAnswer != "" {
 			a.messages = append(a.messages, llm.Message{Role: "user", Content: userAnswer})
+			// A new reply changes the context even if the model needs to ask
+			// the same question again after explaining its choices.
+			identicalToolCalls = map[string]int{}
+			if a.PlanMode() || a.SkillPlanMode() {
+				planningQuestionsActive = true
+			}
 			a.publishContext()
 		}
 		if nextSteer == nil {

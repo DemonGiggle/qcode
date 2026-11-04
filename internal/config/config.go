@@ -8,8 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pelletier/go-toml/v2"
 	"qcode/internal/redaction"
@@ -17,6 +19,11 @@ import (
 )
 
 const fileName = "config.toml"
+
+// errFatalProviderConfig marks validation failures that must fail startup
+// instead of silently skipping the file (e.g. chatgpt + api_key, which
+// previously failed fast in main). Load returns these as fatal errors.
+var errFatalProviderConfig = errors.New("invalid provider credentials")
 
 // WebSearch selects the search backend at startup.
 type WebSearch struct {
@@ -186,7 +193,27 @@ func (s Skills) NormalizedSelection() (selected []string, always []string) {
 }
 
 // Config contains settings that may be supplied by a qcode config file.
+// ChatGPT holds the ChatGPT subscription (OAuth) settings. OAuthPath points
+// at the JSON file written by `qcode login chatgpt`. Empty means the default
+// ~/.config/qcode/chatgpt-oauth.json. It never holds a secret itself.
+type ChatGPT struct {
+	OAuthPath string `toml:"oauth_path"`
+}
+
+// ProviderProfile overrides connection fields independently. A nil field inherits;
+// a pointer to an empty string explicitly clears a lower-priority value.
+type ProviderProfile struct {
+	BaseURL *string `toml:"base_url"`
+	APIKey  *string `toml:"api_key"`
+}
+
 type Config struct {
+	Providers              map[string]ProviderProfile `toml:"providers"`
+	connectionsLoaded      bool
+	legacyConnectionOwners map[string]string
+	globalBaseURL          string
+	globalAPIKey           string
+
 	Redaction            redaction.Config `toml:"redaction"`
 	Learning             Learning         `toml:"learning"`
 	Skills               Skills           `toml:"skills"`
@@ -196,6 +223,9 @@ type Config struct {
 	APIKey               string           `toml:"api_key"`
 	Model                string           `toml:"model"`
 	Thinking             string           `toml:"thinking"`
+	ProviderModels       map[string]string `toml:"provider_models"`
+	ProviderThinking     map[string]string `toml:"provider_thinking"`
+	ChatGPT              ChatGPT          `toml:"chatgpt"`
 	Interactive          *bool            `toml:"interactive"`
 	ContextWindow        *int             `toml:"context_window"`
 	AutoCompactThreshold *int             `toml:"auto_compact_threshold"`
@@ -236,6 +266,9 @@ func Load() (Config, []string, []error, error) {
 	for _, diagnostic := range diagnostics {
 		var invalid *redaction.InvalidPatternError
 		if errors.As(diagnostic, &invalid) {
+			return Config{}, paths, diagnostics, diagnostic
+		}
+		if errors.Is(diagnostic, errFatalProviderConfig) {
 			return Config{}, paths, diagnostics, diagnostic
 		}
 	}
@@ -287,10 +320,8 @@ func load(paths []string) (Config, []string, []error) {
 			continue
 		}
 
-		var cfg Config
-		decoder := toml.NewDecoder(strings.NewReader(string(data)))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&cfg); err != nil {
+		cfg, err := decodeConfig(data, true)
+		if err != nil {
 			diagnostics = append(diagnostics, fmt.Errorf("parse config %s: %w", path, err))
 			continue
 		}
@@ -298,12 +329,64 @@ func load(paths []string) (Config, []string, []error) {
 			diagnostics = append(diagnostics, err)
 			continue
 		}
+		// Bind legacy fields at their original layer, before later defaults change.
+		// When no provider is known yet (global), also track them as global
+		// defaults so provider-less configs keep working for any --provider.
+		// Scoped profiles still own their layer for migration provenance.
+		var raw struct {
+			BaseURL *string `toml:"base_url"`
+			APIKey  *string `toml:"api_key"`
+		}
+		_ = toml.Unmarshal(data, &raw)
+		isGlobal := cfg.Provider == "" && merged.Provider == ""
+		owner := cfg.Provider
+		if owner == "" {
+			owner = merged.Provider
+		}
+		if owner == "" {
+			owner = "ollama"
+		}
+		var legacy Config
+		if raw.BaseURL != nil || raw.APIKey != nil {
+			legacy.Providers = map[string]ProviderProfile{owner: {BaseURL: raw.BaseURL, APIKey: raw.APIKey}}
+		}
+		if err := validate(path, legacy); err != nil {
+			diagnostics = append(diagnostics, err)
+			continue
+		}
+		merge(&merged, legacy)
 		merge(&merged, cfg)
+		if isGlobal {
+			if cfg.BaseURL != "" {
+				merged.globalBaseURL = cfg.BaseURL
+			}
+			if cfg.APIKey != "" {
+				merged.globalAPIKey = cfg.APIKey
+			}
+		}
+		if raw.BaseURL != nil || raw.APIKey != nil {
+			if merged.legacyConnectionOwners == nil {
+				merged.legacyConnectionOwners = make(map[string]string)
+			}
+			merged.legacyConnectionOwners[filepath.Clean(path)] = owner
+		}
+		merged.connectionsLoaded = true
 	}
 	return merged, inspected, diagnostics
 }
 
 func validate(path string, cfg Config) error {
+	for name, profile := range cfg.Providers {
+		if !validProvider(name) {
+			return fmt.Errorf("parse config %s: unknown provider profile %q", path, name)
+		}
+		if name == "chatgpt" && profile.APIKey != nil && *profile.APIKey != "" {
+			return fmt.Errorf("parse config %s: providers.chatgpt.api_key is unsupported (use OAuth): %w", path, errFatalProviderConfig)
+		}
+	}
+	if cfg.Provider == "chatgpt" && cfg.APIKey != "" {
+		return fmt.Errorf("parse config %s: chatgpt api_key is unsupported (use OAuth): %w", path, errFatalProviderConfig)
+	}
 	if err := redaction.Validate(cfg.Redaction); err != nil {
 		return fmt.Errorf("parse config %s: %w", path, err)
 	}
@@ -338,6 +421,9 @@ func validate(path string, cfg Config) error {
 			ids = append(ids, palette.ID)
 		}
 		return fmt.Errorf("parse config %s: theme must be one of %s", path, strings.Join(ids, ", "))
+	}
+	if err := validateProviderModels(path, cfg.ProviderModels, cfg.ProviderThinking); err != nil {
+		return err
 	}
 	if err := validateSkillSelection(path, cfg.Skills); err != nil {
 		return err
@@ -391,6 +477,37 @@ func validateSkillSelection(path string, skills Skills) error {
 // selected. Repeatable
 // --sandbox-command-path flags override the merged configuration entirely.
 func merge(dst *Config, incoming Config) {
+	for name, profile := range incoming.Providers {
+		if dst.Providers == nil {
+			dst.Providers = make(map[string]ProviderProfile)
+		}
+		current := dst.Providers[name]
+		if profile.BaseURL != nil {
+			value := *profile.BaseURL
+			current.BaseURL = &value
+		}
+		if profile.APIKey != nil {
+			value := *profile.APIKey
+			current.APIKey = &value
+		}
+		dst.Providers[name] = current
+	}
+	for name, model := range incoming.ProviderModels {
+		if dst.ProviderModels == nil {
+			dst.ProviderModels = make(map[string]string)
+		}
+		dst.ProviderModels[name] = model
+	}
+	for name, thinking := range incoming.ProviderThinking {
+		if dst.ProviderThinking == nil {
+			dst.ProviderThinking = make(map[string]string)
+		}
+		if strings.TrimSpace(thinking) == "" {
+			delete(dst.ProviderThinking, name)
+			continue
+		}
+		dst.ProviderThinking[name] = thinking
+	}
 	mergeRedaction(&dst.Redaction, incoming.Redaction)
 	if incoming.Learning.ContextBudget != nil {
 		dst.Learning.ContextBudget = incoming.Learning.ContextBudget
@@ -412,6 +529,9 @@ func merge(dst *Config, incoming Config) {
 	}
 	if incoming.Thinking != "" {
 		dst.Thinking = incoming.Thinking
+	}
+	if incoming.ChatGPT.OAuthPath != "" {
+		dst.ChatGPT.OAuthPath = incoming.ChatGPT.OAuthPath
 	}
 	if incoming.Interactive != nil {
 		dst.Interactive = incoming.Interactive
@@ -565,4 +685,97 @@ func mergeRedaction(dst *redaction.Config, src redaction.Config) {
 			*pair.dst = append([]string{}, pair.src...)
 		}
 	}
+}
+
+func validProvider(name string) bool {
+	switch name {
+	case "ollama", "openai", "opencode-go", "chatgpt":
+		return true
+	}
+	return false
+}
+
+// ProviderConnection resolves a provider's merged connection. Directly constructed
+// legacy Config values still use flat fields for their selected provider (or
+// the caller's provider when Provider is omitted). Loaded configs use explicit
+// profiles first, then global provider-less defaults, and never reassign
+// scoped legacy credentials to another provider.
+func (c Config) ProviderConnection(name string) (baseURL, apiKey string) {
+	if !c.connectionsLoaded && (c.Provider == "" || name == c.Provider) {
+		baseURL, apiKey = c.BaseURL, c.APIKey
+	} else if c.connectionsLoaded {
+		baseURL, apiKey = c.globalBaseURL, c.globalAPIKey
+	}
+	p := c.Providers[name]
+	if p.BaseURL != nil {
+		baseURL = *p.BaseURL
+	}
+	if p.APIKey != nil {
+		apiKey = *p.APIKey
+	}
+	return
+}
+
+// Secrets returns all configured nonempty API keys, including inactive profiles,
+// legacy fields, and global provider-less defaults, for startup redaction.
+// Values are deduplicated and sorted.
+func (c Config) Secrets() []string {
+	seen := map[string]bool{}
+	if c.APIKey != "" {
+		seen[c.APIKey] = true
+	}
+	if c.globalAPIKey != "" {
+		seen[c.globalAPIKey] = true
+	}
+	for _, p := range c.Providers {
+		if p.APIKey != nil && *p.APIKey != "" {
+			seen[*p.APIKey] = true
+		}
+	}
+	values := make([]string, 0, len(seen))
+	for value := range seen {
+		values = append(values, value)
+	}
+	sort.Strings(values)
+	return values
+}
+
+func validateProviderModels(path string, models, thinking map[string]string) error {
+	for name, model := range models {
+		if !validProvider(name) {
+			return fmt.Errorf("parse config %s: unknown provider_models entry %q", path, name)
+		}
+		if strings.TrimSpace(model) == "" {
+			return fmt.Errorf("parse config %s: provider_models.%s must not be empty", path, name)
+		}
+		if !utf8.ValidString(model) {
+			return fmt.Errorf("parse config %s: provider_models.%s contains invalid UTF-8", path, name)
+		}
+	}
+	for name, level := range thinking {
+		if !validProvider(name) {
+			return fmt.Errorf("parse config %s: unknown provider_thinking entry %q", path, name)
+		}
+		if !utf8.ValidString(level) {
+			return fmt.Errorf("parse config %s: provider_thinking.%s contains invalid UTF-8", path, name)
+		}
+	}
+	return nil
+}
+
+// RememberedProviderModel returns the last model (and thinking level) recorded
+// for a provider. The second result reports whether a model was remembered.
+// An empty thinking level means the provider/model default.
+func (c Config) RememberedProviderModel(provider string) (model, thinking string, ok bool) {
+	if c.ProviderModels == nil {
+		return "", "", false
+	}
+	model, ok = c.ProviderModels[provider]
+	if !ok || strings.TrimSpace(model) == "" {
+		return "", "", false
+	}
+	if c.ProviderThinking != nil {
+		thinking = c.ProviderThinking[provider]
+	}
+	return model, thinking, true
 }

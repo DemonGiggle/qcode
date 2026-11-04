@@ -22,6 +22,11 @@ start a second runtime when remote access is enabled, and a remote adapter must
 not create its own `AgentManager`. Local and remote commands therefore operate
 on the same agents, queues, session state, and workspace locks.
 
+Provider switching remains terminal-only in this version: `/provider` and
+`/provider <name>` are rejected by the browser command endpoint. A successful
+terminal switch updates the browser's provider/model labels and model catalog
+for that tab without replacing its agent or conversation.
+
 - Interactive, restored, demo, and one-shot runtimes are created as a
   `control.Host`.
 - Existing TUI behavior is preserved through its current presentation event

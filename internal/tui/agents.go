@@ -31,7 +31,7 @@ func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 		return
 	}
 	if len(fields) == 3 && fields[1] == "new" {
-		summary, err := u.manager.Create(fields[2])
+		summary, err := u.createAgentWithProvider(fields[2])
 		if err != nil {
 			u.printSystemMessage(yellow + err.Error() + reset)
 			return
@@ -148,7 +148,7 @@ func (u *UI) createAgent(ctx context.Context) {
 		u.printSystemMessage(dim + "Agent creation cancelled." + reset)
 		return
 	}
-	summary, err := u.manager.Create(selected)
+	summary, err := u.createAgentWithProvider(selected)
 	if err != nil {
 		u.printSystemMessage(yellow + err.Error() + reset)
 		return
@@ -270,6 +270,7 @@ type agentView struct {
 	viewport viewport
 	rowCache historyRowCache
 	queue    queuePanel
+	todo     todoPanel
 	unseen   bool
 	onSkills skillChangeFunc
 }
@@ -320,7 +321,18 @@ func (d *agentDisplay) WriteJSONEvent(data []byte) (int, error) {
 }
 func (d *agentDisplay) writeFilteredLocked(data []byte) (int, error) {
 	originalLength := len(data)
+	if d.ui.todoArchiving {
+		// The finished-todo archival below reuses the notice path; it only
+		// appends history so the outer write owns the repaint.
+		_, _ = d.history.Write(data)
+		return originalLength, nil
+	}
 	_, _ = d.history.Write(data)
+	if d.id == d.ui.activeAgent {
+		// Every todo mutation lands here as an activity line first, so the
+		// completion check sees each transition without extra events.
+		d.ui.maybeArchiveTodoLocked(d.id)
+	}
 	if d.ui.fixedInput {
 		if d.ui.activeAgent == d.id {
 			d.ui.paintFixedLocked(0)
@@ -626,6 +638,9 @@ func (u *UI) switchAgent(id string) error {
 	u.SetRunner(runner)
 	u.signalPresentation()
 	u.updateActiveCancellation()
+	// A background tab may have finished its checklist while hidden; archive
+	// it now that its runner is active so the panel is already gone.
+	u.maybeArchiveTodo(id)
 	u.repaintActive()
 	return nil
 }

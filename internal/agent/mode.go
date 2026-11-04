@@ -431,10 +431,16 @@ func (a *Agent) askQuestions(ctx context.Context, arguments json.RawMessage) (ll
 			a.askedQuestions = make(map[string]bool)
 		}
 		a.askedQuestions[strings.ToLower(strings.Join(strings.Fields(questions[0].Text), " "))] = true
-		output := formatQuestionAnswers(questions, answers) + "\n\nContinue with the user message that follows."
-		return llm.ToolResult{Output: output, UserAnswer: fmt.Sprintf("In response to %q: %s", questions[0].Text, answers[0])}, nil
 	}
-	return llm.ToolResult{Output: formatQuestionAnswers(questions, answers)}, nil
+	answerText := formatQuestionAnswers(questions, answers)
+	userAnswer := answerText
+	if len(questions) == 1 {
+		userAnswer = fmt.Sprintf("In response to %q: %s", questions[0].Text, answers[0])
+	}
+	return llm.ToolResult{
+		Output:     answerText + "\n\nContinue with the user message that follows.",
+		UserAnswer: userAnswer,
+	}, nil
 }
 
 // formatQuestionAnswers renders collected answers as an indented list for both

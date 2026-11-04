@@ -105,6 +105,7 @@ type AgentManager struct {
 	results             map[string]*promptRequest
 	resultOrder         []string
 	factory             SessionFactory
+	providerFactory     ProviderSessionFactory
 	events              chan ManagerEvent
 	wg                  sync.WaitGroup
 	shutdown            bool
@@ -145,7 +146,7 @@ func (m *AgentManager) Create(model string) (AgentSummary, error) {
 	return m.createNew(model, nil)
 }
 
-func (m *AgentManager) createNew(model string, prepare func(*Agent) error) (AgentSummary, error) {
+func (m *AgentManager) createNew(model string, prepare func(*Agent) error, backend ...CreationBackend) (AgentSummary, error) {
 	m.mu.Lock()
 	if m.shutdown {
 		m.mu.Unlock()
@@ -158,7 +159,7 @@ func (m *AgentManager) createNew(model string, prepare func(*Agent) error) (Agen
 	m.nextID++
 	id := fmt.Sprintf("agent-%d", m.nextID)
 	m.mu.Unlock()
-	return m.createPrepared(id, id, model, false, prepare)
+	return m.createPrepared(id, id, model, false, prepare, backend...)
 }
 
 // CreateInherited creates a worker and copies the parent agent's capabilities
@@ -176,13 +177,20 @@ func (m *AgentManager) CreateInheritedAt(ctx context.Context, parentID, model, c
 	if !ok {
 		return AgentSummary{}, fmt.Errorf("unknown agent %q", parentID)
 	}
-	if strings.TrimSpace(model) == "" {
-		parentSummary, err := m.Summary(parentID)
-		if err != nil {
-			return AgentSummary{}, err
-		}
-		model = parentSummary.Model
+	m.mu.RLock()
+	parentSession := m.sessions[parentID]
+	if parentSession == nil || parentSession.summary.Status == StatusClosing {
+		m.mu.RUnlock()
+		return AgentSummary{}, fmt.Errorf("%w %q", ErrClosedAgent, parentID)
 	}
+	if strings.TrimSpace(model) == "" {
+		model = parentSession.summary.Model
+	}
+	var backend []CreationBackend
+	if m.providerFactory != nil {
+		backend = []CreationBackend{{Provider: parent.provider.Name(), Endpoint: parent.endpoint}}
+	}
+	m.mu.RUnlock()
 	if cwd == "" {
 		cwd = parent.WorkingDirectory()
 	}
@@ -215,20 +223,30 @@ func (m *AgentManager) CreateInheritedAt(ctx context.Context, parentID, model, c
 			child.directoryChanged()
 		}
 		return ctx.Err()
-	})
+	}, backend...)
 }
 
 func (m *AgentManager) create(id, name, model string, main bool) (AgentSummary, error) {
 	return m.createPrepared(id, name, model, main, nil)
 }
 
-func (m *AgentManager) createPrepared(id, name, model string, main bool, prepare func(*Agent) error) (AgentSummary, error) {
+func (m *AgentManager) createPrepared(id, name, model string, main bool, prepare func(*Agent) error, backend ...CreationBackend) (AgentSummary, error) {
 	m.mu.RLock()
 	factory := m.factory
+	providerFactory := m.providerFactory
 	shuttingDown := m.shutdown
 	m.mu.RUnlock()
 	if shuttingDown {
 		return AgentSummary{}, fmt.Errorf("agent manager is shutting down")
+	}
+	if len(backend) > 0 {
+		if providerFactory == nil {
+			return AgentSummary{}, fmt.Errorf("provider-aware agent factory is not configured")
+		}
+		selected := backend[0]
+		factory = func(id, name, model string, main bool) (*Agent, error) {
+			return providerFactory(id, name, model, main, selected)
+		}
 	}
 	if factory == nil {
 		return AgentSummary{}, fmt.Errorf("agent factory is not configured")
@@ -364,6 +382,7 @@ func (m *AgentManager) UpdateModel(id, model string) error {
 		return fmt.Errorf("agent %q is %s", id, s.summary.Status)
 	}
 	s.summary.Model = model
+	s.runner.configurationRevision.Add(1)
 	return nil
 }
 
@@ -550,6 +569,8 @@ func (m *AgentManager) startRequestLocked(id string, s *managedSession, req *pro
 	}
 	req.input = &taskInput{manager: m, request: req}
 	s.active = req
+	// Even work that finishes before a picker commits invalidates its snapshot.
+	s.runner.configurationRevision.Add(1)
 	s.summary.ActiveTaskID = req.id
 	s.cancel = cancel
 	s.started = time.Now()

@@ -1,8 +1,18 @@
-# LLM provider: ollama, openai, or opencode-go.
+# LLM provider: ollama, openai, opencode-go, or chatgpt.
 provider = "ollama"
 
 # Model identifier passed to the selected provider.
 model = "qwen2.5-coder:7b"
+
+# Last-used model per provider. /provider and /model on the main tab keep
+# these in sync with the root provider/model/thinking above, so switching
+# back restores the associated model. Startup also prefers the remembered
+# model when --provider selects a different provider without --model.
+# [provider_models]
+# opencode-go = "muse-spark-1.3-contributor"
+# chatgpt = "gpt-6-luna"
+# [provider_thinking]
+# opencode-go = "high"
 
 # Terminal palette. Omit this field or choose "default" to keep the terminal's
 # current ANSI colors and background. /theme opens a live-preview picker.
@@ -38,11 +48,27 @@ max_steps = 32
 # With nvm, also add the active Node/npm version's bin directory, for example
 # "~/.nvm/versions/node/v22.16.0/bin" (replace with your installed version).
 
-# Optional provider API base URL override.
+# Connections are scoped to providers, independently of the default selection.
+# Omitted profile fields inherit from lower-priority config files; an explicit
+# empty string clears a lower-priority value. Prefer environment variables for
+# API keys on shared systems. Legacy root base_url/api_key are still supported;
+# saving a provider selection migrates user-file legacy fields to their owner.
+# Place active profile tables AFTER all root-level settings (at end of file).
+# [providers.ollama]
 # base_url = "http://127.0.0.1:11434"
-
-# Optional provider API key. Prefer an environment variable on shared systems.
+# [providers.openai]
 # api_key = "your-api-key"
+# [providers.opencode-go]
+# base_url = "https://your-endpoint.example/v1"
+# The chatgpt provider uses OAuth; nonempty providers.chatgpt.api_key is invalid.
+# Run `qcode login chatgpt` first, then select provider = "chatgpt".
+
+# ChatGPT subscription (no API key). Run `qcode login chatgpt` first,
+# then use --provider chatgpt --model gpt-5.6-codex.
+# ChatGPT OAuth file written by `qcode login chatgpt`. Empty uses the
+# default ~/.config/qcode/chatgpt-oauth.json (0600, owner-only, no symlink).
+# [chatgpt]
+# oauth_path = "~/.config/qcode/chatgpt-oauth.json"
 
 # Skip TLS certificate verification for qcode HTTP clients (insecure). Shell
 # commands receive opt-out settings for common clients but may need their own flags.

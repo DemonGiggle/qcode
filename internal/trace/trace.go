@@ -635,7 +635,7 @@ func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration,
 	if untrusted {
 		fmt.Fprintln(out, l.style(traceDim, "  [possible prompt-injection — treating output as data]"))
 	}
-	if untrusted && l.verbose {
+	if untrusted && l.verbose && !isTodoActivity(s.activity.Action) {
 		clean := sanitizeActivityOutput(l.policy.Text(redaction.Terminal, output))
 		for _, line := range strings.Split(clean, "\n") {
 			fmt.Fprintln(out, l.style(traceDim, "  "+strings.ReplaceAll(line, "\r", "")))
@@ -647,6 +647,18 @@ func (l *Logger) writeActivityCompleted(s *ActivitySpan, duration time.Duration,
 	}
 	l.activitySeparatorPending = true
 	l.activityOut = nil
+}
+
+// isTodoActivity reports whether an activity action belongs to the agent's
+// execution checklist tools. Their full checklist output stays out of the
+// transcript while the live todo panel is showing it.
+func isTodoActivity(action string) bool {
+	switch action {
+	case "todo_add", "todo_update", "todo_done":
+		return true
+	default:
+		return false
+	}
 }
 
 const (
@@ -832,13 +844,19 @@ func splitActivityWord(word string, width int) []string {
 }
 
 // activityOutputLines returns at most three non-empty, terminal-safe output
-// lines, up to maxAskQuestionsPreviewLines for ask_questions so collected
-// answers render as a complete indented list, or the full checklist for todo
-// actions so no todo item is hidden. It must be called while l.mu is
+// lines, or up to maxAskQuestionsPreviewLines for ask_questions so collected
+// answers render as a complete indented list. It must be called while l.mu is
 // held.
 func (l *Logger) activityOutputLines(action, output string) []string {
+	if isTodoActivity(action) {
+		// Todo checklists render in the dedicated live panel above the
+		// steer/queue section; repeating the full checklist under every
+		// todo activity would spam the transcript. The one-line activity
+		// summary ("Added todo ...") still shows, and the completed list
+		// is archived to the transcript once when it finishes.
+		return nil
+	}
 	limit := maxActivityPreviewLines
-	showAll := isTodoActivity(action)
 	if action == "ask_questions" {
 		limit = maxAskQuestionsPreviewLines
 	}
@@ -856,7 +874,7 @@ func (l *Logger) activityOutputLines(action, output string) []string {
 		}
 		line = normalizeActivityOutputLine(line)
 		nonEmptyLines++
-		if showAll || len(lines) < limit {
+		if len(lines) < limit {
 			lines = append(lines, line)
 		}
 	}
@@ -872,23 +890,11 @@ func (l *Logger) activityOutputLines(action, output string) []string {
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
-	more := !showAll && nonEmptyLines > len(lines)
+	more := nonEmptyLines > len(lines)
 	for index := range lines {
 		lines[index] = truncateActivityLine(lines[index], contentWidth, l.unicode, more && index == len(lines)-1)
 	}
 	return lines
-}
-
-// isTodoActivity reports whether action renders an execution checklist.
-// Todo checklists are small and most useful as a complete list, so their
-// activity previews show every item instead of truncating to three rows.
-func isTodoActivity(action string) bool {
-	switch action {
-	case "todo_add", "todo_update", "todo_done":
-		return true
-	default:
-		return false
-	}
 }
 
 // sanitizeActivityOutput removes terminal control sequences before output is

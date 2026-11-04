@@ -48,7 +48,7 @@ func (u *UI) activeQueueLocked() *queuePanel {
 func (u *UI) toggleQueuePanel() {
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
-	if u.activeQuestionPanelLocked() != nil {
+	if u.questionnaireActive {
 		return
 	}
 	if len(u.queuedPromptsLocked()) == 0 {
@@ -159,14 +159,14 @@ func (p *queuePanel) page(rows []queuedDisplayRow, size, direction int) []queued
 
 func (u *UI) handlePendingPanelKey(key rune) bool {
 	u.screenMu.Lock()
-	if u.activeQuestionPanelLocked() != nil {
+	if u.questionnaireActive {
 		u.screenMu.Unlock()
 		return false
 	}
 	panel := u.activeQueueLocked()
 	if !panel.expanded {
 		u.screenMu.Unlock()
-		return false
+		return u.handleTodoPanelKey(key)
 	}
 	items := u.queuedPromptsLocked()
 	if len(items) == 0 {

@@ -1,9 +1,61 @@
 # Providers and modes
 
-qcode talks to Ollama and OpenAI-compatible APIs, plus OpenCode Go. Provider-specific wire formats stay isolated behind the small `llm.Provider` interface; see [Extending providers](extending-providers.md) to add one.
+qcode talks to Ollama and OpenAI-compatible APIs, plus OpenCode Go and ChatGPT subscriptions. Provider-specific wire formats stay isolated behind the small `llm.Provider` interface; see [Extending providers](extending-providers.md) to add one.
 
 Normal agent turns leave temperature unspecified, preserving the provider's
 model defaults, including parameters stored in an Ollama model.
+
+## Switching providers without restarting
+
+In the normal terminal UI:
+
+```text
+/provider
+/provider openai
+/provider opencode-go
+/provider chatgpt
+```
+
+Bare `/provider` lists the same registry as `qcode --list-providers`, highlighting
+this tab's current provider. Up/Down and Enter choose; Esc goes back or leaves the
+picker, and Ctrl+C cancels the command. Direct names are validated against that
+registry. `/help provider` shows usage and examples.
+
+Only the active tab changes. Finish or cancel its work first; running, queued,
+approval-waiting, or closing work cannot be switched. Discovery is cancellable,
+and if new work or configuration changes arrive during selection, the pending
+switch is rejected rather than overwriting them.
+
+qcode associates each provider with its last-used model. Switching restores
+that provider's remembered model when it is still in the target catalog,
+without prompting. If no remembered model exists, the current model is kept
+when the target catalog contains it. Otherwise qcode opens the model picker
+and, when applicable, the target's thinking-level picker. A restored or
+retained model keeps its thinking level only if the target supports it;
+otherwise the level resets to the target default. Provider/model/thinking
+commit together:
+cancelling a picker, failed credentials/discovery, or an empty catalog leaves
+the old selection and saved default unchanged. Selecting the already active
+provider does not rebuild the backend, but main can still save that selection.
+
+History, skills, tools, drafts, modes, and cumulative token totals are kept.
+Context accounting is refreshed for the new backend, clearing the old custom
+capacity override. Because reasoning/tool history can be backend-specific, qcode
+warns that the next request may fail; run `/new` if a fresh conversation is needed.
+
+Configure separate endpoints/keys with [connection profiles](configuration.md#provider-connection-profiles).
+Official OpenAI/OpenCode Go endpoints require API credentials; custom endpoints
+can remain unauthenticated. For ChatGPT, run `qcode login chatgpt` beforehand.
+Missing credentials produce setup guidance rather than changing the live tab.
+On main, provider/model/thinking save to the user config. Worker selections are
+session-local. New tabs inherit their creator's provider, and `/resume` restores
+each saved tab with its own provider and current matching credentials.
+
+`/provider` is terminal-only: browser status reflects switches but browser
+provider commands are rejected. One-shot, piped, JSON-event, and demo runs do not
+support runtime provider switching; continue using startup flags there. There
+are no new provider arguments to `/new`, `/resume`, or `/agent new`, and no
+in-session endpoint/key editor.
 
 ## Ollama (default)
 
@@ -111,6 +163,34 @@ contributor models accept `minimal`, `low`, `medium`, `high`, and `xhigh`; they
 can lower reasoning effort but cannot turn it off. qcode shows reasoning
 summaries streamed by these models in its thinking view. These routes omit
 `temperature`; Luna rejects it as an unsupported parameter.
+
+## ChatGPT subscription
+
+```sh
+qcode login chatgpt
+qcode --provider chatgpt --model gpt-5.6-codex "explain this repository"
+```
+
+The `chatgpt` provider talks to the Sign in with ChatGPT Responses endpoint
+(`https://api.openai.com/v1`) with the OAuth file written by
+`qcode login chatgpt` — no API key. The login follows the open-source Sign in
+with ChatGPT flow: first registration uses `client_id=dynamic_agent_client`
+with `agent_name_hint=qcode` and a stable `ext_agent_host_id`, then reuses the
+issued client; open the printed URL, approve, and the `127.0.0.1/auth/callback`
+loopback completes (paste back only for remote browsers).
+Tokens live at `~/.config/qcode/chatgpt-oauth.json` (`[chatgpt] oauth_path`
+overrides) with `0600` owner-only rules, refresh automatically with a 5-minute
+margin, and retry once on 401. Requests send the SIWC contract
+(`instructions`, `store: false`, `stream: true`) with plain Bearer auth and no
+`ChatGPT-Account-Id` header. A `401 rejected_by_access_enforcement /
+no_matching_rule` means the request went to the private
+`chatgpt.com/backend-api` route: remove any chatgpt `base_url` override so the
+default `https://api.openai.com/v1` is used, then run `qcode login chatgpt`
+again. Thinking levels (`minimal`, `low`, `medium`, `high`, `xhigh`) are sent
+as the Responses `reasoning` effort when selected; empty preserves the
+provider default (`medium`). Context windows come from the bundled catalog
+with Codex-suffix fallback, so `CTX` shows remaining capacity instead of
+`unknown`.
 
 ## Vision
 

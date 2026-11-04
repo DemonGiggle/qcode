@@ -30,7 +30,7 @@ func TestUserConfigPath(t *testing.T) {
 func TestPersistModelCreatesOnlyRequestedKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "qcode", "config.toml")
 	writer := newRuntimePreferenceWriter(path)
-	if err := writer.PersistModel("new-model", ""); err != nil {
+	if err := writer.PersistModel("openai", "new-model", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -38,18 +38,27 @@ func TestPersistModelCreatesOnlyRequestedKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), "model = \"new-model\"\n"; got != want {
-		t.Fatalf("new config = %q, want %q", got, want)
+	text := string(data)
+	for _, want := range []string{`model = "new-model"`, "[provider_models]", `openai = "new-model"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("new config missing %q: %q", want, text)
+		}
 	}
-	if err := writer.PersistModel("new-model", "low"); err != nil {
+	if strings.Contains(text, "thinking") {
+		t.Fatalf("unexpected thinking in new config: %q", text)
+	}
+	if err := writer.PersistModel("openai", "new-model", "low"); err != nil {
 		t.Fatal(err)
 	}
 	data, err = os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), "model = \"new-model\"\nthinking = \"low\"\n"; got != want {
-		t.Fatalf("explicit thinking config = %q, want %q", got, want)
+	text = string(data)
+	for _, want := range []string{`model = "new-model"`, `thinking = "low"`, "[provider_models]", `openai = "new-model"`, "[provider_thinking]", `openai = "low"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("explicit thinking config missing %q: %q", want, text)
+		}
 	}
 	assertMode(t, filepath.Dir(path), 0o700)
 	assertMode(t, path, 0o600)
@@ -71,7 +80,7 @@ context_budget = 1200
 		t.Fatal(err)
 	}
 	writer := newRuntimePreferenceWriter(path)
-	if err := writer.PersistModel("new-model", ""); err != nil {
+	if err := writer.PersistModel("openai", "new-model", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := writer.PersistMaxSteps(64); err != nil {

@@ -58,6 +58,8 @@ func (r *configurableMaxStepsRunner) MaxSteps() int                   { return r
 func (r *configurableMaxStepsRunner) SetMaxSteps(maxSteps int)        { r.maxSteps = maxSteps }
 
 type runtimePreferenceRecorder struct {
+	provider         string
+	providerCalls    int
 	model            string
 	thinking         string
 	maxSteps         int
@@ -80,9 +82,15 @@ type runtimePreferenceRecorder struct {
 	skillsErr        error
 }
 
-func (r *runtimePreferenceRecorder) PersistModel(model, thinking string) error {
+func (r *runtimePreferenceRecorder) PersistProvider(provider, model, thinking string) error {
+	r.providerCalls++
+	r.provider, r.model, r.thinking = provider, model, thinking
+	return r.modelErr
+}
+
+func (r *runtimePreferenceRecorder) PersistModel(provider, model, thinking string) error {
 	r.modelCalls++
-	r.model, r.thinking = model, thinking
+	r.provider, r.model, r.thinking = provider, model, thinking
 	return r.modelErr
 }
 
@@ -184,7 +192,7 @@ func TestMatchingSlashCommands(t *testing.T) {
 		want []string
 	}{
 		{line: "", want: nil},
-		{line: "/", want: []string{"/agent", "/bash", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/history", "/interactive", "/learn", "/maxsteps", "/model", "/new", "/plan", "/resume", "/remote", "/skill", "/skillplan", "/quit", "/statusline", "/theme", "/todo", "/tool", "/verbose"}},
+		{line: "/", want: []string{"/agent", "/bash", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/history", "/interactive", "/learn", "/maxsteps", "/model", "/new", "/plan", "/provider", "/resume", "/remote", "/skill", "/skillplan", "/quit", "/statusline", "/theme", "/todo", "/tool", "/verbose"}},
 		{line: "/d", want: []string{"/diff"}},
 		{line: "/h", want: []string{"/help", "/history"}},
 		{line: "/m", want: []string{"/maxsteps", "/model"}},
@@ -315,16 +323,16 @@ func TestRuntimePreferencesAreMainTabOnly(t *testing.T) {
 		runtimePreferences: recorder,
 	}
 
-	u.persistModelPreference("child-model", "high")
+	u.persistModelPreference("ollama", "child-model", "high")
 	u.persistMaxStepsPreference(64)
 	if recorder.modelCalls != 0 || recorder.stepsCalls != 0 {
 		t.Fatalf("child tab persisted runtime preferences: %+v", recorder)
 	}
 
 	u.activeAgent = "main"
-	u.persistModelPreference("main-model", "low")
+	u.persistModelPreference("ollama", "main-model", "low")
 	u.persistMaxStepsPreference(32)
-	if recorder.modelCalls != 1 || recorder.stepsCalls != 1 || recorder.model != "main-model" || recorder.thinking != "low" || recorder.maxSteps != 32 {
+	if recorder.modelCalls != 1 || recorder.stepsCalls != 1 || recorder.provider != "ollama" || recorder.model != "main-model" || recorder.thinking != "low" || recorder.maxSteps != 32 {
 		t.Fatalf("main tab persistence = %+v", recorder)
 	}
 }
@@ -476,7 +484,7 @@ func TestGradientLineSkipsDarkestPaletteShades(t *testing.T) {
 
 func TestStatusBarPlainFallback(t *testing.T) {
 	got := statusBar("ollama", "qwen", "~/code", 80, true, false)
-	want := "ollama [MODEL qwen] [WS ~/code]"
+	want := "Ollama [MODEL qwen] [WS ~/code]"
 	if got != want {
 		t.Fatalf("status bar = %q, want %q", got, want)
 	}
@@ -484,7 +492,7 @@ func TestStatusBarPlainFallback(t *testing.T) {
 
 func TestStatusBarSegmentOrder(t *testing.T) {
 	got := statusBar("ollama", "qwen", "~/code", 120, true, false, "73% left", "I:1.2K O:340")
-	want := "ollama [MODEL qwen] [WS ~/code] [CTX 73% left] [TOK I:1.2K O:340]"
+	want := "Ollama [MODEL qwen] [WS ~/code] [CTX 73% left] [TOK I:1.2K O:340]"
 	if got != want {
 		t.Fatalf("status bar = %q, want %q", got, want)
 	}
@@ -492,7 +500,7 @@ func TestStatusBarSegmentOrder(t *testing.T) {
 
 func TestStatusBarShowsStepProgress(t *testing.T) {
 	got := statusBar("ollama", "qwen", "~/code", 120, true, false, "73% left", "I:1.2K O:340", "2/32")
-	want := "ollama [MODEL qwen] [WS ~/code] [CTX 73% left] [STEP 2/32] [TOK I:1.2K O:340]"
+	want := "Ollama [MODEL qwen] [WS ~/code] [CTX 73% left] [STEP 2/32] [TOK I:1.2K O:340]"
 	if got != want {
 		t.Fatalf("status bar = %q, want %q", got, want)
 	}
@@ -520,7 +528,7 @@ func TestNarrowStatusBarKeepsStepProgress(t *testing.T) {
 	// Extremely narrow with a long model name keeps the higher-priority
 	// provider/model unit (truncated) and drops the lowest-priority totals.
 	narrow := statusBar("openai", "a-very-long-model-name", "/workspace", 32, true, false, "73% left", "I:1.2K O:340", "2/32")
-	if !strings.Contains(narrow, "openai") || strings.Contains(narrow, "[TOK ") || visibleWidth(narrow) > 32 {
+	if !strings.Contains(narrow, "OpenAI") || strings.Contains(narrow, "[TOK ") || visibleWidth(narrow) > 32 {
 		t.Fatalf("narrow status bar = %q, width = %d", narrow, visibleWidth(narrow))
 	}
 }
@@ -532,7 +540,7 @@ func TestStatusBarUsesColoredSegments(t *testing.T) {
 			t.Fatalf("status bar %q does not contain color %q", got, sequence)
 		}
 	}
-	if !strings.Contains(got, cyan+bold+"ollama"+reset) {
+	if !strings.Contains(got, cyan+bold+"Ollama"+reset) {
 		t.Fatalf("provider is not bold in status bar: %q", got)
 	}
 	for _, background := range []string{"\x1b[40m", "\x1b[41m", "\x1b[42m", "\x1b[43m", "\x1b[44m", "\x1b[45m", "\x1b[46m", "\x1b[47m"} {

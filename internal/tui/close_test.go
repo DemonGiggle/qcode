@@ -100,7 +100,6 @@ func TestClosedAgentSharedTabCleanupAndBrowserFallback(t *testing.T) {
 			u.drafts[id], u.drafts["main"] = "discard worker draft", "keep main draft"
 			u.views[id].response.diffList = []string{"worker diff"}
 			u.views[id].queue.expanded = true
-			u.questionPanel = &questionPanel{agentID: id}
 			u.screenMu.Unlock()
 			u.questions = []*questionRequest{{agentID: id, result: make(chan questionResult, 1)}}
 			u.approvals[id] = []*approvalRequest{{result: make(chan approvalResult, 1)}}
@@ -125,7 +124,7 @@ func TestClosedAgentSharedTabCleanupAndBrowserFallback(t *testing.T) {
 			if u.activeAgent != "main" || len(u.views) != 1 || u.views[id] != nil || u.drafts[id] != "" || u.drafts["main"] != "keep main draft" {
 				t.Fatalf("tab cleanup: active=%s views=%v drafts=%v", u.activeAgent, u.views, u.drafts)
 			}
-			if len(u.questions) != 0 || len(u.approvals[id]) != 0 || len(u.modeDecisions) != 0 || u.questionPanel != nil {
+			if len(u.questions) != 0 || len(u.approvals[id]) != 0 || len(u.modeDecisions) != 0 {
 				t.Fatal("closed tab retained dialogs")
 			}
 			main, _ := h.Runner("main")

@@ -58,7 +58,7 @@ func TestContextStatusRemainsVisibleOnNarrowTerminals(t *testing.T) {
 	// Extremely narrow with a long model name keeps the higher-priority
 	// provider/model unit over CTX.
 	narrow := statusBar("opencode-go", "a-very-long-model", "/workspace", 32, true, false, "73% left")
-	if !strings.Contains(narrow, "opencode-go") || visibleWidth(narrow) > 32 {
+	if !strings.Contains(narrow, "OpenCode Go") || visibleWidth(narrow) > 32 {
 		t.Fatalf("bar=%q width=%d", narrow, visibleWidth(narrow))
 	}
 }

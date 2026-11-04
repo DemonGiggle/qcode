@@ -34,9 +34,9 @@ func TestSetModelCommandWarnsOnBackendChange(t *testing.T) {
 		models: []string{"minimax-m3", "muse-spark-1.3-contributor"},
 	}
 	u := &UI{
-		runner:  runner,
-		display: newHistoryWriter(&output),
-		input:   newInterruptReader(strings.NewReader("")),
+		runner:   runner,
+		display:  newHistoryWriter(&output),
+		input:    newInterruptReader(strings.NewReader("")),
 		provider: "opencode-go",
 		model:    "minimax-m3",
 	}
@@ -58,9 +58,9 @@ func TestSetModelCommandQuietOnSameBackend(t *testing.T) {
 		models: []string{"minimax-m3", "minimax-m2.7"},
 	}
 	u := &UI{
-		runner:  runner,
-		display: newHistoryWriter(&output),
-		input:   newInterruptReader(strings.NewReader("")),
+		runner:   runner,
+		display:  newHistoryWriter(&output),
+		input:    newInterruptReader(strings.NewReader("")),
 		provider: "opencode-go",
 		model:    "minimax-m3",
 	}

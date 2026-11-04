@@ -44,6 +44,17 @@
     "text-embedding-3-small": 8191,
     "text-embedding-ada-002": 8192
   },
+  "chatgpt": {
+    "gpt-6-luna": 1050000,
+    "gpt-5-codex": 400000,
+    "gpt-5.1-codex": 400000,
+    "gpt-5.2-codex": 400000,
+    "gpt-5.3-codex": 400000,
+    "gpt-5.3-codex-spark": 128000,
+    "gpt-5.4-codex": 1050000,
+    "gpt-5.5-codex": 1050000,
+    "gpt-5.6-codex": 1050000
+  },
   "opencode-go": {
     "deepseek-v4-flash": 1000000,
     "deepseek-v4-flash-vision-exp": 1000000,

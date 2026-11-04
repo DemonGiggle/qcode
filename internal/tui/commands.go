@@ -54,7 +54,7 @@ var slashCommands = []slashCommand{
 	{
 		name: "/compact", usage: "/compact [show]", description: "Summarize old context to make room for new work",
 		arguments: []helpArgument{{name: "show", description: "Show the compacted context (system + summary + recent tail) in a history-style view for debugging compaction quality."}},
-		examples: []string{"/compact", "/compact show"},
+		examples:  []string{"/compact", "/compact show"},
 	},
 	{
 		name: "/diff", usage: "/diff [number]", description: "View more lines of a recent file change",
@@ -121,6 +121,11 @@ var slashCommands = []slashCommand{
 			{name: "act", description: "Approve and start implementing the latest plan."},
 		},
 		examples: []string{"/plan", "/plan show", "/plan act"},
+	},
+	{
+		name: "/provider", usage: "/provider [name]", description: "Switch the active tab's provider (terminal only)",
+		arguments: []helpArgument{{name: "name", description: "Registered provider name; omit to open the picker. Restore the provider's last-used model when available, otherwise keep the model if supported. Main-tab changes save the default; workers stay local."}},
+		examples:  []string{"/provider", "/provider openai", "/provider chatgpt"},
 	},
 	{
 		name: "/resume", usage: "/resume [session-id]", description: "Browse, rename, pin, delete, and continue saved sessions",
