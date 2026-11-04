@@ -102,6 +102,13 @@ var slashCommands = []slashCommand{
 		examples:  []string{"/maxsteps", "/maxsteps 64"},
 	},
 	{
+		name: "/memo", usage: "/memo [text]", description: "Save a scratchpad memo or manage saved memos",
+		arguments: []helpArgument{
+			{name: "text", description: "Save one memo without disturbing agent work; omit it to open the manage view."},
+		},
+		examples: []string{"/memo check edge case where path has spaces", "/memo"},
+	},
+	{
 		name: "/model", usage: "/model [<model> [thinking]]", description: "Choose a model and optional thinking level",
 		arguments: []helpArgument{
 			{name: "model", description: "Provider model ID; omit it to open the model picker."},

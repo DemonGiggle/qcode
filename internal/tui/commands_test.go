@@ -192,10 +192,11 @@ func TestMatchingSlashCommands(t *testing.T) {
 		want []string
 	}{
 		{line: "", want: nil},
-		{line: "/", want: []string{"/agent", "/bash", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/history", "/interactive", "/learn", "/maxsteps", "/model", "/new", "/plan", "/provider", "/resume", "/remote", "/skill", "/skillplan", "/quit", "/statusline", "/theme", "/todo", "/tool", "/verbose"}},
+		{line: "/", want: []string{"/agent", "/bash", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/history", "/interactive", "/learn", "/maxsteps", "/memo", "/model", "/new", "/plan", "/provider", "/resume", "/remote", "/skill", "/skillplan", "/quit", "/statusline", "/theme", "/todo", "/tool", "/verbose"}},
 		{line: "/d", want: []string{"/diff"}},
 		{line: "/h", want: []string{"/help", "/history"}},
-		{line: "/m", want: []string{"/maxsteps", "/model"}},
+		{line: "/m", want: []string{"/maxsteps", "/memo", "/model"}},
+		{line: "/me", want: []string{"/memo"}},
 		{line: "/max", want: []string{"/maxsteps"}},
 		{line: "/n", want: []string{"/new"}},
 		{line: "/s", want: []string{"/skill", "/skillplan", "/statusline"}},

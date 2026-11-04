@@ -20,7 +20,9 @@ error. Assistant text goes to stdout and activity or diagnostics go to stderr.
 One-shot and piped runs do not save sessions or wait for interactive questions
 or directory approvals. Both web tools start enabled outside the sandbox and
 disabled when sandbox isolation is active. Configured skill autoloading
-(lazy or `always_load`) and learning retrieval still apply.
+(lazy or `always_load`) and learning retrieval still apply. `/memo` is
+TUI-only and has no one-shot, piped, `--json-events`, or remote-control
+surface; see [Memos](memo.md).
 
 ## Startup flags
 

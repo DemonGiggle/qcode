@@ -117,6 +117,7 @@ var tipTexts = []string{
 	"Run `/learn compact` to review merges and cleanup of saved learning; approved changes create a backup.",
 	"Set `context_budget = 0` under `[learning]` to stop retrieving learning while keeping saved records.",
 	"`/new` keeps global learning; use `/learn forget <id>` to remove a preference you no longer want.",
+	"Run `/memo idea text` to stash a thought while busy; bare `/memo` lists memos newest-first with put-to-prompt.",
 
 	// File tools, web access, and sandboxing.
 	"Name a workspace image in your prompt to inspect it with a vision model; PNG, JPEG, WEBP, and GIF are supported.",

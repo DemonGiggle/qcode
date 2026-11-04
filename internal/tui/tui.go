@@ -311,6 +311,7 @@ type UI struct {
 	demoPromptDelay      time.Duration
 	demoQueueDelay       time.Duration
 	runtimePreferences   RuntimePreferenceWriter
+	memoStore            memoStore
 	persistence          *sessionPersistence
 	sessionHost          *UI
 	statuslineHidden     []string
@@ -841,6 +842,11 @@ func (u *UI) Run(ctx context.Context) error {
 		u.tabMu.Lock()
 		tabPending := u.pendingTab != 0
 		u.tabMu.Unlock()
+		trimmedMemo := strings.TrimSpace(line)
+		if trimmedMemo == "/memo" || strings.HasPrefix(trimmedMemo, "/memo ") || strings.HasPrefix(trimmedMemo, "/memo\t") {
+			u.handleMemoCommand(ctx, trimmedMemo)
+			continue
+		}
 		if !tabPending {
 			u.screenMu.Lock()
 			u.drafts[u.activeAgent] = ""

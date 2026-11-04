@@ -21,6 +21,7 @@ import (
 	"qcode/internal/demo"
 	"qcode/internal/learning"
 	"qcode/internal/llm"
+	"qcode/internal/memo"
 	"qcode/internal/prompt"
 	"qcode/internal/redaction"
 	"qcode/internal/remote"
@@ -323,12 +324,19 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		}
 	}
 	var learningStore learning.Store
+	var memoStore *memo.FileStore
 	if !opts.demo {
 		dir, err := learning.DefaultDirectory()
 		if err != nil {
 			fmt.Fprintln(diagnosticsOut, "Learning unavailable:", err)
 		} else {
 			learningStore = learning.New(dir, func(message string) { fmt.Fprintln(diagnosticsOut, "Learning warning:", message) })
+		}
+		memoDir, err := memo.DefaultDirectory()
+		if err != nil {
+			fmt.Fprintln(diagnosticsOut, "Memos unavailable:", err)
+		} else {
+			memoStore = memo.New(memoDir, func(message string) { fmt.Fprintln(diagnosticsOut, "Memo warning:", message) })
 		}
 	}
 	system := prompt.System
@@ -375,6 +383,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	ui.SetSkillCatalogLoader(loadSkills)
 	ui.SetSkillBodyLoader(loadSkillBodies)
 	ui.SetSkillLocations(skillLocations)
+	if memoStore != nil {
+		ui.SetMemoStore(memoStore)
+	}
 	if opts.demo {
 		ui.SetDemoPromptScript(demo.InteractivePrompts(), demo.InteractivePromptDelay, demo.InteractiveQueueDelay)
 	}
@@ -514,6 +525,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			staged.SetSkillCatalogLoader(loadSkills)
 			staged.SetSkillBodyLoader(loadSkillBodies)
 			staged.SetSkillLocations(skillLocations)
+			if memoStore != nil {
+				staged.SetMemoStore(memoStore)
+			}
 			return staged, nil
 		}
 		if err := ui.EnableSessions(store, func(snap session.Snapshot) (*tui.UI, error) {
