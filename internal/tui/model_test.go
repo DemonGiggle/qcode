@@ -130,4 +130,14 @@ func TestSelectOptionWithDisabledSkipsUnselectable(t *testing.T) {
 	if !strings.Contains(line, "beta (Need Setup First)") {
 		t.Fatalf("disabled line = %q", line)
 	}
+	// Disabled rows show grey when color is enabled.
+	greyLine := renderModelLineWithDisabled(options, []int{0, 1, 2}, disabled, 1, false, 80, true)
+	if !strings.Contains(greyLine, gray) || !strings.Contains(greyLine, "beta (Need Setup First)") {
+		t.Fatalf("disabled grey line = %q", greyLine)
+	}
+	// Enabled selection keeps the active highlight, not grey.
+	activeLine := renderModelLineWithDisabled(options, []int{0, 1, 2}, disabled, 2, true, 80, true)
+	if strings.Contains(activeLine, gray) {
+		t.Fatalf("enabled line should not be grey = %q", activeLine)
+	}
 }

@@ -306,7 +306,7 @@ func renderModelLineWithDisabled(models []string, matches []int, disabled map[st
 	isDisabled := len(disabled) > 0 && disabled[models[matches[matchIndex]]]
 	if isDisabled {
 		if color {
-			line = dim + line + reset
+			line = gray + line + reset
 		}
 		return line
 	}
