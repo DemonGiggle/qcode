@@ -258,6 +258,7 @@ type UI struct {
 	out                  *os.File
 	runner               Runner
 	providerFactory      ProviderFactory
+	providerAvailable    ProviderAvailability
 	provider             string
 	model                string
 	providerModels       map[string]string
