@@ -212,6 +212,9 @@ func demoArguments(name string) json.RawMessage {
 	values := map[string]string{
 		"list_agents":   `{}`,
 		"delegate_task": `{"agent_id":"agent-1","prompt":"Review the mocked demo workspace"}`,
+		"todo_add":      `{"id":"tour-setup","title":"Tour the mocked workspace"}`,
+		"todo_update":   `{"id":"tour-setup","status":"doing"}`,
+		"todo_done":     `{"id":"tour-setup"}`,
 		"web_fetch":     `{"url":"https://example.com"}`,
 		"web_search":    `{"query":"Go documentation","max_results":5}`,
 		"read":          `{"path":"README.md","offset":1,"limit":20}`,

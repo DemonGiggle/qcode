@@ -4,19 +4,20 @@ Usage-focused guide for people using qcode. It intentionally omits
 implementation and architecture details and shows how to use each feature.
 
 The **Use cases** pages after chapter 3 walk through repository onboarding,
-bug fixes with queued checks, planning, independent agent tabs, reusable skills,
+bug fixes with queued checks, planning with execution checklists, independent agent tabs, reusable skills,
 and resuming or sharing work. The guide also covers pinned latest prompts,
-steering and pending-work removal, pasted-block handling, /compact show inspection,
+steering and pending-work removal, the live Todo panel with Alt+T, pasted-block handling, /compact show inspection,
 model-operation progress and elapsed time, working directories with
 change_directory and directory approvals, tool approvals and prompt-injection
-warnings, cross-backend model-switch warnings, local redaction, terminal themes,
+warnings, cross-backend model-switch warnings and /provider switching, ChatGPT subscription login,
+local redaction, terminal themes,
 transcript boundary navigation, token totals, workspace path shortening, skill
-autoloading and companion files, official skills, and sandbox command directories.
+autoloading, always-load and companion files, official skills, and sandbox command directories.
 
 - **PDF:** [`qcode-user-manual.pdf`](qcode-user-manual.pdf)
 - **Screenshots:** [`assets/`](assets/) — illustrative terminal screens
   rendered for print clarity (TUI layout, `/help`, `/model` names only,
-  agents, Plan mode, Skill Plan question, `/remote` QR, diff/export,
+  agents, Plan mode, Todo checklist, Skill Plan question, `/remote` QR, diff/export,
   `/interactive` question, `/theme` live preview, and `/resume` with pins
   and transcript preview).
 
@@ -73,7 +74,7 @@ make demo-gif
 ```
 
 The recording uses the current binary in `--demo` mode with a temporary home
-and workspace. It shows the pinned latest prompt, Enter steering, Tab queueing,
+and workspace. It shows the pinned latest prompt, the live Todo checklist, Enter steering, Tab queueing,
 the pending panel, mocked diffs, theme previews, transcript navigation, and model
 search without calling a model or running real tools. Check representative GIF
 frames against the recording after each refresh.
@@ -81,7 +82,7 @@ frames against the recording after each refresh.
 ## Scope rule
 
 Keep this manual about **using** qcode: install, prompt, queue, pastes, commands,
-models, agents with working directories, plans, skills, memory, tools with
+models, providers, agents with working directories, plans, todo checklists, skills, memory, tools with
 approvals and web access, sessions, privacy, browser control,
 settings, and troubleshooting. Do not add package layouts, control-plane,
 event-bus, provider wire formats, or other internals here.

@@ -32,9 +32,10 @@ def main():
     if not binary.is_file():
         parser.error("qcode binary is missing; run make build first")
 
-    # Let the automatic prompts demonstrate queueing and mocked tool diffs,
-    # then show live theme previews, pending-work navigation, history, model
-    # search, and the Enter/Tab controls with the latest prompt pinned above.
+    # Let the automatic prompts demonstrate queueing, the live Todo checklist,
+    # and mocked tool diffs, then show live theme previews, pending-work
+    # navigation, history, model search, and the Enter/Tab controls with the
+    # latest prompt pinned above.
     actions = [
         (3, b"/theme\r"),
         (4, b"\x1b[B"),
@@ -78,7 +79,7 @@ def main():
             with args.output.open("w") as recording:
                 header = {"version": 2, "width": 120, "height": 36,
                           "timestamp": int(time.time()),
-                          "title": "qcode: pinned prompts, steering, queues, and themes",
+                          "title": "qcode: pinned prompts, todo checklist, steering, queues, and themes",
                           "env": {"TERM": "xterm-256color", "SHELL": "/bin/sh"}}
                 recording.write(json.dumps(header) + "\n")
                 decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")

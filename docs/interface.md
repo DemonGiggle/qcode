@@ -43,7 +43,7 @@ position. Ctrl+C in the normal composer cancels the active agent task.
 - `/history` opens a searchable, newest-first list of completed prompts for the active agent. Select a prompt to read only that prompt and its final response; leaving the browser restores the conversation view without changing its reading position.
 - `/tool` opens the active agent's tool list. Type to filter, Space toggles, and Enter applies; `/tool <name> on|off` changes a tool directly, for example `/tool shell off`. File, shell, image, skill, and web tools can be toggled. Web tools start enabled outside the sandbox and disabled inside it. Enabling either web tool also allows sandboxed shell commands to use the network; disabling both blocks networking. Plan and Skill Plan modes restrict the available list; use `/interactive` to control normal-mode questions. See [Web tools](web-tools.md) for web access.
 - `/plan` enters read-only planning mode; `/plan show` opens the latest plan in a scrollable view; `/plan off` leaves it; `/plan act` implements the latest submitted plan. See [Plan mode](plan-mode.md).
-- `/todo show` opens the active agent's execution checklist in a scrollable view. Unlike `/plan`, the todo list is stateful and execution-time: the model maintains it with its todo tools while implementing, and each tab owns its own list.
+- `/todo show` opens the active agent's execution checklist in a scrollable view. Unlike `/plan`, the todo list is stateful and execution-time: the model maintains it with its `todo_add`, `todo_update`, and `todo_done` tools while implementing, and each tab owns its own list. A live `Todo n/m` panel also sits above the steer/queue area while work is incomplete; see [Execution checklist panel](#execution-checklist-todo-panel).
 - `/interactive on|off` controls normal-mode questions for the active agent and saves the default for future sessions to the user config; `/interactive` reports the setting. See [Interactive questions](interactive-mode.md).
 - `/skillplan [rough intention]` starts guided, review-first skill creation; use `/skillplan show`, `/skillplan create`, or `/skillplan off` to manage the draft. See [Skill Plan mode](skillplan.md).
 
@@ -91,6 +91,21 @@ Queued | Alt+Q expand
 ```
 
 ASCII mode uses `|` and `+-` for the tree connectors. Wrapped and multiline prompts keep their indentation; each item retains its identity for selection and removal.
+
+## Execution checklist (todo) panel
+
+For multi-step work the model keeps one execution checklist per agent tab with `todo_add`, `todo_update`, and `todo_done` (titles are one line, at most 10 items). It is separate from `/plan`: plans are one-shot handoffs, while the todo list is updated during implementation. Sub-agents keep their own lists and never inherit the caller's; `/plan act` keeps the todo list, `/new` clears it, and saved sessions restore it.
+
+While items remain incomplete, a live panel sits directly above the steer/queue area so progress stays visible without opening a viewer:
+
+```text
+Todo 1/3 | Alt+T expand
+[ ] design retry helper
+◐ cover timeout + invalid token cases
+[x] run focused tests
+```
+
+`[ ]` is todo, `◐` (`[-]` in ASCII mode) is doing, and `[x]` is done. The collapsed panel shows up to three rows; `Alt+T` (or `Alt+Shift+T`) expands it to scroll all rows, and `Esc` collapses an expanded panel. The header shows `Todo done/total` plus the expand/close hint, or `Todo n/m Alt+T` on very narrow terminals. The panel hides when the list is empty or every item is done; a finished list is archived once to the transcript as a checklist group. Use `/todo show` to review the latest checklist in a scrollable view at any time.
 
 ## Activity events
 

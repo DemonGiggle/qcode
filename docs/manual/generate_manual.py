@@ -432,6 +432,28 @@ def make_screenshots() -> dict[str, Path]:
         ],
     )
 
+    out["todo"] = ASSETS / "12-todo-panel.png"
+    draw_terminal(
+        out["todo"],
+        "qcode \u2014 execution checklist",
+        [
+            ("[main \u25cf]    Ctrl+PgUp/PgDn \u00b7 Alt+,/.", CYAN, None, True),
+            ("\u2726 fix the login timeout with retry", MAGENTA, PROMPT_BG, True),
+            ("\u003e fix the login timeout with retry", DIM, None, False),
+            ("Adding todo design retry helper", GREEN, None, False),
+            ("", FG, None, False),
+            ("Todo 1/3 | Alt+T expand", CYAN, None, True),
+            ("[ ] design retry helper", FG, None, False),
+            ("\u25d0 cover timeout + invalid token cases", YELLOW, None, False),
+            ("[x] run focused tests", DIM, None, False),
+            ("", FG, None, False),
+            ("(Steer)\u003e also check the timeout handling", WHITE, None, True),
+            ("Waiting (\u280b) \u00b7 12s \u00b7 Receiving model response", DIM, None, False),
+            ("Alt+T expand todo | Alt+Q expand queue | Ctrl+C to cancel", DIM, None, False),
+            ("ollama [MODEL qwen2.5-coder:7b] [WS ~/demo] [CTX 73% left]", DIM, STATUS_BG, False),
+        ],
+    )
+
     return out
 
 
@@ -642,10 +664,11 @@ def build_pdf(images: dict[str, Path]):
     pdf.multi_cell(
         0,
         5.5,
-        "In this manual: install once, tour the screen (including pasted blocks),\n"
-        "try practical use cases, clarifying questions, switch models, use agents\n"
-        "with working directories, plan, skills, memory, tools with approvals,\n"
-        "sessions, browser control, and settings.",
+        "In this manual: install once, tour the screen (including pasted blocks\n"
+        "and the execution checklist), try practical use cases, clarifying\n"
+        "questions, switch models and providers (including ChatGPT login),\n"
+        "use agents with working directories, plan, todo, skills, memory,\n"
+        "tools with approvals, sessions, browser control, and settings.",
         align="C",
         new_x=XPos.LMARGIN, new_y=YPos.NEXT,
     )
@@ -723,6 +746,7 @@ def build_pdf(images: dict[str, Path]):
             "Transcript: streamed answers with Markdown, tables, and tool activity like `Reading ...` or `Writing ...`. One blank separator row sits between each pair of visible regions (pinned prompt, transcript, pending prompts, suggestions, Steer/Queued blocks, composer); very small terminals keep minimum output visible and omit separators that would hide content.",
             "Task indicator: Waiting for model response, Receiving model thinking, or Receiving model response, with elapsed time for that operation. The timer resets when the phase changes. Tools appear in the transcript; questions show Waiting for input.",
             "Pending area: shows the current steer separately from FIFO tasks.",
+            "Todo panel: a live `Todo done/total` checklist sits above the steer/queue area while multi-step work is incomplete (`[ ]` todo, half-circle doing, `[x]` done). Alt+T expands it; Esc collapses; /todo show reviews it any time.",
             "Prompt: `>` idle, `(Plan)>` planning, `(Skill plan)>` skill design, `(Steer)>` working. You can keep typing while work runs.",
             "Status bar: provider, MODEL, WS folder, CTX percent left, STEP n/max, and TOK input/output plus total when it fits. THINK appears when set, MODE shows PLAN, SKILL PLAN, or INTERACTIVE, and REMOTE while browser control runs. Narrow windows shorten the workspace path first, then wrap to a second left-aligned row before dropping low-priority segments (tok first). Hide parts with /statusline.",
             "Pastes: long pastes stay together as one `[paste N characters]` block (100+ characters or more than 3 lines; one trailing newline does not count as a line). Short pastes stay inline and editable. Pasting never submits: press Enter to submit the full draft. Type before or after a collapsed block; Left/Right moves across it as a whole, Backspace/Delete removes the whole block.",
@@ -876,6 +900,15 @@ def build_pdf(images: dict[str, Path]):
             ("/theme", "Preview, apply, and save a terminal color theme."),
             ("/compact [show]", "Summarize old context; show inspects the compacted context."),
             ("/export", "Export conversations or full transcript as HTML."),
+            ("/provider [name]", "Switch the active idle tab without restarting; terminal-only."),
+            ("/todo show", "Review the live execution checklist; Alt+T expands it."),
+            ("/agent ...", "Create, list, switch, rename, cancel, or close agent tabs."),
+            ("/skill [...]", "Pick reusable skills; Space cycles off/lazy/always-load."),
+            ("/plan ...", "Enter, review, implement, or leave read-only planning."),
+            ("/interactive ...", "Toggle inline clarifying questions for normal work."),
+            ("/learn ...", "Save, list, forget, or compact reusable preferences."),
+            ("/skillplan ...", "Guided review-first skill creation."),
+            ("/remote", "Control the live session from a browser."),
             ("/quit, /exit", "Save the session and exit qcode."),
         ],
     )
@@ -907,10 +940,12 @@ def build_pdf(images: dict[str, Path]):
             "Ollama (local default): pull a model first, then `qcode --model qwen2.5-coder:7b`. Thinking uses the model's native think setting.",
             "OpenAI-compatible: `export OPENAI_API_KEY=...` then `qcode --provider openai --model gpt-5`. Thinking uses reasoning effort where the model offers it.",
             "OpenCode Go: `export QCODE_API_KEY=...` then `qcode --provider opencode-go --model kimi-k3`. Options vary per model. Known models may offer off, on, none, minimal, low, medium, high, xhigh, or max; the set is model-specific. With no setting, qcode preserves the provider default and omits optional thinking fields.",
-            "Flags can also come from QCODE_PROVIDER, QCODE_MODEL, QCODE_THINKING, QCODE_BASE_URL, QCODE_API_KEY.",
+
+            "ChatGPT subscription: `qcode login chatgpt` connects Sign in with ChatGPT (browser approval, loopback callback, 0600 OAuth file), then `qcode --provider chatgpt --model gpt-5.6-codex`. Requests use the SIWC Responses endpoint with store:false; thinking levels minimal/low/medium/high/xhigh map to Responses reasoning effort.",
+            "Use `/provider` (or `/provider openai`) to switch an idle tab without restarting; unconfigured providers are dimmed and cannot be chosen. Main-tab switches save the default; workers stay local. History is kept with a `/new` warning; browser provider commands are rejected. Keep separate endpoints/keys with [providers.<name>] connection profiles.",            "Flags can also come from QCODE_PROVIDER, QCODE_MODEL, QCODE_THINKING, QCODE_BASE_URL, QCODE_API_KEY.",
         ],
     )
-    code(pdf, "qcode --provider ollama --model qwen3:8b --thinking high \"reply with OK\"\nqcode --provider opencode-go --model deepseek-v4-flash --thinking high \"reply with OK\"")
+    code(pdf, "qcode --provider ollama --model qwen3:8b --thinking high \"reply with OK\"\nqcode --provider opencode-go --model deepseek-v4-flash --thinking high \"reply with OK\"\nqcode login chatgpt\nqcode --provider chatgpt --model gpt-5.6-codex \"explain this repository\"")
     bullets(
         pdf,
         [
@@ -950,7 +985,7 @@ def build_pdf(images: dict[str, Path]):
             "Queues are per agent (up to 16 waiting each). A slow helper never blocks `main`.",
             "Each agent has its own working directory, starting at the launch workspace (--cwd). Use the change_directory tool (ask for packages/server) to select another existing directory; relative paths resolve against that agent\u2019s current directory and symlinks resolve to their canonical destination. The status WS segment updates during the task; other agents and qcode keep their own directories. Helpers created by main inherit its model, tools, skills, directory grants, and step limit when created.",
             "Ask main to wait for helpers with a consultation deadline: --agent-timeout 90s (default 5m) is shared by the batch including queue time. Completed replies are kept; failed or expired consultations are reported and skipped. This applies to main\u2019s consult_agents coordination, not ordinary prompts or background delegate_task work.",
-            "When main delegates a task, its current run ends after accepting the assignment and the helper continues in its tab. Send a follow-up to main to ask for findings or a consultation. Full recorded findings remain searchable after closing a helper or using /new.",
+            "When main delegates a task (create_agent with task or delegate_task), its current run ends after accepting the assignment and the helper continues in its tab. When the helper finishes, main receives an automatic callback with a bounded summary and reacts to it; burst completions coalesce into one pending callback. Use search_agent_work or consult_agents for details instead of polling list_agents. Full recorded findings remain searchable after closing a helper or using /new.",
             "Main can use close_agent with one agent_id in normal execution mode. Closure returns immediately without ending main's turn. Pending tasks, steering, and interactions are cancelled; a running helper shows closing until its run exits and still counts toward the agent limit. The selected closed tab returns to main. Closing helpers are excluded from saved resumable tabs; recorded work remains searchable and exportable.",
         ],
     )
@@ -976,6 +1011,17 @@ def build_pdf(images: dict[str, Path]):
         ],
     )
     tip(pdf, "`/new` clears the saved plan. Plan commands need an idle agent with no running or queued work.")
+    h2(pdf, "Execution checklist (/todo)")
+    body(pdf, "For multi-step implementation the model keeps one execution checklist per agent tab with todo_add, todo_update, and todo_done. It is separate from /plan: plans are one-shot handoffs, while the todo list is updated while building. Sub-agents keep their own lists; /plan act keeps the todo list and /new clears both.")
+    figure(pdf, images["todo"], "Figure 7b: Live Todo panel above the steer/queue area. Alt+T expands it; /todo show reviews the latest checklist.")
+    bullets(
+        pdf,
+        [
+            "A live `Todo done/total` panel sits above the steer/queue area while work is incomplete ([ ] todo, half-circle doing, [x] done). Collapsed it shows up to three rows; Alt+T expands all rows and Esc collapses.",
+            "Use `/todo show` to open the latest checklist in a scrollable view at any time. A finished list is archived once to the transcript.",
+            "Titles are one line (10 items max); the model should only call todo tools when the list changes, not every turn. Todo tools are unavailable in Plan and Skill Plan modes.",
+        ],
+    )
 
     # 8 Skills
     h1(pdf, "8. Skills and SkillPlan")
@@ -1136,8 +1182,7 @@ def build_pdf(images: dict[str, Path]):
             "Copy `config.toml.example` to your user config location; missing files are ignored. Priority, highest first: file beside the program, user config (~/.local/etc/qcode on Linux, ~/Library/Application Support on macOS, %AppData% on Windows), system config (/usr/local/etc/qcode), then etc/ beside the program.",
             "Command flags beat environment variables. Both beat config files. Config files beat built-ins. `--api-key` beats config and environment keys.",
             "Prefer environment variables for keys: QCODE_API_KEY or OPENAI_API_KEY. Keep key files private (mode 0600).",
-            "Common knobs: thinking level, agent_timeout like \"5m\", interactive true/false, statusline_hidden, web_search backend, learning context_budget, skills paths, autoload_paths, selected/selected_always, redaction sinks/patterns, context_window and auto_compact_threshold.",
-            "Restart after changing the web backend. /model, /maxsteps, /statusline, and /skill on main save automatically; worker-tab changes to these settings stay within the session.",
+            "Common knobs: provider/model/thinking, agent_timeout like \"5m\", interactive true/false, statusline_hidden, web_search backend, learning context_budget, skills paths, autoload_paths, selected/selected_always, [providers.<name>] profiles, [chatgpt] oauth_path, redaction sinks/patterns, context_window and auto_compact_threshold.",            "Restart after changing the web backend. /model, /maxsteps, /statusline, and /skill on main save automatically; worker-tab changes to these settings stay within the session.",
         ],
     )
     h2(pdf, "Working directories under the sandbox")
