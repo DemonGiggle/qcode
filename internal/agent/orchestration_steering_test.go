@@ -303,6 +303,30 @@ func TestDelegationToolsPersistAttributionAndRemainSearchable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Issue #69: completing the delegated task queues a bounded callback for main.
+			callbackID := ""
+				deadline := time.Now().Add(3 * time.Second)
+				for callbackID == "" && time.Now().Before(deadline) {
+				for _, record := range manager.WorkRecords() {
+					if record.Source == "delegation-callback" && record.AgentID == "main" {
+						callbackID = record.RequestID
+						break
+					}
+				}
+				if callbackID == "" {
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
+			if callbackID == "" {
+				t.Fatalf("delegation callback was not queued for main: %+v", manager.WorkRecords())
+			}
+			if _, err := waitOrchestrationResult(t, manager, callbackID); err != nil {
+				t.Fatal(err)
+			}
+			events := manager.DelegationEvents(0)
+			if len(events) != 1 || events[0].AgentID != "agent-1" || events[0].RequestID != requestID || events[0].CallbackID != callbackID || events[0].Status != "completed" {
+				t.Fatalf("delegation callback event missing: %+v", events)
+			}
 			restored := restoreHistoryManager(t, manager)
 			for _, candidate := range []struct {
 				name    string
@@ -310,8 +334,11 @@ func TestDelegationToolsPersistAttributionAndRemainSearchable(t *testing.T) {
 			}{{"live", manager}, {"resumed", restored}} {
 				t.Run(candidate.name, func(t *testing.T) {
 					records := candidate.manager.WorkRecords()
-					if len(records) != 1 || records[0].RequestID != requestID || records[0].Source != "delegation" || records[0].Actor != "main" || records[0].Status != "completed" {
+					if len(records) != 2 || records[0].RequestID != requestID || records[0].Source != "delegation" || records[0].Actor != "main" || records[0].Status != "completed" {
 						t.Fatalf("delegation attribution did not survive persistence: %+v", records)
+					}
+					if records[1].Source != "delegation-callback" || records[1].AgentID != "main" || records[1].Actor != "agent-1" {
+						t.Fatalf("delegation callback did not survive persistence: %+v", records)
 					}
 					main, _ := candidate.manager.Agent("main")
 					result, err := main.tools.ExecuteDetailed(context.Background(), llm.ToolCall{

@@ -134,6 +134,10 @@ type Event struct {
 	Duration         time.Duration
 	// Consultation wakes consumers to read the durable consultation event log.
 	Consultation bool
+	// Delegation wakes consumers to read the durable delegation event log.
+	// It is emitted when a delegated sub-agent task finishes and a callback
+	// for main has been queued or merged.
+	Delegation bool
 	// Barrier is acknowledged after earlier presentation events are drained.
 	Barrier chan struct{}
 }
@@ -171,11 +175,23 @@ type ConsultationEvent struct {
 	Elapsed   time.Duration `json:"elapsed_ns"`
 }
 
+type DelegationEvent struct {
+	Sequence  uint64        `json:"sequence"`
+	AgentID   string        `json:"agent_id"`
+	RequestID string        `json:"request_id,omitempty"`
+	CallbackID string       `json:"callback_id,omitempty"`
+	Status    string        `json:"status"`
+	Error     string        `json:"error,omitempty"`
+	Time      time.Time     `json:"time"`
+	Elapsed   time.Duration `json:"elapsed_ns"`
+}
+
 type WorkHistory struct {
 	NextRequestID  uint64
 	Records        []WorkRecord
 	SteeringEvents []SteeringEvent `json:"steering_events,omitempty"`
 	Events         []ConsultationEvent
+	Delegations    []DelegationEvent `json:"delegations,omitempty"`
 }
 
 // SubmissionIntent separates task FIFO work from input to the observed task.

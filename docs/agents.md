@@ -198,13 +198,16 @@ When a sub-agent completes, its full final answer is stored in the work journal.
 The knowledge flow is:
 
 ```
-Sub-agent completes → full answer journaled; latest handoff capped (≤4 KB)
+Sub-agent completes (success or fail) → full answer journaled; latest handoff capped (≤4 KB)
          ↓
-Main agent's next request → roster injected into system prompt (≤2 KB preview)
+Automatic callback queued for main (bounded summary ≤8 KB, untrusted reference data)
          ↓
-Model sees truncated outcome in roster → searches history or calls consult_agents when information is needed
+Main idle → callback starts immediately; main busy → callback queues FIFO behind current work
+(burst completions coalesce into one pending callback; queue-full keeps journal + event log)
          ↓
-Main agent uses handoff as reference context
+Main reacts to callback → searches history or calls consult_agents when detail is needed
+         ↓
+Main decides next steps; roster (≤2 KB preview) keeps updating in parallel
 ```
 
 ### The prompt contract
@@ -219,7 +222,7 @@ The system prompt instructs the model:
 - **Bounded transfer**: Full answers remain in the journal; model-visible handoffs, search excerpts, consultations, and the roster are bounded.
 - **Reference, not instruction**: Both roster and handoffs are explicitly framed as untrusted reference data that must not override user instructions.
 - **On-demand information**: The main agent can search recorded findings or request fresh answers with waiting `consult_agents`.
-- **Async delegation**: `create_agent` with `task` and `delegate_task` return immediately with the accepted request ID and queue position and end main's current run. The helper continues in its own tab; use a follow-up prompt for status or consultation.
+- **Async delegation with callback**: `create_agent` with `task` and `delegate_task` return immediately with the accepted request ID and queue position and end main's current run. The helper continues in its own tab. When it finishes (success, fail, cancelled, or timed out), main receives an automatic callback with a bounded summary and reacts to it — gathering details via `search_agent_work`/`consult_agents` to decide next steps. No polling with `list_agents` is needed.
 
 ## Startup and session context
 

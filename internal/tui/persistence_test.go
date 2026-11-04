@@ -231,6 +231,13 @@ func (m *persistenceManager) ConsultationEvents(after uint64) []session.Consulta
 	return append([]session.ConsultationEvent(nil), m.work.Events[after:]...)
 }
 
+func (m *persistenceManager) DelegationEvents(after uint64) []session.DelegationEvent {
+	if m.work == nil || after >= uint64(len(m.work.Delegations)) {
+		return nil
+	}
+	return append([]session.DelegationEvent(nil), m.work.Delegations[after:]...)
+}
+
 func TestConsultationEventsReplayAndPersistWithoutDuplicates(t *testing.T) {
 	u, m := persistenceUI(t)
 	m.work = &session.WorkHistory{NextRequestID: 1, Events: []session.ConsultationEvent{

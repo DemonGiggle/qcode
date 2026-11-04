@@ -370,6 +370,7 @@ func (u *UI) watchAgentEvents(events <-chan session.Event) {
 	defer close(u.agentEventsDone)
 	u.reconcileClosedAgents()
 	u.replayConsultationEvents()
+	u.replayDelegationEvents()
 	u.replaySteeringEvents()
 	for event := range events {
 		u.reconcileClosedAgents()
@@ -377,18 +378,20 @@ func (u *UI) watchAgentEvents(events <-chan session.Event) {
 			u.queueAgentClosures([]string{event.Agent.ID})
 		}
 		u.replayConsultationEvents()
+		u.replayDelegationEvents()
 		u.replaySteeringEvents()
 		if event.Barrier != nil {
 			close(event.Barrier)
 			continue
 		}
-		if event.Closed || event.Consultation {
+		if event.Closed || event.Consultation || event.Delegation {
 			continue
 		}
 		u.handleAgentEvent(event)
 	}
 	u.reconcileClosedAgents()
 	u.replayConsultationEvents()
+	u.replayDelegationEvents()
 	u.replaySteeringEvents()
 }
 
@@ -499,6 +502,41 @@ func (u *UI) replayConsultationEvents() {
 		u.screenMu.Lock()
 		view.display.writeNoticeLocked(dim + sanitizeDiffLine(message, "<ESC>") + reset)
 		u.consultationCursor = event.Sequence
+		u.screenMu.Unlock()
+	}
+	if len(events) > 0 {
+		u.requestSessionSave()
+	}
+}
+
+// Delegation callbacks are replayed from the journal rather than relying on a
+// potentially saturated notification channel. The cursor follows the saved UI.
+func (u *UI) replayDelegationEvents() {
+	source, ok := u.manager.(interface {
+		DelegationEvents(uint64) []session.DelegationEvent
+	})
+	if !ok {
+		return
+	}
+	u.screenMu.Lock()
+	cursor := u.delegationCursor
+	view := u.views["main"]
+	u.screenMu.Unlock()
+	if view == nil {
+		return
+	}
+	events := source.DelegationEvents(cursor)
+	for _, event := range events {
+		message := "Sub-agent " + event.AgentID + " (" + event.RequestID + "): " + event.Status
+		if event.Elapsed > 0 {
+			message += " after " + formatRunDuration(event.Elapsed)
+		}
+		if event.Error != "" {
+			message += ": " + event.Error
+		}
+		u.screenMu.Lock()
+		view.display.writeNoticeLocked(dim + sanitizeDiffLine(message, "<ESC>") + reset)
+		u.delegationCursor = event.Sequence
 		u.screenMu.Unlock()
 	}
 	if len(events) > 0 {
