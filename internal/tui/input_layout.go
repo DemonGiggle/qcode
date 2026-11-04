@@ -339,6 +339,7 @@ func (u *UI) paintFixedLocked(direction int) {
 	// win on cramped screens, hiding the panel until there is room.
 	todoHeight := 0
 	sepT := 0
+	sepTodoFollowup := 0
 	todoDesired := 0
 	if todoLive {
 		if todo.expanded {
@@ -351,12 +352,21 @@ func (u *UI) paintFixedLocked(direction int) {
 		room := outputHeight - minOutput
 		if room > todoDesired {
 			todoHeight, sepT = todoDesired, 1
+			if count > 0 || queueHeight > 0 {
+				if sepO > 0 {
+					// Reuse the existing transcript separator above TODO so
+					// adding a follow-up gap does not double the top spacing.
+					sepT = 0
+				}
+				// Keep a distinct gap between the TODO panel and follow-up.
+				sepTodoFollowup = min(1, room-todoDesired-sepT)
+			}
 		} else {
 			// Cramped: prefer panel content over its separator.
 			todoHeight = room
 		}
 	}
-	outputHeight -= todoHeight + sepT
+	outputHeight -= todoHeight + sepT + sepTodoFollowup
 	u.activeViewportLocked().visibleRows = outputHeight
 	screenRows := make([]string, u.height+1)
 	if u.manager != nil && u.height > 3 {
@@ -393,7 +403,7 @@ func (u *UI) paintFixedLocked(direction int) {
 		screenRows[panelEnd-queueHeight-sepS-count+i] = truncateDiffLine(text, u.width, u.unicode)
 	}
 	if todoHeight > 0 {
-		todoStart := panelEnd - queueHeight - sepS - count - todoHeight
+		todoStart := panelEnd - queueHeight - sepS - count - todoHeight - sepTodoFollowup
 		header := todoHeader(todoDoneCount, len(todoItems), u.width, todo.expanded)
 		if ColorEnabled(u.out) {
 			// Theme-governed header: cyan maps to the Prompt role so
@@ -423,7 +433,7 @@ func (u *UI) paintFixedLocked(direction int) {
 				switch row.status {
 				case "done":
 					// Success (green) keeps completed rows theme-governed;
-				// dim preserves the de-emphasized look.
+					// dim preserves the de-emphasized look.
 					text = dim + green + text + reset
 				case "doing":
 					// Warning (yellow) makes in-progress rows stand out.

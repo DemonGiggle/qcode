@@ -102,7 +102,6 @@ func TestTodoDisplayRowsPreservesStatusForThemeColoring(t *testing.T) {
 	}
 }
 
-
 func TestTodoPanelSitsAboveQueue(t *testing.T) {
 	ids, titles, statuses := todoFiveItems()
 	runner := &todoPanelRunner{ids: ids, titles: titles, statuses: statuses, version: 1,
@@ -111,16 +110,28 @@ func TestTodoPanelSitsAboveQueue(t *testing.T) {
 	u.manager.(*layoutManager).queued["main"] = []session.QueuedPrompt{
 		{RequestID: "q1", Prompt: "queued work"},
 	}
+	if _, err := u.display.Write([]byte(strings.Repeat("output line\n", 40) + "last output\n")); err != nil {
+		t.Fatal(err)
+	}
 	u.renderInput(inputPrompt, "", 0)
-	got := frame()
-	todoAt := strings.Index(got, "Todo 1/5")
-	queueAt := strings.Index(got, "Queued")
-	if todoAt < 0 || queueAt < 0 {
-		t.Fatalf("missing todo (%d) or queue (%d): %q", todoAt, queueAt, got)
+	lines := strings.Split(frame(), "\n")
+	idxOutput, idxTodo, idxLastTodo, idxQueue := -1, -1, -1, -1
+	for i, line := range lines {
+		if strings.Contains(line, "last output") {
+			idxOutput = i
+		}
+		if strings.Contains(line, "Todo 1/5") {
+			idxTodo = i
+		}
+		if strings.Contains(line, "Third task") {
+			idxLastTodo = i
+		}
+		if strings.Contains(line, "Queued | Alt+Q expand") {
+			idxQueue = i
+		}
 	}
-	if todoAt > queueAt {
-		t.Fatalf("todo panel is not above queue: %q", got)
-	}
+	requireOneBlank(t, lines, idxOutput, idxTodo, "transcript vs todo")
+	requireOneBlank(t, lines, idxLastTodo, idxQueue, "todo vs pending work")
 }
 
 func TestTodoPanelExpandShowsAllRows(t *testing.T) {
