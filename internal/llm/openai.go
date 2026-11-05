@@ -228,24 +228,53 @@ func openAIContent(message Message) any {
 	return parts
 }
 
-// openAIUsageWire is the private Chat Completions usage shape. Detailed
-// cache breakdown mapping belongs to a later issue; this adapter only
-// forwards the inclusive input/output counts into the normalized contract.
+// openAIUsageWire is the private Chat Completions usage shape. Pointer
+// fields preserve presence: nil means unreported, a pointer to zero is an
+// explicitly reported zero. Only the documented detail paths are mapped:
+// prompt_tokens_details.cached_tokens and
+// completion_tokens_details.reasoning_tokens. No write field is mapped on
+// this route: the matrix documents no exact Chat Completions write wire
+// path, and writes are never inferred from cache misses.
 type openAIUsageWire struct {
-	InputTokens  *int `json:"prompt_tokens"`
-	OutputTokens *int `json:"completion_tokens"`
+	PromptTokens        *int `json:"prompt_tokens"`
+	CompletionTokens    *int `json:"completion_tokens"`
+	PromptTokensDetails *struct {
+		CachedTokens *int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+	CompletionTokensDetails *struct {
+		ReasoningTokens *int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
 }
 
-func (w *openAIUsageWire) normalized() *Usage {
-	if w == nil {
-		return nil
+// mergeInto folds one usage snapshot into the accumulator by presence: only
+// explicitly present fields replace earlier values. Missing or null fields
+// leave earlier values intact, while an explicit zero replaces a previous
+// value. UncachedInputTokens is never derived here; no exact subtraction is
+// permitted without documented component semantics.
+func (w *openAIUsageWire) mergeInto(acc *Usage) {
+	if w == nil || acc == nil {
+		return
 	}
-	return NormalizeUsage(&Usage{InputTokens: w.InputTokens, OutputTokens: w.OutputTokens})
+	if w.PromptTokens != nil {
+		acc.InputTokens = w.PromptTokens
+	}
+	if w.CompletionTokens != nil {
+		acc.OutputTokens = w.CompletionTokens
+	}
+	if w.PromptTokensDetails != nil && w.PromptTokensDetails.CachedTokens != nil {
+		acc.CacheReadTokens = w.PromptTokensDetails.CachedTokens
+	}
+	if w.CompletionTokensDetails != nil && w.CompletionTokensDetails.ReasoningTokens != nil {
+		acc.ReasoningTokens = w.CompletionTokensDetails.ReasoningTokens
+	}
 }
 
 func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error) {
 	result := Message{Role: "assistant"}
-	var usage *Usage
+	// Usage snapshots are cumulative: each event carries the latest totals
+	// for the fields it reports. Merge by presence and validate once at the
+	// end so a later snapshot missing a field never erases earlier values.
+	accumulated := &Usage{}
 	type partialCall struct{ id, name, arguments string }
 	partials := map[int]*partialCall{}
 	scanner := bufio.NewScanner(reader)
@@ -260,9 +289,11 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 			break
 		}
 		// openAIUsageWire stays private to the adapter: wire JSON is never
-		// decoded directly into the normalized Usage contract.
+		// decoded directly into the normalized Usage contract. Usage is
+		// captured as raw JSON first so malformed usage metadata cannot
+		// break text generation; it is decoded leniently per snapshot.
 		var event struct {
-			Usage *openAIUsageWire `json:"usage"`
+			Usage json.RawMessage `json:"usage"`
 			Error *struct {
 				Message string `json:"message"`
 			} `json:"error,omitempty"`
@@ -279,8 +310,11 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			return Response{}, fmt.Errorf("decode provider stream: %w", err)
 		}
-		if event.Usage != nil {
-			usage = event.Usage.normalized()
+		if len(event.Usage) != 0 {
+			var wire openAIUsageWire
+			if err := json.Unmarshal(event.Usage, &wire); err == nil {
+				wire.mergeInto(accumulated)
+			}
 		}
 		if event.Error != nil {
 			return Response{}, errors.New(event.Error.Message)
@@ -331,5 +365,5 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 		}
 		result.ToolCalls = append(result.ToolCalls, ToolCall{ID: part.id, Name: part.name, Arguments: arguments})
 	}
-	return Response{Message: result, Usage: usage}, nil
+	return Response{Message: result, Usage: NormalizeUsage(accumulated)}, nil
 }
