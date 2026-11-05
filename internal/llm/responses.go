@@ -21,6 +21,9 @@ type responsesPartialCall struct{ id, name, arguments string }
 // Completions adapter: the two APIs have different continuation semantics.
 // Thinking levels are sent as the Responses reasoning object when the model
 // advertises them.
+// Cache policy (#81): this route never emits prompt_cache_key, even when
+// Request carries a key. Only the official OpenAI Chat Completions route may
+// transmit that field.
 func (p *openAIProvider) completeResponses(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
 	// Reasoning Responses models reject temperature (Luna returns 400).
 	// Omit it and keep the provider default, as the Anthropic adapter does.
@@ -123,9 +126,61 @@ func responsesMessage(role, text string, images []Image) map[string]any {
 	return map[string]any{"role": role, "content": content}
 }
 
+// responsesUsageWire is the private Responses usage shape shared by the
+// ChatGPT and OpenCode Go Responses routes. Pointer fields preserve
+// presence: nil means unreported, a pointer to zero is an explicitly
+// reported zero. Only documented detail paths are mapped:
+// input_tokens_details.cached_tokens,
+// input_tokens_details.cache_write_tokens (when explicitly present), and
+// output_tokens_details.reasoning_tokens. No other write path is mapped;
+// writes are never inferred from cache misses.
+type responsesUsageWire struct {
+	InputTokens        *int `json:"input_tokens"`
+	OutputTokens       *int `json:"output_tokens"`
+	InputTokensDetails *struct {
+		CachedTokens     *int `json:"cached_tokens"`
+		CacheWriteTokens *int `json:"cache_write_tokens"`
+	} `json:"input_tokens_details"`
+	OutputTokensDetails *struct {
+		ReasoningTokens *int `json:"reasoning_tokens"`
+	} `json:"output_tokens_details"`
+}
+
+// mergeInto folds one usage snapshot into the accumulator by presence: only
+// explicitly present fields replace earlier values. Missing or null fields
+// leave earlier values intact, while an explicit zero replaces a previous
+// value. UncachedInputTokens is never derived here; no exact subtraction is
+// permitted without documented component semantics.
+func (w *responsesUsageWire) mergeInto(acc *Usage) {
+	if w == nil || acc == nil {
+		return
+	}
+	if w.InputTokens != nil {
+		acc.InputTokens = w.InputTokens
+	}
+	if w.OutputTokens != nil {
+		acc.OutputTokens = w.OutputTokens
+	}
+	if w.InputTokensDetails != nil {
+		if w.InputTokensDetails.CachedTokens != nil {
+			acc.CacheReadTokens = w.InputTokensDetails.CachedTokens
+		}
+		if w.InputTokensDetails.CacheWriteTokens != nil {
+			acc.CacheWriteTokens = w.InputTokensDetails.CacheWriteTokens
+		}
+	}
+	if w.OutputTokensDetails != nil && w.OutputTokensDetails.ReasoningTokens != nil {
+		acc.ReasoningTokens = w.OutputTokensDetails.ReasoningTokens
+	}
+}
+
 func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, error) {
 	result := Message{Role: "assistant"}
-	var usage *Usage
+	// Usage snapshots are cumulative: each completed event carries the
+	// latest totals for the fields it reports. Merge by presence and
+	// validate once at the end so a later snapshot missing a field never
+	// erases earlier values.
+	accumulated := &Usage{}
 	var completedOutput []json.RawMessage
 	partials := map[int]*responsesPartialCall{}
 	scanner := bufio.NewScanner(reader)
@@ -151,10 +206,11 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 			} `json:"item"`
 			Response struct {
 				Output []json.RawMessage `json:"output"`
-				Usage  *struct {
-					InputTokens  int `json:"input_tokens"`
-					OutputTokens int `json:"output_tokens"`
-				} `json:"usage"`
+				// Captured raw so malformed usage metadata cannot break
+				// text generation; it is decoded leniently per snapshot.
+				// responsesUsageWire stays private: wire JSON is never
+				// decoded directly into the normalized Usage contract.
+				Usage json.RawMessage `json:"usage"`
 				Error *struct {
 					Message string `json:"message"`
 				} `json:"error"`
@@ -206,8 +262,11 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 			part.arguments += event.Delta
 		case "response.completed":
 			completedOutput = event.Response.Output
-			if event.Response.Usage != nil {
-				usage = &Usage{InputTokens: event.Response.Usage.InputTokens, OutputTokens: event.Response.Usage.OutputTokens}
+			if len(event.Response.Usage) != 0 {
+				var wire responsesUsageWire
+				if err := json.Unmarshal(event.Response.Usage, &wire); err == nil {
+					wire.mergeInto(accumulated)
+				}
 			}
 		}
 	}
@@ -234,7 +293,7 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 		}
 		result.ToolCalls = append(result.ToolCalls, ToolCall{ID: part.id, Name: part.name, Arguments: arguments})
 	}
-	return Response{Message: result, Usage: usage}, nil
+	return Response{Message: result, Usage: NormalizeUsage(accumulated)}, nil
 }
 
 func responsesCompletedOutput(result *Message, output []json.RawMessage, partials map[int]*responsesPartialCall) {

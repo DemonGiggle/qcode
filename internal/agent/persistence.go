@@ -29,6 +29,11 @@ type SavedToolCall struct {
 type SavedState struct {
 	ArtifactVersion                                 uint64
 	ProviderSession                                 string
+	// CacheSessionID is the agent-owned random session identity for
+	// prompt_cache_key namespacing (#81). Only the base identity is
+	// persisted; transmitted keys are namespaced digests recomputed per
+	// request and never stored.
+	CacheSessionID                                  string
 	PendingImages                                   []llm.Image
 	Provider, Model, Thinking, Endpoint, System     string
 	Messages                                        []SavedMessage
@@ -36,6 +41,7 @@ type SavedState struct {
 	ContextWindow, ContextOverride, ContextMessages int
 	ContextUsage                                    *llm.Usage
 	Usage                                           llm.SessionUsage
+	UsageVersion                                    int `json:"usage_version,omitempty"`
 	Remaining                                       int
 	Known, Estimated                                bool
 	AutoCompact                                     bool
@@ -112,6 +118,7 @@ func (a *Agent) publishCheckpoint() {
 	}
 	a.stateMu.RLock()
 	s.LastResponse, s.Usage = a.lastResponse, a.sessionUsage
+	s.UsageVersion = llm.UsageSchemaVersion
 	s.ArtifactVersion = a.artifactVersion
 	a.stateMu.RUnlock()
 	if c := a.contextStatus.Load(); c != nil {
@@ -130,6 +137,9 @@ func (a *Agent) publishCheckpoint() {
 	if p, ok := a.provider.(interface{ SessionIdentity() string }); ok {
 		s.ProviderSession = p.SessionIdentity()
 	}
+	// Persist only the base cache identity; transmitted keys are namespaced
+	// digests recomputed per request.
+	s.CacheSessionID = a.ensureCacheSessionID()
 	// A max-steps update can happen from the UI while the agent goroutine is
 	// publishing its checkpoint. Compare-and-swap prevents either checkpoint
 	// writer from overwriting the other's update.
@@ -213,6 +223,42 @@ func (a *Agent) RestoreFreshState(data json.RawMessage) error {
 	return nil
 }
 
+// restoreSessionUsage carries a persisted session total into memory without
+// silently upgrading legacy data. Version 2 snapshots round-trip exactly.
+// Legacy snapshots (missing UsageVersion) retain their old numeric totals and
+// Missing count, start new coverage counters at zero, and stay marked
+// uncertain until /new. Request counts and cache data are never reconstructed.
+func restoreSessionUsage(saved llm.SessionUsage, version int) llm.SessionUsage {
+	if version == llm.UsageSchemaVersion {
+		return saved
+	}
+	legacy := saved
+	legacy.InputReported = 0
+	legacy.OutputReported = 0
+	legacy.CacheReadReported = 0
+	legacy.CacheWriteReported = 0
+	legacy.CacheReadTokens = 0
+	legacy.CacheWriteTokens = 0
+	legacy.CacheRatioReadTokens = 0
+	legacy.CacheRatioInputTokens = 0
+	legacy.CacheRatioRequests = 0
+	if legacy.InputTokens != 0 || legacy.OutputTokens != 0 || legacy.TotalTokens != 0 || legacy.Missing != 0 || legacy.Requests != 0 {
+		legacy.LegacyUncertain = true
+	}
+	return llm.MigrateLegacySessionUsage(legacy)
+}
+
+// restoreContextUsage invalidates legacy per-request context usage: pre-schema
+// totals mixed ambiguous zeros with reported zeros, so they must not feed the
+// context display after a resume. Version 2 usage is sanitized, never trusted
+// blindly.
+func restoreContextUsage(saved *llm.Usage, version int) *llm.Usage {
+	if version != llm.UsageSchemaVersion {
+		return nil
+	}
+	return llm.NormalizeUsage(saved)
+}
+
 func (a *Agent) RestoreState(data json.RawMessage) error {
 	var s SavedState
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -270,7 +316,12 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 		}
 	}
 	a.contextWindow, a.contextOverride, a.contextMessages = s.ContextWindow, s.ContextOverride, s.ContextMessages
-	a.contextUsage, a.sessionUsage = s.ContextUsage, s.Usage
+	a.sessionUsage, a.contextUsage = restoreSessionUsage(s.Usage, s.UsageVersion), restoreContextUsage(s.ContextUsage, s.UsageVersion)
+	// Restored history is reference data with new provenance; any prior
+	// request-prefix calibration is invalid. The saved meter snapshot is
+	// preserved until the next preparation republishes it.
+	a.prepared.valid = false
+	a.calibration.valid = false
 	a.autoCompact, a.autoCompactThreshold = s.AutoCompact, s.AutoCompactThreshold
 	a.artifactVersion = s.ArtifactVersion
 	a.planMode.Store(s.PlanMode)
@@ -290,6 +341,14 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 	}
 	a.maxSteps.Store(int64(s.MaxSteps))
 	a.learningContext, a.learningSessionID, a.learningBudget = s.LearningContext, s.LearningSessionID, s.LearningBudget
+	// Cache identity survives resume. Legacy saves missing the field
+	// initialize once; malformed stored values regenerate safely instead of
+	// failing the resume.
+	if llm.IsValidCacheSessionID(s.CacheSessionID) {
+		a.cacheSessionID = s.CacheSessionID
+	} else {
+		a.rotateCacheSessionID()
+	}
 	a.selectedSkills = s.Skills
 	a.alwaysContents = s.AlwaysContents
 	a.updateModeSystem()

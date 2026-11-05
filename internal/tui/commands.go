@@ -191,6 +191,10 @@ var slashCommands = []slashCommand{
 		examples: []string{"/tool", "/tool web_search on"},
 	},
 	{
+		name: "/usage", usage: "/usage", description: "Show detailed token usage for the active agent",
+		examples: []string{"/usage"},
+	},
+	{
 		name: "/verbose", usage: "/verbose", description: "Show or hide detailed action traces",
 		examples: []string{"/verbose"},
 	},

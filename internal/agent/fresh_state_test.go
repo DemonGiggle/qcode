@@ -58,7 +58,7 @@ func TestRestoreFreshStatePreservesSettingsAndClearsConversation(t *testing.T) {
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: "old conversation"})
 	a.lastResponse = "old answer"
 	a.pendingImages = []llm.Image{{Data: []byte("old image")}}
-	a.contextUsage = &llm.Usage{InputTokens: 1000, OutputTokens: 500}
+	a.contextUsage = &llm.Usage{InputTokens: llm.IntPtr(1000), OutputTokens: llm.IntPtr(500)}
 	a.contextMessages = 2
 	a.sessionUsage = llm.SessionUsage{InputTokens: 1000, OutputTokens: 500, TotalTokens: 1500}
 	a.learningBudget, a.learningContext, a.learningSessionID = 345, "old learning", "old-learning-session"

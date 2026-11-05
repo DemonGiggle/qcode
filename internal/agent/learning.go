@@ -4,16 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"qcode/internal/learning"
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
-	"qcode/internal/redaction"
-	"qcode/internal/transcript"
-	"qcode/internal/trust"
 )
 
 // LearningApprover receives the entire proposed change set, including before
@@ -27,61 +23,14 @@ func (a *Agent) SetLearning(store learning.Store, budget int) {
 	a.invalidateContextUsage()
 }
 
+// requestMessages is the legacy accessor for the prepared normal-request
+// messages without a one-shot recovery notice. It resolves learning and
+// requestContext exactly once via prepareNormalRequest and returns the exact
+// messages Complete would receive (including the question-budget notice when
+// applicable). Prefer prepareNormalRequest when the tool set, estimate, or
+// recovery notice is also needed.
 func (a *Agent) requestMessages(ctx context.Context) []llm.Message {
-	extra := ""
-	if a.learningStore != nil && a.learningBudget > 0 {
-		query := ""
-		for i := len(a.messages) - 1; i >= 0; i-- {
-			if a.messages[i].Role == "user" {
-				query = a.messages[i].Content
-				break
-			}
-		}
-		budget := a.learningBudget - learning.EstimatedTokens(prompt.LearningReference)
-		if budget > 0 && query != "" {
-			items, err := a.learningStore.Search(ctx, query, budget)
-			if err != nil {
-				fmt.Fprintln(transcript.NewGroup(a.out), "Learning warning:", a.redaction.Error(redaction.Terminal, err))
-			} else if len(items) > 0 {
-				extra = prompt.LearningReference + trust.Wrap("user_approved_learning", learning.Context(items))
-			}
-		}
-	}
-	if a.learningContext != extra {
-		a.contextUsage = nil
-	}
-	a.learningContext = extra
-	messages := append([]llm.Message(nil), a.messages...)
-	var restoredPositions []string
-	for i := 1; i < len(messages); i++ {
-		if messages[i].Untrusted && strings.HasPrefix(messages[i].Origin, "restored_") {
-			restoredPositions = append(restoredPositions, strconv.Itoa(i))
-		}
-	}
-	a.stateMu.RLock()
-	contextSource := a.requestContext
-	a.stateMu.RUnlock()
-	dynamic := ""
-	if contextSource != nil {
-		dynamic = contextSource()
-	}
-	a.dynamicContext = dynamic
-	if len(messages) > 0 {
-		if cwd := a.WorkingDirectory(); cwd != "" {
-			messages[0].Content += "\n\nCurrent agent working directory: " + strconv.Quote(cwd)
-		}
-		if len(restoredPositions) > 0 {
-			messages[0].Content += fmt.Sprintf(prompt.RestoredHistoryReference, strings.Join(restoredPositions, ", "))
-		}
-		messages[0].Content += extra
-		if dynamic != "" {
-			messages[0].Content += "\n\nAdditional context: " + trust.Wrap("request_context", dynamic)
-		}
-		if a.taskContext != "" {
-			messages[0].Content += "\n\nWork history: " + trust.Wrap("work_history", a.taskContext)
-		}
-	}
-	return messages
+	return a.prepareNormalRequest(ctx, "").Request.Messages
 }
 
 // Learn is reachable only through an explicit interactive /learn command.
@@ -151,7 +100,11 @@ func (a *Agent) Learn(ctx context.Context, arguments string, approve LearningApp
 		span := a.trace.Start("llm", a.provider.Name(), map[string]any{"model": a.model, "operation": "learn " + action})
 		proposalCtx, cancel := context.WithCancel(ctx)
 		streamedBytes := 0
-		response, requestErr := a.provider.Complete(proposalCtx, llm.Request{Model: a.model, Messages: []llm.Message{{Role: "system", Content: instruction}, {Role: "user", Content: string(input)}}}, func(event llm.StreamEvent) {
+		backend := ""
+		if a.provider != nil {
+			backend = a.provider.Name()
+		}
+		response, requestErr := a.provider.Complete(proposalCtx, llm.Request{Model: a.model, Messages: []llm.Message{{Role: "system", Content: instruction}, {Role: "user", Content: string(input)}}, PromptCacheKey: a.learnCacheKey(backend, a.model)}, func(event llm.StreamEvent) {
 			streamedBytes += len(event.Text)
 			if streamedBytes > learning.MaxProposalBytes {
 				cancel()

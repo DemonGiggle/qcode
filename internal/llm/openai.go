@@ -180,6 +180,15 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 	for field, value := range thinkingFields(capability, input.Thinking) {
 		body[field] = value
 	}
+	// Session-stable cache control (#81): emit prompt_cache_key only on the
+	// official OpenAI Chat Completions route. Custom base URLs, opencode-go
+	// (all three routes share this adapter when name != "openai"), chatgpt,
+	// and ollama must omit the field even when Request carries a key. The
+	// existing x-opencode-session header behavior is unchanged. Never retry
+	// after a cache-field rejection; surface the provider error normally.
+	if p.name == "openai" && IsOfficialOpenAIEndpoint(p.baseURL) && input.PromptCacheKey != "" {
+		body["prompt_cache_key"] = input.PromptCacheKey
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return Response{}, err
@@ -228,9 +237,53 @@ func openAIContent(message Message) any {
 	return parts
 }
 
+// openAIUsageWire is the private Chat Completions usage shape. Pointer
+// fields preserve presence: nil means unreported, a pointer to zero is an
+// explicitly reported zero. Only the documented detail paths are mapped:
+// prompt_tokens_details.cached_tokens and
+// completion_tokens_details.reasoning_tokens. No write field is mapped on
+// this route: the matrix documents no exact Chat Completions write wire
+// path, and writes are never inferred from cache misses.
+type openAIUsageWire struct {
+	PromptTokens        *int `json:"prompt_tokens"`
+	CompletionTokens    *int `json:"completion_tokens"`
+	PromptTokensDetails *struct {
+		CachedTokens *int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+	CompletionTokensDetails *struct {
+		ReasoningTokens *int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
+}
+
+// mergeInto folds one usage snapshot into the accumulator by presence: only
+// explicitly present fields replace earlier values. Missing or null fields
+// leave earlier values intact, while an explicit zero replaces a previous
+// value. UncachedInputTokens is never derived here; no exact subtraction is
+// permitted without documented component semantics.
+func (w *openAIUsageWire) mergeInto(acc *Usage) {
+	if w == nil || acc == nil {
+		return
+	}
+	if w.PromptTokens != nil {
+		acc.InputTokens = w.PromptTokens
+	}
+	if w.CompletionTokens != nil {
+		acc.OutputTokens = w.CompletionTokens
+	}
+	if w.PromptTokensDetails != nil && w.PromptTokensDetails.CachedTokens != nil {
+		acc.CacheReadTokens = w.PromptTokensDetails.CachedTokens
+	}
+	if w.CompletionTokensDetails != nil && w.CompletionTokensDetails.ReasoningTokens != nil {
+		acc.ReasoningTokens = w.CompletionTokensDetails.ReasoningTokens
+	}
+}
+
 func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error) {
 	result := Message{Role: "assistant"}
-	var usage *Usage
+	// Usage snapshots are cumulative: each event carries the latest totals
+	// for the fields it reports. Merge by presence and validate once at the
+	// end so a later snapshot missing a field never erases earlier values.
+	accumulated := &Usage{}
 	type partialCall struct{ id, name, arguments string }
 	partials := map[int]*partialCall{}
 	scanner := bufio.NewScanner(reader)
@@ -244,8 +297,12 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 		if data == "[DONE]" {
 			break
 		}
+		// openAIUsageWire stays private to the adapter: wire JSON is never
+		// decoded directly into the normalized Usage contract. Usage is
+		// captured as raw JSON first so malformed usage metadata cannot
+		// break text generation; it is decoded leniently per snapshot.
 		var event struct {
-			Usage *Usage `json:"usage"`
+			Usage json.RawMessage `json:"usage"`
 			Error *struct {
 				Message string `json:"message"`
 			} `json:"error,omitempty"`
@@ -262,8 +319,11 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			return Response{}, fmt.Errorf("decode provider stream: %w", err)
 		}
-		if event.Usage != nil {
-			usage = event.Usage
+		if len(event.Usage) != 0 {
+			var wire openAIUsageWire
+			if err := json.Unmarshal(event.Usage, &wire); err == nil {
+				wire.mergeInto(accumulated)
+			}
 		}
 		if event.Error != nil {
 			return Response{}, errors.New(event.Error.Message)
@@ -314,5 +374,5 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 		}
 		result.ToolCalls = append(result.ToolCalls, ToolCall{ID: part.id, Name: part.name, Arguments: arguments})
 	}
-	return Response{Message: result, Usage: usage}, nil
+	return Response{Message: result, Usage: NormalizeUsage(accumulated)}, nil
 }

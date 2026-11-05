@@ -36,10 +36,10 @@ func (p *interTurnCompactingProvider) Complete(_ context.Context, request llm.Re
 				Thinking:  strings.Repeat("reasoning ", 200),
 				ToolCalls: []llm.ToolCall{{ID: "call_skill", Name: "skill"}},
 			},
-			Usage: &llm.Usage{InputTokens: 200, OutputTokens: 600},
+			Usage: &llm.Usage{InputTokens: llm.IntPtr(200), OutputTokens: llm.IntPtr(600)},
 		}, nil
 	}
-	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}, Usage: &llm.Usage{InputTokens: 800}}, nil
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}, Usage: &llm.Usage{InputTokens: llm.IntPtr(800)}}, nil
 }
 
 func (*compactingProvider) Name() string { return "compacting" }
@@ -48,14 +48,14 @@ func (p *compactingProvider) Complete(_ context.Context, request llm.Request, _ 
 	if request.Messages[0].Content == prompt.ConversationCompact {
 		return llm.Response{Message: llm.Message{Role: "assistant", Content: "User chose Go. Work remains: tests."}}, nil
 	}
-	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}, Usage: &llm.Usage{InputTokens: 900}}, nil
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}, Usage: &llm.Usage{InputTokens: llm.IntPtr(900)}}, nil
 }
 
 func (*usageProvider) Name() string                                       { return "usage" }
 func (*usageProvider) ContextWindow(context.Context, string) (int, error) { return 1000, nil }
 func (p *usageProvider) Complete(context.Context, llm.Request, llm.StreamCallback) (llm.Response, error) {
 	p.calls++
-	return llm.Response{Message: llm.Message{Role: "assistant", Content: "hi"}, Usage: &llm.Usage{InputTokens: 700, OutputTokens: 50}}, nil
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "hi"}, Usage: &llm.Usage{InputTokens: llm.IntPtr(700), OutputTokens: llm.IntPtr(50)}}, nil
 }
 
 func TestContextTracksLatestRequestAndReset(t *testing.T) {
@@ -69,7 +69,12 @@ func TestContextTracksLatestRequestAndReset(t *testing.T) {
 		if err := a.Run(context.Background(), "hello"); err != nil {
 			t.Fatal(err)
 		}
-		if left, known, estimated := a.ContextRemaining(); left != 25 || !known || estimated {
+		// #79: the meter reuses reported InputTokens (700) as a baseline
+		// and estimates the appended assistant replay locally (~9 tokens),
+		// so occupancy is ~709/1000 (29% left). Reported output (50) is
+		// never treated as replay size, and every value stays estimated
+		// because provider reasoning may never replay.
+		if left, known, estimated := a.ContextRemaining(); left != 29 || !known || !estimated {
 			t.Fatalf("context=%d %v %v", left, known, estimated)
 		}
 	}
@@ -78,7 +83,7 @@ func TestContextTracksLatestRequestAndReset(t *testing.T) {
 		t.Fatal("reset retained usage")
 	}
 	a.SetContextWindow(500)
-	a.contextUsage = &llm.Usage{InputTokens: 700, OutputTokens: 50}
+	a.contextUsage = &llm.Usage{InputTokens: llm.IntPtr(700), OutputTokens: llm.IntPtr(50)}
 	a.contextMessages = len(a.messages)
 	a.publishContext()
 	if left, _, _ := a.ContextRemaining(); left != 0 {
@@ -93,7 +98,7 @@ func TestContextTracksLatestRequestAndReset(t *testing.T) {
 func TestContextIncludesPendingToolResults(t *testing.T) {
 	a := New(&usageProvider{}, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 3)
 	a.SetContextWindow(1000)
-	a.contextUsage = &llm.Usage{InputTokens: 500, OutputTokens: 50}
+	a.contextUsage = &llm.Usage{InputTokens: llm.IntPtr(500), OutputTokens: llm.IntPtr(50)}
 	a.contextMessages = len(a.messages)
 	a.messages = append(a.messages, llm.Message{Role: "tool", Content: "new tool output"})
 	a.publishContext()
@@ -106,7 +111,7 @@ func TestContextIncludesPendingToolResults(t *testing.T) {
 func TestContextMissingUsageAndChangedSettings(t *testing.T) {
 	a := New(&usageProvider{}, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 3)
 	a.SetContextWindow(10000)
-	a.contextUsage = &llm.Usage{InputTokens: 2900}
+	a.contextUsage = &llm.Usage{InputTokens: llm.IntPtr(2900)}
 	a.contextMessages = len(a.messages)
 	a.publishContext()
 	if left, _, _ := a.ContextRemaining(); left != 71 {
@@ -116,7 +121,7 @@ func TestContextMissingUsageAndChangedSettings(t *testing.T) {
 	if _, known, estimated := a.ContextRemaining(); !known || !estimated {
 		t.Fatal("skill change retained measured usage")
 	}
-	a.contextUsage = &llm.Usage{InputTokens: 2000}
+	a.contextUsage = &llm.Usage{InputTokens: llm.IntPtr(2000)}
 	a.ToggleTool("skill", false)
 	if _, known, estimated := a.ContextRemaining(); !known || !estimated {
 		t.Fatal("tool change retained measured usage")
@@ -161,7 +166,7 @@ func TestAutoCompactOnlyRunsForKnownCapacity(t *testing.T) {
 	a := New(p, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 1)
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: "old"}, llm.Message{Role: "assistant", Content: "old"})
 	a.SetContextWindow(100)
-	a.contextUsage = &llm.Usage{InputTokens: 90}
+	a.contextUsage = &llm.Usage{InputTokens: llm.IntPtr(90)}
 	a.contextMessages = len(a.messages)
 	a.publishContext()
 	if err := a.Run(context.Background(), "next"); err != nil {
@@ -219,7 +224,7 @@ func TestManualCompactWorksWhenAutomaticCompactionIsDisabled(t *testing.T) {
 	a.SetAutoCompact(false, DefaultAutoCompactThreshold)
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: "old"}, llm.Message{Role: "assistant", Content: "old"})
 	a.SetContextWindow(100)
-	a.contextUsage = &llm.Usage{InputTokens: 90}
+	a.contextUsage = &llm.Usage{InputTokens: llm.IntPtr(90)}
 	a.contextMessages = len(a.messages)
 	a.publishContext()
 	if err := a.Run(context.Background(), "next"); err != nil {

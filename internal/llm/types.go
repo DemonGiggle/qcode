@@ -54,6 +54,13 @@ type Request struct {
 	// Temperature is optional: nil preserves the provider's model default.
 	// A non-nil value, including zero, is sent only by adapters that support it.
 	Temperature *float64
+	// PromptCacheKey carries a session-stable namespaced cache identity for
+	// the official OpenAI Chat Completions route only (see cachekey.go).
+	// The agent sets it for normal, compaction, and learning requests with
+	// purpose namespacing; only the OpenAI adapter with an official endpoint
+	// emits it as prompt_cache_key. All other adapters must omit it even
+	// when set, and no adapter may retry after a cache-field rejection.
+	PromptCacheKey string
 }
 
 type Response struct {
@@ -183,20 +190,6 @@ func Names() []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// SessionUsage contains reported totals; Missing counts requests without usage.
-type SessionUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
-	TotalTokens  int `json:"total_tokens"`
-	Missing      int `json:"missing_completions"`
-}
-
-// Usage describes one completion, not cumulative session billing.
-type Usage struct {
-	InputTokens  int `json:"prompt_tokens"`
-	OutputTokens int `json:"completion_tokens"`
 }
 
 // ContextWindowProvider reports the active model's context capacity, or zero
