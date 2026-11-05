@@ -250,7 +250,7 @@ func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText Str
 	for scanner.Scan() {
 		var event struct {
 			InputTokens  *int          `json:"prompt_eval_count"`
-			OutputTokens int           `json:"eval_count"`
+			OutputTokens *int          `json:"eval_count"`
 			Message      ollamaMessage `json:"message"`
 			Error        string        `json:"error"`
 		}
@@ -258,7 +258,9 @@ func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText Str
 			return Response{}, fmt.Errorf("decode provider stream: %w", err)
 		}
 		if event.InputTokens != nil {
-			usage = &Usage{InputTokens: *event.InputTokens, OutputTokens: event.OutputTokens}
+			// Presence-gated like before: no prompt count means no usage.
+			// Ollama reports no cache breakdowns (unsupported, not unknown).
+			usage = NormalizeUsage(&Usage{InputTokens: event.InputTokens, OutputTokens: event.OutputTokens})
 		}
 		if event.Error != "" {
 			return Response{}, fmt.Errorf("ollama: %s", event.Error)

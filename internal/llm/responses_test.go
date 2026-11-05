@@ -47,7 +47,10 @@ func TestOpenCodeGoResponsesUsesDedicatedRouteAndStreamsToolCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.Message.Content != "Checking" || streamed != "Checking" || response.Usage == nil || response.Usage.InputTokens != 10 || len(response.Message.ToolCalls) != 1 {
+	if response.Message.Content != "Checking" || streamed != "Checking" || response.Usage == nil || len(response.Message.ToolCalls) != 1 {
+		t.Fatalf("response = %#v, streamed = %q", response, streamed)
+	}
+	if in, ok := response.Usage.KnownInput(); !ok || in != 10 {
 		t.Fatalf("response = %#v, streamed = %q", response, streamed)
 	}
 	call := response.Message.ToolCalls[0]

@@ -228,6 +228,21 @@ func openAIContent(message Message) any {
 	return parts
 }
 
+// openAIUsageWire is the private Chat Completions usage shape. Detailed
+// cache breakdown mapping belongs to a later issue; this adapter only
+// forwards the inclusive input/output counts into the normalized contract.
+type openAIUsageWire struct {
+	InputTokens  *int `json:"prompt_tokens"`
+	OutputTokens *int `json:"completion_tokens"`
+}
+
+func (w *openAIUsageWire) normalized() *Usage {
+	if w == nil {
+		return nil
+	}
+	return NormalizeUsage(&Usage{InputTokens: w.InputTokens, OutputTokens: w.OutputTokens})
+}
+
 func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error) {
 	result := Message{Role: "assistant"}
 	var usage *Usage
@@ -244,8 +259,10 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 		if data == "[DONE]" {
 			break
 		}
+		// openAIUsageWire stays private to the adapter: wire JSON is never
+		// decoded directly into the normalized Usage contract.
 		var event struct {
-			Usage *Usage `json:"usage"`
+			Usage *openAIUsageWire `json:"usage"`
 			Error *struct {
 				Message string `json:"message"`
 			} `json:"error,omitempty"`
@@ -263,7 +280,7 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 			return Response{}, fmt.Errorf("decode provider stream: %w", err)
 		}
 		if event.Usage != nil {
-			usage = event.Usage
+			usage = event.Usage.normalized()
 		}
 		if event.Error != nil {
 			return Response{}, errors.New(event.Error.Message)

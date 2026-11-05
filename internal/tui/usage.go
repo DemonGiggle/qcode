@@ -16,14 +16,31 @@ func usageLabelFor(value Runner, unicode bool) string {
 		return "unknown"
 	}
 	s := runner.SessionUsage()
-	if s.Missing > 0 && s.TotalTokens == 0 {
+	if s.Missing > 0 && s.TotalTokens == 0 && s.Requests == 0 {
+		return "unknown"
+	}
+	if s.Requests > 0 && s.InputReported == 0 && s.OutputReported == 0 {
 		return "unknown"
 	}
 	suffix := ""
-	if s.Missing > 0 {
+	if s.Missing > 0 || s.LegacyUncertain {
+		suffix = "?"
+	} else if s.Requests > 0 && (s.InputReported < s.Requests || s.OutputReported < s.Requests) {
+		// Partial subtotal: some completions omitted one side.
 		suffix = "?"
 	}
-	label := fmt.Sprintf("I:%s O:%s%s", compactTokenCount(s.InputTokens), compactTokenCount(s.OutputTokens), suffix)
+	inputStr := compactTokenCount(s.InputTokens)
+	outputStr := compactTokenCount(s.OutputTokens)
+	if s.Requests > 0 {
+		// Never display an unreported side as a reported zero.
+		if s.InputReported == 0 {
+			inputStr = "?"
+		}
+		if s.OutputReported == 0 {
+			outputStr = "?"
+		}
+	}
+	label := fmt.Sprintf("I:%s O:%s%s", inputStr, outputStr, suffix)
 	label += interfaceGlyph(unicode, " Σ:", " T:") + compactTokenCount(s.TotalTokens)
 	return label
 }

@@ -107,7 +107,7 @@ type ActivitySpan struct {
 // Usage emits structured accounting even when verbose tracing is disabled.
 func (l *Logger) Usage(provider, model string, usage *llm.Usage, session llm.SessionUsage) {
 	if l.json {
-		l.writeJSON("usage", "llm", provider, time.Now(), 0, map[string]any{"model": model, "usage": usage, "session_usage": session})
+		l.writeJSON("usage", "llm", provider, time.Now(), 0, map[string]any{"model": model, "usage": usage, "session_usage": session, "usage_schema_version": llm.UsageSchemaVersion})
 	}
 }
 

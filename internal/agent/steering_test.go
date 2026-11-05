@@ -318,7 +318,7 @@ func TestSteeringDuringAutoCompactionAndManualUnavailable(t *testing.T) {
 			a, _ := m.Agent("main")
 			a.messages = append(a.messages, llm.Message{Role: "user", Content: "earlier task"}, llm.Message{Role: "assistant", Content: "earlier response"})
 			a.SetContextWindow(100000)
-			a.contextUsage = &llm.Usage{InputTokens: 90000}
+			a.contextUsage = &llm.Usage{InputTokens: llm.IntPtr(90000)}
 			a.contextMessages = len(a.messages)
 			a.publishContext()
 			var original session.Submission
@@ -345,7 +345,7 @@ func TestSteeringDuringAutoCompactionAndManualUnavailable(t *testing.T) {
 				t.Fatal(err)
 			}
 			response := finalSteeringResponse("summary")
-			response.Usage = &llm.Usage{InputTokens: 30, OutputTokens: 10}
+			response.Usage = &llm.Usage{InputTokens: llm.IntPtr(30), OutputTokens: llm.IntPtr(10)}
 			p.replies <- response
 			request := nextSteeringRequest(t, p)
 			expected := "after compaction"
@@ -356,7 +356,7 @@ func TestSteeringDuringAutoCompactionAndManualUnavailable(t *testing.T) {
 				t.Fatalf("compaction boundary: %+v", request.Messages)
 			}
 			response = finalSteeringResponse("done")
-			response.Usage = &llm.Usage{InputTokens: 20, OutputTokens: 5}
+			response.Usage = &llm.Usage{InputTokens: llm.IntPtr(20), OutputTokens: llm.IntPtr(5)}
 			p.replies <- response
 			waitSteeringResult(t, m, original.RequestID)
 			// The FIFO task may still be finishing in the manual case; shutdown waits.

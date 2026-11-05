@@ -50,7 +50,7 @@ func TestRestoredHistoryKeepsPlainRepliesAcrossResumes(t *testing.T) {
 				}
 				old.messages = append(old.messages, llm.Message{Role: "user", Content: "inspect registers"}, llm.Message{Role: "assistant", Content: content})
 				old.lastResponse = content
-				old.contextUsage = &llm.Usage{InputTokens: 300, OutputTokens: 50}
+				old.contextUsage = &llm.Usage{InputTokens: llm.IntPtr(300), OutputTokens: llm.IntPtr(50)}
 				old.publishContext()
 				data := *old.checkpoint.Load()
 				for resume := 0; resume < 3; resume++ {
