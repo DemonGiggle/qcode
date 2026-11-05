@@ -135,9 +135,66 @@ func anthropicContent(message Message) any {
 	return parts
 }
 
+// anthropicUsageWire is the private Anthropic Messages usage shape shared by
+// the OpenCode Go Messages route. Pointer fields preserve presence: nil means
+// unreported, a pointer to zero is an explicitly reported zero. The Anthropic
+// wire separates logical input into three components:
+//
+//	input_tokens (uncached/non-cache input),
+//	cache_read_input_tokens,
+//	cache_creation_input_tokens (aggregate cache write).
+//
+// The normalized complete InputTokens is derived as the sum of the three
+// components ONLY when all three are known. A gateway that reports only
+// input_tokens therefore yields known uncached input with unknown complete
+// input. TTL-specific subcounts inside cache_creation are intentionally
+// ignored: the aggregate creation count is used once and never added to TTL
+// breakdowns, and no pricing is synthesized from TTLs. No cache-control
+// request fields are emitted in this issue.
+type anthropicUsageWire struct {
+	InputTokens              *int `json:"input_tokens"`
+	OutputTokens             *int `json:"output_tokens"`
+	CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
+	CacheCreation            *struct {
+		Ephemeral5mInputTokens *int `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1hInputTokens *int `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
+}
+
+// mergeInto folds one usage snapshot into the accumulator by presence: only
+// explicitly present fields replace earlier values. Missing or null fields
+// leave earlier values intact, while an explicit zero replaces a previous
+// value. Wire input_tokens maps to UncachedInputTokens (never directly to
+// complete InputTokens); reads map to CacheReadTokens and aggregate creation
+// maps to CacheWriteTokens. TTL subcounts are ignored. Complete InputTokens
+// is computed once at the end, not here.
+func (w *anthropicUsageWire) mergeInto(acc *Usage) {
+	if w == nil || acc == nil {
+		return
+	}
+	if w.InputTokens != nil {
+		acc.UncachedInputTokens = w.InputTokens
+	}
+	if w.OutputTokens != nil {
+		acc.OutputTokens = w.OutputTokens
+	}
+	if w.CacheReadInputTokens != nil {
+		acc.CacheReadTokens = w.CacheReadInputTokens
+	}
+	if w.CacheCreationInputTokens != nil {
+		acc.CacheWriteTokens = w.CacheCreationInputTokens
+	}
+}
+
 func parseAnthropicStream(reader io.Reader, onText StreamCallback) (Response, error) {
 	result := Message{Role: "assistant"}
-	var usage *Usage
+	// Usage snapshots are cumulative: message_start carries the input side
+	// and message_delta carries later output updates. Merge by presence and
+	// validate once at the end so a later snapshot missing a field never
+	// erases earlier values. Output updates replace earlier output counts;
+	// successive deltas are never added.
+	accumulated := &Usage{}
 	type partialTool struct {
 		id, name, input, initial string
 		receivedDelta            bool
@@ -154,6 +211,10 @@ func parseAnthropicStream(reader io.Reader, onText StreamCallback) (Response, er
 		if data == "" {
 			continue
 		}
+		// anthropicUsageWire stays private to the adapter: wire JSON is never
+		// decoded directly into the normalized Usage contract. Usage is
+		// captured as raw JSON first so malformed usage metadata cannot
+		// break text generation; it is decoded leniently per snapshot.
 		var event struct {
 			Type  string `json:"type"`
 			Index int    `json:"index"`
@@ -161,13 +222,9 @@ func parseAnthropicStream(reader io.Reader, onText StreamCallback) (Response, er
 				Message string `json:"message"`
 			} `json:"error"`
 			Message *struct {
-				Usage struct {
-					InputTokens *int `json:"input_tokens"`
-				} `json:"usage"`
+				Usage json.RawMessage `json:"usage"`
 			} `json:"message"`
-			Usage *struct {
-				OutputTokens *int `json:"output_tokens"`
-			} `json:"usage"`
+			Usage        json.RawMessage `json:"usage"`
 			ContentBlock *struct {
 				Type  string          `json:"type"`
 				ID    string          `json:"id"`
@@ -186,19 +243,16 @@ func parseAnthropicStream(reader io.Reader, onText StreamCallback) (Response, er
 		if event.Error != nil {
 			return Response{}, fmt.Errorf("Anthropic: %s", event.Error.Message)
 		}
-		if event.Message != nil {
-			// Anthropic cache detail mapping belongs to a later issue; only
-			// the inclusive input count is forwarded here.
-			usage = NormalizeUsage(&Usage{InputTokens: event.Message.Usage.InputTokens})
+		if event.Message != nil && len(event.Message.Usage) != 0 {
+			var wire anthropicUsageWire
+			if err := json.Unmarshal(event.Message.Usage, &wire); err == nil {
+				wire.mergeInto(accumulated)
+			}
 		}
-		if event.Usage != nil {
-			if usage == nil {
-				usage = NormalizeUsage(&Usage{OutputTokens: event.Usage.OutputTokens})
-			} else {
-				usage = NormalizeUsage(&Usage{
-					InputTokens:  usage.InputTokens,
-					OutputTokens: event.Usage.OutputTokens,
-				})
+		if len(event.Usage) != 0 {
+			var wire anthropicUsageWire
+			if err := json.Unmarshal(event.Usage, &wire); err == nil {
+				wire.mergeInto(accumulated)
 			}
 		}
 		if event.Type == "content_block_start" && event.ContentBlock != nil && event.ContentBlock.Type == "tool_use" {
@@ -240,5 +294,31 @@ func parseAnthropicStream(reader io.Reader, onText StreamCallback) (Response, er
 		}
 		result.ToolCalls = append(result.ToolCalls, ToolCall{ID: part.id, Name: part.name, Arguments: arguments})
 	}
-	return Response{Message: result, Usage: usage}, nil
+	anthropicFinalizeUsage(accumulated)
+	return Response{Message: result, Usage: NormalizeUsage(accumulated)}, nil
+}
+
+// anthropicFinalizeUsage derives the complete logical InputTokens as the sum
+// of the three separate Anthropic components (uncached + read + write) only
+// when all three are known. Missing components stay unknown: there is no
+// route-specific guarantee of zero on the OpenCode Go Messages route, so an
+// input-only legacy payload keeps known uncached input with unknown complete
+// input. The sum is computed only for non-negative components; negative or
+// inconsistent values are left to NormalizeUsage sanitization.
+func anthropicFinalizeUsage(acc *Usage) {
+	if acc == nil {
+		return
+	}
+	if acc.InputTokens != nil {
+		return
+	}
+	if acc.UncachedInputTokens == nil || acc.CacheReadTokens == nil || acc.CacheWriteTokens == nil {
+		return
+	}
+	uncached, read, write := *acc.UncachedInputTokens, *acc.CacheReadTokens, *acc.CacheWriteTokens
+	if uncached < 0 || read < 0 || write < 0 {
+		return
+	}
+	sum := uncached + read + write
+	acc.InputTokens = &sum
 }
