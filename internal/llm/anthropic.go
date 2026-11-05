@@ -162,11 +162,11 @@ func parseAnthropicStream(reader io.Reader, onText StreamCallback) (Response, er
 			} `json:"error"`
 			Message *struct {
 				Usage struct {
-					InputTokens int `json:"input_tokens"`
+					InputTokens *int `json:"input_tokens"`
 				} `json:"usage"`
 			} `json:"message"`
 			Usage *struct {
-				OutputTokens int `json:"output_tokens"`
+				OutputTokens *int `json:"output_tokens"`
 			} `json:"usage"`
 			ContentBlock *struct {
 				Type  string          `json:"type"`
@@ -187,13 +187,19 @@ func parseAnthropicStream(reader io.Reader, onText StreamCallback) (Response, er
 			return Response{}, fmt.Errorf("Anthropic: %s", event.Error.Message)
 		}
 		if event.Message != nil {
-			usage = &Usage{InputTokens: event.Message.Usage.InputTokens}
+			// Anthropic cache detail mapping belongs to a later issue; only
+			// the inclusive input count is forwarded here.
+			usage = NormalizeUsage(&Usage{InputTokens: event.Message.Usage.InputTokens})
 		}
 		if event.Usage != nil {
 			if usage == nil {
-				usage = &Usage{}
+				usage = NormalizeUsage(&Usage{OutputTokens: event.Usage.OutputTokens})
+			} else {
+				usage = NormalizeUsage(&Usage{
+					InputTokens:  usage.InputTokens,
+					OutputTokens: event.Usage.OutputTokens,
+				})
 			}
-			usage.OutputTokens = event.Usage.OutputTokens
 		}
 		if event.Type == "content_block_start" && event.ContentBlock != nil && event.ContentBlock.Type == "tool_use" {
 			part := &partialTool{id: event.ContentBlock.ID, name: event.ContentBlock.Name}

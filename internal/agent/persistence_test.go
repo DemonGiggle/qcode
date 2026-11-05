@@ -17,7 +17,7 @@ type resumeProvider struct{ request llm.Request }
 func (*resumeProvider) Name() string { return "resume-test" }
 func (p *resumeProvider) Complete(_ context.Context, r llm.Request, _ llm.StreamCallback) (llm.Response, error) {
 	p.request = r
-	return llm.Response{Message: llm.Message{Role: "assistant", Content: "continued"}, Usage: &llm.Usage{InputTokens: 10, OutputTokens: 2}}, nil
+	return llm.Response{Message: llm.Message{Role: "assistant", Content: "continued"}, Usage: &llm.Usage{InputTokens: llm.IntPtr(10), OutputTokens: llm.IntPtr(2)}}, nil
 }
 
 func TestAgentRestorePreservesImagesContextAndContinuation(t *testing.T) {
@@ -27,9 +27,9 @@ func TestAgentRestorePreservesImagesContextAndContinuation(t *testing.T) {
 	a.SetInteractiveMode(true)
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: "inspect", Images: []llm.Image{{MediaType: "image/png", Data: []byte{1, 2, 3}}}}, llm.Message{Role: "assistant", Content: "answer", Thinking: "reasoning"})
 	a.contextWindow = 10000
-	a.contextUsage = &llm.Usage{InputTokens: 300, OutputTokens: 50}
+	a.contextUsage = &llm.Usage{InputTokens: llm.IntPtr(300), OutputTokens: llm.IntPtr(50)}
 	a.contextMessages = len(a.messages)
-	a.sessionUsage = llm.SessionUsage{InputTokens: 500, OutputTokens: 80, TotalTokens: 580, Missing: 1}
+	a.sessionUsage = llm.SessionUsage{InputTokens: 500, OutputTokens: 80, TotalTokens: 580, Missing: 1, Requests: 2, InputReported: 1, OutputReported: 1}
 	a.SetMaxSteps(12)
 	a.publishContext()
 	data := *a.checkpoint.Load()

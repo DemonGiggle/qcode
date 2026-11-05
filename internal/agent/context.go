@@ -298,7 +298,9 @@ func (a *Agent) publishContext() {
 		used += (len(a.learningContext) + 3) / 4
 	}
 	if a.contextUsage != nil {
-		used = a.contextUsage.InputTokens + a.contextUsage.OutputTokens
+		// Presence-safe: unknown components contribute nothing to the
+		// measured total. Context usage includes cached input already.
+		used = a.contextUsage.Total()
 		state.estimated = false
 		if a.contextMessages < len(a.messages) {
 			used += estimateTokens(a.messages[a.contextMessages:])

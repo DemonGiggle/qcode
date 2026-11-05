@@ -582,3 +582,68 @@ Unresolved (carried forward, not assumed):
   files listed above; links verified against `docs/providers.md`,
   `docs/token-usage.md`, and `docs/context.md`.
 - Fixture-based tests only; no live API calls: `go test ./...`.
+
+## 12. Normalized usage and session coverage contract (schema 2)
+
+Issue #73. Shared contract only — no adapter cache mapping, no aggregation
+UI, no costs, no provider capability switches.
+
+### Per-request `llm.Usage`
+
+- All fields are optional `*int`: `InputTokens` (complete logical input),
+  `OutputTokens`, `CacheReadTokens`, `CacheWriteTokens`,
+  `UncachedInputTokens`, `ReasoningTokens`. `nil` means unknown; a pointer
+  to zero is an explicitly reported zero.
+- JSON keys: `prompt_tokens`, `completion_tokens` (kept),
+  `cache_read_tokens`, `cache_write_tokens`, `uncached_input_tokens`,
+  `reasoning_tokens`. Unknown serializes as `null`, never as numeric zero.
+- `InputTokens` is inclusive of cache reads/writes exactly once.
+  `OutputTokens` already includes reported reasoning when the protocol says
+  so. Reasoning and cache counters are breakdown subsets and are never added
+  to totals. Per-request total is the sum of known input and known output
+  (partial subtotal when either side is missing); 1000 input / 100 output /
+  800 cache-read / 20 reasoning yields 1100.
+- Nil/all-unknown `Usage` is absent usage. Negative wire values become
+  unknown for that field. Cache reads or writes individually exceeding known
+  inclusive input — or a known breakdown sum exceeding it — are discarded
+  for ratios/aggregation while valid input/output totals are retained.
+  Reasoning exceeding output becomes unknown. Inconsistent optional metadata
+  never fails successful text generation.
+- Provider wire JSON structs stay private to adapters
+  (`openAIUsageWire`, `responsesUsageWire`, Anthropic/Ollama event shapes);
+  wire usage is never decoded directly into normalized `Usage`. Shared
+  validation lives in `llm.NormalizeUsage` with presence-safe accessors
+  (`KnownInput`, `KnownOutput`, `KnownCacheRead`, `KnownCacheWrite`,
+  `KnownUncached`, `KnownReasoning`, `Total`, `IsAbsent`, `NewUsage`,
+  `IntPtr`). Consumers must never dereference unknown fields or display
+  them as a reported zero.
+- `llm.Request` carries an inert `PromptCacheKey string` transport hint for
+  later benchmark/control issues. Adapters must not emit it until a control
+  policy is implemented.
+
+### Session `llm.SessionUsage`
+
+- Existing integer sums and JSON names are kept: `input_tokens`,
+  `output_tokens`, `total_tokens`, `missing_completions`. `TotalTokens` is
+  the sum of the known input and known output components (partial subtotal
+  when either side is missing). `Missing` keeps its meaning: completions
+  with no usable usage fields.
+- Added coverage bookkeeping (all `snake_case`): `requests`,
+  `input_reported`, `output_reported`, `cache_read_reported`,
+  `cache_write_reported`, `cache_read_tokens`, `cache_write_tokens`,
+  `cache_ratio_read_tokens`, `cache_ratio_input_tokens`,
+  `cache_ratio_requests`, `legacy_uncertain`. Counters count requests,
+  never token quantities.
+- Cache-ratio sums include only requests with both known complete input and
+  known valid cache-read counts. The hit ratio is
+  `cache_ratio_read_tokens / cache_ratio_input_tokens` and is unavailable
+  when there are no eligible requests or the denominator is zero; it can
+  never be negative or exceed 100%. `cache_ratio_read_tokens` is separate
+  from every reported cache-read sum.
+- `legacy_uncertain` marks sessions that may mix pre-schema-2 ambiguous
+  zeros with presence-aware counts (e.g. checkpoints restored from before
+  `UsageSchemaVersion` 2). Trace `usage` events carry
+  `usage_schema_version: 2` (`llm.UsageSchemaVersion`).
+- Specialized adapter cache mapping (#74–#76) and full aggregation UI (#77)
+  build on this contract; this issue only keeps those call sites compiling
+  with minimal presence-safe behavior.

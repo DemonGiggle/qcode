@@ -38,8 +38,14 @@ func TestProviderUsage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if response.Message.Content != "hi" || response.Usage == nil || *response.Usage != (Usage{750, 50}) {
+			if response.Message.Content != "hi" || response.Usage == nil {
 				t.Fatalf("response = %+v", response)
+			}
+			if in, ok := response.Usage.KnownInput(); !ok || in != 750 {
+				t.Fatalf("input = %+v", response.Usage)
+			}
+			if out, ok := response.Usage.KnownOutput(); !ok || out != 50 {
+				t.Fatalf("output = %+v", response.Usage)
 			}
 		})
 	}

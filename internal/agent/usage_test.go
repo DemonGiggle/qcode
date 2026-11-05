@@ -19,7 +19,7 @@ func TestSessionUsageAccumulationIsolationAndReset(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	want := llm.SessionUsage{InputTokens: 1400, OutputTokens: 100, TotalTokens: 1500}
+	want := llm.SessionUsage{InputTokens: 1400, OutputTokens: 100, TotalTokens: 1500, Requests: 2, InputReported: 2, OutputReported: 2}
 	if got := a.SessionUsage(); got != want {
 		t.Fatalf("usage = %+v", got)
 	}
@@ -33,10 +33,11 @@ func TestSessionUsageAccumulationIsolationAndReset(t *testing.T) {
 	}
 	a.recordUsage(nil)
 	want.Missing = 1
+	want.Requests = 3
 	if a.SessionUsage() != want {
 		t.Fatal("missing completion lost known totals")
 	}
-	a.recordUsage(&llm.Usage{InputTokens: 10, OutputTokens: 5})
+	a.recordUsage(&llm.Usage{InputTokens: llm.IntPtr(10), OutputTokens: llm.IntPtr(5)})
 	if got := a.SessionUsage(); got.Missing != 1 || got.TotalTokens != 1515 {
 		t.Fatal(got)
 	}

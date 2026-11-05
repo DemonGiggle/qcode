@@ -270,7 +270,8 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 		}
 	}
 	a.contextWindow, a.contextOverride, a.contextMessages = s.ContextWindow, s.ContextOverride, s.ContextMessages
-	a.contextUsage, a.sessionUsage = s.ContextUsage, s.Usage
+	a.contextUsage = llm.NormalizeUsage(s.ContextUsage)
+	a.sessionUsage = llm.MigrateLegacySessionUsage(s.Usage)
 	a.autoCompact, a.autoCompactThreshold = s.AutoCompact, s.AutoCompactThreshold
 	a.artifactVersion = s.ArtifactVersion
 	a.planMode.Store(s.PlanMode)

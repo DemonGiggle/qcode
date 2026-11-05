@@ -123,6 +123,20 @@ func responsesMessage(role, text string, images []Image) map[string]any {
 	return map[string]any{"role": role, "content": content}
 }
 
+// responsesUsageWire is the private Responses usage shape. Cache detail
+// mapping belongs to a later issue; only inclusive counts are forwarded.
+type responsesUsageWire struct {
+	InputTokens  *int `json:"input_tokens"`
+	OutputTokens *int `json:"output_tokens"`
+}
+
+func (w *responsesUsageWire) normalized() *Usage {
+	if w == nil {
+		return nil
+	}
+	return NormalizeUsage(&Usage{InputTokens: w.InputTokens, OutputTokens: w.OutputTokens})
+}
+
 func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, error) {
 	result := Message{Role: "assistant"}
 	var usage *Usage
@@ -151,10 +165,7 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 			} `json:"item"`
 			Response struct {
 				Output []json.RawMessage `json:"output"`
-				Usage  *struct {
-					InputTokens  int `json:"input_tokens"`
-					OutputTokens int `json:"output_tokens"`
-				} `json:"usage"`
+				Usage  *responsesUsageWire `json:"usage"`
 				Error *struct {
 					Message string `json:"message"`
 				} `json:"error"`
@@ -207,7 +218,7 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 		case "response.completed":
 			completedOutput = event.Response.Output
 			if event.Response.Usage != nil {
-				usage = &Usage{InputTokens: event.Response.Usage.InputTokens, OutputTokens: event.Response.Usage.OutputTokens}
+				usage = event.Response.Usage.normalized()
 			}
 		}
 	}

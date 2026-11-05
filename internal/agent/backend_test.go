@@ -32,7 +32,7 @@ func TestSwitchBackendPreservesStateAndInvalidatesContext(t *testing.T) {
 	a.SetSkillsWithContents([]prompt.SkillSummary{{Name: "skill"}}, map[string]string{"skill": "body"})
 	a.SetPlanMode(true)
 	a.contextWindow, a.contextOverride = 4000, 9000
-	a.contextUsage, a.contextMessages = &llm.Usage{InputTokens: 100}, len(a.messages)
+	a.contextUsage, a.contextMessages = &llm.Usage{InputTokens: llm.IntPtr(100)}, len(a.messages)
 	a.sessionUsage = llm.SessionUsage{InputTokens: 123, TotalTokens: 123}
 	before := a.ContextSnapshot()
 	tools := a.tools

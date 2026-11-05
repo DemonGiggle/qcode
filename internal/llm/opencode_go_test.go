@@ -300,7 +300,13 @@ func TestOpenCodeGoUsesAnthropicMessagesForQwen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.Usage == nil || response.Usage.InputTokens != 11 || response.Usage.OutputTokens != 7 || len(response.Message.ToolCalls) != 1 {
+	if response.Usage == nil || len(response.Message.ToolCalls) != 1 {
+		t.Fatalf("response = %#v", response)
+	}
+	if in, ok := response.Usage.KnownInput(); !ok || in != 11 {
+		t.Fatalf("response = %#v", response)
+	}
+	if out, ok := response.Usage.KnownOutput(); !ok || out != 7 {
 		t.Fatalf("response = %#v", response)
 	}
 	call := response.Message.ToolCalls[0]
