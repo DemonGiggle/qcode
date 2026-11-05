@@ -36,6 +36,7 @@ type SavedState struct {
 	ContextWindow, ContextOverride, ContextMessages int
 	ContextUsage                                    *llm.Usage
 	Usage                                           llm.SessionUsage
+	UsageVersion                                    int `json:"usage_version,omitempty"`
 	Remaining                                       int
 	Known, Estimated                                bool
 	AutoCompact                                     bool
@@ -112,6 +113,7 @@ func (a *Agent) publishCheckpoint() {
 	}
 	a.stateMu.RLock()
 	s.LastResponse, s.Usage = a.lastResponse, a.sessionUsage
+	s.UsageVersion = llm.UsageSchemaVersion
 	s.ArtifactVersion = a.artifactVersion
 	a.stateMu.RUnlock()
 	if c := a.contextStatus.Load(); c != nil {
@@ -213,6 +215,42 @@ func (a *Agent) RestoreFreshState(data json.RawMessage) error {
 	return nil
 }
 
+// restoreSessionUsage carries a persisted session total into memory without
+// silently upgrading legacy data. Version 2 snapshots round-trip exactly.
+// Legacy snapshots (missing UsageVersion) retain their old numeric totals and
+// Missing count, start new coverage counters at zero, and stay marked
+// uncertain until /new. Request counts and cache data are never reconstructed.
+func restoreSessionUsage(saved llm.SessionUsage, version int) llm.SessionUsage {
+	if version == llm.UsageSchemaVersion {
+		return saved
+	}
+	legacy := saved
+	legacy.InputReported = 0
+	legacy.OutputReported = 0
+	legacy.CacheReadReported = 0
+	legacy.CacheWriteReported = 0
+	legacy.CacheReadTokens = 0
+	legacy.CacheWriteTokens = 0
+	legacy.CacheRatioReadTokens = 0
+	legacy.CacheRatioInputTokens = 0
+	legacy.CacheRatioRequests = 0
+	if legacy.InputTokens != 0 || legacy.OutputTokens != 0 || legacy.TotalTokens != 0 || legacy.Missing != 0 || legacy.Requests != 0 {
+		legacy.LegacyUncertain = true
+	}
+	return llm.MigrateLegacySessionUsage(legacy)
+}
+
+// restoreContextUsage invalidates legacy per-request context usage: pre-schema
+// totals mixed ambiguous zeros with reported zeros, so they must not feed the
+// context display after a resume. Version 2 usage is sanitized, never trusted
+// blindly.
+func restoreContextUsage(saved *llm.Usage, version int) *llm.Usage {
+	if version != llm.UsageSchemaVersion {
+		return nil
+	}
+	return llm.NormalizeUsage(saved)
+}
+
 func (a *Agent) RestoreState(data json.RawMessage) error {
 	var s SavedState
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -270,8 +308,7 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 		}
 	}
 	a.contextWindow, a.contextOverride, a.contextMessages = s.ContextWindow, s.ContextOverride, s.ContextMessages
-	a.contextUsage = llm.NormalizeUsage(s.ContextUsage)
-	a.sessionUsage = llm.MigrateLegacySessionUsage(s.Usage)
+	a.sessionUsage, a.contextUsage = restoreSessionUsage(s.Usage, s.UsageVersion), restoreContextUsage(s.ContextUsage, s.UsageVersion)
 	a.autoCompact, a.autoCompactThreshold = s.AutoCompact, s.AutoCompactThreshold
 	a.artifactVersion = s.ArtifactVersion
 	a.planMode.Store(s.PlanMode)
