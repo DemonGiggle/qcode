@@ -39,6 +39,10 @@ type Agent struct {
 	learningBudget           int
 	learningContext          string
 	learningSessionID        string
+	// cacheSessionID is the agent-owned random session identity for
+	// prompt_cache_key namespacing (#81). It is independent of
+	// provider-instance routing IDs and persists as SavedState.CacheSessionID.
+	cacheSessionID           string
 	configurationRevision    atomic.Uint64
 	backendSnapshot          atomic.Pointer[backendSnapshot]
 	provider                 llm.Provider
@@ -165,6 +169,7 @@ func NewWithSystem(provider llm.Provider, model string, toolset Toolset, logger 
 	}
 	a := &Agent{provider: provider, model: model, trace: logger, out: out, system: system, messages: []llm.Message{{Role: "system", Content: system}}, autoCompact: true, autoCompactThreshold: DefaultAutoCompactThreshold}
 	a.tools = toolset
+	a.rotateCacheSessionID()
 	a.maxSteps.Store(int64(maxSteps))
 	a.publishContext()
 	return a
@@ -465,6 +470,9 @@ func (a *Agent) resetSession() {
 	a.stateMu.Unlock()
 	a.system = a.modeSystem(a.selectedSkills)
 	a.messages = []llm.Message{{Role: "system", Content: a.system}}
+	// /new rotates the cache-session identity so the next session cannot
+	// reuse the previous session's cache accounting group.
+	a.rotateCacheSessionID()
 	if resetter, ok := a.tools.(interface{ ResetSession() }); ok {
 		resetter.ResetSession()
 	}

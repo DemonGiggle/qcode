@@ -212,6 +212,8 @@ func (w *ollamaUsageWire) mergeInto(acc *Usage) {
 }
 
 func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
+	// Cache policy (#81): the Ollama route never emits prompt_cache_key or
+	// other cache fields, even when Request carries a key.
 	messages := make([]map[string]any, 0, len(input.Messages))
 	for _, message := range input.Messages {
 		item := map[string]any{"role": message.Role, "content": message.Content}

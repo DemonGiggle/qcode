@@ -100,7 +100,11 @@ func (a *Agent) Learn(ctx context.Context, arguments string, approve LearningApp
 		span := a.trace.Start("llm", a.provider.Name(), map[string]any{"model": a.model, "operation": "learn " + action})
 		proposalCtx, cancel := context.WithCancel(ctx)
 		streamedBytes := 0
-		response, requestErr := a.provider.Complete(proposalCtx, llm.Request{Model: a.model, Messages: []llm.Message{{Role: "system", Content: instruction}, {Role: "user", Content: string(input)}}}, func(event llm.StreamEvent) {
+		backend := ""
+		if a.provider != nil {
+			backend = a.provider.Name()
+		}
+		response, requestErr := a.provider.Complete(proposalCtx, llm.Request{Model: a.model, Messages: []llm.Message{{Role: "system", Content: instruction}, {Role: "user", Content: string(input)}}, PromptCacheKey: a.learnCacheKey(backend, a.model)}, func(event llm.StreamEvent) {
 			streamedBytes += len(event.Text)
 			if streamedBytes > learning.MaxProposalBytes {
 				cancel()

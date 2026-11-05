@@ -280,7 +280,7 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 	}
 	prefixHash := hashRequestPrefix(systemContent, toolsHash, backend, a.model, a.thinking, mode, cwd, extra, dynamic, a.taskContext, notice, recovery)
 	prep := preparedRequest{
-		Request:      llm.Request{Model: a.model, Thinking: a.thinking, Messages: messages, Tools: toolsCopy},
+		Request:      llm.Request{Model: a.model, Thinking: a.thinking, Messages: messages, Tools: toolsCopy, PromptCacheKey: a.chatCacheKey(backend, a.model)},
 		Estimate:     estimate,
 		ToolsHash:    toolsHash,
 		PrefixHash:   prefixHash,
