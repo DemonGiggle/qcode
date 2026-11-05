@@ -20,6 +20,10 @@ Upstream documentation was accessed on 2026-11-05. Statements are labeled:
 No live API calls were made to produce this document. All gateway claims are
 traceable to fixture-based unit tests under `internal/llm/*_test.go`.
 
+Benchmarking before/after cache-control changes uses the opt-in synthetic
+harness documented in `docs/cachebench.md`
+(`cmd/qcode-cachebench`; harness only, no live measurements by default).
+
 ## 1. Registered providers versus wire protocols
 
 qcode registers exactly four providers (`internal/llm/types.go` registry via
