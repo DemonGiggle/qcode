@@ -79,6 +79,7 @@ qcode update --arch arm64
 - [Skill Plan mode](docs/skillplan.md) - Guided, review-first qcode skill creation
 - [Token usage](docs/token-usage.md) - Per-session totals and structured usage events
 - [Context usage](docs/context.md) - Remaining capacity, estimates, and automatic compaction
+- [Prompt caching](docs/prompt-caching.md) - Provider usage semantics and cache capability evidence (#70)
 - [Providers](docs/providers.md) - Ollama, OpenAI, and OpenCode Go setup
 - [Multi-agent](docs/agents.md) - Concurrent agent tabs and orchestration
 - [Skills](docs/skills.md) - Workspace-local instruction bundles, [official release skills](docs/skills/), and authoring guidance
