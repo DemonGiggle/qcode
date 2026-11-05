@@ -1171,7 +1171,7 @@ def build_pdf(images: dict[str, Path]):
     body(pdf, "Use /theme to preview terminal palettes with Up/Down. Enter applies and saves the choice; Esc or Ctrl+C cancels. Default (Auto) follows your terminal. The 22 dark and light choices include Catppuccin, Dracula/Alucard, Gruvbox, Solarized, Nord, Tokyo Night, One, Rosé Pine, Everforest, Kanagawa, and Ayu. The setting is terminal-wide and saves from any agent tab. The browser's pinned prompt follows the theme's accent color and background.")
     figure(pdf, images["theme"], "Figure 11: /theme previews colors for responses, diffs, and status. Enter applies and saves; Esc or Ctrl+C leaves the current choice.")
     body(pdf, "WS uses available status bar space and keeps the final two complete folders when possible, using a second row as needed. Home-relative paths retain ~/; omitted parents appear as an ellipsis folder, for example ~/.../work/foo. If the final folder name must be clipped, its ending gets an ellipsis: ~/workspace/this-folder-is... (the final dots shorten the name).")
-    body(pdf, "TOK shows provider-reported session input/output counts. The combined total uses a sigma marker, or T: in ASCII mode, whenever it fits one or two status rows. If usage is missing, unknown or a question mark indicates incomplete counts. /new resets the active agent's totals; changing models keeps them.")
+    body(pdf, "TOK shows provider-reported session input/output counts. The combined total uses a sigma marker, or T: in ASCII mode, whenever it fits one or two status rows. If usage is missing, unknown or a question mark indicates incomplete counts. Unknown means unreported, not zero; partial subtotals are not bills; cached tokens occupy context and count inside input totals; mixed-provider totals are token sums only. Use /usage for the detailed read-only view (input/output/total, cache-read/write sums with reported-request coverage, missing completions, legacy uncertainty, and cached input share). /new resets the active agent's totals; changing models keeps them.")
     body(pdf, "Open /statusline, move with Up/Down, toggle with Space, and apply with Enter. Or type /statusline tok off, /statusline show, or /statusline reset. Changes on main save statusline_hidden in your user config while preserving comments and unrelated tables, including redaction and skills settings.")
     code(
         pdf,
@@ -1236,6 +1236,7 @@ def build_pdf(images: dict[str, Path]):
             ("/learn ...", "Save/list/forget/compact preferences."),
             ("/memo [text]", "Save or manage global scratchpad memos."),
             ("/tool", "Choose file, shell, image, skill, web, directory tools."),
+            ("/usage", "Detailed token usage for the active agent."),
             ("/resume, /new", "Reopen session / reset tab."),
             ("/history", "Find and re-read answers."),
             ("/diff [N]", "Expand saved diff N (to 200 lines)."),

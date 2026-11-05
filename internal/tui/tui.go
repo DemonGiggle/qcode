@@ -979,6 +979,10 @@ func (u *UI) Run(ctx context.Context) error {
 			}
 			continue
 		}
+		if len(fields) > 0 && fields[0] == "/usage" {
+			u.handleUsageCommand(fields)
+			continue
+		}
 		switch line {
 		case "/quit", "/exit":
 			return nil
