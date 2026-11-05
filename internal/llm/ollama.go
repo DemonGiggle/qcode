@@ -181,6 +181,36 @@ type ollamaMessage struct {
 	ToolCalls []ollamaToolCall `json:"tool_calls,omitempty"`
 }
 
+// ollamaUsageWire is the private Ollama /api/chat NDJSON usage shape.
+// Pointer fields preserve presence: nil means unreported, a pointer to zero
+// is an explicitly reported zero. Per the documented Ollama contract,
+// prompt_eval_count maps to normalized InputTokens and eval_count maps to
+// normalized OutputTokens. This endpoint documents no prompt-cache
+// accounting, so no cache or reasoning breakdown is mapped here: those
+// fields stay unknown (nil, never zero) unless a separately documented
+// field is mapped by a later task. Cache behavior is never inferred from
+// timing, warm models, keep_alive, or prompt counts.
+type ollamaUsageWire struct {
+	PromptEvalCount *int `json:"prompt_eval_count"`
+	EvalCount       *int `json:"eval_count"`
+}
+
+// mergeInto folds one usage snapshot into the accumulator by presence: only
+// explicitly present fields replace earlier values. Missing or null fields
+// leave earlier values intact, while an explicit zero replaces a previous
+// value. Snapshots are cumulative latest-values, never summed.
+func (w *ollamaUsageWire) mergeInto(acc *Usage) {
+	if w == nil || acc == nil {
+		return
+	}
+	if w.PromptEvalCount != nil {
+		acc.InputTokens = w.PromptEvalCount
+	}
+	if w.EvalCount != nil {
+		acc.OutputTokens = w.EvalCount
+	}
+}
+
 func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
 	messages := make([]map[string]any, 0, len(input.Messages))
 	for _, message := range input.Messages {
@@ -244,23 +274,31 @@ func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText Str
 		return Response{}, fmt.Errorf("provider returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
 	}
 	result := Message{Role: "assistant"}
-	var usage *Usage
+	// Usage snapshots are cumulative: the final NDJSON line carries the
+	// latest totals for the fields it reports. Merge by presence and
+	// validate once at the end so a later snapshot missing a field never
+	// erases earlier values. Output-only reports are retained; later
+	// values replace earlier ones and are never summed.
+	accumulated := &Usage{}
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
+		line := scanner.Bytes()
 		var event struct {
-			InputTokens  *int          `json:"prompt_eval_count"`
-			OutputTokens *int          `json:"eval_count"`
-			Message      ollamaMessage `json:"message"`
-			Error        string        `json:"error"`
+			Message ollamaMessage `json:"message"`
+			Error   string        `json:"error"`
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+		if err := json.Unmarshal(line, &event); err != nil {
 			return Response{}, fmt.Errorf("decode provider stream: %w", err)
 		}
-		if event.InputTokens != nil {
-			// Presence-gated like before: no prompt count means no usage.
-			// Ollama reports no cache breakdowns (unsupported, not unknown).
-			usage = NormalizeUsage(&Usage{InputTokens: event.InputTokens, OutputTokens: event.OutputTokens})
+		// ollamaUsageWire stays private to the adapter: wire JSON is never
+		// decoded directly into the normalized Usage contract. Usage is
+		// decoded leniently per snapshot so malformed usage metadata
+		// cannot break text generation; it is ignored while message,
+		// thinking, tool, and error handling continue unchanged.
+		var wire ollamaUsageWire
+		if err := json.Unmarshal(line, &wire); err == nil {
+			wire.mergeInto(accumulated)
 		}
 		if event.Error != "" {
 			return Response{}, fmt.Errorf("ollama: %s", event.Error)
@@ -284,5 +322,5 @@ func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText Str
 	if err := scanner.Err(); err != nil {
 		return Response{}, err
 	}
-	return Response{Message: result, Usage: usage}, nil
+	return Response{Message: result, Usage: NormalizeUsage(accumulated)}, nil
 }
