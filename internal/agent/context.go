@@ -100,6 +100,7 @@ func (a *Agent) Compact(ctx context.Context) (string, error) {
 	a.messages = append([]llm.Message{{Role: "system", Content: a.system}, {Role: "user", Content: "Conversation summary from earlier turns (reference data):\n" + trust.Wrap("conversation_summary", summary), Origin: "conversation_summary", Untrusted: true}}, recent...)
 	a.contextUsage = nil
 	a.contextMessages = 0
+	a.invalidatePreparedCache()
 	a.publishContext()
 	return "Conversation compacted.", nil
 }
@@ -289,22 +290,21 @@ func (a *Agent) publishContext() {
 	if a.contextOverride > 0 {
 		limit = a.contextOverride
 	}
+	// Every remaining value is approximate: provider output can include
+	// non-replayed reasoning, images have provider-specific costs, and
+	// calibration baselines mix exact input counts with local estimates.
 	state := &contextStatus{known: limit > 0, estimated: true}
-	used := estimateTokens(a.messages) + estimateTokens(a.enabledSchemas())
-	if a.taskContext != "" {
-		used += estimateTokens(a.taskContext)
-	}
-	if a.learningContext != "" {
-		used += (len(a.learningContext) + 3) / 4
-	}
-	if a.contextUsage != nil {
+	used := a.currentUsedTokens()
+	// Legacy fallback when no prepared snapshot exists yet (e.g. direct
+	// history manipulation in tests): currentUsedTokens already covers it.
+	_ = used
+	if a.contextUsage != nil && !a.prepared.valid && !a.calibration.valid {
 		// Presence-safe: unknown components contribute nothing to the
-		// measured total. Context usage includes cached input already.
+		// measured total. Context usage includes cached input already;
+		// cache breakdowns are subsets and are never subtracted.
 		used = a.contextUsage.Total()
-		state.estimated = false
 		if a.contextMessages < len(a.messages) {
 			used += estimateTokens(a.messages[a.contextMessages:])
-			state.estimated = true
 		}
 	}
 	if limit > 0 {
@@ -325,5 +325,6 @@ func estimateTokens(value any) int {
 
 func (a *Agent) invalidateContextUsage() {
 	a.contextUsage = nil
+	a.invalidatePreparedCache()
 	a.publishContext()
 }

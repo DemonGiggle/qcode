@@ -98,6 +98,7 @@ func (m *AgentManager) SwitchBackend(id string, expectedRevision uint64, next Ba
 	a.provider, a.endpoint, a.model, a.thinking = next.Provider, next.Endpoint, next.Model, level
 	a.contextWindow, a.contextOverride = next.ContextCapacity, 0
 	a.contextUsage, a.contextMessages = nil, 0
+	a.invalidatePreparedCache()
 	a.configurationRevision.Add(1)
 	s.summary.Model = next.Model
 	a.publishContext()
