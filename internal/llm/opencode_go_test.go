@@ -303,8 +303,13 @@ func TestOpenCodeGoUsesAnthropicMessagesForQwen(t *testing.T) {
 	if response.Usage == nil || len(response.Message.ToolCalls) != 1 {
 		t.Fatalf("response = %#v", response)
 	}
-	if in, ok := response.Usage.KnownInput(); !ok || in != 11 {
+	// Issue #75: a legacy input-only payload preserves uncached input while
+	// complete input stays unknown (no route-specific zero guarantee).
+	if uncached, ok := response.Usage.KnownUncached(); !ok || uncached != 11 {
 		t.Fatalf("response = %#v", response)
+	}
+	if in, ok := response.Usage.KnownInput(); ok {
+		t.Fatalf("complete input = %d, want unknown for input-only payload (%#v)", in, response)
 	}
 	if out, ok := response.Usage.KnownOutput(); !ok || out != 7 {
 		t.Fatalf("response = %#v", response)
