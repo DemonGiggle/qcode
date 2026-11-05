@@ -69,7 +69,12 @@ func TestContextTracksLatestRequestAndReset(t *testing.T) {
 		if err := a.Run(context.Background(), "hello"); err != nil {
 			t.Fatal(err)
 		}
-		if left, known, estimated := a.ContextRemaining(); left != 25 || !known || estimated {
+		// #79: the meter reuses reported InputTokens (700) as a baseline
+		// and estimates the appended assistant replay locally (~9 tokens),
+		// so occupancy is ~709/1000 (29% left). Reported output (50) is
+		// never treated as replay size, and every value stays estimated
+		// because provider reasoning may never replay.
+		if left, known, estimated := a.ContextRemaining(); left != 29 || !known || !estimated {
 			t.Fatalf("context=%d %v %v", left, known, estimated)
 		}
 	}

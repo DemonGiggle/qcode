@@ -61,6 +61,12 @@ type Agent struct {
 	contextUsage             *llm.Usage
 	sessionUsage             llm.SessionUsage
 	contextMessages          int
+	// Prepared-request estimate cache (#79). publishContext reads only these
+	// immutable snapshots; it never resolves learning or requestContext.
+	prepared         preparedSnapshot
+	calibration      requestCalibration
+	learningResolves int
+	contextResolves  int
 	autoCompact              bool
 	autoCompactThreshold     int
 	system                   string
@@ -265,6 +271,7 @@ func (a *Agent) SetModel(model string) {
 			a.contextWindow = 0
 			a.contextOverride = 0
 			a.contextUsage = nil
+			a.invalidatePreparedCache()
 		}
 		a.model = model
 		a.configurationRevision.Add(1)
@@ -306,6 +313,8 @@ func (a *Agent) SetThinking(level string) error {
 	}
 	a.thinking = level
 	a.configurationRevision.Add(1)
+	a.invalidatePreparedCache()
+	a.publishContext()
 	a.publishCheckpoint()
 	return nil
 }
@@ -577,6 +586,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		nextContext := contextual.TaskContext(userText)
 		if nextContext != a.taskContext {
 			a.contextUsage = nil // Previous provider usage excludes the new history excerpts.
+			a.invalidatePreparedCache()
 		}
 		a.taskContext = nextContext
 	}
@@ -593,7 +603,8 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		a.publishContext()
 	}()
 	task := a.progressTask
-	a.autoCompactIfNeeded(ctx)
+	// Pre-send prepared-estimate compaction (below) covers the pre-request
+	// threshold check, including the new user text and ephemeral context.
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userText})
 	a.publishContext()
 	identicalToolCalls := map[string]int{}
@@ -661,7 +672,8 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			a.taskContext = contextual.TaskContext(item.Text)
 		}
 		a.contextUsage = nil
-		replanning = append(replanning, item)
+			a.invalidatePreparedCache()
+			replanning = append(replanning, item)
 		a.publishContext()
 	}
 	for step := 0; step < a.MaxSteps(); step++ {
@@ -670,34 +682,37 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		}
 
 		a.currentStep.Store(int64(step + 1))
-		if step > 0 {
-			// Usage and tool results from the previous model turn can push the
-			// conversation over the threshold while Run is still active.
-			a.autoCompactIfNeeded(ctx)
-		}
+		// Inter-turn threshold checks run against the prepared estimate
+		// below (which includes tool results and ephemeral context), so no
+		// separate stale-meter compaction runs here.
 		if item := input.take(false); item != nil {
 			applySteer(item)
 			step = 0
 			a.currentStep.Store(1)
 		}
-		requestMessages := a.requestMessages(ctx)
-		if a.InteractiveMode() && a.interactiveAvailable.Load() && !a.PlanMode() && !a.SkillPlanMode() && len(requestMessages) > 0 {
-			requestMessages[0].Content += fmt.Sprintf("\n\nInteractive questions remaining for this request: %d.", max(0, 3-a.questionsAsked))
-		}
-		if trust.Suspicious(a.learningContext) {
-			warnInjection("learning context", a.learningContext)
-		}
-		if trust.Suspicious(a.dynamicContext) {
-			warnInjection("additional context", a.dynamicContext)
-		}
-		if recoveryInstruction != "" && len(requestMessages) > 0 && requestMessages[0].Role == "system" {
-			// Keep the recovery notice ephemeral. It helps the next model turn
-			// without becoming a durable conversation turn or disturbing the
-			// provider-specific assistant/tool message pairing.
-			requestMessages[0].Content += "\n\n" + recoveryInstruction
-		}
-		recoveryInstruction = ""
-		a.publishContext()
+		// Prepared-request path (#79): resolve learning/requestContext once,
+			// apply every request-only addition in order, capture tools once,
+			// and estimate the exact Messages+Tools Complete will receive.
+			// The recovery notice stays ephemeral: it helps the next model
+			// turn without becoming durable history or disturbing
+			// provider-specific assistant/tool pairing.
+			pendingRecovery := recoveryInstruction
+			prep := a.prepareNormalRequest(ctx, pendingRecovery)
+			if trust.Suspicious(a.learningContext) {
+				warnInjection("learning context", a.learningContext)
+			}
+			if trust.Suspicious(a.dynamicContext) {
+				warnInjection("additional context", a.dynamicContext)
+			}
+			// Validate auto-compaction against the prepared estimate before
+			// sending. Rebuild once when compaction rewrites history so the
+			// request matches the compacted conversation; never loop and
+			// never drop the pending one-shot recovery notice.
+			if a.maybeAutoCompactForPrepared(ctx, prep.Estimate) {
+				prep = a.prepareNormalRequest(ctx, pendingRecovery)
+			}
+			recoveryInstruction = ""
+			a.publishContext()
 		span := a.trace.Start("llm", a.provider.Name(), map[string]any{"model": a.model, "step": step + 1})
 		wroteText := false
 		visibleText := false
@@ -717,7 +732,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		a.reportProgress("Waiting for model response")
 		task.Resume()
 		streamPhase := ""
-		response, err := a.provider.Complete(ctx, llm.Request{Model: a.model, Thinking: a.thinking, Messages: requestMessages, Tools: a.enabledSchemas()}, func(event llm.StreamEvent) {
+		response, err := a.provider.Complete(ctx, prep.Request, func(event llm.StreamEvent) {
 			if ctx.Err() != nil {
 				return
 			}
@@ -804,6 +819,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		a.messages = append(a.messages, response.Message)
 		a.contextUsage = response.Usage
 		a.contextMessages = len(a.messages)
+		a.updateCalibration(prep, response.Usage)
 		a.RefreshContext(ctx)
 		if len(response.Message.ToolCalls) == 0 {
 			if planningQuestionsActive && (a.PlanMode() || a.SkillPlanMode()) {
