@@ -21,6 +21,9 @@ type responsesPartialCall struct{ id, name, arguments string }
 // Completions adapter: the two APIs have different continuation semantics.
 // Thinking levels are sent as the Responses reasoning object when the model
 // advertises them.
+// Cache policy (#81): this route never emits prompt_cache_key, even when
+// Request carries a key. Only the official OpenAI Chat Completions route may
+// transmit that field.
 func (p *openAIProvider) completeResponses(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
 	// Reasoning Responses models reject temperature (Luna returns 400).
 	// Omit it and keep the provider default, as the Anthropic adapter does.

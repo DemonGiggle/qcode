@@ -651,3 +651,44 @@ UI, no costs, no provider capability switches.
 - Specialized adapter cache mapping (#74–#76) and full aggregation UI (#77)
   build on this contract; this issue only keeps those call sites compiling
   with minimal presence-safe behavior.
+
+## 13. Session-stable cache keys for official OpenAI Chat Completions (#81)
+
+Implemented control under the frozen policy (Section 7). Upstream contract:
+`prompt_cache_key` is a documented OpenAI field (prompt-caching guide,
+`prompt_cache_key` examples for Responses and Chat Completions; SIWC key
+examples in the multi-turn agent guide). The client sends it only on the
+official OpenAI Chat Completions route
+(`p.name == "openai"` and `IsOfficialOpenAIEndpoint` true). All other
+routes omit it even when `Request` carries a key.
+
+- **Identity:** each agent owns one random UUIDv4 cache-session identity,
+  independent of provider-instance IDs. Persisted as
+  `SavedState.CacheSessionID` (base identity only). Lazily generated when
+  missing from legacy saves; malformed stored values regenerate safely.
+  Never derived from prompt content, credentials, cwd, or personal
+  identifiers.
+- **Stability:** the same base identity is reused across normal/tool turns
+  and compaction within an agent session, survives resume, and is distinct
+  per agent. `/new` (`ResetSession`) rotates the identity.
+- **Namespacing:** the transmitted key is
+  `NamespacedCacheKey(base, provider, model, purpose)` — a fixed-length
+  64-character hex digest of non-secret namespace components only, so the
+  wire value stays within the documented API limit regardless of model ID
+  length. Model/provider switches keep the agent identity but change the
+  transmitted namespace; switching back may reuse a namespace. Normal
+  requests use purpose `chat`; compaction uses `compact`; learning
+  proposals use `learn`, so auxiliary requests cannot share the chat key.
+- **Routing separation:** the existing `x-opencode-session` header behavior
+  is unchanged on all three OpenCode Go routes; the cache identity is a
+  different lifecycle.
+- **Failures:** no explicit cache markers, TTL/retention, prewarm,
+  model-route additions, config UI, or automatic retry after a
+  cache-field rejection. Rejections fail normally rather than replaying a
+  potentially billable completion.
+
+Session partitioning prioritizes isolation and a stable identity per agent.
+Separate agents never share an identity, which may reduce cross-session
+reuse and guarantees no hit-rate improvement. Existing automatic provider
+caching remains provider-owned. Key material never appears in trace spans,
+session usage, or UI; persistence stores only the base identity.

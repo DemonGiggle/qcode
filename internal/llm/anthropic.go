@@ -27,6 +27,8 @@ type anthropicTool struct {
 
 // completeAnthropicMessages adapts qcode's normalized conversation to the
 // Anthropic Messages protocol used by the Qwen and MiniMax OpenCode Go routes.
+// Cache policy (#81): this route never emits prompt_cache_key or other cache
+// fields, even when Request carries a key.
 func (p *openAIProvider) completeAnthropicMessages(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
 	system, messages := anthropicMessages(input.Messages)
 	body := map[string]any{

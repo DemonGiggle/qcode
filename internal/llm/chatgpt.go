@@ -294,6 +294,8 @@ func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText St
 }
 
 func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chatgptoauth.Tokens, onText StreamCallback) (Response, error) {
+	// Cache policy (#81): the SIWC Responses route never emits
+	// prompt_cache_key, even when Request carries a key.
 	instructions, rest := splitChatGPTMessages(input.Messages)
 	body := map[string]any{
 		"model":  input.Model,

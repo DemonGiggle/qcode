@@ -54,8 +54,12 @@ type Request struct {
 	// Temperature is optional: nil preserves the provider's model default.
 	// A non-nil value, including zero, is sent only by adapters that support it.
 	Temperature *float64
-	// PromptCacheKey is an inert transport hint for later benchmark/control
-	// issues. Adapters must not emit it until a control policy is implemented.
+	// PromptCacheKey carries a session-stable namespaced cache identity for
+	// the official OpenAI Chat Completions route only (see cachekey.go).
+	// The agent sets it for normal, compaction, and learning requests with
+	// purpose namespacing; only the OpenAI adapter with an official endpoint
+	// emits it as prompt_cache_key. All other adapters must omit it even
+	// when set, and no adapter may retry after a cache-field rejection.
 	PromptCacheKey string
 }
 

@@ -29,6 +29,11 @@ type SavedToolCall struct {
 type SavedState struct {
 	ArtifactVersion                                 uint64
 	ProviderSession                                 string
+	// CacheSessionID is the agent-owned random session identity for
+	// prompt_cache_key namespacing (#81). Only the base identity is
+	// persisted; transmitted keys are namespaced digests recomputed per
+	// request and never stored.
+	CacheSessionID                                  string
 	PendingImages                                   []llm.Image
 	Provider, Model, Thinking, Endpoint, System     string
 	Messages                                        []SavedMessage
@@ -132,6 +137,9 @@ func (a *Agent) publishCheckpoint() {
 	if p, ok := a.provider.(interface{ SessionIdentity() string }); ok {
 		s.ProviderSession = p.SessionIdentity()
 	}
+	// Persist only the base cache identity; transmitted keys are namespaced
+	// digests recomputed per request.
+	s.CacheSessionID = a.ensureCacheSessionID()
 	// A max-steps update can happen from the UI while the agent goroutine is
 	// publishing its checkpoint. Compare-and-swap prevents either checkpoint
 	// writer from overwriting the other's update.
@@ -333,6 +341,14 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 	}
 	a.maxSteps.Store(int64(s.MaxSteps))
 	a.learningContext, a.learningSessionID, a.learningBudget = s.LearningContext, s.LearningSessionID, s.LearningBudget
+	// Cache identity survives resume. Legacy saves missing the field
+	// initialize once; malformed stored values regenerate safely instead of
+	// failing the resume.
+	if llm.IsValidCacheSessionID(s.CacheSessionID) {
+		a.cacheSessionID = s.CacheSessionID
+	} else {
+		a.rotateCacheSessionID()
+	}
 	a.selectedSkills = s.Skills
 	a.alwaysContents = s.AlwaysContents
 	a.updateModeSystem()
