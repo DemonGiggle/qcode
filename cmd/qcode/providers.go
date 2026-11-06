@@ -54,7 +54,9 @@ func (b *providerBuilder) connection(name string, endpoint *string) llm.Config {
 // availability reports whether name can be selected without additional setup.
 // It mirrors prepare's credential checks without network or model-metadata
 // work so the /provider picker can disable unconfigured backends. The hint
-// describes the setup step when unavailable.
+// describes the setup step when unavailable. api_key_path files are already
+// resolved into the connection during config load, so an empty key here means
+// neither inline, file, nor env provided one.
 func (b *providerBuilder) availability(name string) (bool, string) {
 	connection := b.connection(name, nil)
 	if name == "chatgpt" {
@@ -73,7 +75,7 @@ func (b *providerBuilder) availability(name string) (bool, string) {
 	if (name == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
 		(name == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL)) {
 		if connection.APIKey == "" {
-			return false, fmt.Sprintf("provider %s requires an API key: configure [providers.%s].api_key or supply a launch API-key override", name, name)
+			return false, fmt.Sprintf("provider %s requires an API key: set [providers.%s].api_key_path (preferred), QCODE_API_KEY, or a launch API-key override", name, name)
 		}
 	}
 	return true, ""
@@ -105,7 +107,7 @@ func (b *providerBuilder) prepare(ctx context.Context, name string, endpoint *st
 	}
 	if connection.APIKey == "" && ((name == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
 		(name == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL))) {
-		return result, fmt.Errorf("provider %s requires an API key: configure [providers.%s].api_key or supply a launch API-key override", name, name)
+		return result, fmt.Errorf("provider %s requires an API key: set [providers.%s].api_key_path (preferred), QCODE_API_KEY, or a launch API-key override", name, name)
 	}
 	if (name == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
 		(name == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL)) {

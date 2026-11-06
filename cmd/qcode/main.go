@@ -103,6 +103,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		isTerminal := term.IsTerminal(int(stdin.Fd())) && term.IsTerminal(int(stdout.Fd()))
 		return runLogin(arguments[1:], stdin, stdout, diagnosticsOut, isTerminal)
 	}
+	if len(arguments) > 0 && arguments[0] == "config" {
+		return runConfig(arguments[1:], stdout, diagnosticsOut)
+	}
 
 	opts := options{learningBudget: learning.DefaultBudget, autoCompactThreshold: agent.DefaultAutoCompactThreshold}
 	var configPaths []string
@@ -137,7 +140,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	flags.Lookup("api-key").DefValue = ""
 	flags.BoolVar(&opts.dangerSkipTLSVerify, "danger-skip-tls-verify", false, "skip TLS certificate verification (insecure)")
 	flags.Usage = func() {
-		fmt.Fprintf(diagnosticsOut, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\nUse 'qcode update' to install the latest release.\nUse 'qcode login chatgpt' to connect a ChatGPT subscription via OAuth.\n\nOptions:\n")
+		fmt.Fprintf(diagnosticsOut, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\nUse 'qcode update' to install the latest release.\nUse 'qcode login chatgpt' to connect a ChatGPT subscription via OAuth.\nUse 'qcode config check [--json]' to validate config files with fix suggestions.\n\nOptions:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(arguments); err != nil {
@@ -804,18 +807,23 @@ func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
 	// A model, base URL, and API key describe the configured provider. Do not
 	// carry them over when a higher-precedence source selects another provider.
 	// They can still be supplied explicitly through their own flag or env var.
-	// Each provider also remembers its last-used model, so switching back
-	// restores it when no explicit model override is given.
+	// Converged precedence for model/thinking: [providers.<name>] model/thinking
+	// first, then the deprecated provider_models/provider_thinking memory, then
+	// deprecated root model/thinking when the root provider matches.
 	providerConfigApplies := cfg.Provider == "" || opts.provider == cfg.Provider
 	if !setFlags["model"] && os.Getenv("QCODE_MODEL") == "" {
-		if rememberedModel, _, ok := cfg.RememberedProviderModel(opts.provider); ok {
+		if profileModel, _, ok := cfg.ProviderModel(opts.provider); ok {
+			opts.model = profileModel
+		} else if rememberedModel, _, ok := cfg.RememberedProviderModel(opts.provider); ok {
 			opts.model = rememberedModel
 		} else if providerConfigApplies && cfg.Model != "" {
 			opts.model = cfg.Model
 		}
 	}
 	if !setFlags["thinking"] && os.Getenv("QCODE_THINKING") == "" {
-		if _, rememberedThinking, ok := cfg.RememberedProviderModel(opts.provider); ok {
+		if profileThinking, ok := cfg.ProfileThinking(opts.provider); ok {
+			opts.thinking = profileThinking
+		} else if _, rememberedThinking, ok := cfg.RememberedProviderModel(opts.provider); ok {
 			opts.thinking = rememberedThinking
 		} else if providerConfigApplies && cfg.Thinking != "" {
 			opts.thinking = cfg.Thinking
