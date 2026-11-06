@@ -411,6 +411,24 @@ func (t *Terminal) setLine(newLine []rune, newPos int) {
 	}
 }
 
+// SetExpandedDraft replaces the current line with text and keeps it fully
+// visible. Unlike bracketed-paste injection, it never folds long or tall
+// drafts into a "[paste N characters]" placeholder, so memo put-to-prompt
+// shows the content directly.
+func (t *Terminal) SetExpandedDraft(line string) {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+	t.line = []rune(line)
+	t.pos = len(t.line)
+	t.pastes = nil
+	t.pasteActive = false
+	t.pasteBuffer = t.pasteBuffer[:0]
+	t.historyIndex = -1
+	if t.echo && t.RenderInput == nil {
+		t.clearAndRepaintLinePlusNPrevious(t.maxLine)
+	}
+}
+
 func (t *Terminal) advanceCursor(places int) {
 	t.cursorX += places
 	t.cursorY += t.cursorX / t.termWidth

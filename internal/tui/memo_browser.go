@@ -235,6 +235,12 @@ func putMemoToPrompt(u *UI, text string) error {
 	agent := u.activeAgent
 	u.drafts[agent] = text
 	u.screenMu.Unlock()
+	// Show the memo directly instead of folding it into a
+	// "[paste N characters]" placeholder.
+	if u.terminal != nil {
+		u.terminal.SetExpandedDraft(text)
+		return nil
+	}
 	if u.input != nil {
 		u.input.injectDraft(text)
 	}
