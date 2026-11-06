@@ -367,7 +367,8 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
 	ui.SetRedaction(policy)
 	installProviderFactory(ui)
-	ui.SetRememberedProviderModels(loadedConfig.ProviderModels, loadedConfig.ProviderThinking)
+	seededModels, seededThinking := loadedConfig.SeededProviderModels()
+	ui.SetRememberedProviderModels(seededModels, seededThinking)
 	ui.RememberProviderModel(opts.provider, opts.model, opts.thinking)
 	ui.SetStatuslineHidden(configuredStatuslineHidden)
 	if configuredTheme != "" {
@@ -519,7 +520,8 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			staged := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
 			staged.SetRedaction(policy)
 			installProviderFactory(staged)
-			staged.SetRememberedProviderModels(loadedConfig.ProviderModels, loadedConfig.ProviderThinking)
+			seededModels, seededThinking := loadedConfig.SeededProviderModels()
+			staged.SetRememberedProviderModels(seededModels, seededThinking)
 			staged.RememberProviderModel(opts.provider, opts.model, opts.thinking)
 			staged.SetStatuslineHidden(configuredStatuslineHidden)
 			if configuredTheme != "" {

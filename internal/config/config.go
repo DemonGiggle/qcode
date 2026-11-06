@@ -848,6 +848,45 @@ func validateProviderModels(path string, models, thinking map[string]string) err
 	return nil
 }
 
+// SeededProviderModels returns per-provider last-used models for UI memory,
+// merging deprecated provider_models/provider_thinking with explicit
+// [providers.<name>] model/thinking (profiles win). Explicit empty profile
+// thinking clears the remembered entry. Callers seed interactive switching
+// from this so profile saves survive restarts.
+func (c Config) SeededProviderModels() (models map[string]string, thinking map[string]string) {
+	models = make(map[string]string, len(c.ProviderModels)+len(c.Providers))
+	for k, v := range c.ProviderModels {
+		if strings.TrimSpace(k) == "" || strings.TrimSpace(v) == "" {
+			continue
+		}
+		models[k] = v
+	}
+	thinking = make(map[string]string, len(c.ProviderThinking)+len(c.Providers))
+	for k, v := range c.ProviderThinking {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		if strings.TrimSpace(v) == "" {
+			continue
+		}
+		thinking[k] = v
+	}
+	for name, profile := range c.Providers {
+		if profile.Model != nil && strings.TrimSpace(*profile.Model) != "" {
+			models[name] = strings.TrimSpace(*profile.Model)
+		}
+		if profile.Thinking != nil {
+			level := strings.TrimSpace(*profile.Thinking)
+			if level == "" {
+				delete(thinking, name)
+			} else {
+				thinking[name] = level
+			}
+		}
+	}
+	return models, thinking
+}
+
 // RememberedProviderModel returns the last model (and thinking level) recorded
 // for a provider. The second result reports whether a model was remembered.
 // An empty thinking level means the provider/model default.

@@ -41,12 +41,13 @@ func (w *RuntimePreferenceWriter) SetLegacyConfig(cfg Config) {
 	w.SetLegacyProvider(owner)
 }
 
-// PersistProvider atomically stores only the selected provider, model and
-// thinking preference. The model and thinking are also associated with the
-// provider in provider_models and provider_thinking so switching back restores
-// them. Empty thinking removes the user override. Legacy root
-// connection fields in this file are first migrated to their original owner;
-// connection values from other layers, flags or the environment are never saved.
+// PersistProvider atomically stores the selected provider and its
+// [providers.<name>] model/thinking preference so switching back restores
+// them. Empty thinking removes the profile thinking override. Deprecated root
+// model/thinking and provider_models/provider_thinking entries for this
+// provider are removed. Legacy root connection fields in this file are first
+// migrated to their original owner; connection values from other layers,
+// flags or the environment are never saved.
 func (w *RuntimePreferenceWriter) PersistProvider(provider, model, thinking string) error {
 	if w == nil {
 		return errors.New("runtime preference writer is nil")
@@ -63,10 +64,8 @@ func (w *RuntimePreferenceWriter) PersistProvider(provider, model, thinking stri
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.persistWithProviderMemory(map[string]*string{
+	return w.persistWithProviderProfile(map[string]*string{
 		"provider": stringPointer(tomlString(provider)),
-		"model":    stringPointer(tomlString(model)),
-		"thinking": optionalTOMLString(thinking),
 	}, provider, stringPointer(tomlString(model)), optionalTOMLString(thinking))
 }
 

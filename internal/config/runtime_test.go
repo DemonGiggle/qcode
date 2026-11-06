@@ -39,10 +39,13 @@ func TestPersistModelCreatesOnlyRequestedKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, want := range []string{`model = "new-model"`, "[provider_models]", `openai = "new-model"`} {
+	for _, want := range []string{"[providers.openai]", `model = "new-model"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("new config missing %q: %q", want, text)
 		}
+	}
+	if strings.Contains(text, "provider_models") || strings.Contains(text, "provider_thinking") {
+		t.Fatalf("deprecated memory in new config: %q", text)
 	}
 	if strings.Contains(text, "thinking") {
 		t.Fatalf("unexpected thinking in new config: %q", text)
@@ -55,10 +58,13 @@ func TestPersistModelCreatesOnlyRequestedKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	text = string(data)
-	for _, want := range []string{`model = "new-model"`, `thinking = "low"`, "[provider_models]", `openai = "new-model"`, "[provider_thinking]", `openai = "low"`} {
+	for _, want := range []string{"[providers.openai]", `model = "new-model"`, `thinking = "low"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("explicit thinking config missing %q: %q", want, text)
 		}
+	}
+	if strings.Contains(text, "provider_models") || strings.Contains(text, "provider_thinking") {
+		t.Fatalf("deprecated memory in explicit config: %q", text)
 	}
 	assertMode(t, filepath.Dir(path), 0o700)
 	assertMode(t, path, 0o600)
@@ -95,19 +101,28 @@ context_budget = 1200
 	for _, want := range []string{
 		"# keep this comment",
 		`provider = "openai"`,
-		`model = "new-model" # keep this inline comment`,
 		`max_steps = 64`,
 		`unrelated = "keep"`,
+		"# keep this inline comment",
 		"# keep this thinking note",
 		"[learning]",
 		"context_budget = 1200",
+		"[providers.openai]",
+		`model = "new-model"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("updated config missing %q: %s", want, got)
 		}
 	}
-	if strings.Contains(got, "thinking =") {
-		t.Fatalf("cleared thinking override remains: %s", got)
+	if strings.Contains(got, "provider_models") || strings.Contains(got, "provider_thinking") {
+		t.Fatalf("deprecated memory remains: %s", got)
+	}
+	// Deprecated root model/thinking must not be reintroduced.
+	if strings.Contains(got, `model = "old-model"`) || strings.Contains(got, `model = "new-model" # keep this inline comment`) {
+		t.Fatalf("deprecated root model remains: %s", got)
+	}
+	if strings.Contains(got, "thinking =") && !strings.Contains(got, "[providers.openai]") {
+		t.Fatalf("cleared thinking override remains in root: %s", got)
 	}
 	assertMode(t, path, 0o640)
 
@@ -115,8 +130,11 @@ context_budget = 1200
 	if err := loadAndDecodeForTest(data, &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Model != "new-model" || parsed.MaxSteps == nil || *parsed.MaxSteps != 64 || parsed.Thinking != "" {
-		t.Fatalf("parsed config = %+v", parsed)
+	if parsed.Model != "" || parsed.Thinking != "" || parsed.MaxSteps == nil || *parsed.MaxSteps != 64 {
+		t.Fatalf("deprecated root not removed: %+v", parsed)
+	}
+	if model, _, ok := parsed.ProviderModel("openai"); !ok || model != "new-model" {
+		t.Fatalf("profile model missing: %+v", parsed.Providers)
 	}
 }
 

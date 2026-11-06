@@ -82,11 +82,11 @@ func userConfigPath(goos, home, userConfigDir string) string {
 }
 
 // PersistModel records a model selection and its optional explicit thinking
-// level. The model is associated with the given provider: the root model and
-// thinking are updated and the provider's last-used entry in provider_models
-// and provider_thinking is refreshed. An empty thinking value removes the
-// user-level thinking override so lower-priority configuration can be
-// inherited.
+// level for the given provider in its [providers.<name>] profile. An empty
+// thinking value removes the profile thinking override so lower-priority
+// configuration can be inherited. Deprecated root model/thinking and
+// provider_models/provider_thinking entries for this provider are removed so
+// `config check` stays clean.
 func (w *RuntimePreferenceWriter) PersistModel(provider, model, thinking string) error {
 	if w == nil {
 		return errors.New("runtime preference writer is nil")
@@ -104,10 +104,7 @@ func (w *RuntimePreferenceWriter) PersistModel(provider, model, thinking string)
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.persistWithProviderMemory(map[string]*string{
-		"model":    stringPointer(tomlString(model)),
-		"thinking": optionalTOMLString(thinking),
-	}, provider, stringPointer(tomlString(model)), optionalTOMLString(thinking))
+	return w.persistWithProviderProfile(nil, provider, stringPointer(tomlString(model)), optionalTOMLString(thinking))
 }
 
 // PersistMaxSteps records the positive model-turn limit in the user config.
@@ -331,11 +328,14 @@ func (w *RuntimePreferenceWriter) persist(changes map[string]*string) error {
 	return nil
 }
 
-// persistWithProviderMemory writes root preference changes and refreshes the
-// provider's last-used model/thinking in provider_models and provider_thinking.
-// modelLiteral and thinkingLiteral are TOML values (nil removes the thinking
-// entry). The caller must hold w.mu.
-func (w *RuntimePreferenceWriter) persistWithProviderMemory(changes map[string]*string, provider string, modelLiteral, thinkingLiteral *string) error {
+// persistWithProviderProfile writes root provider changes (when rootChanges
+// contains "provider") and stores the model/thinking in the
+// [providers.<name>] profile. Deprecated root model/thinking and
+// provider_models/provider_thinking entries for this provider are removed so
+// new saves never reintroduce the deprecated style. modelLiteral is always
+// non-nil; thinkingLiteral nil removes the profile thinking override. The
+// caller must hold w.mu.
+func (w *RuntimePreferenceWriter) persistWithProviderProfile(rootChanges map[string]*string, provider string, modelLiteral, thinkingLiteral *string) error {
 	if strings.TrimSpace(w.path) == "" {
 		return errors.New("runtime preference path is empty")
 	}
@@ -349,31 +349,51 @@ func (w *RuntimePreferenceWriter) persistWithProviderMemory(changes map[string]*
 		return err
 	}
 	original := append([]byte(nil), data...)
-	if _, switching := changes["provider"]; switching {
+	if _, switching := rootChanges["provider"]; switching {
 		data, err = migrateLegacyConnection(data, w.legacyProvider)
 		if err != nil {
 			return fmt.Errorf("update config %s: %w", path, err)
 		}
 	}
-	updated, changed, err := patchRuntimeConfig(data, changes)
+	updated, changed, err := patchRuntimeConfig(data, rootChanges)
 	if err != nil {
 		return fmt.Errorf("update config %s: %w", path, err)
 	}
 	data = updated
 	if modelLiteral != nil {
-		updated, modelChanged, err := patchProviderMemoryTable(data, "provider_models", provider, modelLiteral)
+		updated, modelChanged, err := patchProviderProfile(data, provider, "model", modelLiteral)
 		if err != nil {
 			return fmt.Errorf("update config %s: %w", path, err)
 		}
 		data = updated
 		changed = changed || modelChanged
 	}
-	updated, thinkingChanged, err := patchProviderMemoryTable(data, "provider_thinking", provider, thinkingLiteral)
+	updated, thinkingChanged, err := patchProviderProfile(data, provider, "thinking", thinkingLiteral)
 	if err != nil {
 		return fmt.Errorf("update config %s: %w", path, err)
 	}
 	data = updated
 	changed = changed || thinkingChanged
+	// Drop the deprecated counterparts for this provider so saves converge to
+	// [providers.<name>] model/thinking.
+	updated, deprecatedChanged, err := patchRuntimeConfig(data, map[string]*string{"model": nil, "thinking": nil})
+	if err != nil {
+		return fmt.Errorf("update config %s: %w", path, err)
+	}
+	data = updated
+	changed = changed || deprecatedChanged
+	updated, deprecatedChanged, err = patchProviderMemoryTable(data, "provider_models", provider, nil)
+	if err != nil {
+		return fmt.Errorf("update config %s: %w", path, err)
+	}
+	data = updated
+	changed = changed || deprecatedChanged
+	updated, deprecatedChanged, err = patchProviderMemoryTable(data, "provider_thinking", provider, nil)
+	if err != nil {
+		return fmt.Errorf("update config %s: %w", path, err)
+	}
+	data = updated
+	changed = changed || deprecatedChanged
 	changed = changed || !bytes.Equal(original, data)
 	if !changed {
 		return nil
@@ -385,6 +405,330 @@ func (w *RuntimePreferenceWriter) persistWithProviderMemory(changes map[string]*
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
 	return nil
+}
+
+// persistWithProviderMemory is retained for compatibility; it now forwards to
+// the profile-based writer so legacy callers never reintroduce deprecated
+// root model/thinking or provider_models/provider_thinking entries.
+func (w *RuntimePreferenceWriter) persistWithProviderMemory(changes map[string]*string, provider string, modelLiteral, thinkingLiteral *string) error {
+	rootChanges := map[string]*string{}
+	if value, ok := changes["provider"]; ok {
+		rootChanges["provider"] = value
+	}
+	return w.persistWithProviderProfile(rootChanges, provider, modelLiteral, thinkingLiteral)
+}
+
+// patchProviderProfile upserts or removes a single field in a
+// [providers.<name>] profile while preserving comments. A nil literal removes
+// the entry; otherwise the TOML value replaces it. Table, dotted, and
+// parent-table forms are updated in place; missing entries are appended as a
+// canonical [providers.<name>] table to avoid dotted quoted keys that break
+// direct TOML decoding.
+func patchProviderProfile(data []byte, provider, field string, literal *string) ([]byte, bool, error) {
+	if len(data) == 0 {
+		if literal == nil {
+			return data, false, nil
+		}
+		newline := "\n"
+		var output bytes.Buffer
+		output.WriteString("[providers." + providerMemoryKey(provider) + "]")
+		output.WriteString(newline)
+		output.WriteString(field)
+		output.WriteString(" = ")
+		output.WriteString(*literal)
+		output.WriteString(newline)
+		return output.Bytes(), true, nil
+	}
+	var document map[string]any
+	if err := toml.Unmarshal(data, &document); err != nil {
+		return nil, false, err
+	}
+	entries, err := providerProfileEntries(data, provider, field)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(entries) > 0 {
+		if literal == nil {
+			var edits []runtimeConfigEdit
+			for _, entry := range entries {
+				removeStart, removeEnd := entry.keyValueStart, entry.keyValueEnd
+				endOfLine := lineEnd(data, entry.keyValueEnd)
+				if len(bytes.TrimSpace(data[entry.keyValueEnd:endOfLine])) == 0 {
+					removeStart, removeEnd = lineStart(data, entry.keyValueStart), endOfLine
+				}
+				edits = append(edits, runtimeConfigEdit{start: removeStart, end: removeEnd})
+			}
+			return applyRuntimeConfigEdits(data, edits), true, nil
+		}
+		for _, entry := range entries {
+			if bytes.Equal(data[entry.valueStart:entry.valueEnd], []byte(*literal)) {
+				continue
+			}
+			return applyRuntimeConfigEdits(data, []runtimeConfigEdit{{start: entry.valueStart, end: entry.valueEnd, replacement: []byte(*literal)}}), true, nil
+		}
+		// All matching values already equal the desired literal.
+		// If multiple duplicates exist with the same value there is nothing to do.
+		return append([]byte(nil), data...), false, nil
+	}
+	if literal == nil {
+		return append([]byte(nil), data...), false, nil
+	}
+	updated, changed, err := appendProviderProfileField(data, provider, field, *literal)
+	if err != nil {
+		return nil, false, err
+	}
+	return updated, changed, nil
+}
+
+// appendProviderProfileField inserts a missing [providers.<name>] field as a
+// canonical table, preserving comments and newlines. If the provider table
+// already exists the field is appended at its end; otherwise a new table is
+// appended at the end of the document. Inline `providers = {...}` definitions
+// are extended in place via insertProfileField so the document stays valid.
+func appendProviderProfileField(data []byte, provider, field, literal string) ([]byte, bool, error) {
+	if hasInlineProvidersTable(data) {
+		updated, err := insertProfileField(data, []string{"providers", provider, field}, literal)
+		if err != nil {
+			return nil, false, err
+		}
+		return updated, !bytes.Equal(data, updated), nil
+	}
+	hasTable, tableEnd, err := providerProfileTableRange(data, provider)
+	if err != nil {
+		return nil, false, err
+	}
+	newline := detectedNewline(data)
+	if hasTable {
+		insertAt := tableEnd
+		if insertAt < 0 {
+			insertAt = len(data)
+		}
+		var inserted bytes.Buffer
+		inserted.WriteString(field)
+		inserted.WriteString(" = ")
+		inserted.WriteString(literal)
+		inserted.WriteString(newline)
+		if insertAt > 0 && data[insertAt-1] != '\n' && data[insertAt-1] != '\r' {
+			prefix := []byte(newline)
+			prefix = append(prefix, inserted.Bytes()...)
+			inserted.Reset()
+			inserted.Write(prefix)
+		}
+		return applyRuntimeConfigEdits(data, []runtimeConfigEdit{{start: insertAt, end: insertAt, replacement: inserted.Bytes()}}), true, nil
+	}
+	var inserted bytes.Buffer
+	if len(bytes.TrimSpace(data)) > 0 {
+		if !endsInNewline(data) {
+			inserted.WriteString(newline)
+		}
+		inserted.WriteString(newline)
+	}
+	inserted.WriteString("[providers." + providerMemoryKey(provider) + "]")
+	inserted.WriteString(newline)
+	inserted.WriteString(field)
+	inserted.WriteString(" = ")
+	inserted.WriteString(literal)
+	inserted.WriteString(newline)
+	return append(data, inserted.Bytes()...), true, nil
+}
+
+// providerProfileTableRange locates the [providers.<name>] table section.
+func providerProfileTableRange(data []byte, provider string) (bool, int, error) {
+	parser := unstable.Parser{}
+	parser.Reset(data)
+	hasTable := false
+	tableEnd := -1
+	for parser.NextExpression() {
+		expression := parser.Expression()
+		switch expression.Kind {
+		case unstable.Table, unstable.ArrayTable:
+			path := expressionKeyPath(expression)
+			if expression.Kind == unstable.Table && len(path) == 2 && path[0] == "providers" && path[1] == provider {
+				hasTable = true
+				continue
+			}
+			if hasTable && tableEnd < 0 {
+				if offset := expressionTableOffset(data, expression); offset >= 0 {
+					tableEnd = lineStart(data, offset)
+				}
+			}
+		}
+	}
+	if err := parser.Error(); err != nil {
+		return false, -1, err
+	}
+	if hasTable && tableEnd < 0 {
+		tableEnd = len(data)
+	}
+	return hasTable, tableEnd, nil
+}
+
+// hasInlineProvidersTable reports whether providers is defined as an inline
+// value (`providers = {...}`). Appending a [providers.<name>] table in that
+// case would be invalid TOML, so callers extend the inline table instead.
+func hasInlineProvidersTable(data []byte) bool {
+	parser := unstable.Parser{}
+	parser.Reset(data)
+	inRoot := true
+	for parser.NextExpression() {
+		expression := parser.Expression()
+		switch expression.Kind {
+		case unstable.Table, unstable.ArrayTable:
+			inRoot = false
+		case unstable.KeyValue:
+			if !inRoot {
+				continue
+			}
+			keyPath := expressionKeyPath(expression)
+			if len(keyPath) != 1 || keyPath[0] != "providers" {
+				continue
+			}
+			if value := expression.Value(); value != nil && value.Kind == unstable.InlineTable {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// findInlineProfileEntries locates profile fields nested in inline tables
+// (`providers = {<name> = {<field> = ...}}`). parentPath is the full path of
+// the inline table itself (e.g. ["providers"]).
+func findInlineProfileEntries(inline *unstable.Node, parentPath []string, provider, field string, data []byte) []runtimeConfigEntry {
+	var out []runtimeConfigEntry
+	for child := inline.Child(); child != nil; child = child.Next() {
+		if child.Kind != unstable.KeyValue {
+			continue
+		}
+		keyPath := expressionKeyPath(child)
+		full := make([]string, 0, len(parentPath)+len(keyPath))
+		full = append(full, parentPath...)
+		full = append(full, keyPath...)
+		if len(full) < 1 || len(full) > 3 || full[0] != "providers" {
+			continue
+		}
+		if len(full) < 3 {
+			if value := child.Value(); value != nil && value.Kind == unstable.InlineTable {
+				out = append(out, findInlineProfileEntries(value, full, provider, field, data)...)
+			}
+			continue
+		}
+		if full[1] != provider || full[2] != field {
+			continue
+		}
+		exprStart := int(child.Raw.Offset)
+		exprEnd := exprStart + int(child.Raw.Length)
+		if exprStart < 0 || exprEnd > len(data) || exprStart >= exprEnd {
+			continue
+		}
+		value := child.Value()
+		if value == nil {
+			continue
+		}
+		valueStart := int(value.Raw.Offset)
+		valueEnd := valueStart + int(value.Raw.Length)
+		if valueStart < exprStart || valueEnd > exprEnd || valueStart >= valueEnd {
+			continue
+		}
+		out = append(out, runtimeConfigEntry{
+			keyValueStart: exprStart,
+			keyValueEnd:   exprEnd,
+			valueStart:    valueStart,
+			valueEnd:      valueEnd,
+		})
+	}
+	return out
+}
+
+// providerProfileEntries locates [providers.<name>] model/thinking values in
+// table ([providers.<name>]), parent-table ([providers] with dotted keys),
+// root dotted (providers.<name>.<field>) and inline
+// (`providers = {<name> = {<field> = ...}}`) forms.
+func providerProfileEntries(data []byte, provider, field string) ([]runtimeConfigEntry, error) {
+	parser := unstable.Parser{}
+	parser.Reset(data)
+	var table []string
+	var out []runtimeConfigEntry
+	seen := map[string]bool{}
+	for parser.NextExpression() {
+		expression := parser.Expression()
+		switch expression.Kind {
+		case unstable.Table, unstable.ArrayTable:
+			table = expressionKeyPath(expression)
+		case unstable.KeyValue:
+			keyPath := expressionKeyPath(expression)
+			full := make([]string, 0, len(table)+len(keyPath))
+			full = append(full, table...)
+			full = append(full, keyPath...)
+			if len(full) < 1 || len(full) > 3 || full[0] != "providers" {
+				continue
+			}
+			if len(full) < 3 {
+				if value := expression.Value(); value != nil && value.Kind == unstable.InlineTable {
+					for _, e := range findInlineProfileEntries(value, full, provider, field, data) {
+						out = append(out, e)
+					}
+				}
+				continue
+			}
+			if full[1] != provider || full[2] != field {
+				continue
+			}
+			exprStart := int(expression.Raw.Offset)
+			exprEnd := exprStart + int(expression.Raw.Length)
+			if exprStart < 0 || exprEnd > len(data) || exprStart >= exprEnd {
+				continue
+			}
+			value := expression.Value()
+			if value == nil {
+				continue
+			}
+			valueStart := int(value.Raw.Offset)
+			valueEnd := valueStart + int(value.Raw.Length)
+			if valueStart < exprStart || valueEnd > exprEnd || valueStart >= valueEnd {
+				// Fall back to the '=' scan used for root keys when the value
+				// range is unavailable (e.g. arrays).
+				eq := bytes.IndexByte(data[exprStart:exprEnd], '=')
+				if eq < 0 {
+					continue
+				}
+				valueStart = exprStart + eq + 1
+				for valueStart < exprEnd && (data[valueStart] == ' ' || data[valueStart] == '\t') {
+					valueStart++
+				}
+				valueEnd = exprEnd
+			}
+			dedup := string(data[exprStart:exprEnd])
+			if seen[dedup] {
+				continue
+			}
+			seen[dedup] = true
+			// Only keep the first occurrence for replacement; duplicates are
+			// handled by replacing the first and leaving the rest to a later
+			// save, avoiding overlapping edits.
+			if len(out) == 0 {
+				out = append(out, runtimeConfigEntry{
+					keyValueStart: exprStart,
+					keyValueEnd:   exprEnd,
+					valueStart:    valueStart,
+					valueEnd:      valueEnd,
+				})
+			} else {
+				// Record duplicates for removal when deleting, but only the
+				// first for replacement.
+				out = append(out, runtimeConfigEntry{
+					keyValueStart: exprStart,
+					keyValueEnd:   exprEnd,
+					valueStart:    valueStart,
+					valueEnd:      valueEnd,
+				})
+			}
+		}
+	}
+	if err := parser.Error(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // patchProviderMemoryTable upserts or removes a single provider entry in a

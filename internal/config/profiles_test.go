@@ -101,8 +101,18 @@ func TestPersistProviderMigrationFormats(t *testing.T) {
 				if err != nil {
 					t.Fatal(err, string(data))
 				}
-				if cfg.Provider != "ollama" || cfg.Model != "new" || cfg.Thinking != "" || cfg.BaseURL != "" || cfg.APIKey != "" {
+				if cfg.Provider != "ollama" || cfg.Model != "" || cfg.Thinking != "" || cfg.BaseURL != "" || cfg.APIKey != "" {
 					t.Fatalf("bad root: %+v", cfg)
+				}
+				if len(cfg.ProviderModels) != 0 || len(cfg.ProviderThinking) != 0 {
+					t.Fatalf("deprecated memory not removed: %+v %+v", cfg.ProviderModels, cfg.ProviderThinking)
+				}
+				ollama := cfg.Providers["ollama"]
+				if ollama.Model == nil || *ollama.Model != "new" {
+					t.Fatalf("bad ollama profile: %+v", ollama)
+				}
+				if ollama.Thinking != nil && *ollama.Thinking != "" {
+					t.Fatalf("thinking not cleared: %+v", ollama)
 				}
 				p := cfg.Providers["openai"]
 				wantKey := "legacy-key"
@@ -159,12 +169,25 @@ func TestPersistProviderOwnerAndFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ = os.ReadFile(path)
-	var cfg Config
-	if err := toml.Unmarshal(data, &cfg); err != nil {
-		t.Fatal(err)
+	cfg, err := decodeConfig(data, false)
+	if err != nil {
+		t.Fatal(err, string(data))
 	}
-	if cfg.Providers["openai"].APIKey == nil || *cfg.Providers["openai"].APIKey != "local-only" || cfg.Thinking != "low" {
+	if cfg.Providers["openai"].APIKey == nil || *cfg.Providers["openai"].APIKey != "local-only" {
 		t.Fatal(string(data))
+	}
+	if cfg.Model != "" || cfg.Thinking != "" {
+		t.Fatalf("deprecated root not removed: %+v", cfg)
+	}
+	ollama := cfg.Providers["ollama"]
+	if ollama.Model == nil || *ollama.Model != "new" {
+		t.Fatalf("bad ollama profile: %+v", ollama)
+	}
+	if ollama.Thinking == nil || *ollama.Thinking != "low" {
+		t.Fatalf("bad ollama thinking: %+v", ollama)
+	}
+	if len(cfg.ProviderModels) != 0 || len(cfg.ProviderThinking) != 0 {
+		t.Fatalf("deprecated memory not removed: %+v %+v", cfg.ProviderModels, cfg.ProviderThinking)
 	}
 	for _, bad := range []string{"model = [", "providers = 2\napi_key = 'x'"} {
 		if err := os.WriteFile(path, []byte(bad), 0600); err != nil {
@@ -225,20 +248,26 @@ func TestPersistProviderCreatesAtomicSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, want := range []string{`provider = "openai"`, `model = "new"`, `thinking = "high"`, "[provider_models]", `openai = "new"`, "[provider_thinking]", `openai = "high"`} {
+	for _, want := range []string{`provider = "openai"`, "[providers.openai]", `model = "new"`, `thinking = "high"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("selection missing %q: %q", want, text)
+		}
+	}
+	for _, deprecated := range []string{"[provider_models]", "[provider_thinking]", "provider_models", "provider_thinking"} {
+		if strings.Contains(text, deprecated) {
+			t.Fatalf("deprecated style written: %q in %q", deprecated, text)
 		}
 	}
 	var parsed Config
 	if err := toml.Unmarshal(data, &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Provider != "openai" || parsed.Model != "new" || parsed.Thinking != "high" {
-		t.Fatalf("bad root: %+v", parsed)
+	// decodeConfig handles dotted provider keys without the unaddressable panic.
+	if parsed.Provider != "openai" || parsed.Model != "" || parsed.Thinking != "" {
+		t.Fatalf("deprecated root not removed: %+v", parsed)
 	}
-	if model, thinking, ok := parsed.RememberedProviderModel("openai"); !ok || model != "new" || thinking != "high" {
-		t.Fatalf("bad remembered: %+v", parsed.ProviderModels)
+	if model, thinking, ok := parsed.ProviderModel("openai"); !ok || model != "new" || thinking != "high" {
+		t.Fatalf("bad profile: %+v", parsed.Providers)
 	}
 	assertMode(t, path, 0600)
 	for _, args := range [][3]string{{"bad", "model", ""}, {"openai", " ", ""}, {"openai", "model", string([]byte{255})}} {
@@ -298,14 +327,14 @@ func TestProviderModelsRoundTripAndThinkingCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if model, thinking, ok := cfg.RememberedProviderModel("opencode-go"); !ok || model != "muse-spark-1.3-contributor" || thinking != "high" {
-		t.Fatalf("opencode-go remembered = %q %q %v", model, thinking, ok)
+	if model, thinking, ok := cfg.ProviderModel("opencode-go"); !ok || model != "muse-spark-1.3-contributor" || thinking != "high" {
+		t.Fatalf("opencode-go profile = %q %q %v", model, thinking, ok)
 	}
-	if model, thinking, ok := cfg.RememberedProviderModel("chatgpt"); !ok || model != "gpt-6-luna" || thinking != "" {
-		t.Fatalf("chatgpt remembered = %q %q %v", model, thinking, ok)
+	if model, thinking, ok := cfg.ProviderModel("chatgpt"); !ok || model != "gpt-6-luna" || thinking != "" {
+		t.Fatalf("chatgpt profile = %q %q %v", model, thinking, ok)
 	}
-	if cfg.Provider != "chatgpt" || cfg.Model != "gpt-6-luna" {
-		t.Fatalf("root not chatgpt: %+v", cfg)
+	if cfg.Provider != "chatgpt" || cfg.Model != "" {
+		t.Fatalf("deprecated root not removed: %+v", cfg)
 	}
 	// Switching the model for the same provider refreshes both root and memory.
 	if err := w.PersistModel("chatgpt", "gpt-6-luna-2", ""); err != nil {
@@ -319,11 +348,11 @@ func TestProviderModelsRoundTripAndThinkingCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if model, _, ok := cfg.RememberedProviderModel("chatgpt"); !ok || model != "gpt-6-luna-2" {
-		t.Fatalf("chatgpt update lost: %+v", cfg.ProviderModels)
+	if model, _, ok := cfg.ProviderModel("chatgpt"); !ok || model != "gpt-6-luna-2" {
+		t.Fatalf("chatgpt update lost: %+v", cfg.Providers)
 	}
-	if cfg.Model != "gpt-6-luna-2" {
-		t.Fatalf("root model not updated: %+v", cfg)
+	if cfg.Model != "" {
+		t.Fatalf("deprecated root not removed: %+v", cfg)
 	}
 	// Thinking removal deletes the per-provider thinking entry but keeps the model.
 	if err := w.PersistProvider("opencode-go", "muse-spark-1.3-contributor", ""); err != nil {
@@ -337,10 +366,13 @@ func TestProviderModelsRoundTripAndThinkingCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, thinking, ok := cfg.RememberedProviderModel("opencode-go"); !ok || thinking != "" {
-		t.Fatalf("thinking not cleared: %+v", cfg.ProviderThinking)
+	if _, thinking, ok := cfg.ProviderModel("opencode-go"); !ok || thinking != "" {
+		t.Fatalf("thinking not cleared: %+v", cfg.Providers)
 	}
-	if !strings.Contains(string(data), "[provider_models]") {
-		t.Fatalf("provider_models table lost: %s", data)
+	if strings.Contains(string(data), "provider_models") || strings.Contains(string(data), "provider_thinking") {
+		t.Fatalf("deprecated memory written: %s", data)
+	}
+	if !strings.Contains(string(data), "[providers.opencode-go]") {
+		t.Fatalf("profile table lost: %s", data)
 	}
 }
