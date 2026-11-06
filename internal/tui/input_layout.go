@@ -367,6 +367,41 @@ func (u *UI) paintFixedLocked(direction int) {
 		}
 	}
 	outputHeight -= todoHeight + sepT + sepTodoFollowup
+	// When expanded panels own PageUp/Down but cannot scroll further (small
+	// panels that fit entirely, or already at the top/bottom), fall back to
+	// history so paging always makes visible progress instead of appearing
+	// to do nothing. This keeps independent panel paging when panels can
+	// move (see TestQueuedPanelStaysVisibleAndPagesIndependently) while
+	// ensuring the transcript still pauses/scrolls when panels are stuck.
+	if historyDirection == 0 && direction != 0 && outputHeight > 0 {
+		queueCanScroll := false
+		if queue.expanded && len(queued) > 0 && len(queueRows) > 0 && queueHeight > 1 {
+			size := queueHeight - 1
+			start := 0
+			if queue.anchorID != "" {
+				for i, row := range queueRows {
+					if row.id == queue.anchorID && row.row <= queue.anchorRow {
+						start = i
+					}
+				}
+			}
+			maxStart := max(0, len(queueRows)-size)
+			clamped := max(0, min(start, maxStart))
+			newStart := max(0, min(start-direction*size, maxStart))
+			queueCanScroll = newStart != clamped
+		}
+		todoCanScroll := false
+		if todo.expanded && todoLive && len(todoRows) > 0 && todoHeight > 1 {
+			size := max(1, todoHeight-1)
+			maxAnchor := max(0, len(todoRows)-size)
+			clamped := max(0, min(todo.anchor, maxAnchor))
+			newAnchor := max(0, min(maxAnchor, todo.anchor-direction*size))
+			todoCanScroll = newAnchor != clamped
+		}
+		if !queueCanScroll && !todoCanScroll {
+			historyDirection = direction
+		}
+	}
 	u.activeViewportLocked().visibleRows = outputHeight
 	screenRows := make([]string, u.height+1)
 	if u.manager != nil && u.height > 3 {

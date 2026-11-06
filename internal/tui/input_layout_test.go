@@ -320,6 +320,54 @@ func TestQueuedPanelStaysVisibleAndPagesIndependently(t *testing.T) {
 	}
 }
 
+func TestSmallExpandedPanelsFallbackToHistory(t *testing.T) {
+	// Issue #83: an expanded queue/todo that fits entirely (or is already at
+	// its boundary) must not swallow PageUp with no visible progress. The
+	// transcript should still pause/scroll so paging never appears dead.
+	u, _ := layoutFixture(t)
+	manager := u.manager.(*layoutManager)
+	manager.queued = map[string][]session.QueuedPrompt{"main": {
+		{RequestID: "only", Prompt: "queued work"},
+	}}
+	for i := 0; i < 40; i++ {
+		u.display.AddLine("history line")
+	}
+	u.renderInput(inputPrompt, "draft", 5)
+	u.toggleQueuePanel()
+	if !u.activeQueueLocked().expanded {
+		t.Fatal("queue did not expand")
+	}
+	u.showPage(1)
+	if !u.activeViewportLocked().browsing {
+		t.Fatalf("small expanded queue blocked history paging: queue=%+v history=%+v", u.activeQueueLocked(), u.activeViewportLocked())
+	}
+}
+
+type smallTodoRunner struct{ statusRunner }
+
+func (smallTodoRunner) TodoSnapshot() ([]string, []string, []string, uint64, bool) {
+	return []string{"1"}, []string{"do work"}, []string{"todo"}, 1, true
+}
+
+func (smallTodoRunner) LatestTodoText() (string, bool) { return "todo", true }
+
+func TestSmallExpandedTodoFallbackToHistory(t *testing.T) {
+	u, _ := layoutFixture(t)
+	for i := 0; i < 40; i++ {
+		u.display.AddLine("history line")
+	}
+	u.runner = smallTodoRunner{}
+	u.renderInput(inputPrompt, "draft", 5)
+	u.toggleTodoPanel()
+	if !u.activeTodoLocked().expanded {
+		t.Fatal("todo did not expand")
+	}
+	u.showPage(1)
+	if !u.activeViewportLocked().browsing {
+		t.Fatalf("small expanded todo blocked history paging: todo=%+v history=%+v", u.activeTodoLocked(), u.activeViewportLocked())
+	}
+}
+
 type pendingLayoutManager struct {
 	*layoutManager
 	cancelledID string
