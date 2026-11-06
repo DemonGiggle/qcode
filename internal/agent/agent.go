@@ -603,6 +603,10 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 	a.questionsAsked = 0
 	a.askedQuestions = make(map[string]bool)
 	a.repairInterruptedCalls()
+	// Per-prompt todo lifecycle: a finished checklist from the previous
+	// request is cleared here so the new request starts fresh and may reuse
+	// item ids. Incomplete lists are kept for continuation.
+	a.clearCompletedTodo()
 	a.stateMu.Lock()
 	a.lastResponse = ""
 	a.stateMu.Unlock()

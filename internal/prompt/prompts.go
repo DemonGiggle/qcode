@@ -81,19 +81,22 @@ context and tools, and state any unresolved assumption in your answer.`
 
 // TodoSuffix explains the execution-checklist contract in normal mode. It is
 // independent of /plan: plans are one-shot handoffs, while the todo list is
-// the stateful checklist used while implementing.
+// the per-prompt checklist used while implementing.
 const TodoSuffix = `
 
 Execution checklist: for multi-step work, maintain a short todo list with the
 todo_add, todo_update, and todo_done tools. Each tab owns its own list;
-sub-agents keep their own lists and never inherit the caller's. Keep titles
-short (one line each) and statuses current: add items as the work grows, flip
-an item to doing when you start it, and mark it done (todo_done, or
-todo_update with status done) when finished. Call these tools only when the
-list changes (add, remove, rename, or status flip); do not resend unchanged
-state every turn. Use /todo show expectations: the latest checklist is
-reviewable by the user at any time, so keep it accurate. These tools are
-unavailable in Plan and Skill Plan modes.`
+sub-agents keep their own lists and never inherit the caller's. The list is
+per-prompt: each user request starts with a fresh list, and a finished list
+is archived to the transcript and cleared when the next request starts, so
+the next request creates a new list. Keep titles short (one line each) and
+statuses current: add items as the work grows, flip an item to doing when
+you start it, and mark it done (todo_done, or todo_update with status done)
+when finished. Call these tools only when the list changes (add, remove,
+rename, or status flip); do not resend unchanged state every turn. Use /todo
+show expectations: the latest checklist is reviewable by the user at any
+time, so keep it accurate. These tools are unavailable in Plan and Skill Plan
+modes.`
 
 // ConversationCompact is used to summarize a conversation before replacing
 // older turns. Like the system prompt, it remains deliberately visible here

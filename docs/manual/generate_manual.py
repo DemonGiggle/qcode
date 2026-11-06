@@ -1013,13 +1013,13 @@ def build_pdf(images: dict[str, Path]):
     )
     tip(pdf, "`/new` clears the saved plan. Plan commands need an idle agent with no running or queued work.")
     h2(pdf, "Execution checklist (/todo)")
-    body(pdf, "For multi-step implementation the model keeps one execution checklist per agent tab with todo_add, todo_update, and todo_done. It is separate from /plan: plans are one-shot handoffs, while the todo list is updated while building. Sub-agents keep their own lists; /plan act keeps the todo list and /new clears both.")
+    body(pdf, "For multi-step implementation the model keeps one execution checklist per agent tab with todo_add, todo_update, and todo_done. It is separate from /plan: plans are one-shot handoffs, while the todo list is per-prompt and updated while building. Each request starts fresh; a finished list is archived and cleared when the next request starts. Sub-agents keep their own lists; /plan act keeps the todo list and /new clears both.")
     figure(pdf, images["todo"], "Figure 7b: Live Todo panel above the steer/queue area. Alt+T expands it; /todo show reviews the latest checklist.")
     bullets(
         pdf,
         [
             "A live `Todo done/total` panel sits above the steer/queue area while work is incomplete ([ ] todo, half-circle doing, [x] done). Collapsed it shows up to three rows; Alt+T expands all rows and Esc collapses.",
-            "Use `/todo show` to open the latest checklist in a scrollable view at any time. A finished list is archived once to the transcript.",
+            "Use `/todo show` to open the latest checklist in a scrollable view at any time. A finished list is archived once to the transcript and cleared when the next request starts.",
             "Titles are one line (10 items max); the model should only call todo tools when the list changes, not every turn. Todo tools are unavailable in Plan and Skill Plan modes.",
         ],
     )

@@ -296,3 +296,55 @@ func TestTodoRedactedInCheckpoint(t *testing.T) {
 		t.Fatalf("todo title leaked: %+v", got.LatestTodo)
 	}
 }
+
+func TestTodoClearedPerPromptWhenDone(t *testing.T) {
+	provider := &resumeProvider{}
+	a := New(provider, "model", &modeTestToolset{}, trace.New(io.Discard, false), io.Discard, 4)
+	mustTodoAdd(t, a, "setup", "Set up workspace")
+	if _, err := a.executeDetailed(context.Background(), llm.ToolCall{
+		Name:      "todo_done",
+		Arguments: json.RawMessage(`{"id":"setup"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := a.LatestTodo(); !ok {
+		t.Fatal("completed list went missing before the next prompt")
+	}
+	if err := a.Run(context.Background(), "next prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := a.LatestTodo(); ok {
+		t.Fatal("completed todo was not cleared for the next prompt")
+	}
+	if _, _, _, _, ok := a.TodoSnapshot(); ok {
+		t.Fatal("cleared snapshot still reported a list")
+	}
+	// A fresh per-prompt list may reuse ids from the archived list.
+	mustTodoAdd(t, a, "setup", "Set up again")
+}
+
+func TestTodoIncompleteSurvivesNextPrompt(t *testing.T) {
+	provider := &resumeProvider{}
+	a := New(provider, "model", &modeTestToolset{}, trace.New(io.Discard, false), io.Discard, 4)
+	mustTodoAdd(t, a, "setup", "Set up workspace")
+	mustTodoAdd(t, a, "impl", "Implement changes")
+	if _, err := a.executeDetailed(context.Background(), llm.ToolCall{
+		Name:      "todo_done",
+		Arguments: json.RawMessage(`{"id":"setup"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Run(context.Background(), "continue"); err != nil {
+		t.Fatal(err)
+	}
+	todo, ok := a.LatestTodo()
+	if !ok || len(todo.Items) != 2 {
+		t.Fatalf("incomplete list was cleared: %+v ok=%v", todo, ok)
+	}
+	if _, err := a.executeDetailed(context.Background(), llm.ToolCall{
+		Name:      "todo_add",
+		Arguments: json.RawMessage(`{"id":"setup","title":"Duplicate"}`),
+	}); err == nil {
+		t.Fatal("duplicate id was accepted while the incomplete list survives")
+	}
+}

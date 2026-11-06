@@ -37,7 +37,11 @@ type TodoItem struct {
 }
 
 // Todo is the per-agent execution checklist. It is owned by one agent tab,
-// never shared with sub-agents, and never shares state with /plan.
+// never shared with sub-agents, and never shares state with /plan. Its
+// lifetime is per-prompt: each user request starts with a fresh list (any
+// fully-done list from the previous request is cleared when the next request
+// starts), the finished list is archived to the transcript, and the next
+// request creates a new list.
 type Todo struct {
 	Items []TodoItem `json:"items"`
 }
@@ -190,6 +194,38 @@ func (a *Agent) ClearTodo() {
 	a.latestTodo = nil
 	a.stateMu.Unlock()
 	a.publishCheckpoint()
+}
+
+// clearCompletedTodo drops a fully-done checklist so the next user request
+// starts with a fresh per-prompt list. Incomplete lists are preserved so a
+// follow-up (e.g. "continue") can resume them. It reports whether a list was
+// cleared. The finished list stays available for /todo show and transcript
+// archival until the next request starts.
+func (a *Agent) clearCompletedTodo() bool {
+	a.stateMu.Lock()
+	if a.latestTodo == nil || len(a.latestTodo.Items) == 0 {
+		empty := a.latestTodo != nil
+		if empty {
+			a.todoVersion++
+			a.latestTodo = nil
+		}
+		a.stateMu.Unlock()
+		if empty {
+			a.publishCheckpoint()
+		}
+		return empty
+	}
+	for _, item := range a.latestTodo.Items {
+		if item.Status != TodoStatusDone {
+			a.stateMu.Unlock()
+			return false
+		}
+	}
+	a.todoVersion++
+	a.latestTodo = nil
+	a.stateMu.Unlock()
+	a.publishCheckpoint()
+	return true
 }
 
 func (a *Agent) applyTodo(next Todo) string {
