@@ -260,6 +260,15 @@ key path (for example `providers.opencode-go.api_key`), what is wrong, and how
 to fix it by hand. Human output is the default; `--json` emits
 `{"files": [...], "issues": [...]}`.
 
+Startup runs the same check before a real session (`--demo`, `--version`,
+`--list-providers`, `login`, and `config` itself are exempt). No issues stays
+silent. Errors print the same report plus a `qcode config check` tip and fail.
+Warnings print the same report plus the tip, then wait for Enter in an
+interactive terminal so the problem is seen; piped / `--json-events` runs only
+print and continue. A missing `api_key_path` file for the launch provider does
+not block when its key already comes from `--api-key` / `QCODE_API_KEY` /
+`OPENAI_API_KEY`.
+
 ## Lookup order
 
 The lookup order is platform-specific. Priority 1 is highest: it overrides
