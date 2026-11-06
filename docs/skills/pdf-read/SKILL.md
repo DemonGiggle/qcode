@@ -1,5 +1,5 @@
 ---
-description: Extract and comprehend PDF files (including long 100+ page documents) by an LLM, covering parsing, chunking, retrieval, and reasoning strategies.
+description: Read PDF files including scanned pages, charts, figures, tables and formulas; use vision fallback when text extraction fails.
 ---
 
 # PDF Read Skill
@@ -9,6 +9,19 @@ description: Extract and comprehend PDF files (including long 100+ page document
 Apply this skill when the user wants an LLM to read, understand, answer questions about, or summarize a PDF file. This is especially relevant for long documents (e.g., 100 pages) that exceed a single LLM context window.
 
 Do **not** use this skill for non-PDF files (Word, HTML, plain text) — those have their own simpler extraction paths. Do not use it when the user only wants to download or store a PDF without reading it.
+
+Use vision fallback when the question is about layout, chart, figure, table, formula, or visual comparison, or when extracted text is empty or garbled. Do not keep retrying OCR in those cases.
+
+## Decision: text or vision
+
+1. Inspect: `pdfinfo doc.pdf` for page count. Extract page 1 text to check for a text layer.
+2. If the question is about prose AND text layer is OK -> use Pattern A / B / C below (existing RAG / map-reduce / long-context).
+3. If the question is about chart / figure / table / formula / layout, OR text is empty / garbled -> use Pattern D vision:
+   a. `pdftoppm -png -r 150 -f N -l N doc.pdf /tmp/p`
+   b. `view_image` on `/tmp/p-N.png`, 1-3 pages per turn.
+   c. Answer with `[Page N]` citation.
+4. `view_image` returning `Loaded image ...` counts as seen. Otherwise fall back to OCR.
+5. If `poppler` / `mutool` / `pymupdf` render is unavailable, fall back to OCR directly. Do not block.
 
 ## Workflow
 
@@ -74,6 +87,13 @@ Best for "summarize the whole document" or holistic understanding.
 
 **Pattern C — Long-context LLM (if available):**
 If using an LLM with a very large context window (e.g., 100k+ tokens), you may be able to feed the entire extracted text directly. Verify the token count first — 100 pages of dense text can be 50k–100k tokens.
+
+**Pattern D — Vision fallback (few pages):**
+For scanned pages with no text layer, visual questions (`what does Figure 3 show?`, `this table`, `this formula`), or unusable OCR output.
+1. Render locally with `pdftoppm -png -r 150 -f N -l N doc.pdf /tmp/p` (bump to 200 dpi only if vision output is unclear). If `poppler` / `mutool` / `pymupdf` render is unavailable, fall back to OCR directly with a note. Do not block.
+2. Pass 1-3 rendered pages per turn to `view_image` (e.g. `view_image` on `/tmp/p-N.png`) to bound tokens.
+3. Cite page numbers same as the text path (`[Page N]`).
+4. Render locally, same boundary as above: do not upload the PDF or rendered images to external services unless the user explicitly approves.
 
 ### 6. Prompt engineering for document understanding
 
