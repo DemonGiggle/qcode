@@ -202,9 +202,17 @@ type ChatGPT struct {
 
 // ProviderProfile overrides connection fields independently. A nil field inherits;
 // a pointer to an empty string explicitly clears a lower-priority value.
+//
+// APIKeyPath points at a file holding the provider API key (0600 or 0400,
+// owner-only, no symlink). It is the preferred replacement for inline APIKey.
+// Model and Thinking are the per-provider counterparts of the deprecated root
+// model/thinking and provider_models/provider_thinking memory tables.
 type ProviderProfile struct {
-	BaseURL *string `toml:"base_url"`
-	APIKey  *string `toml:"api_key"`
+	BaseURL    *string `toml:"base_url"`
+	APIKey     *string `toml:"api_key"`
+	APIKeyPath *string `toml:"api_key_path"`
+	Model      *string `toml:"model"`
+	Thinking   *string `toml:"thinking"`
 }
 
 type Config struct {
@@ -214,29 +222,29 @@ type Config struct {
 	globalBaseURL          string
 	globalAPIKey           string
 
-	Redaction            redaction.Config `toml:"redaction"`
-	Learning             Learning         `toml:"learning"`
-	Skills               Skills           `toml:"skills"`
-	WebSearch            WebSearch        `toml:"web_search"`
-	Provider             string           `toml:"provider"`
-	BaseURL              string           `toml:"base_url"`
-	APIKey               string           `toml:"api_key"`
-	Model                string           `toml:"model"`
-	Thinking             string           `toml:"thinking"`
+	Redaction            redaction.Config  `toml:"redaction"`
+	Learning             Learning          `toml:"learning"`
+	Skills               Skills            `toml:"skills"`
+	WebSearch            WebSearch         `toml:"web_search"`
+	Provider             string            `toml:"provider"`
+	BaseURL              string            `toml:"base_url"`
+	APIKey               string            `toml:"api_key"`
+	Model                string            `toml:"model"`
+	Thinking             string            `toml:"thinking"`
 	ProviderModels       map[string]string `toml:"provider_models"`
 	ProviderThinking     map[string]string `toml:"provider_thinking"`
-	ChatGPT              ChatGPT          `toml:"chatgpt"`
-	Interactive          *bool            `toml:"interactive"`
-	ContextWindow        *int             `toml:"context_window"`
-	AutoCompactThreshold *int             `toml:"auto_compact_threshold"`
-	DisableAutoCompact   *bool            `toml:"disable_auto_compact"`
-	MaxSteps             *int             `toml:"max_steps"`
-	AgentTimeout         *string          `toml:"agent_timeout"`
-	Sandbox              *bool            `toml:"sandbox"`
-	SandboxCommandPaths  []string         `toml:"sandbox_command_paths"`
-	DangerSkipTLSVerify  *bool            `toml:"danger_skip_tls_verify"`
-	StatuslineHidden     []string         `toml:"statusline_hidden"`
-	Theme                string           `toml:"theme"`
+	ChatGPT              ChatGPT           `toml:"chatgpt"`
+	Interactive          *bool             `toml:"interactive"`
+	ContextWindow        *int              `toml:"context_window"`
+	AutoCompactThreshold *int              `toml:"auto_compact_threshold"`
+	DisableAutoCompact   *bool             `toml:"disable_auto_compact"`
+	MaxSteps             *int              `toml:"max_steps"`
+	AgentTimeout         *string           `toml:"agent_timeout"`
+	Sandbox              *bool             `toml:"sandbox"`
+	SandboxCommandPaths  []string          `toml:"sandbox_command_paths"`
+	DangerSkipTLSVerify  *bool             `toml:"danger_skip_tls_verify"`
+	StatuslineHidden     []string          `toml:"statusline_hidden"`
+	Theme                string            `toml:"theme"`
 }
 
 // Load returns the configuration assembled from every existing configuration
@@ -308,6 +316,10 @@ func load(paths []string) (Config, []string, []error) {
 	var merged Config
 	var inspected []string
 	var diagnostics []error
+	// apiKeyPathDirs tracks the directory of the highest-priority layer that
+	// set each provider's api_key_path, so relative paths resolve from the
+	// file that declared them even after layers merge.
+	apiKeyPathDirs := map[string]string{}
 	for i := len(paths) - 1; i >= 0; i-- {
 		path := paths[i]
 		data, err := os.ReadFile(path)
@@ -356,6 +368,13 @@ func load(paths []string) (Config, []string, []error) {
 		}
 		merge(&merged, legacy)
 		merge(&merged, cfg)
+		for name, profile := range cfg.Providers {
+			if profile.APIKeyPath != nil {
+				apiKeyPathDirs[name] = filepath.Dir(path)
+			}
+		}
+		// A legacy layer never sets api_key_path, so provenance only tracks
+		// explicit profile entries above.
 		if isGlobal {
 			if cfg.BaseURL != "" {
 				merged.globalBaseURL = cfg.BaseURL
@@ -372,6 +391,44 @@ func load(paths []string) (Config, []string, []error) {
 		}
 		merged.connectionsLoaded = true
 	}
+	// Resolve merged api_key_path files last so higher-priority paths win and
+	// relative entries resolve from their declaring file. Failures are
+	// layer-style diagnostics (startup continues; the affected provider simply
+	// has no key until fixed). `qcode config check` reports them as errors.
+	// A merged profile with both inline api_key and api_key_path is ambiguous
+	// and fails startup.
+	for name, profile := range merged.Providers {
+		hasInline := profile.APIKey != nil && *profile.APIKey != ""
+		hasPath := profile.APIKeyPath != nil && strings.TrimSpace(*profile.APIKeyPath) != ""
+		if hasInline && hasPath {
+			diagnostics = append(diagnostics, fmt.Errorf("parse config: providers.%s has both api_key and api_key_path; remove one (prefer api_key_path): %w", name, errFatalProviderConfig))
+			// Drop the ambiguous key so startup redaction never sees two sources.
+			cleared := profile
+			empty := ""
+			cleared.APIKey = &empty
+			merged.Providers[name] = cleared
+			continue
+		}
+		if !hasPath {
+			continue
+		}
+		key, err := resolveProfileAPIKey(profile, apiKeyPathDirs[name])
+		if err != nil {
+			diagnostics = append(diagnostics, fmt.Errorf("parse config: providers.%s.api_key_path: %w", name, err))
+			cleared := profile
+			empty := ""
+			cleared.APIKey = &empty
+			merged.Providers[name] = cleared
+			continue
+		}
+		merged.Providers[name] = ProviderProfile{
+			BaseURL:    profile.BaseURL,
+			APIKey:     stringPointer(key),
+			APIKeyPath: profile.APIKeyPath,
+			Model:      profile.Model,
+			Thinking:   profile.Thinking,
+		}
+	}
 	return merged, inspected, diagnostics
 }
 
@@ -382,6 +439,18 @@ func validate(path string, cfg Config) error {
 		}
 		if name == "chatgpt" && profile.APIKey != nil && *profile.APIKey != "" {
 			return fmt.Errorf("parse config %s: providers.chatgpt.api_key is unsupported (use OAuth): %w", path, errFatalProviderConfig)
+		}
+		if name == "chatgpt" && profile.APIKeyPath != nil && strings.TrimSpace(*profile.APIKeyPath) != "" {
+			return fmt.Errorf("parse config %s: providers.chatgpt.api_key_path is unsupported (use OAuth): %w", path, errFatalProviderConfig)
+		}
+		if err := validateProfileCredentials(path, name, profile); err != nil {
+			return err
+		}
+		if profile.Model != nil && !utf8.ValidString(*profile.Model) {
+			return fmt.Errorf("parse config %s: providers.%s.model contains invalid UTF-8", path, name)
+		}
+		if profile.Thinking != nil && !utf8.ValidString(*profile.Thinking) {
+			return fmt.Errorf("parse config %s: providers.%s.thinking contains invalid UTF-8", path, name)
 		}
 	}
 	if cfg.Provider == "chatgpt" && cfg.APIKey != "" {
@@ -489,6 +558,18 @@ func merge(dst *Config, incoming Config) {
 		if profile.APIKey != nil {
 			value := *profile.APIKey
 			current.APIKey = &value
+		}
+		if profile.APIKeyPath != nil {
+			value := *profile.APIKeyPath
+			current.APIKeyPath = &value
+		}
+		if profile.Model != nil {
+			value := *profile.Model
+			current.Model = &value
+		}
+		if profile.Thinking != nil {
+			value := *profile.Thinking
+			current.Thinking = &value
 		}
 		dst.Providers[name] = current
 	}
@@ -700,6 +781,10 @@ func validProvider(name string) bool {
 // the caller's provider when Provider is omitted). Loaded configs use explicit
 // profiles first, then global provider-less defaults, and never reassign
 // scoped legacy credentials to another provider.
+//
+// api_key_path files are resolved during load into the profile APIKey, so the
+// returned key already includes file content. Launch precedence stays in the
+// caller: --api-key > QCODE_API_KEY > OPENAI_API_KEY (openai only) > config.
 func (c Config) ProviderConnection(name string) (baseURL, apiKey string) {
 	if !c.connectionsLoaded && (c.Provider == "" || name == c.Provider) {
 		baseURL, apiKey = c.BaseURL, c.APIKey
@@ -778,4 +863,60 @@ func (c Config) RememberedProviderModel(provider string) (model, thinking string
 		thinking = c.ProviderThinking[provider]
 	}
 	return model, thinking, true
+}
+
+// ProviderModel returns the per-provider default from
+// [providers.<name>] model/thinking. It is the converged replacement for the
+// deprecated root model/thinking + provider_models/provider_thinking memory:
+// an explicit profile entry wins, otherwise the caller falls back to remembered
+// and root values. An explicit empty string clears and reports not-ok.
+func (c Config) ProviderModel(name string) (model, thinking string, ok bool) {
+	p, exists := c.Providers[name]
+	if !exists {
+		return "", "", false
+	}
+	if p.Model != nil && strings.TrimSpace(*p.Model) != "" {
+		model = strings.TrimSpace(*p.Model)
+		ok = true
+	} else {
+		return "", "", false
+	}
+	if thinking, ok := c.ProfileThinking(name); ok {
+		return model, thinking, true
+	}
+	if c.ProviderThinking != nil {
+		// Preserve legacy memory when the profile does not set thinking.
+		// The caller (applyConfig) already prefers remembered entries; this
+		// keeps direct callers consistent.
+		thinking = c.ProviderThinking[name]
+	}
+	return model, thinking, ok
+}
+
+// ProfileThinking returns the explicit [providers.<name>] thinking value.
+// The second result reports whether the profile sets the key at all; an
+// explicit empty string clears to the provider default and returns "", true.
+func (c Config) ProfileThinking(name string) (string, bool) {
+	p, exists := c.Providers[name]
+	if !exists || p.Thinking == nil {
+		return "", false
+	}
+	return strings.TrimSpace(*p.Thinking), true
+}
+
+// EffectiveModel resolves the startup model/thinking for a provider with the
+// converged precedence: profile > remembered > root (when the root provider
+// matches or no root provider is set). Direct Config values without load use
+// the same rule via ProviderConnection-style flat fallback.
+func (c Config) EffectiveModel(provider string) (model, thinking string) {
+	if m, t, ok := c.ProviderModel(provider); ok {
+		return m, t
+	}
+	if m, t, ok := c.RememberedProviderModel(provider); ok {
+		return m, t
+	}
+	if c.Provider == "" || c.Provider == provider {
+		return c.Model, c.Thinking
+	}
+	return "", ""
 }

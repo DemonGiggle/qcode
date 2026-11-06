@@ -4,8 +4,6 @@ qcode loads every existing `config.toml` file in the locations below. Lower-prio
 
 ```toml
 provider = "openai"
-model = "my-model"
-thinking = "high"
 max_steps = 32
 theme = "catppuccin-mocha"
 agent_timeout = "5m"
@@ -17,7 +15,9 @@ interactive = false
 
 [providers.openai]
 base_url = "http://localhost:8000/v1"
-api_key = "your-api-key"
+api_key_path = "~/.config/qcode/openai.key"
+model = "my-model"
+thinking = "high"
 
 [providers.ollama]
 base_url = "http://127.0.0.1:11434"
@@ -168,18 +168,52 @@ background tasks submitted through `delegate_task`.
 ## Provider connection profiles
 
 Each provider can have its own optional `[providers.<name>]` table containing
-`base_url` and `api_key`. Supported names match the built-in registry: `ollama`,
+`base_url`, `api_key_path` (preferred), `api_key` (deprecated inline),
+`model`, and `thinking`. Supported names match the built-in registry: `ollama`,
 `openai`, `opencode-go`, and `chatgpt`. Connection profiles do not add providers
 or change the active provider by themselves; the root `provider` selects the
 startup default, and `/provider` changes the active terminal tab.
+
+```toml
+provider = "openai"
+
+[providers.openai]
+api_key_path = "~/.config/qcode/openai.key"
+model = "my-model"
+thinking = "high"
+
+[providers.ollama]
+base_url = "http://127.0.0.1:11434"
+```
 
 Profiles merge **field by field** through the usual config layers. An omitted
 field inherits; an explicit empty string clears a lower-priority profile value
 and lets the provider use its built-in endpoint or no configured key. Higher
 priority flags/environment still win. ChatGPT uses `[chatgpt].oauth_path`, not
-an API key; a nonempty `providers.chatgpt.api_key` or root `api_key` with
-`provider = "chatgpt"` is invalid and fails startup (use OAuth). Edit profiles in
-config and restart to load changes; `/provider` does not prompt for or edit keys.
+an API key; `providers.chatgpt.api_key`, `providers.chatgpt.api_key_path`, or
+root `api_key` with `provider = "chatgpt"` is invalid and fails startup (use
+OAuth). Edit profiles in config and restart to load changes; `/provider` does
+not prompt for or edit keys.
+
+`api_key_path` points at a file holding only the key (one line, no quotes).
+The file must be a regular file (no symlink) with mode `0600` or `0400`,
+owned by the current user on Linux, and at most 64 KiB. `~` and `$VAR` expand;
+relative paths resolve from the config file that declares them. A profile with
+both `api_key` and `api_key_path` fails to load; keep one source (prefer the
+file or env). A missing, unreadable, or wrong-permission key file warns at
+startup and leaves the provider without a key (the `/provider` picker shows
+Need Setup First); fix it and restart. `qcode config check` reports the same
+problem as an error with a hand-fix. File contents are registered for startup
+redaction like inline keys.
+
+Root `provider` remains the global default selection. Root `base_url`,
+`api_key`, `model`, and `thinking` plus `[provider_models]` /
+`[provider_thinking]` are deprecated but still run; `qcode config check` warns
+with a move suggestion (for example `root api_key -> [providers.<owner>]
+api_key_path`). New per-provider defaults belong under `[providers.<name>]
+model/thinking`, which win over remembered and root values. Dotted keys
+(`providers.openai.api_key`) and table form (`[providers.openai]`) are
+parser-equivalent; style alone never warns.
 
 Legacy root `base_url` and `api_key` remain accepted. Each legacy connection is
 bound to the provider declared in that config layer, otherwise to the provider
@@ -198,8 +232,9 @@ Launch `--base-url`, `--api-key`, `QCODE_BASE_URL`, and `QCODE_API_KEY` override
 stay associated with the provider selected at launch, including when switching
 back to it. Switching to another provider uses its own profile/defaults instead
 of forwarding the old connection. `OPENAI_API_KEY` is also available when
-switching to OpenAI. At startup the existing `--api-key` > `QCODE_API_KEY` >
-`OPENAI_API_KEY` > config precedence remains in effect.
+switching to OpenAI. At startup the precedence is `--api-key` >
+`QCODE_API_KEY` > `OPENAI_API_KEY` (openai only) > `api_key_path` file >
+`providers.<name>.api_key` / legacy config.
 
 Main-tab `/provider` writes root `provider`, `model`, and explicit `thinking`
 together atomically, and remembers the model/thinking under that provider in
@@ -212,6 +247,18 @@ live switch remains active and a warning says the default was not saved.
 the saved default at the next startup. New terminal tabs use the creating tab's
 provider; existing tabs are never switched implicitly. Saved sessions restore
 individual providers but get credentials from current config, not checkpoints.
+
+## Config check
+
+`qcode config check [--json]` validates every existing `config.toml` layer plus
+their merged result without starting a session. Errors exit non-zero (bad TOML,
+unknown provider, ChatGPT with a key, both `api_key` + `api_key_path`, illegal
+values, missing/unsafe key files). Warnings exit zero (deprecated root
+`base_url`/`api_key`/`model`/`thinking`, inline `providers.*.api_key`,
+`provider_models`/`provider_thinking`). Every finding names the file, the dotted
+key path (for example `providers.opencode-go.api_key`), what is wrong, and how
+to fix it by hand. Human output is the default; `--json` emits
+`{"files": [...], "issues": [...]}`.
 
 ## Lookup order
 
@@ -240,7 +287,7 @@ Explicit command-line flags take precedence over environment variables, which ta
 
 When a flag or environment variable selects a provider different from the configured provider, the configured `model`, `thinking`, and `context_window` are not inherited; set them explicitly if they should apply to the selected provider. The provider's remembered entry in `[provider_models]` / `[provider_thinking]` still applies when no explicit `--model` / `--thinking` override is given. The selected provider's own connection profile is used; legacy credentials owned by another provider are not inherited. A configured `context_window` also applies only when the configured model is unset or matches the selected model.
 
-API keys can be set with `[providers.<name>].api_key` (or legacy root `api_key`) in this file, though `QCODE_API_KEY` or `OPENAI_API_KEY` is preferable on shared systems. `--api-key` takes precedence over both environment variables and the configuration file. Keep configuration files containing a key private (for example, mode `0600` on Unix-like systems). The `chatgpt` provider uses `qcode login chatgpt` OAuth instead of an API key; set its file with `[chatgpt] oauth_path` (default `~/.config/qcode/chatgpt-oauth.json`).
+API keys can be set with `[providers.<name>].api_key_path` (preferred file, `0600`/`0400`) or deprecated inline `[providers.<name>].api_key` (or legacy root `api_key`), though `QCODE_API_KEY` or `OPENAI_API_KEY` is preferable on shared systems. `--api-key` takes precedence over both environment variables and the configuration file. Keep key files and any config containing an inline key private. The `chatgpt` provider uses `qcode login chatgpt` OAuth instead of an API key; set its file with `[chatgpt] oauth_path` (default `~/.config/qcode/chatgpt-oauth.json`).
 
 `thinking` (or `--thinking` / `QCODE_THINKING`) is an optional level such as
 `off`, `low`, `high`, or `max`. It is validated against the selected provider
