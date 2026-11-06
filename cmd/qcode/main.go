@@ -184,6 +184,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			opts.sandboxCommandPaths = append([]string(nil), sandboxCommandPathFlags...)
 		}
 		applyConfig(&opts, cfg, setFlags)
+		if err := enforceStartupConfigCheck(diagnosticsOut, stdin, stdout, stderr, opts.jsonEvents, opts.provider, opts.apiKey); err != nil {
+			return err
+		}
 	} else if len(sandboxCommandPathFlags) > 0 {
 		opts.sandboxCommandPaths = append([]string(nil), sandboxCommandPathFlags...)
 	}
