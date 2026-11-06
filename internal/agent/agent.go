@@ -954,7 +954,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 				}
 			}
 			toolSpan.End(toolErr)
-			if injectionSeen || trust.Suspicious(execution.Output) {
+			if trust.Suspicious(execution.Output) {
 				activity.EndWithUntrustedOutput(toolErr, execution.Output)
 			} else {
 				activity.EndWithOutput(toolErr, execution.Output)
