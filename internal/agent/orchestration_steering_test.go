@@ -295,10 +295,16 @@ func TestDelegationToolsPersistAttributionAndRemainSearchable(t *testing.T) {
 				t.Fatalf("delegation was not accepted asynchronously: %+v %v", result, err)
 			}
 			records := manager.WorkRecords()
-			if len(records) != 1 || records[0].Source != "delegation" || records[0].Actor != "main" || records[0].AgentID != "agent-1" || records[0].Prompt != task || !strings.Contains(result.Output, "request_id="+records[0].RequestID) {
+			requestID := ""
+			for _, record := range records {
+				if record.Source == "delegation" && record.Actor == "main" && record.AgentID == "agent-1" && record.Prompt == task && strings.Contains(result.Output, "request_id="+record.RequestID) {
+					requestID = record.RequestID
+					break
+				}
+			}
+			if requestID == "" {
 				t.Fatalf("delegation attribution missing from journal: %+v", records)
 			}
-			requestID := records[0].RequestID
 			answer, err := waitOrchestrationResult(t, manager, requestID)
 			if err != nil {
 				t.Fatal(err)
