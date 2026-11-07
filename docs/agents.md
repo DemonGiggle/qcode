@@ -46,11 +46,12 @@ absolute or parent-relative paths, subject to operating-system permissions.
 Agents can also switch outside the launch workspace; `write` and `edit` remain
 lexically confined to the selected directory.
 
-`create_agent` accepts optional `cwd`. Omitting it inherits the caller's current
-directory; relative values resolve against the caller's directory. qcode validates
+`create_agent` accepts optional `cwd` and `thinking_level`. Omitting `cwd` inherits the caller's current
+directory; relative values resolve against the caller's directory. Omitting `thinking_level`
+uses the provider default. qcode validates
 and authorizes the destination before creating the child, then applies inherited
-capabilities and the directory before queuing its first task. Failed validation
-or approval creates no child. Interactive `/agent new` retains its defaults and
+capabilities, the thinking level, and the directory before queuing its first task. Failed validation
+or approval creates no child. An unsupported `thinking_level` fails creation with no child. Interactive `/agent new` retains its defaults and
 starts in the launch workspace.
 
 For example, prepare a Git worktree with the shell tool:
@@ -114,7 +115,8 @@ The main agent receives five orchestrator tools that sub-agents do not have:
 The main agent can create and assign work in one asynchronous call by passing
 an optional `task` to `create_agent`, or can call `create_agent` first and use
 the returned agent ID in a subsequent `delegate_task` call. If `model` is
-omitted, the new agent uses the main agent's current model. Agents created this way inherit the main agent's
+omitted, the new agent uses the main agent's current model. If `thinking_level` is
+omitted, the new agent uses the provider default. Agents created this way inherit the main agent's
 current provider/endpoint, tool enablement, selected skills, approved directory grants, working directory, and
 maximum step setting; their conversation and main-only orchestration tools stay
 separate. The interactive `/agent` command remains available when the user wants to

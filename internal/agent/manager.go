@@ -178,7 +178,17 @@ func (m *AgentManager) CreateInherited(parentID, model string) (AgentSummary, er
 // CreateInheritedAt validates and authorizes cwd against the caller before
 // creating a child, then installs its capabilities and directory before it
 // becomes available for task submission. Empty cwd inherits the caller's.
+// Empty thinking uses the provider default.
 func (m *AgentManager) CreateInheritedAt(ctx context.Context, parentID, model, cwd string) (AgentSummary, error) {
+	return m.CreateInheritedWithThinking(ctx, parentID, model, "", cwd)
+}
+
+// CreateInheritedWithThinking validates and authorizes cwd against the caller
+// before creating a child, then installs its capabilities, thinking level,
+// and directory before it becomes available for task submission. Empty model
+// inherits the caller's model. Empty thinking uses the provider default.
+// Empty cwd inherits the caller's.
+func (m *AgentManager) CreateInheritedWithThinking(ctx context.Context, parentID, model, thinking, cwd string) (AgentSummary, error) {
 	parent, ok := m.Agent(parentID)
 	if !ok {
 		return AgentSummary{}, fmt.Errorf("unknown agent %q", parentID)
@@ -214,9 +224,15 @@ func (m *AgentManager) CreateInheritedAt(ctx context.Context, parentID, model, c
 	if err := ctx.Err(); err != nil {
 		return AgentSummary{}, err
 	}
+	thinking = strings.ToLower(strings.TrimSpace(thinking))
 	return m.createNew(model, func(child *Agent) error {
 		if err := child.InheritCapabilitiesFrom(parent); err != nil {
 			return fmt.Errorf("inherit capabilities: %w", err)
+		}
+		if thinking != "" {
+			if err := child.SetThinking(thinking); err != nil {
+				return err
+			}
 		}
 		if cwd != "" {
 			tools, ok := child.tools.(directoryTools)
@@ -1234,9 +1250,10 @@ func (t *managedToolset) listAgents() (llm.ToolResult, error) {
 
 func (t *managedToolset) createAgent(ctx context.Context, arguments json.RawMessage) (llm.ToolResult, error) {
 	var args struct {
-		Model string  `json:"model"`
-		Task  string  `json:"task"`
-		Cwd   *string `json:"cwd"`
+		Model         string  `json:"model"`
+		Task          string  `json:"task"`
+		Cwd           *string `json:"cwd"`
+		ThinkingLevel string  `json:"thinking_level"`
 	}
 	if err := json.Unmarshal(arguments, &args); err != nil {
 		return llm.ToolResult{}, fmt.Errorf("invalid create_agent arguments: %w", err)
@@ -1259,12 +1276,16 @@ func (t *managedToolset) createAgent(ctx context.Context, arguments json.RawMess
 			return llm.ToolResult{}, fmt.Errorf("create_agent.cwd must name an existing directory")
 		}
 	}
-	summary, err := t.manager.CreateInheritedAt(ctx, t.id, model, cwd)
+	thinking := strings.ToLower(strings.TrimSpace(args.ThinkingLevel))
+	summary, err := t.manager.CreateInheritedWithThinking(ctx, t.id, model, thinking, cwd)
 	if err != nil {
 		return llm.ToolResult{}, err
 	}
 	task := strings.TrimSpace(args.Task)
 	if task == "" {
+		if thinking != "" {
+			return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q with thinking_level %q; no task assigned", summary.ID, summary.Model, thinking)}, nil
+		}
 		return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q; no task assigned", summary.ID, summary.Model)}, nil
 	}
 	submission, err := t.manager.SubmitPrompt(session.PromptSubmission{AgentID: summary.ID, Prompt: task, Intent: session.IntentQueue, Source: "delegation", Actor: t.id})
@@ -1272,6 +1293,9 @@ func (t *managedToolset) createAgent(ctx context.Context, arguments json.RawMess
 		return llm.ToolResult{
 			Output: fmt.Sprintf("created agent %s using model %q, but task assignment failed; the agent remains idle and can be retried with delegate_task", summary.ID, summary.Model),
 		}, fmt.Errorf("assign task to newly created agent %s: %w", summary.ID, err)
+	}
+	if thinking != "" {
+		return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q with thinking_level %q and accepted task asynchronously; request_id=%s; queue_position=%d", summary.ID, summary.Model, thinking, submission.RequestID, submission.QueuePosition), EndTurn: true}, nil
 	}
 	return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q and accepted task asynchronously; request_id=%s; queue_position=%d", summary.ID, summary.Model, submission.RequestID, submission.QueuePosition), EndTurn: true}, nil
 }
@@ -1344,7 +1368,7 @@ func managerSchemas() []llm.Tool {
 		{Name: "search_agent_work", Description: prompt.SearchAgentWorkTool, Parameters: object(map[string]any{"query": stringField(prompt.AgentWorkQueryParameter), "agent_id": stringField(prompt.AgentIDParameter), "offset": map[string]any{"type": "integer", "minimum": 0}}, "query")},
 		{Name: "consult_agents", Description: prompt.ConsultAgentsTool, Parameters: object(map[string]any{"requests": map[string]any{"type": "array", "minItems": 1, "maxItems": DefaultMaxAgents - 1, "items": object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter), "prompt": stringField(prompt.AgentPromptParameter)}, "agent_id", "prompt")}}, "requests")},
 		{Name: "list_agents", Description: prompt.ListAgentsTool, Parameters: object(nil)},
-		{Name: "create_agent", Description: prompt.CreateAgentTool, Parameters: object(map[string]any{"model": stringField(prompt.AgentModelParameter), "task": stringField(prompt.AgentPromptParameter), "cwd": stringField(prompt.WorkingDirectoryParameter)})},
+		{Name: "create_agent", Description: prompt.CreateAgentTool, Parameters: object(map[string]any{"model": stringField(prompt.AgentModelParameter), "task": stringField(prompt.AgentPromptParameter), "cwd": stringField(prompt.WorkingDirectoryParameter), "thinking_level": stringField(prompt.AgentThinkingParameter)})},
 		{Name: "delegate_task", Description: prompt.DelegateTaskTool, Parameters: object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter), "prompt": stringField(prompt.AgentPromptParameter)}, "agent_id", "prompt")},
 		{Name: "close_agent", Description: prompt.CloseAgentTool, Parameters: object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter)}, "agent_id")},
 	}
