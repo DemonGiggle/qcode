@@ -215,6 +215,130 @@ type ProviderProfile struct {
 	Thinking   *string `toml:"thinking"`
 }
 
+// AllowedAgentModel is one human-curated entry in the [[agents.allow_models]]
+// roster. Provider qualifies the model because children inherit provider and
+// endpoint from the parent. Role is smart | balanced | cheap. ThinkingLevel
+// is accepted on decode for forward compatibility but ignored: main decides
+// thinking_level at create_agent time from live capability data.
+type AllowedAgentModel struct {
+	Provider string `toml:"provider" json:"provider"`
+	Model    string `toml:"model" json:"model"`
+	Role     string `toml:"role" json:"role"`
+	// Deprecated: ignored. Kept so old files with thinking_level still decode.
+	ThinkingLevel string `toml:"thinking_level" json:"-"`
+}
+
+// Agents holds the human-curated roster of models main may use for sub-agents.
+// Empty (nil or zero entries) means no restriction: create_agent behaves as
+// today. Non-empty is soft guidance for main, never a hard block.
+type Agents struct {
+	AllowModels []AllowedAgentModel `toml:"allow_models"`
+}
+
+// AgentRoleSmart is for hard, reasoning-heavy work (review, deep reasoning).
+// AgentRoleBalanced is the default for routine implementation.
+// AgentRoleCheap is for mechanical, trivial work.
+const (
+	AgentRoleSmart    = "smart"
+	AgentRoleBalanced = "balanced"
+	AgentRoleCheap    = "cheap"
+)
+
+func validAgentRole(role string) bool {
+	switch role {
+	case AgentRoleSmart, AgentRoleBalanced, AgentRoleCheap:
+		return true
+	}
+	return false
+}
+
+// normalizeAllowedAgentModels trims, drops invalid entries, dedupes by
+// provider+model (last wins), and sorts deterministically. Invalid entries
+// are dropped for startup tolerance; `qcode config check` warns about them.
+func normalizeAllowedAgentModels(entries []AllowedAgentModel) []AllowedAgentModel {
+	byKey := map[string]AllowedAgentModel{}
+	order := map[string]int{}
+	idx := 0
+	for _, raw := range entries {
+		provider := strings.TrimSpace(raw.Provider)
+		model := strings.TrimSpace(raw.Model)
+		role := strings.TrimSpace(strings.ToLower(raw.Role))
+		if provider == "" || model == "" {
+			continue
+		}
+		if !utf8.ValidString(provider) || !utf8.ValidString(model) || !utf8.ValidString(raw.Role) {
+			continue
+		}
+		if !validProvider(provider) {
+			continue
+		}
+		if !validAgentRole(role) {
+			continue
+		}
+		key := provider + "\x00" + model
+		if _, exists := byKey[key]; !exists {
+			order[key] = idx
+			idx++
+		}
+		byKey[key] = AllowedAgentModel{Provider: provider, Model: model, Role: role}
+	}
+	out := make([]AllowedAgentModel, 0, len(byKey))
+	for _, entry := range byKey {
+		out = append(out, entry)
+	}
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0; j-- {
+			a, b := out[j], out[j-1]
+			swap := false
+			if a.Provider != b.Provider {
+				swap = a.Provider < b.Provider
+			} else if a.Model != b.Model {
+				swap = a.Model < b.Model
+			} else {
+				swap = a.Role < b.Role
+			}
+			if !swap {
+				break
+			}
+			out[j], out[j-1] = out[j-1], out[j]
+		}
+	}
+	_ = order
+	if len(out) == 0 {
+		return []AllowedAgentModel{}
+	}
+	return out
+}
+
+// NormalizedAllowedAgentModels returns the merged roster cleaned for runtime:
+// trimmed, validated, deduped, and sorted. Empty means no restriction.
+func (c Config) NormalizedAllowedAgentModels() []AllowedAgentModel {
+	if c.Agents.AllowModels == nil {
+		return nil
+	}
+	normalized := normalizeAllowedAgentModels(c.Agents.AllowModels)
+	if len(normalized) == 0 {
+		return []AllowedAgentModel{}
+	}
+	return normalized
+}
+
+// mergeAllowedAgentModels overlays with override semantics: a non-nil incoming
+// list (including an explicit empty list) replaces lower layers.
+func mergeAllowedAgentModels(dst *Agents, incoming Agents) {
+	if incoming.AllowModels != nil {
+		normalized := normalizeAllowedAgentModels(incoming.AllowModels)
+		// Preserve explicit empty as empty (not nil) so clearing works.
+		if len(normalized) == 0 {
+			// incoming could be nil vs empty; incoming != nil means explicit.
+			// Keep empty slice to record explicit none.
+			dst.AllowModels = []AllowedAgentModel{}
+		} else {
+			dst.AllowModels = append([]AllowedAgentModel(nil), normalized...)
+		}
+	}
+}
+
 type Config struct {
 	Providers              map[string]ProviderProfile `toml:"providers"`
 	connectionsLoaded      bool
@@ -234,6 +358,7 @@ type Config struct {
 	ProviderModels       map[string]string `toml:"provider_models"`
 	ProviderThinking     map[string]string `toml:"provider_thinking"`
 	ChatGPT              ChatGPT           `toml:"chatgpt"`
+	Agents               Agents            `toml:"agents"`
 	Interactive          *bool             `toml:"interactive"`
 	ContextWindow        *int              `toml:"context_window"`
 	AutoCompactThreshold *int              `toml:"auto_compact_threshold"`
@@ -651,6 +776,7 @@ func merge(dst *Config, incoming Config) {
 	dst.Skills.AutoloadPaths = appendUniquePaths(dst.Skills.AutoloadPaths, incoming.Skills.AutoloadPaths)
 	dst.Skills.Autoload = appendUniqueAutoload(dst.Skills.Autoload, incoming.Skills.Autoload)
 	mergeSkillSelection(&dst.Skills, incoming.Skills)
+	mergeAllowedAgentModels(&dst.Agents, incoming.Agents)
 }
 
 func appendUniquePaths(existing, incoming []string) []string {

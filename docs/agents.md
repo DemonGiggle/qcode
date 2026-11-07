@@ -12,6 +12,8 @@ Use `/agent` or `/agent new` to choose a model for a new tab, or `/agent new <mo
 
 Use `/agent list`, `/agent switch <id>`, `/agent cancel <id>`, and `/agent close <id>` to manage tabs. Closing asks for confirmation; `/agent close <id> --yes` skips it. Main cannot be closed. `/agent list` is an interactive selector: use Up/Down or PgUp/PgDn to move, Enter to switch to the highlighted agent, and Esc or Ctrl+C to leave it. Each row retains the agent ID, name, model, status, and queue information, followed by the latest recorded knowledge preview truncated to at most five lines.
 
+Use `/agent allow-models` to curate which models main may use for sub-agents. It lists the current tab provider's models with type-to-filter; Space cycles `- -> smart -> balanced -> cheap -> -`, Enter saves. Human picks only model + role (smart = hard/reasoning-heavy, balanced = routine default, cheap = mechanical/trivial); there is no thinking picker. Main decides `thinking_level` at `create_agent` time from live capability data. `/agent allow-models list` prints the current provider roster, `/agent allow-models clear` empties it (empty = no restriction). Saves from main write `[[agents.allow_models]]` to the user config.
+
 Closing cancels queued prompts, pending steering, and human interactions immediately. A running helper remains `closing` until its run exits, then its live context and tab are removed. Its slot counts toward the agent limit while cancellation is pending. If its tab is selected, the terminal and browser return to main after removal. Recorded work and completed results remain available for searches and exports; closing agents are excluded from saved resumable tabs immediately. Repeated closes are harmless.
 
 The tab bar shows the available switch shortcuts when the row has room: Ctrl+PageUp/PageDown or the Alt+, and Alt+. fallbacks. When all agents do not fit, `main` stays pinned while a moving window keeps the active agent and nearby tabs visible; counters at each edge show how many tabs are hidden in that direction. Each agent keeps independent context, provider, model, output, tool settings, working directory, and sandbox grants while filesystem mutations remain serialized across all agents.
@@ -106,11 +108,14 @@ The main agent receives five orchestrator tools that sub-agents do not have:
 | Tool | Purpose |
 |------|---------|
 | `list_agents` | Returns the current status of all agents (outcomes and files stripped for brevity) |
+| `list_allow_agent_models` | Returns the human-curated roster for the caller's provider, enriched with live `thinking_levels` + `thinking_default`; empty means no restriction |
 | `create_agent` | Creates a new agent session and optionally queues its first task asynchronously |
 | `delegate_task` | Queues focused work in another agent asynchronously |
 | `close_agent` | Closes one helper, cancelling pending and active work asynchronously |
 | `search_agent_work` | Searches the full session work journal, including closed agents |
 | `consult_agents` | Asks selected agents questions concurrently and waits for their specific replies within a deadline |
+
+When a human-curated roster exists (`[[agents.allow_models]]` via `/agent allow-models`), main calls `list_allow_agent_models` before choosing a model and picks by hardness: hard/reasoning-heavy uses the `smart` role with the high end of its `thinking_levels`, routine work uses `balanced` with `thinking_default` or a mid level, and mechanical/trivial work uses `cheap` with a low level or omitted `thinking_level`. Human-curated `role` selects *which model*; task hardness selects *how hard it thinks*. If unsure, omit `thinking_level` (provider default). An explicit `thinking_level` is still validated and failure creates no child.
 
 The main agent can create and assign work in one asynchronous call by passing
 an optional `task` to `create_agent`, or can call `create_agent` first and use
