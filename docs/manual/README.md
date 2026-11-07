@@ -8,7 +8,8 @@ bug fixes with queued checks, planning with execution checklists, independent ag
 and resuming or sharing work. The guide also covers pinned latest prompts,
 steering and pending-work removal, the live Todo panel with Alt+T, pasted-block handling, /compact show inspection,
 model-operation progress and elapsed time, working directories with
-change_directory and directory approvals, tool approvals and prompt-injection
+change_directory and directory approvals, allowed-model roster for helper
+model choice with main-decided thinking levels, tool approvals and prompt-injection
 warnings, cross-backend model-switch warnings and /provider switching, ChatGPT subscription login,
 local redaction, terminal themes,
 transcript boundary navigation, token totals, workspace path shortening, skill
@@ -82,7 +83,7 @@ frames against the recording after each refresh.
 ## Scope rule
 
 Keep this manual about **using** qcode: install, prompt, queue, pastes, commands,
-models, providers, agents with working directories, plans, todo checklists, skills, memory, tools with
+models, providers, agents with working directories and allowed-model roster, plans, todo checklists, skills, memory, tools with
 approvals and web access, sessions, privacy, browser control,
 settings, and troubleshooting. Do not add package layouts, control-plane,
 event-bus, provider wire formats, or other internals here.

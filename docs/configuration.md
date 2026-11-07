@@ -49,7 +49,7 @@ the key preserves the existing sandbox behaviour without migration.
 
 In the normal interactive UI, `/model` (including its explicit thinking
 level), `/provider` (provider, model, and thinking together), `/maxsteps`,
-`/statusline`, and `/skill` update the user-level file
+`/statusline`, `/skill`, and `/agent allow-models` update the user-level file
 synchronously when issued from the `main` tab. On Linux this is `~/.local/etc/qcode/config.toml`; other
 platforms use the user configuration path shown below. Existing comments and
 unrelated settings, including nested tables such as `[redaction]` and `[skills]`,
@@ -58,6 +58,8 @@ are preserved. `/statusline` saves the hidden segment list as the top-level
 choice from any agent tab, including when the selection is Default (Auto).
 `/interactive on|off` also saves from any agent tab, setting `interactive` to
 `true` or `false` as the default for new sessions.
+Worker-tab `/agent allow-models` edits apply to the live session only; only
+`main`-tab saves persist `[[agents.allow_models]]` to the user file.
 Other preference changes in worker tabs, demo mode, one-shot mode, and piped
 execution remain session-only. `theme = "default"` keeps the terminal's ANSI
 palette and background. The named palettes below are available in `/theme`,
@@ -165,6 +167,56 @@ Completed replies are kept; failed or expired consultations are reported and
 skipped. This setting applies to `consult_agents`, not ordinary user prompts or
 background tasks submitted through `delegate_task`.
 
+## Allowed sub-agent models
+
+`[[agents.allow_models]]` is a human-curated roster of models `main` may use
+for sub-agents. Each entry names a provider-qualified model plus a hardness
+role; there is no thinking level in the file:
+
+```toml
+[[agents.allow_models]]
+provider = "openai"
+model = "gpt-5"
+role = "smart"
+
+[[agents.allow_models]]
+provider = "openai"
+model = "gpt-5-mini"
+role = "balanced"
+
+[[agents.allow_models]]
+provider = "openai"
+model = "gpt-4.1-mini"
+role = "cheap"
+```
+
+`role` is `smart` (hard, reasoning-heavy work), `balanced` (routine default),
+or `cheap` (mechanical, trivial work). The provider qualifies the model
+because children inherit the parent's provider and endpoint; only same-provider
+entries are visible to `list_allow_agent_models`. Thinking is never stored:
+a `thinking_level` key still decodes for compatibility but is ignored, and
+`main` picks `thinking_level` at `create_agent` time from live capability data
+(`thinking_levels` ordered low to high plus `thinking_default`).
+
+Empty (missing key or zero entries) means no restriction: `create_agent`
+behaves as before. Non-empty is soft guidance, never a hard block:
+`main` calls `list_allow_agent_models` and picks by hardness
+(hard->`smart` with the high end, routine->`balanced` with the default or mid,
+trivial->`cheap` with a low level or omitted, which uses the provider default).
+
+Entries merge with override semantics: a higher-priority layer with a non-nil
+list (including an explicit `[]`) replaces lower layers, so an explicit empty
+list clears the roster. At load time entries are trimmed, roles lowercased,
+deduped by provider+model (last wins), sorted deterministically, and invalid
+rows (empty model, unknown provider, unknown role, invalid UTF-8) are dropped
+with a `qcode config check` warning; startup itself stays tolerant. Manage the
+roster with `/agent allow-models` (type to filter, Space cycles
+`--`->`smart`->`balanced`->`cheap`->`--`, Enter saves); `/agent allow-models
+list` prints the current provider roster and `/agent allow-models clear`
+empties only that provider, preserving other providers. Saving from `main`
+rewrites `[[agents.allow_models]]` atomically, preserves comments and unrelated
+tables, and creates a new user file with mode `0600`.
+
 ## Provider connection profiles
 
 Each provider can have its own optional `[providers.<name>]` table containing
@@ -255,7 +307,9 @@ their merged result without starting a session. Errors exit non-zero (bad TOML,
 unknown provider, ChatGPT with a key, both `api_key` + `api_key_path`, illegal
 values, missing/unsafe key files). Warnings exit zero (deprecated root
 `base_url`/`api_key`/`model`/`thinking`, inline `providers.*.api_key`,
-`provider_models`/`provider_thinking`). Every finding names the file, the dotted
+`provider_models`/`provider_thinking`, plus `[[agents.allow_models]]` roster
+issues: empty model, unknown provider, unknown role, invalid UTF-8, and ignored
+stale `thinking_level`). Every finding names the file, the dotted
 key path (for example `providers.opencode-go.api_key`), what is wrong, and how
 to fix it by hand. Human output is the default; `--json` emits
 `{"files": [...], "issues": [...]}`.

@@ -12,7 +12,7 @@ Use `/agent` or `/agent new` to choose a model for a new tab, or `/agent new <mo
 
 Use `/agent list`, `/agent switch <id>`, `/agent cancel <id>`, and `/agent close <id>` to manage tabs. Closing asks for confirmation; `/agent close <id> --yes` skips it. Main cannot be closed. `/agent list` is an interactive selector: use Up/Down or PgUp/PgDn to move, Enter to switch to the highlighted agent, and Esc or Ctrl+C to leave it. Each row retains the agent ID, name, model, status, and queue information, followed by the latest recorded knowledge preview truncated to at most five lines.
 
-Use `/agent allow-models` to curate which models main may use for sub-agents. It lists the current tab provider's models with type-to-filter; Space cycles `- -> smart -> balanced -> cheap -> -`, Enter saves. Human picks only model + role (smart = hard/reasoning-heavy, balanced = routine default, cheap = mechanical/trivial); there is no thinking picker. Main decides `thinking_level` at `create_agent` time from live capability data. `/agent allow-models list` prints the current provider roster, `/agent allow-models clear` empties it (empty = no restriction). Saves from main write `[[agents.allow_models]]` to the user config.
+Use `/agent allow-models` to curate which models main may use for sub-agents. It lists the current tab provider's models with type-to-filter; Space cycles `--`->`smart`->`balanced`->`cheap`->`--`, Enter saves, Esc cancels. Human picks only model + role (smart = hard/reasoning-heavy, balanced = routine default, cheap = mechanical/trivial); there is no thinking picker. Main decides `thinking_level` at `create_agent` time from live capability data. `/agent allow-models list` prints the current provider roster, `/agent allow-models clear` empties only that provider while keeping other providers (empty = no restriction). Saves from `main` write `[[agents.allow_models]]` to the user config, preserving comments and other providers; worker-tab edits update only the live session. See [Configuration](configuration.md#allowed-sub-agent-models) for file shape, override merge, and tolerant load.
 
 Closing cancels queued prompts, pending steering, and human interactions immediately. A running helper remains `closing` until its run exits, then its live context and tab are removed. Its slot counts toward the agent limit while cancellation is pending. If its tab is selected, the terminal and browser return to main after removal. Recorded work and completed results remain available for searches and exports; closing agents are excluded from saved resumable tabs immediately. Repeated closes are harmless.
 
@@ -48,9 +48,10 @@ absolute or parent-relative paths, subject to operating-system permissions.
 Agents can also switch outside the launch workspace; `write` and `edit` remain
 lexically confined to the selected directory.
 
-`create_agent` accepts optional `cwd` and `thinking_level`. Omitting `cwd` inherits the caller's current
-directory; relative values resolve against the caller's directory. Omitting `thinking_level`
-uses the provider default. qcode validates
+`create_agent` accepts optional `model`, `task`, `cwd`, and `thinking_level`. Omitting `model` inherits the caller's current
+model. Omitting `cwd` inherits the caller's current
+directory; relative values resolve against the caller's directory, and an explicit empty `cwd` is rejected. Omitting `thinking_level`
+uses the provider default (not the caller's level); an explicit value is lowercased and validated against that exact model. qcode validates
 and authorizes the destination before creating the child, then applies inherited
 capabilities, the thinking level, and the directory before queuing its first task. Failed validation
 or approval creates no child. An unsupported `thinking_level` fails creation with no child. Interactive `/agent new` retains its defaults and
@@ -103,19 +104,19 @@ The in-process manager exposes asynchronous submission, synchronous submission-a
 
 ## How the main agent talks to sub-agents
 
-The main agent receives five orchestrator tools that sub-agents do not have:
+The main agent receives seven orchestrator tools that sub-agents do not have:
 
 | Tool | Purpose |
 |------|---------|
 | `list_agents` | Returns the current status of all agents (outcomes and files stripped for brevity) |
-| `list_allow_agent_models` | Returns the human-curated roster for the caller's provider, enriched with live `thinking_levels` + `thinking_default`; empty means no restriction |
+| `list_allow_agent_models` | Main-only. Returns the human-curated roster for the caller's provider, filtered by optional `role` (`smart`/`balanced`/`cheap`) and enriched with live `thinking_levels` (low to high) + `thinking_default`; empty `[]` means no restriction |
 | `create_agent` | Creates a new agent session and optionally queues its first task asynchronously |
 | `delegate_task` | Queues focused work in another agent asynchronously |
 | `close_agent` | Closes one helper, cancelling pending and active work asynchronously |
 | `search_agent_work` | Searches the full session work journal, including closed agents |
 | `consult_agents` | Asks selected agents questions concurrently and waits for their specific replies within a deadline |
 
-When a human-curated roster exists (`[[agents.allow_models]]` via `/agent allow-models`), main calls `list_allow_agent_models` before choosing a model and picks by hardness: hard/reasoning-heavy uses the `smart` role with the high end of its `thinking_levels`, routine work uses `balanced` with `thinking_default` or a mid level, and mechanical/trivial work uses `cheap` with a low level or omitted `thinking_level`. Human-curated `role` selects *which model*; task hardness selects *how hard it thinks*. If unsure, omit `thinking_level` (provider default). An explicit `thinking_level` is still validated and failure creates no child.
+When a human-curated roster exists (`[[agents.allow_models]]` via `/agent allow-models`), main calls `list_allow_agent_models` before choosing a model and picks by hardness: hard/reasoning-heavy uses the `smart` role with the high end of its `thinking_levels`, routine work uses `balanced` with `thinking_default` or a mid level, and mechanical/trivial work uses `cheap` with a low level or omitted `thinking_level`. Human-curated `role` selects *which model*; task hardness selects *how hard it thinks*. If unsure, omit `thinking_level` (provider default). An empty `thinking_levels` list means that model has no adjustable thinking. An explicit `thinking_level` is still validated (case-insensitive) and failure creates no child; an invalid `role` filter fails the list call.
 
 The main agent can create and assign work in one asynchronous call by passing
 an optional `task` to `create_agent`, or can call `create_agent` first and use

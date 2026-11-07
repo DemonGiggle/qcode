@@ -667,7 +667,7 @@ def build_pdf(images: dict[str, Path]):
         "In this manual: install once, tour the screen (including pasted blocks\n"
         "and the execution checklist), try practical use cases, clarifying\n"
         "questions, switch models and providers (including ChatGPT login),\n"
-        "use agents with working directories, plan, todo, skills, memory,\n"
+        "use agents with working directories and allowed-model roster, plan, todo, skills, memory,\n"
         "tools with approvals, sessions, browser control, and settings.",
         align="C",
         new_x=XPos.LMARGIN, new_y=YPos.NEXT,
@@ -681,7 +681,7 @@ def build_pdf(images: dict[str, Path]):
         "Read chapters 1-3 to start. Keep chapters 4 and 15 nearby as a command "
         "reference. The Use cases pages after chapter 3 offer complete example workflows. "
         "Chapters 5-12 are task guides you can read when you need them: "
-        "models, agents with working directories, planning, skills, memory, tools with approvals and web, sessions, and phone/browser control.",
+        "models, agents with working directories and allowed-model roster, planning, skills, memory, tools with approvals and web, sessions, and phone/browser control.",
     )
     bullets(
         pdf,
@@ -975,6 +975,9 @@ def build_pdf(images: dict[str, Path]):
             ("/agent rename <id> <name>", "Give an agent a new display name."),
             ("/agent cancel <id>", "Stop that agent's current work."),
             ("/agent close <id>", "Cancel work and close the tab after the run exits (--yes skips confirm)."),
+            ("/agent allow-models", "Curate which models main may use for helpers."),
+            ("/agent allow-models list", "Show the current provider roster."),
+            ("/agent allow-models clear", "Empty only the current provider (no restriction)."),
         ],
     )
     bullets(
@@ -984,8 +987,10 @@ def build_pdf(images: dict[str, Path]):
             "Ask the main agent to split work and it can coordinate helpers; you can also create tabs yourself with /agent.",
             "/agent and /agent new open the current provider's model picker. /agent new <model> takes a model ID, then /agent rename <id> <name> sets its display name.",
             "Queues are per agent (up to 16 waiting each). A slow helper never blocks `main`.",
-            "Each agent has its own working directory, starting at the launch workspace (--cwd). Use the change_directory tool (ask for packages/server) to select another existing directory; relative paths resolve against that agent\u2019s current directory and symlinks resolve to their canonical destination. The status WS segment updates during the task; other agents and qcode keep their own directories. Helpers created by main inherit its model, tools, skills, directory grants, and step limit when created.",
+            "Each agent has its own working directory, starting at the launch workspace (--cwd). Use the change_directory tool (ask for packages/server) to select another existing directory; relative paths resolve against that agent\u2019s current directory and symlinks resolve to their canonical destination. The status WS segment updates during the task; other agents and qcode keep their own directories. Helpers created by main inherit its provider/endpoint, tools, skills, directory grants, working directory, and step limit; an omitted model inherits main\u2019s model and an omitted thinking_level uses the provider default (never main\u2019s level).",
             "Ask main to wait for helpers with a consultation deadline: --agent-timeout 90s (default 5m) is shared by the batch including queue time. Completed replies are kept; failed or expired consultations are reported and skipped. This applies to main\u2019s consult_agents coordination, not ordinary prompts or background delegate_task work.",
+            "Curate helper models with /agent allow-models: type to filter the current provider, Space cycles off -> smart -> balanced -> cheap -> off, Enter saves. Pick only model plus role (smart = hard reasoning, balanced = routine, cheap = trivial); there is no thinking picker. /agent allow-models list shows the roster, clear empties only that provider, and main-tab saves persist [[agents.allow_models]] to the user config (worker-tab edits stay session-only). Empty means no restriction.",
+            "When a roster exists, main picks by hardness before creating a helper: hard uses smart with the high end of its thinking_levels, routine uses balanced with the default, trivial uses cheap with a low level or omitted. Main decides thinking_level at creation time from live capability data; an unsupported level fails creation with no child.",
             "When main delegates a task (create_agent with task or delegate_task), its current run ends after accepting the assignment and the helper continues in its tab. When the helper finishes, main receives an automatic callback with a bounded summary and reacts to it; burst completions coalesce into one pending callback. Use search_agent_work or consult_agents for details instead of polling list_agents. Full recorded findings remain searchable after closing a helper or using /new.",
             "Main can use close_agent with one agent_id in normal execution mode. Closure returns immediately without ending main's turn. Pending tasks, steering, and interactions are cancelled; a running helper shows closing until its run exits and still counts toward the agent limit. The selected closed tab returns to main. Closing helpers are excluded from saved resumable tabs; recorded work remains searchable and exportable.",
         ],
@@ -1183,7 +1188,7 @@ def build_pdf(images: dict[str, Path]):
             "Copy `config.toml.example` to your user config location; missing files are ignored. Priority, highest first: file beside the program, user config (~/.local/etc/qcode on Linux, ~/Library/Application Support on macOS, %AppData% on Windows), system config (/usr/local/etc/qcode), then etc/ beside the program.",
             "Command flags beat environment variables. Both beat config files. Config files beat built-ins. `--api-key` beats config and environment keys.",
             "Prefer environment variables for keys: QCODE_API_KEY or OPENAI_API_KEY. Keep key files private (mode 0600).",
-            "Common knobs: provider/model/thinking, agent_timeout like \"5m\", interactive true/false, statusline_hidden, web_search backend, learning context_budget, skills paths, autoload_paths, selected/selected_always, [providers.<name>] profiles, [chatgpt] oauth_path, redaction sinks/patterns, context_window and auto_compact_threshold.",            "Restart after changing the web backend. /model, /maxsteps, /statusline, and /skill on main save automatically; worker-tab changes to these settings stay within the session.",
+            "Common knobs: provider/model/thinking, agent_timeout like \"5m\", interactive true/false, statusline_hidden, web_search backend, learning context_budget, skills paths, autoload_paths, selected/selected_always, [[agents.allow_models]] roster, [providers.<name>] profiles, [chatgpt] oauth_path, redaction sinks/patterns, context_window and auto_compact_threshold.",            "Restart after changing the web backend. /model, /maxsteps, /statusline, /skill, and /agent allow-models on main save automatically; worker-tab changes to these settings stay within the session.",
         ],
     )
     h2(pdf, "Working directories under the sandbox")
