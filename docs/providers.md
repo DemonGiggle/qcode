@@ -192,9 +192,14 @@ margin, and retry once on 401. Requests send the SIWC contract
 no_matching_rule` means the request went to the private
 `chatgpt.com/backend-api` route: remove any chatgpt `base_url` override so the
 default `https://api.openai.com/v1` is used, then run `qcode login chatgpt`
-again. Thinking levels (`minimal`, `low`, `medium`, `high`, `xhigh`) are sent
-as the Responses `reasoning` effort when selected; empty preserves the
-provider default (`medium`). Context windows come from the bundled catalog
+again. Thinking levels come from each model's `supported_reasoning_levels` in
+the account catalog, with a bundled Codex catalog as a fallback. For example,
+Luna offers `low`, `medium`, `high`, `xhigh`, and `max` (default `medium`),
+while Sol/Terra variants also offer `ultra` and may default to `low`.
+Unknown models without metadata remain usable but have no thinking selector.
+Explicit unsupported levels fail before inference; empty preserves the
+provider default by omitting `reasoning`. Selected levels are sent as the
+Responses `reasoning` effort. Context windows come from the bundled catalog
 with Codex-suffix fallback, so `CTX` shows remaining capacity instead of
 `unknown`.
 

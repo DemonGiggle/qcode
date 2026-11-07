@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"qcode/internal/chatgptoauth"
 )
@@ -41,6 +42,8 @@ type chatGPTProvider struct {
 	tokensPath      string
 	client          HTTPDoer
 	registerSecrets func(...string)
+	thinkingMu      sync.RWMutex
+	thinkingModels  map[string]ThinkingCapability
 }
 
 var (
@@ -48,29 +51,20 @@ var (
 	_ ContextWindowProvider = (*chatGPTProvider)(nil)
 )
 
-// chatGPTThinkingLevels are the Codex reasoning-effort tiers selectable through
-// the SIWC Responses endpoint. They match the Codex CLI model_reasoning_effort
-// knob (minimal/low/medium/high/xhigh) and the documented GPT-5.2-Codex effort
-// support (low/medium/high/xhigh). Levels are sent as the Responses reasoning
-// object, the same wire format OpenCode Go Responses models use.
-var chatGPTThinkingLevels = []string{"minimal", "low", "medium", "high", "xhigh"}
-
-// ThinkingCapability reports the Codex reasoning tiers for any ChatGPT model.
-// The SIWC catalog only serves Codex reasoning models, so every non-empty
-// model ID gets the same adjustable selector instead of falling back to
-// "no thinking info". Future slugs keep working without a catalog update.
+// ThinkingCapability uses account catalog metadata when available, then the
+// bundled Codex catalog. Unknown models remain usable without invented tiers.
 func (p *chatGPTProvider) ThinkingCapability(model string) ThinkingCapability {
-	if strings.TrimSpace(model) == "" {
+	p.thinkingMu.RLock()
+	capability, ok := p.thinkingModels[model]
+	p.thinkingMu.RUnlock()
+	if !ok {
+		capability, ok = bundledChatGPTThinking[model]
+	}
+	if !ok {
 		return ThinkingCapability{RequestFormat: ThinkingRequestNone, ReplayFormat: ThinkingReplayNone}
 	}
-	return ThinkingCapability{
-		Supported:     true,
-		Adjustable:    true,
-		Levels:        append([]string(nil), chatGPTThinkingLevels...),
-		Default:       "medium",
-		RequestFormat: ThinkingRequestResponsesReasoning,
-		ReplayFormat:  ThinkingReplayReasoningDetails,
-	}
+	capability.Levels = append([]string(nil), capability.Levels...)
+	return capability
 }
 
 // ContextWindow reports the active ChatGPT model's context capacity, or zero
@@ -200,7 +194,18 @@ func (p *chatGPTProvider) fetchModels(ctx context.Context, creds chatgptoauth.To
 	if err != nil {
 		return nil, err
 	}
-	return decodeChatGPTModels(data)
+	models, err := decodeChatGPTModels(data)
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := decodeChatGPTThinking(data)
+	if err != nil {
+		return nil, err
+	}
+	p.thinkingMu.Lock()
+	p.thinkingModels = metadata
+	p.thinkingMu.Unlock()
+	return models, nil
 }
 
 func decodeChatGPTModels(data []byte) ([]string, error) {
@@ -271,6 +276,10 @@ func splitChatGPTMessages(messages []Message) (string, []Message) {
 // refreshing once on 401 before giving up. An explicit thinking level is sent
 // as the Responses reasoning object; empty preserves the provider default.
 func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
+	level := strings.ToLower(strings.TrimSpace(input.Thinking))
+	if level != "" && !validThinkingLevel(p.ThinkingCapability(input.Model), level) {
+		return Response{}, fmt.Errorf("thinking level %q is not supported by model %q", input.Thinking, input.Model)
+	}
 	creds, err := chatgptoauth.GetValidTokensWithSecrets(ctx, p.client, p.tokensPath, p.registerSecrets)
 	if err != nil {
 		return Response{}, err
