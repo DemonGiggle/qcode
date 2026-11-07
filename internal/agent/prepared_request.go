@@ -201,7 +201,9 @@ func (a *Agent) resolveDynamicOnce() string {
 // goroutine. Durable a.messages are preserved byte-for-byte; only the copy's
 // leading system message gains the ephemeral suffix in existing order:
 // cwd, restored-history reference, learning, dynamic context, work history,
-// question-budget notice, recovery instruction. Tool schemas are captured
+// question-budget notice, recovery instruction. For ChatGPT this suffix is
+// instead sent as a trailing developer message so changing context does not
+// invalidate the durable conversation prefix. Tool schemas are captured
 // once and never reordered for speculative caching gain.
 func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction string) preparedRequest {
 	extra := a.resolveLearningOnce(ctx)
@@ -266,6 +268,17 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 	if recoveryInstruction != "" && len(messages) > 0 && messages[0].Role == "system" {
 		messages[0].Content += "\n\n" + recoveryInstruction
 		recovery = recoveryInstruction
+	}
+	if a.provider != nil && a.provider.Name() == "chatgpt" && len(messages) > 0 && messages[0].Role == "system" {
+		// Keep request-only context after history. ChatGPT lifts the stable
+		// system message into instructions; a developer message preserves
+		// instruction authority and the existing trust wrappers on context.
+		base := a.messages[0].Content
+		suffix := strings.TrimPrefix(messages[0].Content, base)
+		messages[0].Content = base
+		if strings.TrimSpace(suffix) != "" {
+			messages = append(messages, llm.Message{Role: "developer", Content: suffix})
+		}
 	}
 	estimate := estimateTokens(messages) + estimateTokens(toolsCopy)
 	backend := ""

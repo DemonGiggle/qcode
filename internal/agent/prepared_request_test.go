@@ -331,3 +331,37 @@ func TestGoldenRequestPreservesTrustAndReplay(t *testing.T) {
 		}
 	}
 }
+
+func TestChatGPTChangingContextPreservesConversationPrefix(t *testing.T) {
+	p := &captureAgentProvider{name: "chatgpt"}
+	a := newCacheTestAgent(p)
+	a.messages = append(a.messages, llm.Message{Role: "user", Content: "hello"}, llm.Message{Role: "assistant", Content: "working"})
+	before := append([]llm.Message(nil), a.messages...)
+	dynamic := "first status"
+	a.SetRequestContext(func() string { return dynamic })
+	first := a.prepareNormalRequest(context.Background(), "retry once")
+	dynamic = "second status"
+	second := a.prepareNormalRequest(context.Background(), "")
+	for i, prep := range []preparedRequest{first, second} {
+		msgs := prep.Request.Messages
+		if len(msgs) != len(before)+1 || !stablePrefixEqual(msgs[:len(before)], before) {
+			t.Fatalf("conversation prefix changed: %+v", msgs)
+		}
+		tail := msgs[len(before)]
+		if tail.Role != "developer" || !strings.Contains(tail.Content, trust.Wrap("request_context", []string{"first status", "second status"}[i])) {
+			t.Fatalf("missing wrapped developer context: %+v", tail)
+		}
+		if prep.Estimate != estimateTokens(msgs)+estimateTokens(prep.Request.Tools) {
+			t.Fatal("estimate excludes tail")
+		}
+	}
+	if first.PrefixHash == second.PrefixHash {
+		t.Fatal("changing tail must invalidate calibration")
+	}
+	if !strings.Contains(first.Request.Messages[len(before)].Content, "retry once") || strings.Contains(second.Request.Messages[len(before)].Content, "retry once") {
+		t.Fatal("recovery must be request-only")
+	}
+	if !stablePrefixEqual(a.messages, before) {
+		t.Fatal("durable history mutated")
+	}
+}

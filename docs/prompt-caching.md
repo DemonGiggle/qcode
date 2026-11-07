@@ -692,3 +692,25 @@ Separate agents never share an identity, which may reduce cross-session
 reuse and guarantees no hit-rate improvement. Existing automatic provider
 caching remains provider-owned. Key material never appears in trace spans,
 session usage, or UI; persistence stores only the base identity.
+
+## ChatGPT request context refinement
+
+Normal ChatGPT turns keep the durable system instructions and conversation
+history unchanged at the start of the request. Request-only additions (working
+directory, restored-history references, learning, dynamic context, work history,
+question budget and recovery notices) are sent once in a trailing developer
+message. Trust wrappers are preserved, and this message is never persisted to
+conversation history. Other providers retain their existing message layout.
+
+This revises the first-release restriction on moving request-only instructions:
+ChatGPT already sends system content with developer authority via top-level
+`instructions`. The trailing message retains that authority while preventing
+changing context from rewriting the prefix before conversation history. Context
+estimation includes the tail, and changes still invalidate token calibration.
+No additional cache controls, retention settings or routing keys are emitted.
+
+The [official prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)
+explains that reuse requires a matching prefix and recommends stable content
+before changing content. This layout improves eligibility; actual cache reads
+still depend on the model, cache lifetime and server routing. Live SIWC hit-rate
+improvement must be measured with provider-reported usage across real turns.
