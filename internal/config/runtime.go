@@ -197,6 +197,50 @@ func (w *RuntimePreferenceWriter) PersistSelectedSkills(selected, always []strin
 	return w.persistSkills(normalizedSelected, normalizedAlways)
 }
 
+// PersistAllowedAgentModels records the human-curated [[agents.allow_models]]
+// roster in the user config. Entries are normalized (trimmed, validated,
+// deduped, sorted); an empty list clears the roster to the default
+// unrestricted behavior. Thinking levels are never persisted: human input
+// with thinking_level is rejected so main always decides thinking at runtime.
+func (w *RuntimePreferenceWriter) PersistAllowedAgentModels(entries []AllowedAgentModel) error {
+	if w == nil {
+		return errors.New("runtime preference writer is nil")
+	}
+	for _, raw := range entries {
+		if !utf8.ValidString(raw.Provider) || !utf8.ValidString(raw.Model) || !utf8.ValidString(raw.Role) {
+			return errors.New("allowed agent model contains invalid UTF-8")
+		}
+		if strings.TrimSpace(raw.ThinkingLevel) != "" {
+			return errors.New("allowed agent model must not set thinking_level; main decides thinking at runtime")
+		}
+	}
+	normalized := normalizeAllowedAgentModels(entries)
+	// Validate after normalization: normalization drops invalid rows, so any
+	// drop means the caller passed a bad entry. Report it instead of silently
+	// persisting a subset.
+	if len(normalized) != len(entries) {
+		// Find first bad entry for a helpful error. Re-check with same rules.
+		seen := map[string]bool{}
+		for _, raw := range entries {
+			provider := strings.TrimSpace(raw.Provider)
+			model := strings.TrimSpace(raw.Model)
+			role := strings.TrimSpace(strings.ToLower(raw.Role))
+			key := provider + "\x00" + model
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			if provider == "" || model == "" || !validProvider(provider) || !validAgentRole(role) {
+				return fmt.Errorf("invalid allowed agent model %q %q %q (want valid provider, non-empty model, role smart|balanced|cheap)", raw.Provider, raw.Model, raw.Role)
+			}
+		}
+		// Dedupe caused the length difference; that's fine, persist deduped.
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.persistAllowedModels(normalized)
+}
+
 func normalizeSelectedSkillsPreference(selected, always []string) ([]string, []string, error) {
 	for _, raw := range append(append([]string(nil), selected...), always...) {
 		if !utf8.ValidString(raw) {
@@ -928,6 +972,164 @@ func (w *RuntimePreferenceWriter) persistSkills(selected, always []string) error
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
 	return nil
+}
+
+func (w *RuntimePreferenceWriter) persistAllowedModels(entries []AllowedAgentModel) error {
+	if strings.TrimSpace(w.path) == "" {
+		return errors.New("runtime preference path is empty")
+	}
+	path := filepath.Clean(w.path)
+	parent := filepath.Dir(path)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return fmt.Errorf("create user config directory %s: %w", parent, err)
+	}
+	data, mode, exists, err := readRuntimeConfig(path)
+	if err != nil {
+		return err
+	}
+	updated, changed, err := patchAllowedAgentModels(data, entries)
+	if err != nil {
+		return fmt.Errorf("update config %s: %w", path, err)
+	}
+	if !changed {
+		return nil
+	}
+	if !exists {
+		mode = 0o600
+	}
+	if err := writeRuntimeConfigAtomically(path, updated, mode); err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	return nil
+}
+
+// patchAllowedAgentModels rewrites the [[agents.allow_models]] roster while
+// preserving comments and unrelated tables. It removes all existing
+// [[agents.allow_models]] blocks and any inline allow_models key under
+// [agents], then appends the normalized roster. Empty entries clears the
+// roster (no blocks appended).
+func patchAllowedAgentModels(data []byte, entries []AllowedAgentModel) ([]byte, bool, error) {
+	// Validate TOML syntax first so we never corrupt a broken file.
+	if len(data) != 0 {
+		var document map[string]any
+		if err := toml.Unmarshal(data, &document); err != nil {
+			return nil, false, err
+		}
+	}
+	stripped := stripAllowedAgentModels(data)
+	if len(entries) == 0 {
+		if bytes.Equal(stripped, data) {
+			return append([]byte(nil), data...), false, nil
+		}
+		return stripped, true, nil
+	}
+	var buf bytes.Buffer
+	buf.Write(stripped)
+	newline := detectedNewline(stripped)
+	if len(stripped) > 0 && !endsInNewline(stripped) {
+		buf.WriteString(newline)
+	}
+	if len(bytes.TrimSpace(stripped)) > 0 {
+		// Separate from previous content for readability.
+		if !endsWithBlankLine(stripped) {
+			buf.WriteString(newline)
+		}
+	}
+	for _, entry := range entries {
+		buf.WriteString("[[agents.allow_models]]")
+		buf.WriteString(newline)
+		buf.WriteString("provider = ")
+		buf.WriteString(tomlString(entry.Provider))
+		buf.WriteString(newline)
+		buf.WriteString("model = ")
+		buf.WriteString(tomlString(entry.Model))
+		buf.WriteString(newline)
+		buf.WriteString("role = ")
+		buf.WriteString(tomlString(entry.Role))
+		buf.WriteString(newline)
+	}
+	return buf.Bytes(), true, nil
+}
+
+func stripAllowedAgentModels(data []byte) []byte {
+	if len(data) == 0 {
+		return nil
+	}
+	lines := bytes.SplitAfter(data, []byte("\n"))
+	// bytes.SplitAfter keeps trailing empty without newline; handle final line.
+	var out bytes.Buffer
+	inArrayTable := false
+	inAgentsTable := false
+	for _, lineBytes := range lines {
+		trimmed := strings.TrimSpace(string(lineBytes))
+		// Detect table headers ignoring trailing comments for state tracking.
+		header := trimmed
+		if idx := strings.Index(header, "#"); idx >= 0 {
+			header = strings.TrimSpace(header[:idx])
+		}
+		lower := strings.ToLower(header)
+		isArrayAgentsAllow := lower == "[[agents.allow_models]]"
+		isAnyTable := strings.HasPrefix(header, "[") && strings.HasSuffix(header, "]")
+		if isArrayAgentsAllow {
+			inArrayTable = true
+			inAgentsTable = false
+			continue
+		}
+		if isAnyTable {
+			// Leaving array table on any new table header.
+			inArrayTable = false
+			// Track [agents] for inline allow_models = ... cleanup.
+			if lower == "[agents]" {
+				inAgentsTable = true
+			} else {
+				inAgentsTable = false
+			}
+			out.Write(lineBytes)
+			continue
+		}
+		if inArrayTable {
+			// Skip everything until next table header.
+			continue
+		}
+		if inAgentsTable {
+			// Remove inline allow_models key if user hand-wrote it.
+			noComment := trimmed
+			if idx := strings.Index(noComment, "#"); idx >= 0 {
+				noComment = strings.TrimSpace(noComment[:idx])
+			}
+			// Match allow_models = ... with optional quotes.
+			trimmedNoComment := strings.TrimSpace(noComment)
+			if strings.HasPrefix(trimmedNoComment, "allow_models") {
+				rest := strings.TrimSpace(strings.TrimPrefix(trimmedNoComment, "allow_models"))
+				if strings.HasPrefix(rest, "=") {
+					continue
+				}
+			}
+		}
+		out.Write(lineBytes)
+	}
+	// Trim trailing blank lines to a single newline for clean appends, but
+	// preserve empty file as nil.
+	result := out.Bytes()
+	if len(bytes.TrimSpace(result)) == 0 {
+		return nil
+	}
+	return result
+}
+
+func endsWithBlankLine(data []byte) bool {
+	trimmed := bytes.TrimRight(data, "\r\n")
+	if len(trimmed) == len(data) {
+		return false
+	}
+	// ends with newline; check if line before is blank.
+	rest := bytes.TrimRight(trimmed, "\r\n")
+	if len(rest) == len(trimmed) {
+		return false
+	}
+	lastLine := trimmed[len(rest):]
+	// lastLine includes newline chars; blank line means only whitespace.
+	return len(bytes.TrimSpace(lastLine)) == 0 || bytes.HasSuffix(data, []byte("\n\n"))
 }
 
 func readRuntimeConfig(path string) ([]byte, os.FileMode, bool, error) {

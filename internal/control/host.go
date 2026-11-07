@@ -190,6 +190,12 @@ func (h *Host) Close(id string) error              { return h.manager.Close(id) 
 func (h *Host) ClosedIDs() []string                { return h.manager.ClosedIDs() }
 func (h *Host) Reset(id string) error              { return h.manager.Reset(id) }
 func (h *Host) UpdateModel(id, model string) error { return h.manager.UpdateModel(id, model) }
+func (h *Host) SetAllowedAgentModels(entries []agent.AllowedAgentModel) {
+	h.manager.SetAllowedAgentModels(entries)
+}
+func (h *Host) AllowedAgentModels() []agent.AllowedAgentModel {
+	return h.manager.AllowedAgentModels()
+}
 func (h *Host) Configure(id string, update func() error) error {
 	return h.manager.Configure(id, update)
 }

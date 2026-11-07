@@ -13,6 +13,7 @@ import (
 
 	term "qcode/internal/lineedit"
 
+	"qcode/internal/config"
 	"qcode/internal/session"
 )
 
@@ -80,6 +81,9 @@ type runtimePreferenceRecorder struct {
 	selectedAlways   []string
 	skillsCalls      int
 	skillsErr        error
+	allowed          []config.AllowedAgentModel
+	allowedCalls     int
+	allowedErr       error
 }
 
 func (r *runtimePreferenceRecorder) PersistProvider(provider, model, thinking string) error {
@@ -123,6 +127,12 @@ func (r *runtimePreferenceRecorder) PersistSelectedSkills(selected, always []str
 	r.selected = append([]string(nil), selected...)
 	r.selectedAlways = append([]string(nil), always...)
 	return r.skillsErr
+}
+
+func (r *runtimePreferenceRecorder) PersistAllowedAgentModels(entries []config.AllowedAgentModel) error {
+	r.allowedCalls++
+	r.allowed = append([]config.AllowedAgentModel(nil), entries...)
+	return r.allowedErr
 }
 
 func TestInteractiveCommandPersistsFromEveryTab(t *testing.T) {

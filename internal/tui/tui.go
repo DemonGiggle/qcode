@@ -18,6 +18,7 @@ import (
 	"qcode/internal/llm"
 	"qcode/internal/redaction"
 
+	"qcode/internal/config"
 	"qcode/internal/prompt"
 	"qcode/internal/session"
 	"qcode/internal/skills"
@@ -144,6 +145,7 @@ type RuntimePreferenceWriter interface {
 	PersistStatuslineHidden(hidden []string) error
 	PersistTheme(id string) error
 	PersistSelectedSkills(selected, always []string) error
+	PersistAllowedAgentModels(entries []config.AllowedAgentModel) error
 }
 
 type planController interface {

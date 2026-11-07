@@ -50,6 +50,8 @@ func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 			return
 		}
 		u.selectAgentList(ctx)
+	case "allow-models":
+		u.handleAllowModelsCommand(ctx, fields)
 	case "switch":
 		if len(fields) != 3 {
 			u.agentUsage()
@@ -224,7 +226,7 @@ func (u *UI) closeAgent(id string) {
 }
 
 func (u *UI) agentUsage() {
-	u.printSystemMessage(dim + "Usage: /agent [new [model]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]]" + reset)
+	u.printSystemMessage(dim + "Usage: /agent [new [model]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]|allow-models [list|clear]]" + reset)
 }
 
 func (u *UI) activeAgentConfigurable() bool {

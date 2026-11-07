@@ -116,6 +116,7 @@ type AgentManager struct {
 	shutdown            bool
 	stopOnce            sync.Once
 	consultationTimeout time.Duration
+	allowedModels       []AllowedAgentModel
 	work                []session.WorkRecord
 	consultationEvents  []session.ConsultationEvent
 	delegationEvents    []session.DelegationEvent
@@ -1178,6 +1179,8 @@ func (t *managedToolset) ExecuteDetailed(ctx context.Context, call llm.ToolCall)
 		switch call.Name {
 		case "list_agents":
 			return t.listAgents()
+		case "list_allow_agent_models":
+			return t.listAllowedAgentModels(call.Arguments)
 		case "create_agent":
 			return t.createAgent(ctx, call.Arguments)
 		case "delegate_task":
@@ -1245,6 +1248,50 @@ func (t *managedToolset) listAgents() (llm.ToolResult, error) {
 		list[i].Error = truncateUTF8(list[i].Error, 160)
 	}
 	data, _ := json.Marshal(list)
+	return llm.ToolResult{Output: string(data)}, nil
+}
+
+func (t *managedToolset) listAllowedAgentModels(arguments json.RawMessage) (llm.ToolResult, error) {
+	var args struct {
+		Role string `json:"role"`
+	}
+	if len(arguments) != 0 {
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return llm.ToolResult{}, fmt.Errorf("invalid list_allow_agent_models arguments: %w", err)
+		}
+	}
+	roleFilter := strings.ToLower(strings.TrimSpace(args.Role))
+	if roleFilter != "" && roleFilter != "smart" && roleFilter != "balanced" && roleFilter != "cheap" {
+		return llm.ToolResult{}, fmt.Errorf("invalid list_allow_agent_models.role %q (want smart, balanced, or cheap)", args.Role)
+	}
+	parent, ok := t.manager.Agent(t.id)
+	if !ok {
+		return llm.ToolResult{}, fmt.Errorf("unknown agent %q", t.id)
+	}
+	provider := parent.provider.Name()
+	entries := t.manager.allowedForProvider(provider)
+	views := make([]AllowedAgentView, 0, len(entries))
+	for _, entry := range entries {
+		if roleFilter != "" && entry.Role != roleFilter {
+			continue
+		}
+		capability := thinkingCapability(parent.provider, entry.Model)
+		levels := append([]string(nil), capability.Levels...)
+		if levels == nil {
+			levels = []string{}
+		}
+		views = append(views, AllowedAgentView{
+			Provider:        entry.Provider,
+			Model:           entry.Model,
+			Role:            entry.Role,
+			ThinkingLevels:  levels,
+			ThinkingDefault: capability.Default,
+		})
+	}
+	if views == nil {
+		views = []AllowedAgentView{}
+	}
+	data, _ := json.Marshal(views)
 	return llm.ToolResult{Output: string(data)}, nil
 }
 
@@ -1368,6 +1415,7 @@ func managerSchemas() []llm.Tool {
 		{Name: "search_agent_work", Description: prompt.SearchAgentWorkTool, Parameters: object(map[string]any{"query": stringField(prompt.AgentWorkQueryParameter), "agent_id": stringField(prompt.AgentIDParameter), "offset": map[string]any{"type": "integer", "minimum": 0}}, "query")},
 		{Name: "consult_agents", Description: prompt.ConsultAgentsTool, Parameters: object(map[string]any{"requests": map[string]any{"type": "array", "minItems": 1, "maxItems": DefaultMaxAgents - 1, "items": object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter), "prompt": stringField(prompt.AgentPromptParameter)}, "agent_id", "prompt")}}, "requests")},
 		{Name: "list_agents", Description: prompt.ListAgentsTool, Parameters: object(nil)},
+		{Name: "list_allow_agent_models", Description: prompt.ListAllowedAgentModelsTool, Parameters: object(map[string]any{"role": stringField(prompt.AgentRoleParameter)})},
 		{Name: "create_agent", Description: prompt.CreateAgentTool, Parameters: object(map[string]any{"model": stringField(prompt.AgentModelParameter), "task": stringField(prompt.AgentPromptParameter), "cwd": stringField(prompt.WorkingDirectoryParameter), "thinking_level": stringField(prompt.AgentThinkingParameter)})},
 		{Name: "delegate_task", Description: prompt.DelegateTaskTool, Parameters: object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter), "prompt": stringField(prompt.AgentPromptParameter)}, "agent_id", "prompt")},
 		{Name: "close_agent", Description: prompt.CloseAgentTool, Parameters: object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter)}, "agent_id")},

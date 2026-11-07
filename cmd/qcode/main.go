@@ -401,6 +401,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	}
 	host := control.NewHost(context.Background(), agent.DefaultMaxAgents)
 	defer host.Shutdown()
+	host.SetAllowedAgentModels(loadedConfig.NormalizedAllowedAgentModels())
 	ui.SetAgentManager(host)
 	remoteControl := remote.New(ui)
 	defer remoteControl.Stop()
@@ -544,6 +545,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 				return nil, err
 			}
 			restored := control.NewHost(context.Background(), agent.DefaultMaxAgents)
+			restored.SetAllowedAgentModels(loadedConfig.NormalizedAllowedAgentModels())
 			saved := map[string]agent.SavedState{}
 			for _, item := range snap.Agents {
 				var state agent.SavedState

@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -172,6 +173,7 @@ func CheckPaths(paths []string) []Issue {
 		}
 		// Warnings: deprecated shapes that still run.
 		issues = append(issues, deprecationWarnings(path, data, cfg)...)
+		issues = append(issues, allowModelsWarnings(path, cfg)...)
 		layers = append(layers, layer{path: path, cfg: cfg, data: data})
 	}
 	// Merged cross-layer checks (only over valid layers, like load).
@@ -225,6 +227,70 @@ func CheckPaths(paths []string) []Issue {
 		_ = apiKeyPathDirs
 	}
 	return sortIssues(issues)
+}
+
+// allowModelsWarnings reports human-fixable roster issues without failing
+// startup. Empty model, unknown role/provider, and invalid UTF-8 warn;
+// stale thinking_level keys are ignored (main decides thinking).
+func allowModelsWarnings(path string, cfg Config) []Issue {
+	if cfg.Agents.AllowModels == nil {
+		return nil
+	}
+	var out []Issue
+	for i, raw := range cfg.Agents.AllowModels {
+		base := "agents.allow_models"
+		provider := strings.TrimSpace(raw.Provider)
+		model := strings.TrimSpace(raw.Model)
+		role := strings.TrimSpace(raw.Role)
+		if !utf8.ValidString(raw.Provider) || !utf8.ValidString(raw.Model) || !utf8.ValidString(raw.Role) {
+			out = append(out, Issue{
+				Severity: SeverityWarning,
+				File:     path,
+				Key:      base,
+				Message:  "allow_models entry contains invalid UTF-8 (entry ignored)",
+				Fix:      "Use plain UTF-8 for provider, model, and role; see config.toml.example.",
+			})
+			continue
+		}
+		if provider == "" || !validProvider(provider) {
+			out = append(out, Issue{
+				Severity: SeverityWarning,
+				File:     path,
+				Key:      base,
+				Message:  "allow_models entry has unknown or empty provider (entry ignored)",
+				Fix:      "Set provider to one of ollama, openai, opencode-go, chatgpt.",
+			})
+		}
+		if model == "" {
+			out = append(out, Issue{
+				Severity: SeverityWarning,
+				File:     path,
+				Key:      base,
+				Message:  "allow_models entry has empty model (entry ignored)",
+				Fix:      "Set model to a provider model ID, for example \"gpt-5\".",
+			})
+		}
+		if !validAgentRole(strings.ToLower(role)) {
+			out = append(out, Issue{
+				Severity: SeverityWarning,
+				File:     path,
+				Key:      base,
+				Message:  "allow_models entry has unknown role (entry ignored)",
+				Fix:      "Set role to one of smart, balanced, cheap.",
+			})
+		}
+		if strings.TrimSpace(raw.ThinkingLevel) != "" {
+			out = append(out, Issue{
+				Severity: SeverityWarning,
+				File:     path,
+				Key:      base,
+				Message:  "allow_models thinking_level is ignored; main decides thinking at create_agent time",
+				Fix:      "Remove thinking_level from [[agents.allow_models]]; main picks thinking_level from live capability data.",
+			})
+		}
+		_ = i
+	}
+	return out
 }
 
 func sortIssues(issues []Issue) []Issue {
@@ -356,7 +422,7 @@ func deprecationWarnings(path string, data []byte, cfg Config) []Issue {
 func keyFromDecodeError(err error) string {
 	msg := err.Error()
 	// go-toml strict errors mention the key; surface a dotted path when present.
-	for _, key := range []string{"providers", "provider_models", "provider_thinking", "redaction", "learning", "skills", "web_search", "chatgpt"} {
+	for _, key := range []string{"providers", "provider_models", "provider_thinking", "redaction", "learning", "skills", "agents", "web_search", "chatgpt"} {
 		if strings.Contains(msg, key) {
 			return key
 		}
