@@ -46,8 +46,9 @@ Related protocol-sharing facts (verified gateway):
 - `chatgpt` and `opencode-go` Responses models share one streaming parser,
   `parseResponsesStream` (`internal/llm/responses.go`), and one input
   encoder, `responsesInput` (`internal/llm/responses.go`). The subscription
-  contract differs (`chatgpt` sends top-level `instructions` and
-  `store: false`; see Section 4), but the wire format and usage location are
+  contract differs (`chatgpt` sends `store: false` and uses either top-level
+  `instructions` or a leading developer message; see Section 4 and the current
+  cache-boundary policy below), but the wire format and usage location are
   the same.
 - Anthropic-protocol support on `opencode-go` is protocol compatibility only:
   qcode speaks the Anthropic Messages shape to the gateway
@@ -180,9 +181,11 @@ covers any `base_url`). Differences:
   clients (`rejected_by_access_enforcement / no_matching_rule`); the
   supported route is the default. Auth failures (401/403) are retried once
   after a serialized refresh.
-- **Subscription contract (verified gateway):** top-level `instructions`
-  (system messages are lifted out of `input`; the SIWC route rejects system
-  roles), `store: false`, `stream: true`, plain Bearer auth, no
+- **Subscription contract (verified gateway):** durable instructions are normally
+  sent as top-level `instructions`; supported cache-breakpoint models on the
+  official endpoint use a leading developer message instead (see the current
+  cache-boundary policy below). The SIWC route rejects system roles. Requests
+  use `store: false`, `stream: true`, plain Bearer auth, no
   `ChatGPT-Account-Id` on the supported route. Thinking level, when set, is
   sent as the Responses `reasoning` effort object; empty preserves the
   provider default (`medium`).

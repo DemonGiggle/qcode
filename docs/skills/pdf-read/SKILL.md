@@ -18,7 +18,7 @@ Use vision fallback when the question is about layout, chart, figure, table, for
 2. If the question is about prose AND text layer is OK -> use Pattern A / B / C below (existing RAG / map-reduce / long-context).
 3. If the question is about chart / figure / table / formula / layout, OR text is empty / garbled -> use Pattern D vision:
    a. `pdftoppm -png -r 150 -f N -l N doc.pdf /tmp/p`
-   b. `view_image` on `/tmp/p-N.png`, 1-3 pages per turn.
+   b. Before `view_image`, obtain explicit approval if the model provider is external or its location is unknown. Then use `view_image` on `/tmp/p-N.png`, 1-3 pages per turn.
    c. Answer with `[Page N]` citation.
 4. `view_image` returning `Loaded image ...` counts as seen. Otherwise fall back to OCR.
 5. If `poppler` / `mutool` / `pymupdf` render is unavailable, fall back to OCR directly. Do not block.
@@ -91,9 +91,9 @@ If using an LLM with a very large context window (e.g., 100k+ tokens), you may b
 **Pattern D — Vision fallback (few pages):**
 For scanned pages with no text layer, visual questions (`what does Figure 3 show?`, `this table`, `this formula`), or unusable OCR output.
 1. Render locally with `pdftoppm -png -r 150 -f N -l N doc.pdf /tmp/p` (bump to 200 dpi only if vision output is unclear). If `poppler` / `mutool` / `pymupdf` render is unavailable, fall back to OCR directly with a note. Do not block.
-2. Pass 1-3 rendered pages per turn to `view_image` (e.g. `view_image` on `/tmp/p-N.png`) to bound tokens.
+2. `view_image` attaches the rendered image to a model message: with an external model provider, the page is sent to that provider. Obtain explicit user approval before calling it when the provider is external or its location is unknown. If approval is not granted, do not call it; explain the limitation and use a local alternative where possible. When permitted, pass 1-3 rendered pages per turn (e.g. `view_image` on `/tmp/p-N.png`) to bound tokens.
 3. Cite page numbers same as the text path (`[Page N]`).
-4. Render locally, same boundary as above: do not upload the PDF or rendered images to external services unless the user explicitly approves.
+4. Rendering is local, but model viewing may not be. Do not send the PDF or rendered images to external services unless the user explicitly approves.
 
 ### 6. Prompt engineering for document understanding
 

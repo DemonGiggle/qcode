@@ -187,8 +187,10 @@ loopback completes (paste back only for remote browsers).
 Tokens live at `~/.config/qcode/chatgpt-oauth.json` (`[chatgpt] oauth_path`
 overrides) with `0600` owner-only rules, refresh automatically with a 5-minute
 margin, and retry once on 401. Requests send the SIWC contract
-(`instructions`, `store: false`, `stream: true`) with plain Bearer auth and no
-`ChatGPT-Account-Id` header. A `401 rejected_by_access_enforcement /
+(`store: false`, `stream: true`) with plain Bearer auth and no
+`ChatGPT-Account-Id` header. Durable instructions use top-level `instructions`
+except for supported cache-breakpoint models on the official endpoint, where
+they are sent as a leading developer message; see [prompt caching](prompt-caching.md#chatgpt-siwc-cache-boundaries-current-policy). A `401 rejected_by_access_enforcement /
 no_matching_rule` means the request went to the private
 `chatgpt.com/backend-api` route: remove any chatgpt `base_url` override so the
 default `https://api.openai.com/v1` is used, then run `qcode login chatgpt`

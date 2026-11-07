@@ -265,9 +265,11 @@ Startup runs the same check before a real session (`--demo`, `--version`,
 silent. Errors print the same report plus a `qcode config check` tip and fail.
 Warnings print the same report plus the tip, then wait for Enter in an
 interactive terminal so the problem is seen; piped / `--json-events` runs only
-print and continue. A missing `api_key_path` file for the launch provider does
-not block when its key already comes from `--api-key` / `QCODE_API_KEY` /
-`OPENAI_API_KEY`.
+print and continue. For a non-ChatGPT launch provider with a nonempty effective
+API key, startup filters errors for that provider's `api_key_path` (including
+missing, invalid, or unsafe files), regardless of the key's source.
+`qcode config check` still reports them. If the check itself cannot run, startup warns and
+continues; fatal configuration loading errors can stop startup before the check.
 
 ## Lookup order
 
@@ -286,9 +288,11 @@ Other Unix-like systems use the executable-adjacent config, followed by the
 operating system's user configuration directory, `/usr/local/etc/qcode/config.toml`,
 and finally the executable-relative `etc/config.toml` path.
 
-Missing files are ignored. If an existing configuration file cannot be read,
-contains invalid TOML or unknown settings, or fails validation, qcode prints a
-startup warning, skips that file, and continues loading the remaining layers.
+Missing files are ignored. During loading, qcode may warn and skip an unreadable,
+invalid, or unrecognized configuration layer while continuing to load the
+remaining layers. Normal startup then runs the configuration check described
+above, which generally blocks startup on reported errors. Some fatal validation
+errors stop loading before the startup check runs.
 
 ## Precedence
 
