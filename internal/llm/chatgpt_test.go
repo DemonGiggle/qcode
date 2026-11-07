@@ -76,8 +76,13 @@ func TestChatGPTCompleteSendsCodexContract(t *testing.T) {
 	if !strings.HasPrefix(gotURL, "https://api.openai.com/v1/responses") {
 		t.Fatalf("url = %q, want SIWC https://api.openai.com/v1/responses", gotURL)
 	}
-	if body["store"] != false || body["stream"] != true || body["instructions"] != "be brief" {
+	if body["store"] != false || body["stream"] != true {
 		t.Fatalf("codex contract body = %v", body)
+	}
+	items := body["input"].([]any)
+	initial := items[0].(map[string]any)
+	if initial["role"] != "developer" || initial["content"].([]any)[0].(map[string]any)["text"] != "be brief" {
+		t.Fatalf("missing durable instructions: %v", initial)
 	}
 	input, _ := json.Marshal(body["input"])
 	if strings.Contains(string(input), `"system"`) {

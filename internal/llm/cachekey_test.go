@@ -253,7 +253,7 @@ func TestOllamaOmitsKey(t *testing.T) {
 	}
 }
 
-func TestChatGPTRouteOmitsKey(t *testing.T) {
+func TestChatGPTRouteEmitsKey(t *testing.T) {
 	path := writeChatGPTOAuth(t, chatgptoauth.Tokens{AccessToken: "test-access", RefreshToken: "test-refresh", AccountID: "acct-1"})
 	var body map[string]any
 	client := doerFunc(func(r *http.Request) (*http.Response, error) {
@@ -273,7 +273,7 @@ func TestChatGPTRouteOmitsKey(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := body["prompt_cache_key"]; ok {
-		t.Fatal("chatgpt route must not receive prompt_cache_key")
+	if body["prompt_cache_key"] != "stable-key" {
+		t.Fatal("official chatgpt route must receive the session key")
 	}
 }

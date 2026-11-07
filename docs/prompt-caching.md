@@ -707,10 +707,53 @@ ChatGPT already sends system content with developer authority via top-level
 `instructions`. The trailing message retains that authority while preventing
 changing context from rewriting the prefix before conversation history. Context
 estimation includes the tail, and changes still invalidate token calibration.
-No additional cache controls, retention settings or routing keys are emitted.
+The ChatGPT-only cache policy below adds supported routing keys and breakpoints.
 
 The [official prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)
 explains that reuse requires a matching prefix and recommends stable content
 before changing content. This layout improves eligibility; actual cache reads
 still depend on the model, cache lifetime and server routing. Live SIWC hit-rate
 improvement must be measured with provider-reported usage across real turns.
+
+
+## ChatGPT SIWC cache boundaries (current policy)
+
+This section supersedes the historical #81 exclusions of ChatGPT above.
+On the official SIWC endpoint only, ChatGPT now sends the existing session-stable,
+provider/model/purpose-namespaced `prompt_cache_key` when present. Session resume,
+reset, compaction and learning retain their existing identity lifecycle.
+
+For the documented GPT-5.6, GPT-6 and GPT-6.1 families (including hyphenated
+variants/snapshots), ChatGPT also:
+
+- Sends durable instructions as a leading developer input message, with an
+  explicit breakpoint on its final content block. Top-level `instructions`
+  cannot carry a breakpoint.
+- Marks each user-message ending and tool-result ending explicitly, preserving
+  those boundaries on subsequent requests, including image content boundaries.
+- Keeps `prompt_cache_options.mode: implicit`, so automatic lookup boundaries
+  remain available alongside the explicit ones. The server limits cache writes
+  and lookup candidates; a marker is not a guarantee of a write or hit.
+- Leaves transient trailing developer context unmarked and preserves assistant
+  output/reasoning replay without modification.
+
+Older and unknown model families keep their original input/instructions format
+and receive only the key. Custom endpoints and legacy backend-api routes receive
+none of these changes. OpenAI, OpenCode Go, Anthropic and Ollama adapters are
+unchanged. Retention remains the server default, `store:false` and `stream:true`
+remain required, and a cache-field rejection is not automatically retried.
+
+Sources: [SIWC models and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
+establishes the public Responses endpoint and stateless streaming contract;
+[OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+establishes model-specific boundaries, routing keys and the multi-turn tool-result
+pattern. On GPT-5.6 and later, keys are for accounting separation rather than
+necessary routing optimization; the breakpoints address prefix reuse.
+
+Validation is structural and offline: endpoint/model gating, continuation prefix
+stability, images, opaque replay, empty keys and rejection behavior. No live cache
+rate or improvement over Codex has been established. Measure matched real sessions
+with `sum(cached_tokens) / sum(input_tokens)`, separately report cold and repeated
+turns, and retain missing-usage coverage and latency. A 97% OpenCode result on a
+different model/workload is not a directly comparable target. See
+[cachebench](cachebench.md) for synthetic measurement and its limitations.

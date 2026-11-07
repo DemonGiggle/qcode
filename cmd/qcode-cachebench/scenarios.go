@@ -11,9 +11,9 @@ import (
 // before/after comparisons measure cache behavior rather than prompt drift.
 // Approximate sizes are documented in docs/cachebench.md.
 //
-// The prefix is ~2.4k chars; per-turn additions are short (<200 chars) so
-// repeated turns share a long stable prefix.
-const syntheticPrefix = `CACHEBENCH SYNTHETIC FIXTURE (fictional inventory ledger).
+// The expanded fixture provides ample cacheable material; per-turn additions
+// remain short. Exact token counts depend on the selected model.
+const syntheticLedger = `CACHEBENCH SYNTHETIC FIXTURE (fictional inventory ledger).
 Aisle 01 holds brass hinges, cedar planks, and glass vials. Aisle 02 holds
 iron bolts, jute rope, and kerosene lamps. Aisle 03 holds linen sheets,
 maple dowels, and nickel washers. Aisle 04 holds oak beams, paper reams,
@@ -32,6 +32,15 @@ checked; every seventh order is double counted. End of fixture prefix.
 new aisles. Summaries list aisle, item, count, and reorder flag only.
 Fixture version CACHEBENCH-v1. All numbers above are synthetic and fixed.
 `
+
+// Distinct section headings keep this a deterministic synthetic reference.
+var syntheticPrefix = func() string {
+	var b strings.Builder
+	for i := 0; i < 8; i++ {
+		fmt.Fprintf(&b, "Reference section %d\n%s\n", i+1, syntheticLedger)
+	}
+	return b.String()
+}()
 
 const syntheticSummary = `CACHEBENCH compacted history (synthetic): aisles 01-05 tallied; 3 shortages flagged (hinges, rope, lamps); ledger WO-1001..WO-1048 applied.`
 
@@ -161,10 +170,7 @@ func (s scenario) turns(model string) []llm.Request {
 				{Role: "user", Content: "synthetic follow-up t" + itoa(i) + ": " + t.userSuffix},
 			}
 		} else {
-			msgs = append([]llm.Message(nil), history...)
-			if len(msgs) == 0 {
-				msgs = append(msgs, llm.Message{Role: "system", Content: prefix})
-			}
+			msgs = append([]llm.Message{{Role: "system", Content: prefix}}, history...)
 			msgs = append(msgs, llm.Message{Role: "user", Content: "synthetic request t" + itoa(i) + ": " + t.userSuffix})
 		}
 		history = append(history,

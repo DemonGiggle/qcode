@@ -303,8 +303,6 @@ func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText St
 }
 
 func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chatgptoauth.Tokens, onText StreamCallback) (Response, error) {
-	// Cache policy (#81): the SIWC Responses route never emits
-	// prompt_cache_key, even when Request carries a key.
 	instructions, rest := splitChatGPTMessages(input.Messages)
 	body := map[string]any{
 		"model":  input.Model,
@@ -317,6 +315,18 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 	}
 	if strings.TrimSpace(instructions) != "" {
 		body["instructions"] = instructions
+	}
+	if IsOfficialOpenAIEndpoint(p.baseURL) {
+		if input.PromptCacheKey != "" {
+			body["prompt_cache_key"] = input.PromptCacheKey
+		}
+		if chatGPTSupportsCacheBreakpoints(input.Model) {
+			// Instructions need an input content block to expose a reusable
+			// boundary before the changing conversation and request context.
+			delete(body, "instructions")
+			body["input"] = chatGPTCacheInput(instructions, rest)
+			body["prompt_cache_options"] = map[string]any{"mode": "implicit"}
+		}
 	}
 	if len(input.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(input.Tools))

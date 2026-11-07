@@ -50,7 +50,7 @@ canned replays. Sizes:
 
 | Scenario | Turns | Shared prefix | Per-turn addition | Tools |
 | --- | --- | --- | --- | --- |
-| `stable-long-prefix` | 3 | ~1277 chars fixture | short tally request (<60 chars) | 2 fixed |
+| `stable-long-prefix` | 3 | ~10k chars fixture | short tally request (<60 chars) | 2 fixed |
 | `dynamic-early-context` | 3 | same, but turns 1–2 prepend a ~110-char shift line | same | 2 fixed |
 | `changed-tool-schema` | 3 | same stable prefix | same; schema v1 on turn 0, v2 after | 2 (v2 adds optional `detail`) |
 | `compacted-history` | 3 | full history turn 0, 139-char synthetic summary after | same | 2 fixed |
@@ -100,3 +100,28 @@ rejected by reporting failures, not by filtering them.
   monotonic durations, and sanitized error categories. It never contains
   prompts, responses, tool arguments, credentials, user paths, raw payloads,
   or cache identities.
+
+
+## Fixture correction and ChatGPT comparisons
+
+The current fixture contains eight numbered ledger sections (over 1,024 words)
+and preserves its system prefix on every scripted turn. Previously, the fixture
+was only 1,277 characters and the builder accidentally dropped the system message
+after turn zero; early-context controls also failed to insert their changed
+prefix on later turns. Those runs cannot demonstrate cache-control effectiveness.
+Committed historical offline reports remain historical artifacts.
+
+For before/after testing, use this corrected harness and identical fixtures on
+both builds, changing only the ChatGPT adapter. `--variant` is a label, not a switch
+that disables the optimization. Use `--provider chatgpt --model <account-model>`
+with the existing OAuth login and distinct output files, then `--compare` as above.
+Start with the `stable-long-prefix` scenario filter.
+Report both cache reads and writes, usage coverage, failures, and latency. Do not
+compare corrected fixture results against the committed older reports.
+
+This remains scripted replay, not an actual coding session: it does not execute
+tools, incorporate generated answers into later turns, or model the agent's
+request-only context. A real qcode-versus-Codex comparison must also use the same
+model, effort, task, tool schemas, timing and compaction policy, and count cold
+requests rather than selecting only high-hit turns. No live improvement or 97%
+hit rate is claimed by these changes.
