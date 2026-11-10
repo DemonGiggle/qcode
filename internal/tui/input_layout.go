@@ -185,9 +185,9 @@ func (u *UI) paintFixedLocked(direction int) {
 	if todo.expanded && todoLive {
 		historyDirection = 0
 	}
-	matches := matchingSlashCommands(u.inputText)
+	suggestions := slashSuggestions(u.inputText)
 	if u.inputLabel != inputPrompt && u.inputLabel != planInputPrompt && u.inputLabel != skillPlanInputPrompt {
-		matches = nil
+		suggestions = nil
 	}
 	// Preserve two conversation rows when possible, yielding the second to
 	// the queue shortcut on cramped screens. Each visible content region
@@ -210,7 +210,7 @@ func (u *UI) paintFixedLocked(direction int) {
 	}
 	extras := max(0, total-minOutput)
 	hasQueue := len(queueRows) > 0
-	hasSugg := len(matches) > 0
+	hasSugg := len(suggestions) > 0
 	sepsNeeded := 0
 	if hasQueue && hasSugg {
 		sepsNeeded = 2
@@ -227,7 +227,7 @@ func (u *UI) paintFixedLocked(direction int) {
 			queueHeight = min(previewLimit, len(queueRows), extrasForPanels)
 		}
 		if hasSugg {
-			count = min(len(matches), max(0, extrasForPanels-queueHeight))
+			count = min(len(suggestions), max(0, extrasForPanels-queueHeight))
 		}
 		if queue.expanded && queueHeight > 0 {
 			room := max(0, extrasForPanels-count)
@@ -248,7 +248,7 @@ func (u *UI) paintFixedLocked(direction int) {
 			if len(queued) > 0 && extras > 0 {
 				queueHeight = min(previewLimit, len(queueRows), extras)
 			}
-			count = min(len(matches), extras-queueHeight)
+			count = min(len(suggestions), extras-queueHeight)
 			if queue.expanded && queueHeight > 0 {
 				room := extras - count
 				queueHeight = min(1+len(queueRows), room, max(queueHeight, 2*room/3))
@@ -282,7 +282,7 @@ func (u *UI) paintFixedLocked(direction int) {
 				if len(queued) > 0 && withoutExtras > 0 {
 					withoutQueue = min(previewLimit, len(queueRows), withoutExtras)
 				}
-				withoutCount := min(len(matches), withoutExtras-withoutQueue)
+				withoutCount := min(len(suggestions), withoutExtras-withoutQueue)
 				withoutOutput := max(0, withoutTotal-withoutCount-withoutQueue)
 				if withoutOutput >= withoutMin && withoutOutput > outputHeight {
 					sepL = 0
@@ -295,7 +295,7 @@ func (u *UI) paintFixedLocked(direction int) {
 					if queue.expanded && queueHeight > 0 {
 						room := extras - count
 						queueHeight = min(1+len(queueRows), room, max(queueHeight, 2*room/3))
-						count = min(len(matches), extras-queueHeight)
+						count = min(len(suggestions), extras-queueHeight)
 						withoutOutput = max(0, panelEnd-count-queueHeight-outputStart)
 					}
 					outputHeight = withoutOutput
@@ -325,7 +325,7 @@ func (u *UI) paintFixedLocked(direction int) {
 		if len(queued) > 0 && extras > 0 {
 			queueHeight = min(previewLimit, len(queueRows), extras)
 		}
-		count = min(len(matches), extras-queueHeight)
+		count = min(len(suggestions), extras-queueHeight)
 		if queue.expanded && queueHeight > 0 {
 			room := extras - count
 			queueHeight = min(1+len(queueRows), room, max(queueHeight, 2*room/3))
@@ -428,11 +428,18 @@ func (u *UI) paintFixedLocked(direction int) {
 		}
 	}
 	for i := 0; i < count; i++ {
-		text := fmt.Sprintf("  %-8s %s", matches[i].name, matches[i].description)
-		if ColorEnabled(u.out) {
-			text = fmt.Sprintf("  %s%-8s%s %s%s%s", cyan, matches[i].name, reset, dim, matches[i].description, reset)
+		text := fmt.Sprintf("  %-8s %s", suggestions[i].name, suggestions[i].description)
+		if suggestions[i].subcommand {
+			text = fmt.Sprintf("    %s %s", suggestions[i].name, suggestions[i].description)
 		}
-		if i == count-1 && len(matches) > count {
+		if ColorEnabled(u.out) {
+			if suggestions[i].subcommand {
+				text = fmt.Sprintf("    %s%s%s %s%s%s", green, suggestions[i].name, reset, dim, suggestions[i].description, reset)
+			} else {
+				text = fmt.Sprintf("  %s%-8s%s %s%s%s", cyan, suggestions[i].name, reset, dim, suggestions[i].description, reset)
+			}
+		}
+		if i == count-1 && len(suggestions) > count {
 			text += " (type to filter)"
 		}
 		screenRows[panelEnd-queueHeight-sepS-count+i] = truncateDiffLine(text, u.width, u.unicode)

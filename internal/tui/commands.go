@@ -214,6 +214,224 @@ func matchingSlashCommands(line string) []slashCommand {
 	return matches
 }
 
+// slashSubcommandHint describes one completable first-argument token sourced
+// from a slashCommand's arguments field. name is the completion token (first
+// whitespace-separated field, pipe-expanded), usage is the full argument
+// syntax for display, and description explains the subcommand.
+type slashSubcommandHint struct {
+	name        string
+	usage       string
+	description string
+}
+
+// slashSuggestion is a single row for the fixed-input suggestion panel and
+// the legacy popup menu. subcommand distinguishes child rows from command
+// rows so renderers can apply distinct styling.
+type slashSuggestion struct {
+	name        string
+	description string
+	subcommand  bool
+}
+
+func slashSubcommandHints(command slashCommand) []slashSubcommandHint {
+	var hints []slashSubcommandHint
+	seen := make(map[string]struct{})
+	for _, arg := range command.arguments {
+		name := strings.TrimSpace(arg.name)
+		if name == "" {
+			continue
+		}
+		fields := strings.Fields(name)
+		if len(fields) == 0 {
+			continue
+		}
+		first := fields[0]
+		for _, part := range strings.Split(first, "|") {
+			token := strings.TrimSpace(part)
+			if token == "" {
+				continue
+			}
+			lower := strings.ToLower(token)
+			if _, dup := seen[lower]; dup {
+				continue
+			}
+			seen[lower] = struct{}{}
+			hints = append(hints, slashSubcommandHint{
+				name:        token,
+				usage:       name,
+				description: arg.description,
+			})
+		}
+	}
+	return hints
+}
+
+func isExactSubcommandToken(hints []slashSubcommandHint, token string) bool {
+	for _, hint := range hints {
+		if strings.EqualFold(hint.name, token) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchingSlashSubcommands resolves a line to a single parent command and its
+// filtered first-argument hints. It handles "/agent", "/agent ", "/agent n",
+// and "/plan s" forms with a case-insensitive prefix filter on the first arg
+// token. Lines with deeper args (two or more arg tokens, or an exact first
+// token followed by trailing space) pass through with ok=false so callers
+// hide the subcommand menu.
+func matchingSlashSubcommands(line string) ([]slashSubcommandHint, slashCommand, bool) {
+	if !strings.HasPrefix(line, "/") || strings.ContainsAny(line, "\r\n") {
+		return nil, slashCommand{}, false
+	}
+	idx := strings.IndexAny(line, " \t")
+	var cmdToken, rest string
+	hasSpace := idx >= 0
+	if !hasSpace {
+		cmdToken = line
+	} else {
+		cmdToken = line[:idx]
+		rest = line[idx+1:]
+	}
+	if cmdToken == "" || cmdToken == "/" {
+		return nil, slashCommand{}, false
+	}
+	var parent slashCommand
+	found := false
+	if !hasSpace {
+		lower := strings.ToLower(cmdToken)
+		var matches []slashCommand
+		for _, command := range slashCommands {
+			if strings.HasPrefix(strings.ToLower(command.name), lower) {
+				matches = append(matches, command)
+			}
+		}
+		if len(matches) != 1 {
+			return nil, slashCommand{}, false
+		}
+		parent, found = matches[0], true
+	} else {
+		if command, ok := findSlashCommand(cmdToken); ok {
+			parent, found = command, true
+		} else {
+			lower := strings.ToLower(cmdToken)
+			var matches []slashCommand
+			for _, command := range slashCommands {
+				if strings.HasPrefix(strings.ToLower(command.name), lower) {
+					matches = append(matches, command)
+				}
+			}
+			if len(matches) != 1 {
+				return nil, slashCommand{}, false
+			}
+			parent, found = matches[0], true
+		}
+	}
+	if !found || len(parent.arguments) == 0 {
+		return nil, slashCommand{}, false
+	}
+	hints := slashSubcommandHints(parent)
+	if len(hints) == 0 {
+		return nil, slashCommand{}, false
+	}
+	if !hasSpace {
+		return hints, parent, true
+	}
+	trimmedLeft := strings.TrimLeft(rest, " \t")
+	if trimmedLeft == "" {
+		return hints, parent, true
+	}
+	fields := strings.Fields(trimmedLeft)
+	if len(fields) == 0 {
+		return hints, parent, true
+	}
+	if len(fields) >= 2 {
+		return nil, slashCommand{}, false
+	}
+	token := fields[0]
+	if strings.HasSuffix(rest, " ") || strings.HasSuffix(rest, "\t") {
+		if isExactSubcommandToken(hints, token) {
+			return nil, slashCommand{}, false
+		}
+	}
+	lowerToken := strings.ToLower(token)
+	var filtered []slashSubcommandHint
+	for _, hint := range hints {
+		if strings.HasPrefix(strings.ToLower(hint.name), lowerToken) {
+			filtered = append(filtered, hint)
+		}
+	}
+	return filtered, parent, true
+}
+
+// slashSuggestions combines command matches and subcommand hints into panel
+// rows. When the filter yields exactly one command with subcommand context,
+// the parent row comes first followed by filtered subcommand rows.
+func slashSuggestions(line string) []slashSuggestion {
+	commands := matchingSlashCommands(line)
+	if len(commands) == 1 {
+		if hints, parent, ok := matchingSlashSubcommands(line); ok {
+			suggestions := make([]slashSuggestion, 0, 1+len(hints))
+			suggestions = append(suggestions, slashSuggestion{name: parent.name, description: parent.description})
+			for _, hint := range hints {
+				suggestions = append(suggestions, slashSuggestion{name: hint.name, description: hint.description, subcommand: true})
+			}
+			return suggestions
+		}
+		return []slashSuggestion{{name: commands[0].name, description: commands[0].description}}
+	}
+	if len(commands) > 1 {
+		suggestions := make([]slashSuggestion, 0, len(commands))
+		for _, command := range commands {
+			suggestions = append(suggestions, slashSuggestion{name: command.name, description: command.description})
+		}
+		return suggestions
+	}
+	if hints, parent, ok := matchingSlashSubcommands(line); ok {
+		suggestions := make([]slashSuggestion, 0, 1+len(hints))
+		suggestions = append(suggestions, slashSuggestion{name: parent.name, description: parent.description})
+		for _, hint := range hints {
+			suggestions = append(suggestions, slashSuggestion{name: hint.name, description: hint.description, subcommand: true})
+		}
+		return suggestions
+	}
+	return nil
+}
+
+// completeSlashSubcommand completes a single command's first-argument token.
+// "/agent n" + Tab becomes "/agent new ", "/agent" becomes "/agent ", and
+// "/agent " becomes "/agent <first-hint> ". It returns false when the line is
+// not in a single-command subcommand context or when no hints match.
+func completeSlashSubcommand(line string, pos int) (string, int, bool) {
+	if !strings.HasPrefix(line, "/") || strings.ContainsAny(line, "\r\n") {
+		return line, pos, false
+	}
+	if pos < 0 || pos > len(line) {
+		return line, pos, false
+	}
+	prefix := line[:pos]
+	suffix := line[pos:]
+	if strings.TrimSpace(suffix) != "" {
+		return line, pos, false
+	}
+	hints, parent, ok := matchingSlashSubcommands(prefix)
+	if !ok || len(hints) == 0 {
+		return line, pos, false
+	}
+	var newPrefix string
+	if strings.IndexAny(prefix, " \t") < 0 {
+		newPrefix = parent.name + " "
+	} else {
+		newPrefix = parent.name + " " + hints[0].name + " "
+	}
+	newLine := newPrefix + strings.TrimLeft(suffix, " \t")
+	if newLine == line {
+		return line, pos, false
+	}
+	return newLine, len(newPrefix), true
+}
+
 func findSlashCommand(name string) (slashCommand, bool) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if !strings.HasPrefix(name, "/") {
@@ -313,6 +531,67 @@ func (m *slashCommandMenu) update(commands []slashCommand) {
 		_, _ = io.WriteString(m.out, output.String())
 	}
 	m.visible = rows
+}
+
+// updateSubcommands renders a single parent command row on top with its
+// filtered subcommand rows below using distinct indented styling.
+func (m *slashCommandMenu) updateSubcommands(parent slashCommand, hints []slashSubcommandHint) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var output strings.Builder
+	for range m.visible {
+		output.WriteString("\x1b[1A\r\x1b[2K")
+	}
+	rows := 0
+	var parentLine string
+	if m.color {
+		parentLine = fmt.Sprintf("  %s%-8s%s %s%s%s", cyan, parent.name, reset, dim, parent.description, reset)
+	} else {
+		parentLine = fmt.Sprintf("  %-8s %s", parent.name, parent.description)
+	}
+	parentLine = wrapANSI(parentLine, m.width, "            ")
+	rows += strings.Count(parentLine, "\n") + 1
+	output.WriteString(parentLine)
+	output.WriteByte('\n')
+	for _, hint := range hints {
+		var line string
+		if m.color {
+			line = fmt.Sprintf("    %s%s%s %s%s%s", green, hint.name, reset, dim, hint.description, reset)
+		} else {
+			line = fmt.Sprintf("    %s %s", hint.name, hint.description)
+		}
+		line = wrapANSI(line, m.width, "            ")
+		rows += strings.Count(line, "\n") + 1
+		output.WriteString(line)
+		output.WriteByte('\n')
+	}
+	if output.Len() > 0 {
+		_, _ = io.WriteString(m.out, output.String())
+	}
+	m.visible = rows
+}
+
+// updateForLine refreshes the popup for any slash input, showing subcommand
+// rows when the filter yields exactly one command with subcommand context.
+func (m *slashCommandMenu) updateForLine(line string) {
+	commands := matchingSlashCommands(line)
+	if len(commands) == 1 {
+		if hints, parent, ok := matchingSlashSubcommands(line); ok {
+			m.updateSubcommands(parent, hints)
+			return
+		}
+		m.update(commands)
+		return
+	}
+	if len(commands) > 1 {
+		m.update(commands)
+		return
+	}
+	if hints, parent, ok := matchingSlashSubcommands(line); ok {
+		m.updateSubcommands(parent, hints)
+		return
+	}
+	m.update(nil)
 }
 
 // dismiss removes menu rows after ReadLine has advanced below the submitted

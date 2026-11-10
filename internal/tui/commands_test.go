@@ -819,6 +819,219 @@ func TestSlashCommandCompletion(t *testing.T) {
 	}
 }
 
+func TestMatchingSlashSubcommands(t *testing.T) {
+	hintNames := func(hints []slashSubcommandHint) []string {
+		got := make([]string, len(hints))
+		for i, hint := range hints {
+			got[i] = hint.name
+		}
+		return got
+	}
+	join := func(names []string) string { return strings.Join(names, ",") }
+
+	hints, parent, ok := matchingSlashSubcommands("/agent")
+	if !ok || parent.name != "/agent" {
+		t.Fatalf("/agent parent = %q, ok=%v", parent.name, ok)
+	}
+	if got, want := join(hintNames(hints)), "new,list,switch,rename,cancel,close,allow-models"; got != want {
+		t.Fatalf("/agent hints = %q, want %q", got, want)
+	}
+
+	hints, parent, ok = matchingSlashSubcommands("/agent ")
+	if !ok || parent.name != "/agent" || len(hints) != 7 {
+		t.Fatalf("/agent blank hints = %v, parent=%q, ok=%v", hintNames(hints), parent.name, ok)
+	}
+
+	hints, _, ok = matchingSlashSubcommands("/agent n")
+	if !ok || join(hintNames(hints)) != "new" {
+		t.Fatalf("/agent n hints = %v, ok=%v", hintNames(hints), ok)
+	}
+
+	hints, _, ok = matchingSlashSubcommands("/agent N")
+	if !ok || join(hintNames(hints)) != "new" {
+		t.Fatalf("/agent N hints = %v, ok=%v", hintNames(hints), ok)
+	}
+
+	hints, parent, ok = matchingSlashSubcommands("/plan s")
+	if !ok || parent.name != "/plan" || join(hintNames(hints)) != "show" {
+		t.Fatalf("/plan s = %v, parent=%q, ok=%v", hintNames(hints), parent.name, ok)
+	}
+
+	hints, _, ok = matchingSlashSubcommands("/plan ")
+	if !ok || join(hintNames(hints)) != "off,show,act" {
+		t.Fatalf("/plan blank = %v, ok=%v", hintNames(hints), ok)
+	}
+
+	hints, _, ok = matchingSlashSubcommands("/compact")
+	if !ok || join(hintNames(hints)) != "show" {
+		t.Fatalf("/compact hints = %v, ok=%v", hintNames(hints), ok)
+	}
+
+	hints, _, ok = matchingSlashSubcommands("/export ")
+	if !ok || join(hintNames(hints)) != "pretty,raw" {
+		t.Fatalf("/export hints = %v, ok=%v", hintNames(hints), ok)
+	}
+
+	hints, _, ok = matchingSlashSubcommands("/interactive o")
+	if !ok || join(hintNames(hints)) != "on,off" {
+		t.Fatalf("/interactive o = %v, ok=%v", hintNames(hints), ok)
+	}
+
+	hints, _, ok = matchingSlashSubcommands("/interactive of")
+	if !ok || join(hintNames(hints)) != "off" {
+		t.Fatalf("/interactive of = %v, ok=%v", hintNames(hints), ok)
+	}
+
+	if _, _, ok = matchingSlashSubcommands("/agent new foo"); ok {
+		t.Fatalf("/agent new foo should passthrough deeper args")
+	}
+	if _, _, ok = matchingSlashSubcommands("/agent new "); ok {
+		t.Fatalf("/agent new with trailing space should passthrough")
+	}
+	if _, _, ok = matchingSlashSubcommands("/clear"); ok {
+		t.Fatalf("/clear has no arguments and should not match subcommands")
+	}
+	if _, _, ok = matchingSlashSubcommands("/"); ok {
+		t.Fatalf("/ alone should not match subcommands")
+	}
+	if _, _, ok = matchingSlashSubcommands("/unknown"); ok {
+		t.Fatalf("/unknown should not match subcommands")
+	}
+	if _, _, ok = matchingSlashSubcommands("/s"); ok {
+		t.Fatalf("/s matches multiple commands and should not match subcommands")
+	}
+	hints, parent, ok = matchingSlashSubcommands("/a")
+	if !ok || parent.name != "/agent" || len(hints) != 7 {
+		t.Fatalf("/a prefix-unique = %v, parent=%q, ok=%v", hintNames(hints), parent.name, ok)
+	}
+}
+
+func TestSlashSubcommandMenuRendering(t *testing.T) {
+	var output bytes.Buffer
+	menu := slashCommandMenu{out: &output}
+	hints, parent, ok := matchingSlashSubcommands("/agent n")
+	if !ok {
+		t.Fatal("matchingSlashSubcommands(/agent n) failed")
+	}
+	menu.updateSubcommands(parent, hints)
+	got := output.String()
+	if !strings.Contains(got, "/agent") || !strings.Contains(got, "new") {
+		t.Fatalf("subcommand menu = %q, want parent and hint", got)
+	}
+	if !strings.Contains(got, "    new") {
+		t.Fatalf("subcommand row lacks distinct indent: %q", got)
+	}
+	if menu.visible != 2 {
+		t.Fatalf("visible = %d, want parent plus one hint", menu.visible)
+	}
+
+	output.Reset()
+	parentAgent, _ := findSlashCommand("/agent")
+	allHints := slashSubcommandHints(parentAgent)
+	menu.updateSubcommands(parentAgent, allHints)
+	got = output.String()
+	for _, want := range []string{"new", "list", "switch", "rename", "cancel", "close", "allow-models"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("full agent menu lacks %q: %q", want, got)
+		}
+	}
+
+	var lineOutput bytes.Buffer
+	lineMenu := slashCommandMenu{out: &lineOutput}
+	lineMenu.updateForLine("/plan s")
+	if got := lineOutput.String(); !strings.Contains(got, "/plan") || !strings.Contains(got, "show") || strings.Contains(got, "off") {
+		t.Fatalf("updateForLine(/plan s) = %q, want parent plus filtered show", got)
+	}
+}
+
+func TestSlashSuggestionsPanel(t *testing.T) {
+	suggestions := slashSuggestions("/agent n")
+	if len(suggestions) != 2 || suggestions[0].name != "/agent" || suggestions[0].subcommand {
+		t.Fatalf("/agent n suggestions = %+v", suggestions)
+	}
+	if suggestions[1].name != "new" || !suggestions[1].subcommand {
+		t.Fatalf("/agent n hint row = %+v", suggestions)
+	}
+
+	suggestions = slashSuggestions("/s")
+	if len(suggestions) != 3 {
+		t.Fatalf("/s suggestions = %+v, want 3 command rows", suggestions)
+	}
+	for _, suggestion := range suggestions {
+		if suggestion.subcommand {
+			t.Fatalf("/s should not include subcommands: %+v", suggestions)
+		}
+	}
+
+	suggestions = slashSuggestions("/agent new foo")
+	if len(suggestions) != 0 {
+		t.Fatalf("deeper args should hide suggestions: %+v", suggestions)
+	}
+
+	suggestions = slashSuggestions("/plan ")
+	if len(suggestions) != 4 || suggestions[0].name != "/plan" {
+		t.Fatalf("/plan blank suggestions = %+v", suggestions)
+	}
+}
+
+func TestSlashTabCompletionSubcommand(t *testing.T) {
+	var output bytes.Buffer
+	u := UI{commandMenu: slashCommandMenu{out: &output}}
+
+	line, pos, ok := u.completeSlashCommand("/agent n", len("/agent n"), '\t')
+	if !ok || line != "/agent new " || pos != len("/agent new ") {
+		t.Fatalf("/agent n tab = %q, %d, %v", line, pos, ok)
+	}
+
+	output.Reset()
+	u = UI{commandMenu: slashCommandMenu{out: &output}}
+	line, pos, ok = u.completeSlashCommand("/plan s", len("/plan s"), '\t')
+	if !ok || line != "/plan show " || pos != len("/plan show ") {
+		t.Fatalf("/plan s tab = %q, %d, %v", line, pos, ok)
+	}
+
+	output.Reset()
+	u = UI{commandMenu: slashCommandMenu{out: &output}}
+	line, pos, ok = u.completeSlashCommand("/agent", len("/agent"), '\t')
+	if !ok || line != "/agent " {
+		t.Fatalf("/agent tab = %q, %d, %v", line, pos, ok)
+	}
+	if got := output.String(); !strings.Contains(got, "/agent") || !strings.Contains(got, "new") {
+		t.Fatalf("/agent tab menu = %q, want subcommands", got)
+	}
+
+	output.Reset()
+	u = UI{commandMenu: slashCommandMenu{out: &output}}
+	line, pos, ok = u.completeSlashCommand("/agent ", len("/agent "), '\t')
+	if !ok || line != "/agent new " {
+		t.Fatalf("/agent blank tab = %q, %d, %v", line, pos, ok)
+	}
+
+	output.Reset()
+	u = UI{commandMenu: slashCommandMenu{out: &output}}
+	line, pos, ok = u.completeSlashCommand("/s", len("/s"), '\t')
+	if !ok || line != "/skill" {
+		t.Fatalf("/s tab should complete first command = %q, %d, %v", line, pos, ok)
+	}
+
+	output.Reset()
+	u = UI{commandMenu: slashCommandMenu{out: &output}}
+	typed, typedPos, ok := u.completeSlashCommand("/agent", len("/agent"), ' ')
+	if !ok || typed != "/agent " {
+		t.Fatalf("typing space = %q, %d, %v", typed, typedPos, ok)
+	}
+	if got := output.String(); !strings.Contains(got, "new") {
+		t.Fatalf("typing space menu = %q, want subcommands", got)
+	}
+
+	output.Reset()
+	u = UI{commandMenu: slashCommandMenu{out: &output}}
+	_, _, ok = u.completeSlashCommand("/agent new foo", len("/agent new foo"), '\t')
+	if ok {
+		t.Fatalf("deeper args tab should not complete")
+	}
+}
+
 func TestSlashCommandMenuCountsWrappedRows(t *testing.T) {
 	var output bytes.Buffer
 	menu := slashCommandMenu{out: &output, width: 24}

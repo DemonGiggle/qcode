@@ -1982,6 +1982,10 @@ func formatCompletedMessage(duration time.Duration, completedAt time.Time) strin
 func (u *UI) completeSlashCommand(line string, pos int, key rune) (string, int, bool) {
 	if u.fixedInput {
 		if key == '\t' {
+			if completed, completedPos, ok := completeSlashSubcommand(line, pos); ok {
+				u.rememberDraft(completed)
+				return completed, completedPos, true
+			}
 			matches := matchingSlashCommands(line)
 			if len(matches) > 0 {
 				return matches[0].name, len(matches[0].name), true
@@ -1990,13 +1994,18 @@ func (u *UI) completeSlashCommand(line string, pos int, key rune) (string, int, 
 		return line, pos, false
 	}
 	if key == '\t' {
+		if completed, completedPos, ok := completeSlashSubcommand(line, pos); ok {
+			u.commandMenu.updateForLine(completed)
+			u.rememberDraft(completed)
+			return completed, completedPos, true
+		}
 		matches := matchingSlashCommands(line)
 		if len(matches) == 0 {
-			u.commandMenu.update(nil)
+			u.commandMenu.updateForLine(line)
 			return line, pos, false
 		}
 		completed := matches[0].name
-		u.commandMenu.update(matchingSlashCommands(completed))
+		u.commandMenu.updateForLine(completed)
 		u.rememberDraft(completed)
 		return completed, len(completed), true
 	}
@@ -2005,7 +2014,7 @@ func (u *UI) completeSlashCommand(line string, pos int, key rune) (string, int, 
 	}
 	inserted := string(key)
 	newLine := line[:pos] + inserted + line[pos:]
-	u.commandMenu.update(matchingSlashCommands(newLine))
+	u.commandMenu.updateForLine(newLine)
 	u.rememberDraft(newLine)
 	return newLine, pos + len(inserted), true
 }
