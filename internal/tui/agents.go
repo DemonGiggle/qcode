@@ -226,7 +226,7 @@ func (u *UI) closeAgent(id string) {
 }
 
 func (u *UI) agentUsage() {
-	u.printSystemMessage(dim + "Usage: /agent [new [model]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]|allow-models [list|clear]]" + reset)
+	u.printSystemMessage(dim + "Usage: /agent [new [model]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]|allow-models [list [provider]|clear [provider|--all]]]" + reset)
 }
 
 func (u *UI) activeAgentConfigurable() bool {

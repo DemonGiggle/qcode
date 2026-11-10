@@ -190,32 +190,41 @@ model = "gpt-4.1-mini"
 role = "cheap"
 ```
 
-`role` is `smart` (hard, reasoning-heavy work), `balanced` (routine default),
-or `cheap` (mechanical, trivial work). The provider qualifies the model
-because children inherit the parent's provider and endpoint; only same-provider
-entries are visible to `list_allow_agent_models`. Thinking is never stored:
-a `thinking_level` key still decodes for compatibility but is ignored, and
-`main` picks `thinking_level` at `create_agent` time from live capability data
-(`thinking_levels` ordered low to high plus `thinking_default`).
+`role` is `smart` (hard reasoning), `balanced` (routine work), or `cheap`
+(mechanical work). Entries may mix providers; identity is the provider/model pair.
+Main calls `list_allow_agent_models` to see the complete roster and each backend's
+thinking capabilities and availability, then passes `provider` and `model` to
+`create_agent`. Thinking levels are selected at runtime and never persisted here.
+Legacy `thinking_level` keys decode but are ignored.
 
-Empty (missing key or zero entries) means no restriction: `create_agent`
-behaves as before. Non-empty is soft guidance, never a hard block:
-`main` calls `list_allow_agent_models` and picks by hardness
-(hard->`smart` with the high end, routine->`balanced` with the default or mid,
-trivial->`cheap` with a low level or omitted, which uses the provider default).
+A nonempty roster restricts main-created children to its listed pairs. An empty
+roster uses main's current provider and model. If no curated choice is usable,
+main reports the setup or discovery error instead of falling back. Human-created
+tabs and existing agents are unaffected. Same-provider children inherit main's
+endpoint; other providers use their own connection profile and credentials.
 
-Entries merge with override semantics: a higher-priority layer with a non-nil
-list (including an explicit `[]`) replaces lower layers, so an explicit empty
-list clears the roster. At load time entries are trimmed, roles lowercased,
-deduped by provider+model (last wins), sorted deterministically, and invalid
-rows (empty model, unknown provider, unknown role, invalid UTF-8) are dropped
-with a `qcode config check` warning; startup itself stays tolerant. Manage the
-roster with `/agent allow-models` (type to filter, Space cycles
-`--`->`smart`->`balanced`->`cheap`->`--`, Enter saves); `/agent allow-models
-list` prints the current provider roster and `/agent allow-models clear`
-empties only that provider, preserving other providers. Saving from `main`
-rewrites `[[agents.allow_models]]` atomically, preserves comments and unrelated
-tables, and creates a new user file with mode `0600`.
+Higher-priority lists replace lower-priority lists. An explicit empty override is:
+
+```toml
+[agents]
+allow_models = []
+```
+
+Entries are trimmed, roles lowercased, deduplicated by provider/model (last wins),
+and sorted. Invalid rows are ignored with `qcode config check` warnings.
+
+`/agent allow-models` opens a provider list with selected counts and setup hints.
+Enter edits a provider; type filters models, Space cycles off/smart/balanced/cheap,
+and Enter saves that provider and returns. Esc discards the current edit; earlier
+saves remain. Saved models absent from discovery remain editable and marked not
+listed. Discovery errors preserve saved selections.
+
+`/agent allow-models list [provider]` shows all providers by default.
+`/agent allow-models clear [provider]` clears the current provider by default;
+`clear --all` clears the complete roster. Main-tab saves persist atomically to
+the user config while preserving comments and unrelated tables. Empty saves
+write an explicit empty list so lower-priority selections do not reappear.
+Worker-tab edits remain session-only; persistence failures are reported.
 
 ## Provider connection profiles
 

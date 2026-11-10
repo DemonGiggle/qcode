@@ -14,11 +14,13 @@ type AllowedAgentModel = config.AllowedAgentModel
 
 // AllowedAgentView is the tool-facing row enriched with live thinking data.
 type AllowedAgentView struct {
-	Provider        string   `json:"provider"`
-	Model           string   `json:"model"`
-	Role            string   `json:"role"`
-	ThinkingLevels  []string `json:"thinking_levels"`
-	ThinkingDefault string   `json:"thinking_default"`
+	Available         bool     `json:"available"`
+	UnavailableReason string   `json:"unavailable_reason,omitempty"`
+	Provider          string   `json:"provider"`
+	Model             string   `json:"model"`
+	Role              string   `json:"role"`
+	ThinkingLevels    []string `json:"thinking_levels"`
+	ThinkingDefault   string   `json:"thinking_default"`
 }
 
 func normalizeAllowedRole(role string) string {
@@ -68,7 +70,7 @@ func normalizeAllowedModels(entries []AllowedAgentModel) []AllowedAgentModel {
 }
 
 // SetAllowedAgentModels replaces the in-memory roster used by
-// list_allow_agent_models. Empty clears to the default unrestricted behavior.
+// list_allow_agent_models. Empty makes children use main's current provider/model.
 func (m *AgentManager) SetAllowedAgentModels(entries []AllowedAgentModel) {
 	normalized := normalizeAllowedModels(entries)
 	m.mu.Lock()
@@ -91,21 +93,6 @@ func (m *AgentManager) AllowedAgentModels() []AllowedAgentModel {
 	}
 	out := append([]AllowedAgentModel(nil), m.allowedModels...)
 	if len(out) == 0 {
-		return []AllowedAgentModel{}
-	}
-	return out
-}
-
-func (m *AgentManager) allowedForProvider(provider string) []AllowedAgentModel {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var out []AllowedAgentModel
-	for _, entry := range m.allowedModels {
-		if entry.Provider == provider {
-			out = append(out, entry)
-		}
-	}
-	if out == nil {
 		return []AllowedAgentModel{}
 	}
 	return out

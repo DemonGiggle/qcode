@@ -130,8 +130,8 @@ func TestPersistAllowedAgentModelsRoundTrip(t *testing.T) {
 		t.Fatalf("clear: %v", err)
 	}
 	data, _ = os.ReadFile(path)
-	if strings.Contains(string(data), "allow_models") {
-		t.Fatalf("clear must remove roster: %q", string(data))
+	if !strings.Contains(string(data), "allow_models = []") {
+		t.Fatalf("clear must persist explicit empty roster: %q", string(data))
 	}
 	// Thinking must be rejected.
 	if err := w.PersistAllowedAgentModels([]AllowedAgentModel{{Provider: "openai", Model: "m", Role: "smart", ThinkingLevel: "high"}}); err == nil {
@@ -140,5 +140,24 @@ func TestPersistAllowedAgentModelsRoundTrip(t *testing.T) {
 	// Invalid role must fail, not silently persist subset.
 	if err := w.PersistAllowedAgentModels([]AllowedAgentModel{{Provider: "openai", Model: "m", Role: "genius"}}); err == nil {
 		t.Fatal("persist with bad role must fail")
+	}
+}
+
+func TestClearAllowedModelsOverridesLowerLayer(t *testing.T) {
+	data, _, err := patchAllowedAgentModels([]byte("# keep\n[agents]\n# roster\n[other]\nvalue = 3\n"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := decodeConfig(data, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	low := Config{Agents: Agents{AllowModels: []AllowedAgentModel{{Provider: "openai", Model: "old", Role: "cheap"}}}}
+	mergeAllowedAgentModels(&low.Agents, cleared.Agents)
+	if low.Agents.AllowModels == nil || len(low.Agents.AllowModels) != 0 {
+		t.Fatalf("lower roster resurrected: %+v", low.Agents)
+	}
+	if !strings.Contains(string(data), "# keep") || !strings.Contains(string(data), "value = 3") {
+		t.Fatalf("lost unrelated content: %s", data)
 	}
 }

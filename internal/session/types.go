@@ -57,6 +57,7 @@ const (
 )
 
 type Summary struct {
+	Provider     string    `json:"provider,omitempty"`
 	Cwd          string    `json:"cwd,omitempty"`
 	ActiveTaskID string    `json:"active_task_id,omitempty"`
 	Progress     *Progress `json:"progress,omitempty"`
@@ -176,14 +177,14 @@ type ConsultationEvent struct {
 }
 
 type DelegationEvent struct {
-	Sequence  uint64        `json:"sequence"`
-	AgentID   string        `json:"agent_id"`
-	RequestID string        `json:"request_id,omitempty"`
-	CallbackID string       `json:"callback_id,omitempty"`
-	Status    string        `json:"status"`
-	Error     string        `json:"error,omitempty"`
-	Time      time.Time     `json:"time"`
-	Elapsed   time.Duration `json:"elapsed_ns"`
+	Sequence   uint64        `json:"sequence"`
+	AgentID    string        `json:"agent_id"`
+	RequestID  string        `json:"request_id,omitempty"`
+	CallbackID string        `json:"callback_id,omitempty"`
+	Status     string        `json:"status"`
+	Error      string        `json:"error,omitempty"`
+	Time       time.Time     `json:"time"`
+	Elapsed    time.Duration `json:"elapsed_ns"`
 }
 
 type WorkHistory struct {

@@ -27,8 +27,8 @@ type SavedToolCall struct {
 }
 
 type SavedState struct {
-	ArtifactVersion                                 uint64
-	ProviderSession                                 string
+	ArtifactVersion uint64
+	ProviderSession string
 	// CacheSessionID is the agent-owned random session identity for
 	// prompt_cache_key namespacing (#81). Only the base identity is
 	// persisted; transmitted keys are namespaced digests recomputed per
@@ -461,6 +461,7 @@ func (m *AgentManager) RestoreAgents(saved []session.SavedAgent, nextID int) err
 			return err
 		}
 		s.summary = item.Summary
+		s.summary.Provider = s.runner.provider.Name()
 		s.summary.Cwd = s.runner.WorkingDirectory()
 		s.summary.LastOutcome, _ = trust.UnwrapRestored("assistant", s.summary.LastOutcome)
 		s.latestPrompt = item.LatestPrompt

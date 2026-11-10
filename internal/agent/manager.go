@@ -111,6 +111,7 @@ type AgentManager struct {
 	resultOrder         []string
 	factory             SessionFactory
 	providerFactory     ProviderSessionFactory
+	providerResolver    ProviderResolver
 	events              chan ManagerEvent
 	wg                  sync.WaitGroup
 	shutdown            bool
@@ -189,7 +190,7 @@ func (m *AgentManager) CreateInheritedAt(ctx context.Context, parentID, model, c
 // and directory before it becomes available for task submission. Empty model
 // inherits the caller's model. Empty thinking uses the provider default.
 // Empty cwd inherits the caller's.
-func (m *AgentManager) CreateInheritedWithThinking(ctx context.Context, parentID, model, thinking, cwd string) (AgentSummary, error) {
+func (m *AgentManager) CreateInheritedWithThinking(ctx context.Context, parentID, model, thinking, cwd string, selected ...CreationBackend) (AgentSummary, error) {
 	parent, ok := m.Agent(parentID)
 	if !ok {
 		return AgentSummary{}, fmt.Errorf("unknown agent %q", parentID)
@@ -208,6 +209,9 @@ func (m *AgentManager) CreateInheritedWithThinking(ctx context.Context, parentID
 		backend = []CreationBackend{{Provider: parent.provider.Name(), Endpoint: parent.endpoint}}
 	}
 	m.mu.RUnlock()
+	if len(selected) > 0 {
+		backend = selected
+	}
 	if cwd == "" {
 		cwd = parent.WorkingDirectory()
 	}
@@ -293,7 +297,7 @@ func (m *AgentManager) createPrepared(id, name, model string, main bool, prepare
 	runner.SetActivityRecorder(func(event session.WorkActivity) { m.RecordActivity(id, event) })
 	runner.directoryRecorder = func(cwd string) { m.directoryChanged(id, cwd) }
 	runner.progressRecorder = func(progress *session.Progress) { m.setProgress(id, progress) }
-	summary := AgentSummary{ID: id, Name: name, Model: model, Status: StatusIdle, Cwd: runner.WorkingDirectory()}
+	summary := AgentSummary{Provider: runner.provider.Name(), ID: id, Name: name, Model: model, Status: StatusIdle, Cwd: runner.WorkingDirectory()}
 	m.mu.Lock()
 	if m.shutdown {
 		m.mu.Unlock()
@@ -939,7 +943,6 @@ func (m *AgentManager) emitLocked(summary AgentSummary, duration time.Duration) 
 	}
 }
 
-
 // DelegationEvents returns durable sub-agent completion callbacks after a cursor.
 // Consumers replay the log instead of relying on the buffered event channel.
 func (m *AgentManager) DelegationEvents(after uint64) []session.DelegationEvent {
@@ -1180,7 +1183,7 @@ func (t *managedToolset) ExecuteDetailed(ctx context.Context, call llm.ToolCall)
 		case "list_agents":
 			return t.listAgents()
 		case "list_allow_agent_models":
-			return t.listAllowedAgentModels(call.Arguments)
+			return t.listAllowedAgentModels(ctx, call.Arguments)
 		case "create_agent":
 			return t.createAgent(ctx, call.Arguments)
 		case "delegate_task":
@@ -1251,7 +1254,7 @@ func (t *managedToolset) listAgents() (llm.ToolResult, error) {
 	return llm.ToolResult{Output: string(data)}, nil
 }
 
-func (t *managedToolset) listAllowedAgentModels(arguments json.RawMessage) (llm.ToolResult, error) {
+func (t *managedToolset) listAllowedAgentModels(ctx context.Context, arguments json.RawMessage) (llm.ToolResult, error) {
 	var args struct {
 		Role string `json:"role"`
 	}
@@ -1268,25 +1271,51 @@ func (t *managedToolset) listAllowedAgentModels(arguments json.RawMessage) (llm.
 	if !ok {
 		return llm.ToolResult{}, fmt.Errorf("unknown agent %q", t.id)
 	}
-	provider := parent.provider.Name()
-	entries := t.manager.allowedForProvider(provider)
+	entries := t.manager.AllowedAgentModels()
 	views := make([]AllowedAgentView, 0, len(entries))
+	type resolved struct {
+		p   llm.Provider
+		err error
+	}
+	backends := map[string]resolved{}
 	for _, entry := range entries {
 		if roleFilter != "" && entry.Role != roleFilter {
 			continue
 		}
-		capability := thinkingCapability(parent.provider, entry.Model)
-		levels := append([]string(nil), capability.Levels...)
-		if levels == nil {
-			levels = []string{}
+		r, exists := backends[entry.Provider]
+		if !exists {
+			if entry.Provider == parent.provider.Name() {
+				r.p = parent.provider
+			} else {
+				t.manager.mu.RLock()
+				resolver := t.manager.providerResolver
+				t.manager.mu.RUnlock()
+				if resolver == nil {
+					r.err = fmt.Errorf("provider preparation unavailable")
+				} else {
+					lookup, cancel := context.WithTimeout(ctx, 30*time.Second)
+					r.p, _, r.err = resolver(lookup, entry.Provider, nil)
+					cancel()
+				}
+			}
+			if r.err == nil && r.p != nil {
+				if lister, ok := r.p.(llm.ModelLister); ok {
+					lookup, cancel := context.WithTimeout(ctx, 30*time.Second)
+					_, r.err = lister.Models(lookup)
+					cancel()
+				}
+			}
+			backends[entry.Provider] = r
 		}
-		views = append(views, AllowedAgentView{
-			Provider:        entry.Provider,
-			Model:           entry.Model,
-			Role:            entry.Role,
-			ThinkingLevels:  levels,
-			ThinkingDefault: capability.Default,
-		})
+		view := AllowedAgentView{Provider: entry.Provider, Model: entry.Model, Role: entry.Role, ThinkingLevels: []string{}, Available: r.err == nil && r.p != nil}
+		if view.Available {
+			c := thinkingCapability(r.p, entry.Model)
+			view.ThinkingLevels = append(view.ThinkingLevels, c.Levels...)
+			view.ThinkingDefault = c.Default
+		} else if r.err != nil {
+			view.UnavailableReason = r.err.Error()
+		}
+		views = append(views, view)
 	}
 	if views == nil {
 		views = []AllowedAgentView{}
@@ -1297,6 +1326,7 @@ func (t *managedToolset) listAllowedAgentModels(arguments json.RawMessage) (llm.
 
 func (t *managedToolset) createAgent(ctx context.Context, arguments json.RawMessage) (llm.ToolResult, error) {
 	var args struct {
+		Provider      string  `json:"provider"`
 		Model         string  `json:"model"`
 		Task          string  `json:"task"`
 		Cwd           *string `json:"cwd"`
@@ -1308,14 +1338,43 @@ func (t *managedToolset) createAgent(ctx context.Context, arguments json.RawMess
 	if err := ctx.Err(); err != nil {
 		return llm.ToolResult{}, err
 	}
-	model := strings.TrimSpace(args.Model)
-	if model == "" {
-		summary, err := t.manager.Summary(t.id)
-		if err != nil {
-			return llm.ToolResult{}, err
-		}
-		model = summary.Model
+	parent, ok := t.manager.Agent(t.id)
+	if !ok {
+		return llm.ToolResult{}, fmt.Errorf("unknown agent %q", t.id)
 	}
+	backend, err := t.manager.Backend(t.id)
+	if err != nil {
+		return llm.ToolResult{}, err
+	}
+	provider := strings.TrimSpace(args.Provider)
+	if provider == "" {
+		provider = backend.Provider
+	}
+	model := strings.TrimSpace(args.Model)
+	roster := t.manager.AllowedAgentModels()
+	if len(roster) == 0 {
+		if model == "" {
+			model = parent.model
+		}
+		if provider != backend.Provider || model != parent.model {
+			return llm.ToolResult{}, fmt.Errorf("empty curated roster: use main's current provider and model")
+		}
+	} else {
+		allowed := false
+		for _, row := range roster {
+			if row.Provider == provider && row.Model == model {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return llm.ToolResult{}, fmt.Errorf("choose an explicit provider/model pair from list_allow_agent_models")
+		}
+	}
+	if provider != backend.Provider {
+		backend = CreationBackend{Provider: provider, ResolveProfile: true}
+	}
+	backend.Context = ctx
 	cwd := ""
 	if args.Cwd != nil {
 		cwd = *args.Cwd
@@ -1324,27 +1383,36 @@ func (t *managedToolset) createAgent(ctx context.Context, arguments json.RawMess
 		}
 	}
 	thinking := strings.ToLower(strings.TrimSpace(args.ThinkingLevel))
-	summary, err := t.manager.CreateInheritedWithThinking(ctx, t.id, model, thinking, cwd)
+	t.manager.mu.RLock()
+	hasFactory := t.manager.providerFactory != nil
+	t.manager.mu.RUnlock()
+	var selected []CreationBackend
+	if hasFactory {
+		selected = []CreationBackend{backend}
+	} else if provider != parent.provider.Name() {
+		return llm.ToolResult{}, fmt.Errorf("provider-aware agent factory is not configured")
+	}
+	summary, err := t.manager.CreateInheritedWithThinking(ctx, t.id, model, thinking, cwd, selected...)
 	if err != nil {
 		return llm.ToolResult{}, err
 	}
 	task := strings.TrimSpace(args.Task)
 	if task == "" {
 		if thinking != "" {
-			return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q with thinking_level %q; no task assigned", summary.ID, summary.Model, thinking)}, nil
+			return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q with thinking_level %q; no task assigned", summary.ID, summary.Provider+"/"+summary.Model, thinking)}, nil
 		}
-		return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q; no task assigned", summary.ID, summary.Model)}, nil
+		return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q; no task assigned", summary.ID, summary.Provider+"/"+summary.Model)}, nil
 	}
 	submission, err := t.manager.SubmitPrompt(session.PromptSubmission{AgentID: summary.ID, Prompt: task, Intent: session.IntentQueue, Source: "delegation", Actor: t.id})
 	if err != nil {
 		return llm.ToolResult{
-			Output: fmt.Sprintf("created agent %s using model %q, but task assignment failed; the agent remains idle and can be retried with delegate_task", summary.ID, summary.Model),
+			Output: fmt.Sprintf("created agent %s using model %q, but task assignment failed; the agent remains idle and can be retried with delegate_task", summary.ID, summary.Provider+"/"+summary.Model),
 		}, fmt.Errorf("assign task to newly created agent %s: %w", summary.ID, err)
 	}
 	if thinking != "" {
-		return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q with thinking_level %q and accepted task asynchronously; request_id=%s; queue_position=%d", summary.ID, summary.Model, thinking, submission.RequestID, submission.QueuePosition), EndTurn: true}, nil
+		return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q with thinking_level %q and accepted task asynchronously; request_id=%s; queue_position=%d", summary.ID, summary.Provider+"/"+summary.Model, thinking, submission.RequestID, submission.QueuePosition), EndTurn: true}, nil
 	}
-	return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q and accepted task asynchronously; request_id=%s; queue_position=%d", summary.ID, summary.Model, submission.RequestID, submission.QueuePosition), EndTurn: true}, nil
+	return llm.ToolResult{Output: fmt.Sprintf("created agent %s using model %q and accepted task asynchronously; request_id=%s; queue_position=%d", summary.ID, summary.Provider+"/"+summary.Model, submission.RequestID, submission.QueuePosition), EndTurn: true}, nil
 }
 
 func (t *managedToolset) delegate(ctx context.Context, arguments json.RawMessage) (llm.ToolResult, error) {
@@ -1416,7 +1484,7 @@ func managerSchemas() []llm.Tool {
 		{Name: "consult_agents", Description: prompt.ConsultAgentsTool, Parameters: object(map[string]any{"requests": map[string]any{"type": "array", "minItems": 1, "maxItems": DefaultMaxAgents - 1, "items": object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter), "prompt": stringField(prompt.AgentPromptParameter)}, "agent_id", "prompt")}}, "requests")},
 		{Name: "list_agents", Description: prompt.ListAgentsTool, Parameters: object(nil)},
 		{Name: "list_allow_agent_models", Description: prompt.ListAllowedAgentModelsTool, Parameters: object(map[string]any{"role": stringField(prompt.AgentRoleParameter)})},
-		{Name: "create_agent", Description: prompt.CreateAgentTool, Parameters: object(map[string]any{"model": stringField(prompt.AgentModelParameter), "task": stringField(prompt.AgentPromptParameter), "cwd": stringField(prompt.WorkingDirectoryParameter), "thinking_level": stringField(prompt.AgentThinkingParameter)})},
+		{Name: "create_agent", Description: prompt.CreateAgentTool, Parameters: object(map[string]any{"provider": stringField("Provider ID from list_allow_agent_models; omitted uses main provider"), "model": stringField(prompt.AgentModelParameter), "task": stringField(prompt.AgentPromptParameter), "cwd": stringField(prompt.WorkingDirectoryParameter), "thinking_level": stringField(prompt.AgentThinkingParameter)})},
 		{Name: "delegate_task", Description: prompt.DelegateTaskTool, Parameters: object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter), "prompt": stringField(prompt.AgentPromptParameter)}, "agent_id", "prompt")},
 		{Name: "close_agent", Description: prompt.CloseAgentTool, Parameters: object(map[string]any{"agent_id": stringField(prompt.AgentIDParameter)}, "agent_id")},
 	}

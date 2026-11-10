@@ -30,7 +30,7 @@ type shellCommandRunner interface {
 
 var slashCommands = []slashCommand{
 	{
-		name: "/agent", usage: "/agent [new [model]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]|allow-models [list|clear]]",
+		name: "/agent", usage: "/agent [new [model]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]|allow-models [list [provider]|clear [provider|--all]]]",
 		description: "Create and manage extra agents",
 		arguments: []helpArgument{
 			{name: "new [model]", description: "Create an agent with a model ID, or open the model picker when omitted. Use rename to set its display name."},
@@ -39,7 +39,7 @@ var slashCommands = []slashCommand{
 			{name: "rename <id> <name>", description: "Give an agent a new display name."},
 			{name: "cancel <id>", description: "Stop the agent's current work."},
 			{name: "close <id> [--yes]", description: "Close an agent; --yes skips confirmation."},
-			{name: "allow-models [list|clear]", description: "Curate which models main may use for sub-agents (role only: smart|balanced|cheap); no thinking picker. Main decides thinking_level at create_agent time."},
+			{name: "allow-models [list [provider]|clear [provider|--all]]", description: "Curate which models main may use for sub-agents (role only: smart|balanced|cheap); no thinking picker. Main decides thinking_level at create_agent time."},
 		},
 		examples: []string{"/agent new qwen2.5-coder:7b", "/agent rename agent-1 review", "/agent switch agent-1", "/agent allow-models"},
 	},

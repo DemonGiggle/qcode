@@ -411,6 +411,10 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	mainToolset := toolset
 	mainSelection := skillSelection
 	configureFactory := func(ui *tui.UI, host *control.Host, saved map[string]agent.SavedState) {
+		host.SetProviderResolver(func(ctx context.Context, name string, endpoint *string) (llm.Provider, string, error) {
+			p, err := providers.prepare(ctx, name, endpoint)
+			return p.Provider, p.Endpoint, err
+		})
 		_ = host.SetConsultationTimeout(opts.agentTimeout)
 		create := func(id, name, model string, isMain bool, selected *agent.CreationBackend) (*agent.Agent, error) {
 			currentProvider := mainProvider
@@ -442,12 +446,35 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 							return nil, backendErr
 						}
 					}
-					prepared, providerErr := providers.prepare(context.Background(), backend.Provider, &backend.Endpoint)
+					creationCtx := backend.Context
+					if creationCtx == nil {
+						creationCtx = context.Background()
+					}
+					endpoint := &backend.Endpoint
+					if backend.ResolveProfile {
+						endpoint = nil
+					}
+					prepared, providerErr := providers.prepare(creationCtx, backend.Provider, endpoint)
 					if providerErr != nil {
 						return nil, providerErr
 					}
 					currentEndpoint = prepared.Endpoint
 					currentProvider = prepared.Provider
+					if selected != nil {
+						if lister, ok := currentProvider.(llm.ModelLister); ok {
+							lookup, cancel := context.WithTimeout(creationCtx, 30*time.Second)
+							_, discoveryErr := lister.Models(lookup)
+							cancel()
+							if discoveryErr != nil {
+								return nil, discoveryErr
+							}
+						}
+					}
+					if validator, ok := currentProvider.(llm.ModelValidator); ok {
+						if err := validator.ValidateModel(model); err != nil {
+							return nil, err
+						}
+					}
 					currentToolset = createdRegistry
 				}
 			}
@@ -580,6 +607,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 				return nil, err
 			}
 			fresh := control.NewHost(context.Background(), agent.DefaultMaxAgents)
+			fresh.SetAllowedAgentModels(host.AllowedAgentModels())
 			configureFactory(staged, fresh, map[string]agent.SavedState{"main": state})
 			if _, err := fresh.CreateMain(state.Model); err != nil {
 				fresh.Shutdown()

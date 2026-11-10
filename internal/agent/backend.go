@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -101,6 +102,7 @@ func (m *AgentManager) SwitchBackend(id string, expectedRevision uint64, next Ba
 	a.invalidatePreparedCache()
 	a.configurationRevision.Add(1)
 	s.summary.Model = next.Model
+	s.summary.Provider = next.Provider.Name()
 	a.publishContext()
 	a.publishCheckpoint()
 	// Refresh presentation without reporting task completion. A plain status
@@ -124,4 +126,13 @@ func (m *AgentManager) Backend(id string) (CreationBackend, error) {
 		return CreationBackend{}, fmt.Errorf("agent %q is unavailable", id)
 	}
 	return CreationBackend{Provider: s.runner.provider.Name(), Endpoint: s.runner.endpoint}, nil
+}
+
+// ProviderResolver prepares a backend without creating an agent.
+type ProviderResolver func(context.Context, string, *string) (llm.Provider, string, error)
+
+func (m *AgentManager) SetProviderResolver(resolve ProviderResolver) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.providerResolver = resolve
 }

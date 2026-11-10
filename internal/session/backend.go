@@ -1,12 +1,18 @@
 package session
 
-import "qcode/internal/llm"
+import (
+	"context"
+
+	"qcode/internal/llm"
+)
 
 // CreationBackend identifies a connection without carrying credentials or a live
 // provider instance. Each new agent receives an independent provider instance.
 type CreationBackend struct {
-	Provider string
-	Endpoint string
+	Context        context.Context `json:"-"` // Transient creation cancellation, never checkpointed.
+	ResolveProfile bool            // Resolve the configured endpoint rather than an explicit saved endpoint.
+	Provider       string
+	Endpoint       string
 }
 
 // BackendSwitch is prepared outside orchestration locks. ContextCapacity is zero

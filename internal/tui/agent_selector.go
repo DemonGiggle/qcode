@@ -91,7 +91,7 @@ func renderAgentEntry(entry agentSelectorEntry, selected bool, width int, color 
 	}
 	line := fmt.Sprintf("%s%-9s %-18s %-20s %s", marker,
 		sanitizeDiffLine(entry.summary.ID, "<ESC>"), sanitizeDiffLine(entry.summary.Name, "<ESC>"),
-		sanitizeDiffLine(entry.summary.Model, "<ESC>"), sanitizeDiffLine(status, "<ESC>"))
+		sanitizeDiffLine(entry.summary.Provider+"/"+entry.summary.Model, "<ESC>"), sanitizeDiffLine(status, "<ESC>"))
 	if width > 0 {
 		line = truncateDiffLine(line, width, false)
 	}

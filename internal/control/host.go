@@ -263,3 +263,5 @@ func (h *Host) SwitchBackend(id string, expectedRevision uint64, next agent.Back
 }
 
 func (h *Host) Backend(id string) (agent.CreationBackend, error) { return h.manager.Backend(id) }
+
+func (h *Host) SetProviderResolver(r agent.ProviderResolver) { h.manager.SetProviderResolver(r) }

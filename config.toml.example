@@ -131,13 +131,11 @@ context_budget = 1200
 
 # Human-curated roster of models main may use for sub-agents.
 # Managed by /agent allow-models on the main tab (role only: smart|balanced|cheap).
-# Empty (missing or zero entries) means no restriction: create_agent behaves as today.
-# Non-empty is soft guidance: main calls list_allow_agent_models and picks by hardness
-# (hard->smart with high thinking_levels, routine->balanced with thinking_default,
-# trivial->cheap with low or omitted). Thinking is never stored here; main decides
-# thinking_level at create_agent time from live capability data. thinking_level keys
-# if present are ignored. Provider qualifies the model because children inherit
-# provider/endpoint from the parent.
+# Empty roster: helpers use main's current provider/model.
+# Nonempty roster: main must choose a listed provider/model pair.
+# Providers may be mixed; each uses its configured connection and credentials.
+# Main picks thinking_level at creation time from target model capabilities.
+# To override a lower-priority roster with an empty list: [agents] allow_models = []
 # [[agents.allow_models]]
 # provider = "openai"
 # model = "gpt-5"
@@ -147,8 +145,8 @@ context_budget = 1200
 # model = "gpt-5-mini"
 # role = "balanced"
 # [[agents.allow_models]]
-# provider = "openai"
-# model = "gpt-4.1-mini"
+# provider = "ollama"
+# model = "qwen2.5-coder:7b"
 # role = "cheap"
 
 # Local text filtering is enabled at every output boundary by default.

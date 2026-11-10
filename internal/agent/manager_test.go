@@ -654,7 +654,7 @@ func TestMainCreatedAgentInheritsCapabilities(t *testing.T) {
 	mainTools.state = "inherited"
 
 	result, err := main.tools.ExecuteDetailed(context.Background(), llm.ToolCall{
-		Name: "create_agent", Arguments: []byte(`{"model":"worker-model"}`),
+		Name: "create_agent", Arguments: []byte(`{}`),
 	})
 	if err != nil || !strings.Contains(result.Output, "created agent agent-1") {
 		t.Fatalf("create result = %+v, %v", result, err)

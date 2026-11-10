@@ -216,8 +216,8 @@ type ProviderProfile struct {
 }
 
 // AllowedAgentModel is one human-curated entry in the [[agents.allow_models]]
-// roster. Provider qualifies the model because children inherit provider and
-// endpoint from the parent. Role is smart | balanced | cheap. ThinkingLevel
+// roster. Provider qualifies the model across independently configured backends.
+// Role is smart | balanced | cheap. ThinkingLevel
 // is accepted on decode for forward compatibility but ignored: main decides
 // thinking_level at create_agent time from live capability data.
 type AllowedAgentModel struct {
@@ -229,8 +229,8 @@ type AllowedAgentModel struct {
 }
 
 // Agents holds the human-curated roster of models main may use for sub-agents.
-// Empty (nil or zero entries) means no restriction: create_agent behaves as
-// today. Non-empty is soft guidance for main, never a hard block.
+// Empty uses main's current provider/model. Non-empty restricts main-created
+// children to the listed provider/model pairs.
 type Agents struct {
 	AllowModels []AllowedAgentModel `toml:"allow_models"`
 }
@@ -311,7 +311,7 @@ func normalizeAllowedAgentModels(entries []AllowedAgentModel) []AllowedAgentMode
 }
 
 // NormalizedAllowedAgentModels returns the merged roster cleaned for runtime:
-// trimmed, validated, deduped, and sorted. Empty means no restriction.
+// trimmed, validated, deduped, and sorted. Empty uses main's current provider/model.
 func (c Config) NormalizedAllowedAgentModels() []AllowedAgentModel {
 	if c.Agents.AllowModels == nil {
 		return nil

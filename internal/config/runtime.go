@@ -200,7 +200,7 @@ func (w *RuntimePreferenceWriter) PersistSelectedSkills(selected, always []strin
 // PersistAllowedAgentModels records the human-curated [[agents.allow_models]]
 // roster in the user config. Entries are normalized (trimmed, validated,
 // deduped, sorted); an empty list clears the roster to the default
-// unrestricted behavior. Thinking levels are never persisted: human input
+// main-provider/model behavior. Thinking levels are never persisted: human input
 // with thinking_level is rejected so main always decides thinking at runtime.
 func (w *RuntimePreferenceWriter) PersistAllowedAgentModels(entries []AllowedAgentModel) error {
 	if w == nil {
@@ -1007,7 +1007,7 @@ func (w *RuntimePreferenceWriter) persistAllowedModels(entries []AllowedAgentMod
 // preserving comments and unrelated tables. It removes all existing
 // [[agents.allow_models]] blocks and any inline allow_models key under
 // [agents], then appends the normalized roster. Empty entries clears the
-// roster (no blocks appended).
+// roster with an explicit empty list.
 func patchAllowedAgentModels(data []byte, entries []AllowedAgentModel) ([]byte, bool, error) {
 	// Validate TOML syntax first so we never corrupt a broken file.
 	if len(data) != 0 {
@@ -1018,10 +1018,9 @@ func patchAllowedAgentModels(data []byte, entries []AllowedAgentModel) ([]byte, 
 	}
 	stripped := stripAllowedAgentModels(data)
 	if len(entries) == 0 {
-		if bytes.Equal(stripped, data) {
-			return append([]byte(nil), data...), false, nil
-		}
-		return stripped, true, nil
+		value := "[]"
+		updated, _, err := patchProviderMemoryTable(stripped, "agents", "allow_models", &value)
+		return updated, !bytes.Equal(updated, data), err
 	}
 	var buf bytes.Buffer
 	buf.Write(stripped)
