@@ -697,8 +697,12 @@ func thinkingLabelFor(value Runner) string {
 	if level := runner.ThinkingLevel(); level != "" {
 		return level
 	}
-	if capability := runner.ThinkingCapability(); capability.AlwaysOn {
+	capability := runner.ThinkingCapability()
+	if capability.AlwaysOn {
 		return "on"
+	}
+	if capability.Default != "" {
+		return capability.Default
 	}
 	return ""
 }
