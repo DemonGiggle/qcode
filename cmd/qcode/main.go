@@ -924,6 +924,14 @@ func firstEnv(names ...string) string {
 }
 
 func filterSessionSnapshot(policy *redaction.Policy, snap session.Snapshot) (session.Snapshot, error) {
+	// Share one per-snapshot line cache across the presentation and every
+	// agent state below: the memoized transform is pure, so each distinct
+	// line is redacted once per snapshot instead of once per field.
+	// FilterSnapshot reuses this cache; agent.FilterSavedState reaches the
+	// same one through p.Text. A nil policy keeps its existing semantics.
+	if policy != nil {
+		policy = policy.Cached()
+	}
 	filtered, err := tui.FilterSnapshot(policy, snap)
 	if err != nil {
 		return session.Snapshot{}, err
