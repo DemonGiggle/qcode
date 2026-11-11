@@ -19,6 +19,7 @@ var tipTexts = []string{
 	"While busy, Enter steers the current task and Tab queues another task. The newest pending steer replaces the previous one.",
 	"Alt+Q opens pending work. Use Up/Down to select, Delete to remove, and Esc to return to your draft.",
 	"Type `/` to see matching slash commands, keep typing to filter, and press Tab to complete the first match.",
+	"When `/` narrows to one command, its subcommands appear indented below; keep typing to narrow them and Tab completes one.",
 	"Run `/help` to list commands, or `/help <command>` (e.g. `/help model`) for arguments and examples.",
 	"Use `/provider` or `/provider openai` to switch an idle tab without restarting; main saves the default.",
 	"Set `[providers.<name>]` connection profiles to keep each backend's endpoint and API key separate.",
@@ -39,6 +40,7 @@ var tipTexts = []string{
 	"Run `/verbose` to toggle detailed tool traces and show hidden untrusted tool output for troubleshooting.",
 	"Move through your draft with Left/Right; Home/End or Ctrl+A/E jump to the line ends.",
 	"Use Ctrl/Alt+Left/Right or Alt+B/F to move by word; Ctrl+W deletes the previous word.",
+	"Long drafts wrap upward at word boundaries with indented continuation rows.",
 	"Press Up/Down at the prompt to recall earlier input and return to your unfinished draft.",
 	"In pickers type to filter, move with Up/Down or PgUp/PgDn, Enter to apply, Esc to go back, Ctrl+C to cancel all.",
 	"Run `/compact` to summarize old context; watch STEP, CTX % left, and MODE PLAN in the status bar.",
@@ -62,6 +64,7 @@ var tipTexts = []string{
 
 	// Models, context, and usage.
 	"The `/model` picker offers supported thinking levels after model selection; Esc returns to the model list.",
+	"New agent tabs show [THINK level] for the provider default when you omit thinking_level.",
 	"OpenAI and OpenCode Go cache thinking choices from Models.dev; use `--update-model-meta` to refresh. Ollama uses local metadata.",
 	"In normal interactive mode, `/model` and `/maxsteps` on main save user defaults; changes in other tabs stay local.",
 	"Run `/maxsteps` to see the model-turn limit, or `/maxsteps 64` to allow more turns per request.",
@@ -79,6 +82,7 @@ var tipTexts = []string{
 	"Sessions autosave during interactive work; `/resume` restores tabs, drafts, models, settings, and retained output.",
 	"In `/resume`, Tab opens Rename, Pin/Unpin, and Delete; Ctrl+D opens Delete all with confirmation.",
 	"The `/resume` picker previews each saved session's latest message. Pins sort first; renaming or pinning preserves prompt-recency order.",
+	"If `/resume` reports the snapshots are busy, another process holds the lock; wait a few seconds and retry.",
 	"Delete all removes every saved session in this workspace, including sessions hidden by the filter.",
 	"Deleting the current session clears all tabs and drafts while keeping main's settings; the confirmation defaults to Cancel.",
 	"Finish or cancel running agents before switching sessions with `/resume`; concurrent processes can restore the same session, with the last save winning.",
@@ -92,6 +96,7 @@ var tipTexts = []string{
 
 	// Planning and skills.
 	"Enter `/plan` while idle to investigate safely: Plan mode blocks file changes, shell commands, and delegation.",
+	"Plan mode asks in rounds until scope, edge cases, and validation are clear; vague answers earn focused follow-ups.",
 	"Plan and skill-design questions accept a listed choice or a custom answer; Ctrl+C cancels the request.",
 	"Run `/interactive on` for up to three questions per prompt; it saves the startup default from any tab. `/interactive` shows it.",
 	"Use `/plan show` to scroll through the latest submitted plan, then `/plan act` to start implementation.",

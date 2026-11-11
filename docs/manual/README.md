@@ -11,6 +11,8 @@ model-operation progress and elapsed time, working directories with
 change_directory and directory approvals, allowed-model roster for helper
 model choice with main-decided thinking levels, tool approvals and prompt-injection
 warnings, cross-backend model-switch warnings and /provider switching, ChatGPT subscription login,
+iterative Plan-mode question rounds, slash-command subcommand hints with Tab completion,
+word-wrapped composer drafts, latest-message /resume previews and snapshot-busy retries,
 local redaction, terminal themes,
 transcript boundary navigation, token totals, workspace path shortening, skill
 autoloading, always-load and companion files, official skills, and sandbox command directories.

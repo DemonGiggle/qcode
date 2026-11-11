@@ -746,9 +746,9 @@ def build_pdf(images: dict[str, Path]):
             "Transcript: streamed answers with Markdown, tables, and tool activity like `Reading ...` or `Writing ...`. One blank separator row sits between each pair of visible regions (pinned prompt, transcript, pending prompts, suggestions, Steer/Queued blocks, composer); very small terminals keep minimum output visible and omit separators that would hide content.",
             "Task indicator: Waiting for model response, Receiving model thinking, or Receiving model response, with elapsed time for that operation. The timer resets when the phase changes. Tools appear in the transcript; questions show Waiting for input.",
             "Pending area: shows the current steer separately from FIFO tasks.",
-            "Todo panel: a live `Todo done/total` checklist sits above the steer/queue area while multi-step work is incomplete (`[ ]` todo, half-circle doing, `[x]` done). Alt+T expands it; Esc collapses; /todo show reviews it any time.",
+            "Todo panel: a live `Todo done/total` checklist sits above the steer/queue area while multi-step work is incomplete (`[ ]` todo, half-circle doing, `[x]` done). Alt+T expands it; Esc collapses; /todo show reviews it any time. On very short terminals the panel can shrink to its header row until more room is available.",
             "Prompt: `>` idle, `(Plan)>` planning, `(Skill plan)>` skill design, `(Steer)>` working. You can keep typing while work runs.",
-            "Status bar: provider, MODEL, WS folder, CTX percent left, STEP n/max, and TOK input/output plus total when it fits. THINK appears when set, MODE shows PLAN, SKILL PLAN, or INTERACTIVE, and REMOTE while browser control runs. Narrow windows shorten the workspace path first, then wrap to a second left-aligned row before dropping low-priority segments (tok first). Hide parts with /statusline.",
+            "Status bar: provider, MODEL, WS folder, CTX percent left, STEP n/max, and TOK input/output plus total when it fits. THINK shows the effective level, including the provider default when you omit it, MODE shows PLAN, SKILL PLAN, or INTERACTIVE, and REMOTE while browser control runs. Narrow windows shorten the workspace path first, then wrap to a second left-aligned row before dropping low-priority segments (tok first). Hide parts with /statusline.",
             "Pastes: long pastes stay together as one `[paste N characters]` block (100+ characters or more than 3 lines; one trailing newline does not count as a line). Short pastes stay inline and editable. Pasting never submits: press Enter to submit the full draft. Type before or after a collapsed block; Left/Right moves across it as a whole, Backspace/Delete removes the whole block.",
         ],
     )
@@ -758,7 +758,8 @@ def build_pdf(images: dict[str, Path]):
     bullets(
         pdf,
         [
-            "Type `/` to see up to five matching commands. Type more to filter, Tab to complete the first match, Esc to close.",
+            "Type `/` to see up to five matching commands. Type more to filter, Tab to complete the first match, Esc to close. When the filter narrows to one command, its first-argument subcommands appear indented below it; Tab completes the highlighted subcommand.",
+            "Long drafts wrap upward inside the composer at word boundaries, with each continuation row indented under the prompt label; only words longer than the remaining width split across rows.",
             "Left/Right edits input. At the bottom of output, Home/End move to input ends. Ctrl+Left/Right (or Alt+Left/Right, Alt+B/F) jumps by word; Ctrl+W deletes a word; Ctrl+A/E moves to input ends.",
             "PageUp/PageDown scrolls history with two overlapping rows of context, even while the agent works. Scrolling pauses the live view; PageDown to the bottom resumes it. While paused, Up/Down moves one row for fine reading; it edits the draft again once the live view resumes.",
             "Press Up/Down at an empty prompt to recall earlier input and return to your unfinished draft.",
@@ -844,7 +845,7 @@ def build_pdf(images: dict[str, Path]):
     body(pdf, "Goal: settle scope and review the approach before implementation.")
     numbered(pdf, [
         "On an idle agent, enter /plan and describe the change below.",
-        "Answer design questions, then use /plan show to review the proposal. Request revisions if needed.",
+        "Answer each design-question round (scope, edge cases, validation) with a choice or a custom answer, then use /plan show to review the proposal. Request revisions if it still feels vague.",
         "Use /plan act only when ready to implement. Review the diff and the planned checks afterward; /plan off leaves without implementing.",
     ])
     code(pdf, "/plan\nPlan pagination for the search results. Inspect the current\nAPI and UI, identify compatibility concerns, and propose\nacceptance checks before changing files.\n/plan show\n/plan act")
@@ -884,6 +885,8 @@ def build_pdf(images: dict[str, Path]):
     h1(pdf, "4. Slash commands at a glance")
     body(pdf, "Type `/help` to list commands or `/help <name>` for one command. The leading `/` is optional in the name. Agent, skill, learning, plan, remote, model, tool, and interactive commands are covered in their chapters below.")
     figure(pdf, images["slash"], "Figure 3: /help lists commands. Typing /mo filters the suggestions to /model; Tab completes the first match.")
+    body(pdf, "Keep typing and the list filters itself. When only one command still matches, its first-argument subcommands appear indented beneath it (for example `/agent` shows new, list, switch, rename, cancel, close, and allow-models); keep typing to narrow them, then press Tab to complete the highlighted subcommand.")
+    tip(pdf, "Type `/agent` and pause: the indented rows are completable subcommands. `/agent al` narrows to allow-models; Tab finishes it.")
     cmd_table(
         pdf,
         [
@@ -951,6 +954,7 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             "Switching to a model from a different provider family warns before applying; the same-backend switch applies silently. A failed or unsupported explicit level fails before any model request.",
+            "New agent tabs label the effective thinking level as [THINK level]: your explicit choice wins, otherwise the provider default (for example high) is shown instead of hiding the segment.",
             "OpenAI and OpenCode Go read thinking choices from the public Models.dev catalog, cached under your cache directory (openai-model-meta-v1.json, opencode-go-model-meta-v1.json). Refresh with qcode --provider openai --update-model-meta or qcode --provider opencode-go --update-model-meta. A failed first fetch runs without selectable thinking; a failed refresh keeps the last valid cache. Custom --base-url endpoints do not load this metadata.",
             "Ollama discovers thinking support from local model metadata and sends it through its native think field (GPT-OSS supports low/medium/high and cannot disable thinking that way). Unknown model IDs stay usable but omit optional thinking fields.",
             "Vision-capable models can inspect PNG, JPEG, WEBP, and GIF files inside the workspace (20 MiB each) when you name the image; the agent loads it with view_image through the active provider. The model and endpoint must support image input.",
@@ -1004,26 +1008,26 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             "Type `/plan` to enter. The status bar shows PLAN.",
-            "Describe the task. Answer focused questions if qcode asks (you can type a custom answer).",
-            "Type `/plan show` to re-read the latest plan any time.",
-            "Type `/plan act` to build the latest plan, or `/plan off` to leave without building.",
+            "Describe the task. Expect question rounds until the spec is clear: goals and scope, what is out of scope, affected files, visible behavior or API changes, data and compatibility, edge cases, validation, and rollout. Each round offers concrete choices where alternatives exist; type a custom answer any time, and expect follow-ups when an answer leaves an important ambiguity.",
+            "Type `/plan show` to re-read the latest plan any time; request revisions if it still feels vague.",
+            "Type `/plan act` to build the latest plan, or `/plan off` to leave without building. The model holds the plan until scope, behavior, edge cases, and validation are clear; open questions list only items you deferred or could not answer.",
         ],
     )
     bullets(
         pdf,
         [
-            "Plan mode only advertises inspection tools (read, list, search, view_image, skills, and explicitly enabled web tools). Mutation, shell execution, extra directory grants, and sub-agent delegation are rejected at the tool boundary.",
+            "Plan mode only advertises inspection tools (read, list, search, view_image, skills, and explicitly enabled web tools). Mutation, shell execution, extra directory grants, and sub-agent delegation are rejected at the tool boundary. Asking beats guessing: the agent inspects what is cheap to find, then asks in rounds with 2-6 concrete choices where alternatives exist.",
             "Earlier plan revisions stay in the conversation, but only the latest submitted plan is used for the /plan act handoff.",
         ],
     )
-    tip(pdf, "`/new` clears the saved plan. Plan commands need an idle agent with no running or queued work.")
+    tip(pdf, "`/new` clears the saved plan. Plan commands need an idle agent with no running or queued work. Answer each question round; a vague answer earns a focused follow-up before qcode submits the plan.")
     h2(pdf, "Execution checklist (/todo)")
     body(pdf, "For multi-step implementation the model keeps one execution checklist per agent tab with todo_add, todo_update, and todo_done. It is separate from /plan: plans are one-shot handoffs, while the todo list is updated while building. Incomplete lists persist across requests; a finished list is archived when observed and cleared when the next request starts. Sub-agents keep their own lists; /plan act keeps the todo list and /new clears both.")
     figure(pdf, images["todo"], "Figure 7b: Live Todo panel above the steer/queue area. Alt+T expands it; /todo show reviews the latest checklist.")
     bullets(
         pdf,
         [
-            "A live `Todo done/total` panel sits above the steer/queue area while work is incomplete ([ ] todo, half-circle doing, [x] done). Collapsed it shows up to three rows; Alt+T expands all rows and Esc collapses.",
+            "A live `Todo done/total` panel sits above the steer/queue area while work is incomplete ([ ] todo, half-circle doing, [x] done). Collapsed it shows up to three rows, shrinking to the header row alone when the terminal is too short; Alt+T expands all rows and Esc collapses.",
             "Use `/todo show` to open the latest checklist in a scrollable view at any time. A finished list is archived once to the transcript and cleared when the next request starts.",
             "Titles are one line (20 items max); the model should only call todo tools when the list changes, not every turn. Todo tools are unavailable in Plan and Skill Plan modes.",
         ],
@@ -1122,12 +1126,12 @@ def build_pdf(images: dict[str, Path]):
 
     # 11 Sessions
     h1(pdf, "11. Sessions: autosave, resume, and export")
-    figure(pdf, images["resume"], "Figure 9: /resume previews the saved active tab. Pinned sessions sort first; Tab opens Rename, Pin/Unpin, and Delete, while Ctrl+D opens Delete all.")
+    figure(pdf, images["resume"], "Figure 9: /resume previews each saved session's latest message. Pinned sessions sort first; Tab opens Rename, Pin/Unpin, and Delete, while Ctrl+D opens Delete all.")
     bullets(
         pdf,
         [
             "Sessions autosave about every two seconds, after agent work and commands, and on clean exit or session switch. Each launch starts its own session.",
-            "Type /resume to reopen a session for this folder. A separate marker identifies the current session; selecting it keeps it open. Entries show a preview and activity time. Pinned sessions appear first; prompt activity orders each group. Tab opens Rename, Pin/Unpin, and Delete; Ctrl+D opens Delete all from the list. Up/Down chooses an action; Enter applies it. Finish or cancel running work before switching or deleting the current session. Concurrent processes can restore the same session, with the last save winning.",
+            "Type /resume to reopen a session for this folder. A separate marker identifies the current session; selecting it keeps it open. Entries show the saved session's latest message and activity time. Pinned sessions appear first; prompt activity orders each group. Tab opens Rename, Pin/Unpin, and Delete; Ctrl+D opens Delete all from the list. Up/Down chooses an action; Enter applies it. Finish or cancel running work before switching or deleting the current session. Concurrent processes can restore the same session, with the last save winning; the picker reads only preview metadata so it stays responsive with many or large sessions.",
             "Ctrl+D opens Delete all with Cancel selected by default. Cancel or Esc returns to the list with its filter and selection intact. It deletes every saved session in this workspace, including sessions hidden by the filter, along with names and pins. Other workspaces are unaffected. If the current session is saved, it starts fresh after the other removals succeed; an unsaved current conversation stays open. Failures refresh the list and retain the current conversation.",
             "Delete requires confirmation with Cancel selected by default. Enter applies the choice; Cancel or Esc returns to actions; Ctrl+C closes the picker. Deleting another session keeps the filter and selects the next match, or the previous match if it was last. Deleting the current session clears all tabs, drafts, history, plans, usage, work history, and added directory grants, then starts fresh with the main agent's current provider, model, thinking, runtime settings, skills, and tool selections. Deletion removes the saved snapshot, custom name, and pin; another process's later autosave may recreate it.",
             "Resume restores tabs, models, the pinned latest prompt, conversation and styled output (including blank lines in the preview), diffs and expandable diff data, drafts, reading positions, tool and skill settings, context accounting, and token totals. Provider credentials come from current configuration. Existing directory grants are restored when paths remain valid; discarded grants produce a notice.",
@@ -1212,7 +1216,8 @@ def build_pdf(images: dict[str, Path]):
             ("Slow session?", "Try /compact, then /new for a fresh tab context."),
             ("Need detail?", "Try /verbose. For step limits use /maxsteps N."),
             ("Lost output?", "Scroll with PageUp/PageDown. /history finds old answers. /export saves HTML."),
-            ("Resume failed?", "Read the inline error; finish or cancel local running agents before switching. Fix snapshot, redaction-rewrite, or save errors, then retry. Other processes do not lock the session."),
+            ("Resume failed?", "Read the inline error; finish or cancel local running agents before switching. Fix snapshot, redaction-rewrite, or save errors, then retry. A brief OS transaction lock guards saves during resume; if it reports the snapshots are busy, wait a few seconds and retry."),
+            ("Snapshots busy?", "Another qcode process holds the session lock (up to ~10s). Wait for it to finish, then retry /resume, autosave, or delete. The lock file stays on disk; the OS releases it when the holder exits."),
             ("Waiting a long time?", "Read the model operation and elapsed timer above the status bar. Use Ctrl+C from the composer to cancel; tool activity appears in the transcript."),
             ("Text is redacted?", "Detected sensitive text is replaced locally by [REDACTED]. Saved redactions are permanent; review docs/privacy.md for scope."),
             ("Remote blocked?", "On Linux run once: sudo tailscale set --operator=$USER. Then retry /remote."),
@@ -1223,7 +1228,7 @@ def build_pdf(images: dict[str, Path]):
             ("Compacted context?", "Run /compact show to inspect system + summary + recent tail after any compaction."),
         ],
     )
-    tip(pdf, "Good defaults for most users: local model for drafts, stronger hosted model for final edits, Plan mode for risky changes, one agent per independent job.")
+    tip(pdf, "Good defaults for most users: local model for drafts, stronger hosted model for final edits, Plan mode for risky changes, one agent per independent job. When Plan mode keeps asking, it is narrowing scope, edge cases, or validation: answer the round or say what to defer.")
 
     # 15 Cheat sheet
     h1(pdf, "15. Cheat sheet (copy this page)")
