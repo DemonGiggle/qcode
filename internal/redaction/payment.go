@@ -20,7 +20,18 @@ const expiryLabel = `(?:(?:card` + paymentGap + `)?(?:expir(?:y|ation|es|e)|exp\
 
 // Labels may be Markdown headings/table cells or natural-language mentions.
 // Capture only the value so formatting and useful labels survive filtering.
-const paymentSeparator = `["'*_` + "`" + ` \t]*(?:(?::|=|\||-|\bis\b|\bof\b|\bwas\b)[ \t]*)?["'*_` + "`" + ` \t]*`
+//
+// Separator form: an optional run of quote/space padding, an optional single
+// separator token (punctuation or is/of/was), then padding again. The previous
+// form wrote this as A* (sep S*)? A* where A = ["'*_ ` \t] and S = [ \t].
+// Since S is a subset of A, S* A* and A* denote the same language, so
+// A* (sep S*)? A* accepts exactly the same strings as A* (sep A*)?. The old
+// form forced the engine to partition every padding run between two adjacent
+// stars (quadratic backtracking on long quote/space runs when the trailing
+// value failed); the new form has a single star when no separator is present
+// and a separator token disjoint from A otherwise (":=|-" and is/of/was
+// letters never appear in A), giving a linear scan with identical matches.
+const paymentSeparator = `["'*_` + "`" + ` \t]*(?:(?::|=|\||-|\bis\b|\bof\b|\bwas\b)["'*_` + "`" + ` \t]*)?`
 
 var labelledCard = regexp.MustCompile(`(?i)\b` + cardLabel + paymentSeparator + `(` + cardDigits + `)`)
 var labelledSecurity = regexp.MustCompile(`(?i)\b` + securityLabel + paymentSeparator + `([0-9]{3,4})\b`)
@@ -36,10 +47,30 @@ var paymentFields = []string{
 func redactPayments(line string) string {
 	// Match labelled grouped numbers before generic assignments, which would
 	// otherwise remove just their first digit group.
-	for _, pattern := range []*regexp.Regexp{labelledCard, labelledSecurity, labelledExpiry, labelledExpiryPart} {
+	// Fast paths below skip regexes whose values are impossible: labelledCard
+	// and the generic PAN scan need 13+ ASCII digits, labelledSecurity needs
+	// 3+. Counting digits is a single cheap pass; the guards change no match
+	// because cardDigits requires 13-19 digits and the security value needs
+	// 3-4 digits.
+	line = protect(line, func(piece string) string {
+		if countDigits(piece) < 13 {
+			return piece
+		}
+		return replacePaymentValue(piece, labelledCard)
+	})
+	line = protect(line, func(piece string) string {
+		if countDigits(piece) < 3 {
+			return piece
+		}
+		return replacePaymentValue(piece, labelledSecurity)
+	})
+	for _, pattern := range []*regexp.Regexp{labelledExpiry, labelledExpiryPart} {
 		line = protect(line, func(piece string) string { return replacePaymentValue(piece, pattern) })
 	}
 	return protect(line, func(piece string) string {
+		if countDigits(piece) < 13 {
+			return piece
+		}
 		matches := cardCandidate.FindAllStringIndex(piece, -1)
 		var out strings.Builder
 		cursor := 0
@@ -114,4 +145,18 @@ func luhn(value string) bool {
 		count++
 	}
 	return count >= 13 && count <= 19 && nonzero && sum%10 == 0
+}
+
+// countDigits reports the number of ASCII digits in s. Card values need
+// 13-19 digits and security codes need 3-4, so callers skip the corresponding
+// regexes when fewer digits are present. The guard is exact: a match requires
+// at least that many digit characters in the same Marker-delimited piece.
+func countDigits(s string) int {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] >= '0' && s[i] <= '9' {
+			n++
+		}
+	}
+	return n
 }

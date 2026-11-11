@@ -44,6 +44,7 @@ type Policy struct {
 	literals   *literalRegistry
 	fields     map[string]bool
 	assignment *regexp.Regexp
+	cache      *LineCache
 }
 
 var tokens = regexp.MustCompile(`(?i)\b(?:sk-[a-z0-9_-]{16,}|gh[pousr]_[a-z0-9]{20,}|github_pat_[a-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b`)
@@ -133,6 +134,7 @@ func New(c Config, exactValues []string) (*Policy, error) {
 type literalRegistry struct {
 	mu     sync.RWMutex
 	values []string
+	gen    uint64
 }
 
 // RegisterSecrets adds non-empty literal credentials and their JSON-escaped
@@ -175,6 +177,7 @@ func (p *Policy) RegisterSecrets(values ...string) {
 		return next[i] < next[j]
 	})
 	r.values = next
+	r.gen++
 }
 
 func (p *Policy) literalSnapshot() []string {
@@ -209,24 +212,35 @@ func protect(s string, filter func(string) string) string {
 }
 func (p *Policy) line(line string) string {
 	p = effective(p)
+	if p.cache != nil {
+		return p.cache.getOrCompute(p, line)
+	}
+	return p.lineWithLiterals(line, p.literalSnapshot())
+}
+
+func (p *Policy) lineWithLiterals(line string, literals []string) string {
 	line = redactPayments(line)
 	// Match assignments before replacing individual values to preserve syntax on reruns.
-	line = p.assignment.ReplaceAllStringFunc(line, func(match string) string {
-		separator := strings.IndexAny(match, ":=")
-		prefix, value := match[:separator+1], strings.TrimSpace(match[separator+1:])
-		if value == Marker || value == `"`+Marker+`"` || value == "'"+Marker+"'" {
-			return match
-		}
-		if strings.HasPrefix(value, `"`) {
-			return prefix + ` "` + Marker + `"`
-		}
-		if strings.HasPrefix(value, "'") {
-			return prefix + " '" + Marker + "'"
-		}
-		return prefix + " " + Marker
-	})
+	// Fast path: the assignment pattern requires a literal ":" or "=", so lines
+	// without either cannot match and skip the regex unchanged.
+	if strings.IndexAny(line, ":=") >= 0 {
+		line = p.assignment.ReplaceAllStringFunc(line, func(match string) string {
+			separator := strings.IndexAny(match, ":=")
+			prefix, value := match[:separator+1], strings.TrimSpace(match[separator+1:])
+			if value == Marker || value == `"`+Marker+`"` || value == "'"+Marker+"'" {
+				return match
+			}
+			if strings.HasPrefix(value, `"`) {
+				return prefix + ` "` + Marker + `"`
+			}
+			if strings.HasPrefix(value, "'") {
+				return prefix + " '" + Marker + "'"
+			}
+			return prefix + " " + Marker
+		})
+	}
 	return protect(line, func(part string) string {
-		for _, literal := range p.literalSnapshot() {
+		for _, literal := range literals {
 			part = protect(part, func(piece string) string { return strings.ReplaceAll(piece, literal, Marker) })
 		}
 		part = tokens.ReplaceAllString(part, Marker)

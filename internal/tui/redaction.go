@@ -13,6 +13,11 @@ func FilterSnapshot(p *redaction.Policy, snap session.Snapshot) (session.Snapsho
 	if !p.Enabled(redaction.Persistence) {
 		return snap, nil
 	}
+	// Share one per-snapshot line cache across preview, agents, work, and the
+	// presentation below so each distinct line pays the regex cost once. The
+	// cache memoizes only the pure per-line transform; PEM state, overflow,
+	// and splitting still run per batch, preserving byte-identical output.
+	p = p.Cached()
 	snap.Preview = p.Text(redaction.Persistence, snap.Preview)
 	snap.Agents = append([]session.SavedAgent(nil), snap.Agents...)
 	for i := range snap.Agents {
@@ -52,6 +57,10 @@ func FilterPresentation(p *redaction.Policy, data json.RawMessage) (json.RawMess
 	if !p.Enabled(redaction.Persistence) {
 		return append(json.RawMessage(nil), data...), nil
 	}
+	// Reuse the caller's per-snapshot cache when present (FilterSnapshot
+	// shares one across the whole snapshot); otherwise create a fresh one for
+	// this presentation so repeated history lines are filtered once.
+	p = p.Cached()
 	for id, draft := range s.Drafts {
 		s.Drafts[id] = p.Text(redaction.Persistence, draft)
 	}
