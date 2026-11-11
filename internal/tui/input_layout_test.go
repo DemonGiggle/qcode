@@ -10,6 +10,7 @@ import (
 
 	"qcode/internal/lineedit"
 	"qcode/internal/session"
+	"qcode/internal/termtext"
 )
 
 type layoutManager struct {
@@ -101,19 +102,19 @@ func TestFixedPromptUsesActiveAgentState(t *testing.T) {
 }
 
 func TestInputRowsTracksWideCharactersAndWrapBoundary(t *testing.T) {
-	rows, y, x := inputRows("> 界ab", 5, 5)
-	if strings.Join(rows, "|") != "> 界a|b" || y != 1 || x != 1 {
+	rows, y, x := inputRows("> 界ab", 5, 5, 2)
+	if strings.Join(rows, "|") != "> 界a|  b" || y != 1 || x != 3 {
 		t.Fatalf("rows=%q cursor=%d,%d", rows, y, x)
 	}
 }
 
 func TestInputRowsSplitsShortMultilinePaste(t *testing.T) {
-	rows, y, x := inputRows("> alpha\nbeta", len([]rune("> alpha\nbeta")), 80)
-	if strings.Join(rows, "|") != "> alpha|beta" || y != 1 || x != 4 {
+	rows, y, x := inputRows("> alpha\nbeta", len([]rune("> alpha\nbeta")), 80, 2)
+	if strings.Join(rows, "|") != "> alpha|  beta" || y != 1 || x != 6 {
 		t.Fatalf("rows=%q cursor=%d,%d", rows, y, x)
 	}
-	rows, y, x = inputRows("> a\nb", 3, 80)
-	if strings.Join(rows, "|") != "> a|b" || y != 0 || x != 3 {
+	rows, y, x = inputRows("> a\nb", 3, 80, 2)
+	if strings.Join(rows, "|") != "> a|  b" || y != 0 || x != 3 {
 		t.Fatalf("cursor before newline: rows=%q cursor=%d,%d", rows, y, x)
 	}
 }
@@ -121,9 +122,149 @@ func TestInputRowsSplitsShortMultilinePaste(t *testing.T) {
 func TestInputRowsTracksChineseAndEmojiCursor(t *testing.T) {
 	for _, cluster := range []string{"🛡️", "👩‍💻", "👍🏽", "🇹🇼", "1️⃣"} {
 		text := "> " + cluster + "甲"
-		rows, y, x := inputRows(text, len([]rune(text)), 5)
-		if got, want := strings.Join(rows, "|"), "> "+cluster+"|甲"; got != want || y != 1 || x != 2 {
-			t.Errorf("input %q: rows=%q, cursor=%d,%d; want %q, 1,2", text, got, y, x, want)
+		rows, y, x := inputRows(text, len([]rune(text)), 5, 2)
+		if got, want := strings.Join(rows, "|"), "> "+cluster+"|  甲"; got != want || y != 1 || x != 4 {
+			t.Errorf("input %q: rows=%q, cursor=%d,%d; want %q, 1,4", text, got, y, x, want)
+		}
+	}
+}
+
+// joinInputRows strips the indent gutter from continuation rows so the draft
+// can be compared byte-for-byte with its source text.
+func joinInputRows(rows []string, indent int) string {
+	var joined strings.Builder
+	for i, row := range rows {
+		if i > 0 {
+			if !strings.HasPrefix(row, strings.Repeat(" ", indent)) {
+				return "<missing indent in row " + strconv.Itoa(i) + ": " + strconv.Quote(row) + ">"
+			}
+			row = row[indent:]
+		}
+		joined.WriteString(row)
+	}
+	return joined.String()
+}
+
+func TestInputRowsWrapsWordsWithIndentedContinuation(t *testing.T) {
+	text := "> " + strings.Repeat("wordy ", 39) + "wordy"
+	width, indent := 40, 2
+	rows, y, x := inputRows(text, len([]rune(text)), width, indent)
+	if len(rows) < 2 {
+		t.Fatalf("draft of %d cells did not wrap: %q", len(text), rows)
+	}
+	if !strings.HasPrefix(rows[0], "> ") {
+		t.Fatalf("first row lost the prompt label: %q", rows[0])
+	}
+	for i, row := range rows {
+		if w := visibleWidth(row); w > width {
+			t.Fatalf("row %d is %d cells wide (max %d): %q", i, w, width, row)
+		}
+		if i == 0 {
+			continue
+		}
+		if !strings.HasPrefix(row, strings.Repeat(" ", indent)) {
+			t.Fatalf("continuation row %d is not indented: %q", i, row)
+		}
+		for _, field := range strings.Fields(row[indent:]) {
+			if field != "wordy" {
+				t.Fatalf("row %d split a word: %q", i, row)
+			}
+		}
+	}
+	for _, field := range strings.Fields(strings.TrimPrefix(rows[0], "> ")) {
+		if field != "wordy" {
+			t.Fatalf("row 0 split a word: %q", rows[0])
+		}
+	}
+	if joined := joinInputRows(rows, indent); joined != text {
+		t.Fatalf("rows do not reconstruct the draft:\ngot  %q\nwant %q", joined, text)
+	}
+	if y != len(rows)-1 || x != visibleWidth(rows[len(rows)-1]) || x+1 > width {
+		t.Fatalf("cursor=%d,%d rows=%d; want last row with column inside the screen", y, x, len(rows))
+	}
+}
+
+func TestInputRowsHardSplitsLongWordWithoutTruncation(t *testing.T) {
+	text := "> " + strings.Repeat("x", 100)
+	width, indent := 20, 2
+	rows, y, x := inputRows(text, len([]rune(text)), width, indent)
+	if len(rows) < 2 {
+		t.Fatalf("long word did not wrap: %q", rows)
+	}
+	joined := joinInputRows(rows, indent)
+	if joined != text || strings.Count(joined, "x") != 100 || strings.Contains(joined, "?") {
+		t.Fatalf("long word was cut off: rows=%q joined=%q", rows, joined)
+	}
+	for i, row := range rows {
+		if w := visibleWidth(row); w > width {
+			t.Fatalf("row %d is %d cells wide (max %d): %q", i, w, width, row)
+		}
+	}
+	if y != len(rows)-1 || x+1 > width {
+		t.Fatalf("cursor=%d,%d rows=%d; want the last row inside the screen", y, x, len(rows))
+	}
+}
+
+func TestInputRowsCursorLandsOnWrapBoundaries(t *testing.T) {
+	// Cursor on the break space moves to the start of the next row, where
+	// the word it sits before actually renders.
+	rows, y, x := inputRows("> hello world", 8, 8, 2)
+	if strings.Join(rows, "|") != "> hello |  world" || y != 1 || x != 2 {
+		t.Fatalf("break-space cursor: rows=%q cursor=%d,%d", rows, y, x)
+	}
+	// Cursor inside a word on a continuation row counts the indent gutter.
+	rows, y, x = inputRows("> hello world", 10, 8, 2)
+	if y != 1 || x != 4 {
+		t.Fatalf("mid-word cursor: rows=%q cursor=%d,%d want 1,4", rows, y, x)
+	}
+	// Cursor at the end of a full row moves to the next row instead of the
+	// right margin.
+	rows, y, x = inputRows("> abcdefgh", 10, 10, 2)
+	if strings.Join(rows, "|") != "> abcdefgh|  " || y != 1 || x != 2 {
+		t.Fatalf("end-of-full-row cursor: rows=%q cursor=%d,%d", rows, y, x)
+	}
+}
+
+func TestInputRowsIndentsUnderSteerLabel(t *testing.T) {
+	label := "(Steer)> "
+	text := label + "some draft text here"
+	cursor := utf8.RuneCountInString(text)
+	width := 20
+	rows, y, x := inputRows(text, cursor, width, termtext.Width(label))
+	want := []string{"(Steer)> some draft ", strings.Repeat(" ", 9) + "text here"}
+	if strings.Join(rows, "|") != strings.Join(want, "|") || y != 1 || x != 18 || x+1 > width {
+		t.Fatalf("rows=%q cursor=%d,%d; want %q at 1,18", rows, y, x, want)
+	}
+}
+
+func TestInputRowsNarrowScreenKeepsTextAndCursor(t *testing.T) {
+	text := "> hello"
+	width, indent := 5, 8 // indent clamps to width-1
+	rows, y, x := inputRows(text, utf8.RuneCountInString(text), width, indent)
+	if joined := joinInputRows(rows, 4); joined != text {
+		t.Fatalf("narrow wrap cut the draft: rows=%q joined=%q", rows, joined)
+	}
+	for i, row := range rows {
+		if w := visibleWidth(row); w > width {
+			t.Fatalf("row %d is %d cells wide (max %d): %q", i, w, width, row)
+		}
+	}
+	if y != len(rows)-1 || x+1 > width {
+		t.Fatalf("cursor=%d,%d rows=%d; want the last row inside the screen", y, x, len(rows))
+	}
+}
+
+func TestInputRowsIndentsLinesStartedByNewline(t *testing.T) {
+	text := "> a\nbeta gamma delta epsilon"
+	width, indent := 10, 2
+	rows, y, x := inputRows(text, utf8.RuneCountInString(text), width, indent)
+	want := []string{"> a", "  beta ", "  gamma ", "  delta ", "  epsilon"}
+	if strings.Join(rows, "|") != strings.Join(want, "|") || y != 4 || x != 9 {
+		t.Fatalf("rows=%q cursor=%d,%d; want %q at 4,9", rows, y, x, want)
+	}
+	for i, row := range rows {
+		if w := visibleWidth(row); w > width {
+			t.Fatalf("row %d is %d cells wide (max %d): %q", i, w, width, row)
 		}
 	}
 }

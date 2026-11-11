@@ -41,52 +41,174 @@ func queuePrompt(status session.Status) string {
 	return "> "
 }
 
-// inputRows wraps by display cells, splits on hard line breaks, and retains
-// the logical cursor location. Short multiline pastes below the collapse
-// threshold stay literal, so embedded newlines must start a new composer row
-// instead of leaking into a single row string.
-func inputRows(text string, cursor, width int) ([]string, int, int) {
+// inputUnit is one display unit of the composer draft: the cells it paints
+// plus the rune range it covers in the source text. raw may differ from the
+// source when a cluster is wider than the row it lands on.
+type inputUnit struct {
+	raw   string
+	width int
+	start int
+	end   int
+	space bool
+}
+
+// inputRow is one rendered composer row. start and end delimit the source
+// rune range the row covers, including break and newline characters that are
+// never painted, so a logical cursor index maps back to exactly one row.
+type inputRow struct {
+	units []inputUnit
+	start int
+	end   int
+	width int
+}
+
+// inputRows word-wraps the composer draft by display cells. Row 0 carries the
+// prompt label and spans the full width; every later row starts with an
+// indent gutter aligned under the label, so a wrapped draft reads as one
+// block beneath the prompt. A soft break happens after the last space so
+// whole words move to the next row together; only a word wider than the
+// gutter hard-splits, and no unit is ever dropped: concatenating the rows
+// without the indent gutter reproduces text exactly (newlines included). The
+// cursor is a rune index into text and maps to the row covering that index
+// plus its screen column; a cursor that reaches a full row's last cell moves
+// to column 0 of the next row instead of the right margin.
+func inputRows(text string, cursor, width, indent int) ([]string, int, int) {
 	width = max(1, width)
-	rows := []string{""}
-	x, cy, cx, i := 0, 0, 0, 0
+	indent = max(0, min(indent, width-1))
+	gutter := width - indent // content cells on continuation rows
+	rows := []inputRow{{start: 0}}
+	capacity := func() int {
+		if len(rows) == 1 {
+			return width
+		}
+		return gutter
+	}
+	i := 0
 	for _, unit := range termtext.Units(text) {
 		w, raw := unit.Width, unit.Text
 		count := utf8.RuneCountInString(raw)
+		start := i
+		i += count
 		if strings.ContainsAny(raw, "\r\n") {
-			if cursor >= i && cursor < i+count {
-				cy, cx = len(rows)-1, x
+			// A hard break ends the current row, unless wrapping already
+			// left us at the start of an empty row. The break character is
+			// not painted but stays inside the row it terminates so the
+			// cursor keeps its logical position.
+			if last := len(rows) - 1; len(rows[last].units) > 0 || rows[last].width > 0 {
+				rows[last].end = i
+				rows = append(rows, inputRow{start: i, end: i})
+			} else {
+				rows[last].end = i
 			}
-			i += count
-			// A hard break always starts a new row, unless wrapping
-			// already left us at the start of an empty row.
-			if len(rows[len(rows)-1]) > 0 || x > 0 {
-				rows = append(rows, "")
-			}
-			x = 0
 			continue
 		}
-		if w > width {
+		row := &rows[len(rows)-1]
+		// A cluster wider than an empty row (possible only on very narrow
+		// gutters) paints as "?" instead of overflowing its cells.
+		if row.width == 0 && w > capacity() {
 			raw, w = "?", 1
 		}
-		if x+w > width {
-			rows = append(rows, "")
-			x = 0
+		if row.width+w > capacity() {
+			// Break after the last space when the word tail fits a fresh
+			// continuation row; otherwise split in place so text is kept
+			// whole instead of leaving a hole or losing characters.
+			split, moved := -1, 0
+			if s := lastInputBreak(row.units); s >= 0 {
+				for _, u := range row.units[s+1:] {
+					moved += u.width
+				}
+				if moved+w <= gutter {
+					split = s
+				}
+			}
+			if split >= 0 {
+				tail := append([]inputUnit(nil), row.units[split+1:]...)
+				boundary := start
+				if len(tail) > 0 {
+					boundary = tail[0].start
+				}
+				row.units = row.units[:split+1]
+				row.width -= moved
+				row.end = boundary
+				rows = append(rows, inputRow{start: boundary, end: i, units: tail, width: moved})
+			} else {
+				row.end = start
+				rows = append(rows, inputRow{start: start, end: i})
+			}
+			row = &rows[len(rows)-1]
+			if row.width == 0 && w > capacity() {
+				raw, w = "?", 1
+			}
 		}
-		if cursor >= i && cursor < i+count {
-			cy, cx = len(rows)-1, x
+		row.units = append(row.units, inputUnit{raw: raw, width: w, start: start, end: i, space: raw == " "})
+		row.width += w
+		rows[len(rows)-1].end = i
+	}
+
+	// Map the logical cursor to the row covering its rune index and to a
+	// screen column that includes the indent gutter of continuation rows.
+	total := utf8.RuneCountInString(text)
+	rowIndex, col := 0, 0
+	switch {
+	case cursor <= 0:
+	case cursor >= total:
+		rowIndex = len(rows) - 1
+		col = rows[rowIndex].width
+	default:
+		for rowIndex < len(rows)-1 && cursor >= rows[rowIndex].end {
+			rowIndex++
 		}
-		rows[len(rows)-1] += raw
-		i += count
-		x += w
-		if x >= width {
-			rows = append(rows, "")
-			x = 0
+		for _, u := range rows[rowIndex].units {
+			if u.end <= cursor {
+				col += u.width
+			}
 		}
 	}
-	if cursor >= utf8.RuneCountInString(text) {
-		cy, cx = len(rows)-1, x
+	rowWidth := width
+	if rowIndex > 0 {
+		rowWidth = gutter
 	}
-	return rows, cy, cx
+	if col >= rowWidth {
+		rowIndex++
+		col = 0
+		if rowIndex == len(rows) {
+			rows = append(rows, inputRow{start: total, end: total})
+		}
+	}
+
+	out := make([]string, len(rows))
+	for index, r := range rows {
+		var b strings.Builder
+		if index > 0 {
+			b.WriteString(strings.Repeat(" ", indent))
+		}
+		for _, u := range r.units {
+			b.WriteString(u.raw)
+		}
+		out[index] = b.String()
+	}
+	if rowIndex > 0 {
+		col += indent
+	}
+	return out, rowIndex, col
+}
+
+// lastInputBreak finds the last space with visible content before it: the
+// point where a soft break keeps whole words on the row they started on.
+func lastInputBreak(units []inputUnit) int {
+	for i := len(units) - 1; i >= 0; i-- {
+		if !units[i].space {
+			continue
+		}
+		before := 0
+		for _, u := range units[:i] {
+			before += u.width
+		}
+		if before > 0 {
+			return i
+		}
+	}
+	return -1
 }
 
 // paintFixedLocked owns the entire screen, including the cursor. No editor
@@ -118,7 +240,7 @@ func (u *UI) paintFixedLocked(direction int) {
 			label = plainHistoryText(u.inputLabel)
 		}
 	}
-	rows, cy, cx := inputRows(label+u.inputDisplay, utf8.RuneCountInString(label)+u.inputDisplayPosition, u.width)
+	rows, cy, cx := inputRows(label+u.inputDisplay, utf8.RuneCountInString(label)+u.inputDisplayPosition, u.width, termtext.Width(label))
 	queued := u.queuedPromptsLocked()
 	if u.questionnaireActive {
 		queued = nil
