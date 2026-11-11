@@ -514,7 +514,7 @@ func (u *UI) paintFixedLocked(direction int) {
 		}
 		todoCanScroll := false
 		if todo.expanded && todoLive && len(todoRows) > 0 && todoHeight > 1 {
-			size := max(1, todoHeight-1)
+			size := max(0, todoHeight-1)
 			maxAnchor := max(0, len(todoRows)-size)
 			clamped := max(0, min(todo.anchor, maxAnchor))
 			newAnchor := max(0, min(maxAnchor, todo.anchor-direction*size))
@@ -577,7 +577,7 @@ func (u *UI) paintFixedLocked(direction int) {
 		screenRows[todoStart] = truncateDiffLine(header, u.width, u.unicode)
 		visible := todoRows
 		if todo.expanded {
-			size := max(1, todoHeight-1)
+			size := max(0, todoHeight-1)
 			if direction != 0 {
 				todo.anchor = max(0, min(max(0, len(todoRows)-size), todo.anchor-direction*size))
 			}
