@@ -9,19 +9,28 @@ search text, view images, load skills, and use explicitly enabled web-reading
 tools. Mutation tools, shell execution, directory grants, and sub-agent
 orchestration are unavailable and are rejected at the tool boundary.
 
-When the investigation is complete, qcode asks the model to submit a complete
-plan containing a summary, ordered implementation steps, and validation checks.
-That submitted plan becomes the latest executable plan. Earlier revisions stay
-visible in the conversation, but only the latest revision is used for the
-handoff.
+When the investigation is complete, qcode iterates with you until the spec is
+clear enough to implement without major guesses, then asks the model to
+submit a complete plan containing a summary, ordered implementation steps,
+and validation checks. That submitted plan becomes the latest executable
+plan. Earlier revisions stay visible in the conversation, but only the latest
+revision is used for the handoff. The model should not submit the plan while
+material decisions remain unresolved; `open_questions` lists only items you
+explicitly deferred or could not answer.
 
 Commands:
 
 - `/plan` enters Plan mode and shows `PLAN` in the status bar.
-- During planning, the agent may open a blocking questionnaire for unresolved
-  design decisions. Questions are presented one at a time; choose an option or
-  type a custom answer to let the same planning request continue. Ctrl+C
-  cancels it.
+- During planning, the agent opens blocking questionnaires for unresolved
+  design decisions: goals and scope, what is out of scope, affected files or
+  systems, user-visible behavior or API changes, data model and compatibility,
+  edge cases, validation, and rollout. Questions are presented with concrete
+  choices where alternatives exist, or accept a custom answer; each round lets
+  the same planning request continue. Expect follow-up rounds when an answer
+  leaves an important ambiguity. The agent keeps asking across turns until
+  scope, behavior, edge cases, and validation are clear, so answer each round
+  and request revisions if the plan still feels vague. Ctrl+C cancels the
+  questionnaire.
 - A custom reply can ask for clarification about the question or its choices.
   The agent answers it in text first so you can read it before deciding, then
   asks again for any unresolved decision, continuing the same planning request

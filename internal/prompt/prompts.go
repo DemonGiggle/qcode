@@ -17,12 +17,27 @@ Use tools when they are needed to inspect or change the workspace. Before changi
 // policy enforces the no-mutation portion independently of this prompt.
 const PlanModeSuffix = `
 
-You are in Plan mode. Inspect the workspace and use the ask_questions tool for
-a small blocking questionnaire when a decision is genuinely unresolved. Do
-not change files, run shell commands, or claim that implementation or
-validation has happened. When you have enough information, submit one
-complete implementation plan with the propose_plan tool. The plan must
-include ordered changes and concrete validation steps.` + PlanningQuestionContinuation
+You are in Plan mode. Inspect the workspace first, then iterate with the user
+until the spec is clear enough to implement without major guesses. Do not
+change files, run shell commands, or claim that implementation or validation
+has happened.
+
+Prefer asking over guessing for spec-defining decisions: goals and scope,
+what is explicitly out of scope, affected files or systems, user-visible
+behavior or API changes, data model and compatibility concerns, edge cases,
+validation steps, and rollout or follow-up work. Inspect what is cheap to
+find, but use the ask_questions tool when the answers materially affect the
+plan. Ask in rounds with concrete choices (2-6 options) where alternatives
+exist; omit options only for open-ended answers such as paths, names, or
+detailed descriptions.
+
+Ask follow-up rounds when an answer leaves an important ambiguity, and keep
+iterating across turns until scope, behavior, edge cases, and validation are
+clear. Do not submit a plan while material decisions remain unresolved. When
+you have a clear spec, submit one complete implementation plan with the
+propose_plan tool. The plan must include ordered changes and concrete
+validation steps. Leave open questions empty when none remain; list only
+items the user explicitly deferred or could not answer.` + PlanningQuestionContinuation
 
 // PlanningQuestionContinuation also nudges the loop after a text-only
 // explanation, so a reply asking for clarification does not end planning.
@@ -277,9 +292,9 @@ const (
 	ImageTool                  = "Load a local image and attach it for visual analysis. Outside sandbox mode, paths may be outside the current directory; sandboxed paths require directory access approval. Supports PNG, JPEG, WEBP, and GIF."
 	DirectoryAccessTool        = "Ask the user to grant read/write access to an additional directory for this session. Use this before a shell command needs a path outside the approved workspace."
 	SkillTool                  = "Load an available workspace skill's name, absolute SKILL.md path, base directory, and complete instructions. Call this before performing work covered by that skill. Skills already marked always-loaded are included in the system prompt; calling skill for them returns the same text with a note instead of loading anything new."
-	ProposePlanTool            = "Save a complete implementation plan for the user to review. This tool is available only in Plan mode and ends the current planning request."
+	ProposePlanTool            = "Save a complete implementation plan for the user to review. Call only when the spec is clear enough to implement without major guesses. This tool is available only in Plan mode and ends the current planning request."
 	ProposeSkillTool           = "Save a complete qcode SKILL.md draft for the user to review and refine before creation. This tool is available only in Skill Plan mode."
-	AskQuestionsTool           = "Ask the user a small blocking questionnaire about unresolved design decisions. Use this only when the answers materially affect the current plan or skill draft; the tool returns one answer per question and then work continues."
+	AskQuestionsTool           = "Ask the user a blocking questionnaire about unresolved design decisions. Use this iteratively in Plan and Skill Plan modes until the spec is clear; each call returns one answer per question and then work continues. Ask only when the answers materially affect the current plan or skill draft."
 	InteractiveQuestionsTool   = "Ask the user one focused blocking question when its answer will avoid several broad workspace searches or resolve an important ambiguity. The answer is returned so you can continue the current request."
 	TodoAddTool                = "Add one execution checklist item in status todo. Use it when multi-step work grows; keep titles short. The updated checklist is returned."
 	TodoUpdateTool             = "Rename an execution checklist item and/or flip its status. Call it only when the title or status actually changes; the updated checklist is returned."
@@ -322,7 +337,7 @@ const (
 	PlanSummaryParameter     = "The goal, relevant findings, and important assumptions"
 	PlanStepsParameter       = "Ordered implementation steps; each should name the affected behavior or files"
 	PlanValidationParameter  = "Concrete tests or checks that will validate the implementation"
-	PlanQuestionsParameter   = "Important unresolved decisions; use an empty array when none remain"
+	PlanQuestionsParameter   = "Unresolved decisions the user explicitly deferred or could not answer; use an empty array when none remain"
 	SkillDraftNameParameter  = "Valid skill directory name: 1-64 lowercase letters, digits, hyphens, or underscores"
 	SkillLocationParameter   = "Supported skill root where the skill should be created"
 	SkillContentParameter    = "Complete UTF-8 SKILL.md content, including a concise description near the top and all required instructions"
