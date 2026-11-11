@@ -78,7 +78,7 @@ var tipTexts = []string{
 	"Run `/resume` to browse this workspace's saved sessions, or `/resume <session-id>` to restore one directly.",
 	"Sessions autosave during interactive work; `/resume` restores tabs, drafts, models, settings, and retained output.",
 	"In `/resume`, Tab opens Rename, Pin/Unpin, and Delete; Ctrl+D opens Delete all with confirmation.",
-	"The `/resume` picker previews the saved active tab. Pins sort first; renaming or pinning preserves prompt-recency order.",
+	"The `/resume` picker previews each saved session's latest message. Pins sort first; renaming or pinning preserves prompt-recency order.",
 	"Delete all removes every saved session in this workspace, including sessions hidden by the filter.",
 	"Deleting the current session clears all tabs and drafts while keeping main's settings; the confirmation defaults to Cancel.",
 	"Finish or cancel running agents before switching sessions with `/resume`; concurrent processes can restore the same session, with the last save winning.",

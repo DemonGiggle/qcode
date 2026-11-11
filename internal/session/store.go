@@ -99,7 +99,7 @@ func (s *Store) LoadForResume(id string) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	if s.filter != nil {
-		if err = s.save(snap); err != nil {
+		if err = s.saveSanitized(snap); err != nil {
 			return Snapshot{}, fmt.Errorf("rewrite sanitized session: %w", err)
 		}
 	}
@@ -254,6 +254,14 @@ func (s *Store) save(snap Snapshot) error {
 	if err != nil {
 		return err
 	}
+	return s.saveSanitized(snap)
+}
+
+// saveSanitized persists a snapshot that has already passed through Sanitize.
+// Only the post-Sanitize result may use this path, so nothing unsanitized
+// ever reaches disk via this helper. It repeats the identity validation that
+// save performs after filtering, then does the same marshal + atomicWrite.
+func (s *Store) saveSanitized(snap Snapshot) error {
 	if !validID(snap.ID) || snap.Workspace != s.workspace || snap.Version != SnapshotVersion {
 		return fmt.Errorf("invalid filtered session snapshot")
 	}
@@ -322,6 +330,63 @@ func ResumeTime(s Snapshot) time.Time {
 	return s.Created
 }
 
+// listHeader carries only the snapshot fields the resume picker and the
+// remote catalog need. Agent checkpoints, presentation history, and work
+// journals are deliberately absent: decoding them for every saved session
+// (and running the redaction filter over all of it) is what made listing
+// slow, while the picker only shows the preview, timestamps, and tab count.
+// Agents counts tabs without retaining any checkpoint bytes: each stored
+// array element decodes into a zero-size value, so no agent state, terminal
+// history, or journal payload is ever materialized.
+type listHeader struct {
+	Version                int
+	ID, Workspace, Preview string
+	Created, Saved, Left   time.Time
+	Recency                time.Time `json:",omitempty"`
+	Agents                 []struct{}
+}
+
+// loadListHeader reads the picker-visible snapshot fields without parsing
+// agent checkpoints, presentation history, or work journals. It enforces the
+// same identity checks as Load so foreign or incompatible files are
+// reported as problems rather than listed as sessions.
+func (s *Store) loadListHeader(id string) (Snapshot, int, error) {
+	data, err := os.ReadFile(filepath.Join(s.dir, id+".json"))
+	if err != nil {
+		return Snapshot{}, 0, err
+	}
+	var header listHeader
+	if err := json.Unmarshal(data, &header); err != nil {
+		return Snapshot{}, 0, err
+	}
+	if header.ID != id || header.Workspace != s.workspace || header.Version != SnapshotVersion {
+		return Snapshot{}, 0, fmt.Errorf("incompatible session snapshot %s", id)
+	}
+	snap := Snapshot{
+		Version:   header.Version,
+		ID:        header.ID,
+		Workspace: header.Workspace,
+		Preview:   header.Preview,
+		Created:   header.Created,
+		Saved:     header.Saved,
+		Left:      header.Left,
+		Recency:   header.Recency,
+	}
+	return snap, len(header.Agents), nil
+}
+
+// List returns the picker-visible summary of every saved session. Only the
+// metadata header of each snapshot file is decoded, and the installed filter
+// runs on that metadata-only snapshot (no Agents, Presentation, or Work), so
+// the redacted preview shown in the picker never carries conversation payload
+// and listing cost stays proportional to file headers rather than history.
+//
+// Deliberate trade-off: deep payload validation now happens at resume time
+// (Store.LoadForResume) rather than list time. A snapshot whose agent
+// payload the policy would reject still cannot leak: only the redacted
+// preview is displayed, the payload itself is never loaded, and LoadForResume
+// still validates and sanitizes the full snapshot before restoring it. Such
+// a session lists without a problem marker and fails when resumed.
 func (s *Store) List() ([]Entry, error) {
 	files, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -341,7 +406,7 @@ func (s *Store) List() ([]Entry, error) {
 		if metadataErr != nil {
 			entry.MetadataProblem = metadataErr.Error()
 		}
-		snap, err := s.Load(id)
+		snap, tabs, err := s.loadListHeader(id)
 		if err == nil {
 			snap, err = s.Sanitize(snap)
 		}
@@ -365,6 +430,13 @@ func (s *Store) List() ([]Entry, error) {
 			continue
 		}
 		entry.Snapshot = snap
+		if tabs > 0 {
+			// Preserve the tab count the picker ("N agents") and the remote
+			// catalog (agent_count) display. These placeholders carry no
+			// checkpoint state: they are attached after filtering, so the
+			// filter never sees them and they cannot leak payload.
+			entry.Snapshot.Agents = make([]SavedAgent, tabs)
+		}
 		entries = append(entries, entry)
 	}
 	sort.SliceStable(entries, func(i, j int) bool {

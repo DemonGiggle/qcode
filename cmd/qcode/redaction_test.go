@@ -138,16 +138,38 @@ func TestSnapshotListingIsolatesMalformedOwnedPayloads(t *testing.T) {
 			if err != nil || len(entries) != 2 {
 				t.Fatalf("malformed payload blocked listing: %+v, %v", entries, err)
 			}
+			// Listing is metadata-only: payload shapes are validated at resume
+			// time, so the malformed session lists with a redacted preview and
+			// no materialized payload rather than a problem marker.
 			for _, entry := range entries {
 				if entry.ID == healthy.ID && entry.Problem != "" {
 					t.Fatalf("healthy conversation unavailable: %+v", entry)
 				}
-				if entry.ID == broken.ID && (entry.Problem == "" || entry.Preview != "" || len(entry.Agents) != 0 || len(entry.Presentation) != 0) {
-					t.Fatalf("rejected payload escaped through listing: %+v", entry)
+				if entry.ID == broken.ID {
+					if entry.Problem != "" {
+						t.Fatalf("metadata listing validated payload: %+v", entry)
+					}
+					if strings.Contains(entry.Preview, cliRedactionSecret) {
+						t.Fatalf("listing leaked secret: %+v", entry)
+					}
+					if len(entry.Presentation) != 0 {
+						t.Fatalf("listing materialized payload: %+v", entry)
+					}
+					for _, agent := range entry.Agents {
+						if len(agent.State) != 0 {
+							t.Fatalf("listing materialized agent state: %+v", entry)
+						}
+					}
 				}
 			}
 			if _, err := store.LoadForResume(healthy.ID); err != nil {
 				t.Fatal("healthy conversation could not resume", err)
+			}
+			// Deep payload validation happens at resume time: the malformed
+			// session cannot be restored, so its payload still cannot leak
+			// through resume.
+			if snap, err := store.LoadForResume(broken.ID); err == nil || snap.ID != "" {
+				t.Fatalf("malformed payload resumable: %+v, %v", snap, err)
 			}
 		})
 	}

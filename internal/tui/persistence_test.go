@@ -827,11 +827,17 @@ func TestSessionConversationAndWorkSaved(t *testing.T) {
 			if err != nil || len(entries) != 1 || entries[0].Left.IsZero() {
 				t.Fatalf("conversation or work not saved: %+v, %v", entries, err)
 			}
-			var presentation savedPresentation
-			if err := json.Unmarshal(entries[0].Presentation, &presentation); err != nil {
+			// Listing is metadata-only; the conversation payload is read back
+			// through Load, which is what resume uses.
+			saved, err := store.Load(entries[0].ID)
+			if err != nil {
 				t.Fatal(err)
 			}
-			if presentation.Drafts["main"] != "next draft" || len(entries[0].Agents) != 2 {
+			var presentation savedPresentation
+			if err := json.Unmarshal(saved.Presentation, &presentation); err != nil {
+				t.Fatal(err)
+			}
+			if presentation.Drafts["main"] != "next draft" || len(saved.Agents) != 2 {
 				t.Fatal("started conversation lost draft or tabs")
 			}
 		})
