@@ -281,6 +281,53 @@ func TestGeminiBaseURLOverride(t *testing.T) {
 	}
 }
 
+func TestGeminiStripsAdditionalPropertiesFromToolSchemas(t *testing.T) {
+	var body map[string]any
+	p, err := newGemini(Config{HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		return response(http.StatusOK, "data: [DONE]\n\n"), nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := map[string]any{
+		"type":                 "object",
+		"properties":           map[string]any{"requests": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "object", "properties": map[string]any{"agent_id": map[string]any{"type": "string"}}, "required": []string{"agent_id"}, "additionalProperties": false}}},
+		"required":             []string{"requests"},
+		"additionalProperties": false,
+	}
+	_, err = p.Complete(context.Background(), Request{
+		Model:    "gemini-4-hydrogen",
+		Messages: []Message{{Role: "user", Content: "hi"}},
+		Tools:    []Tool{{Name: "consult_agents", Description: "consult", Parameters: original}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools, ok := body["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools = %#v", body["tools"])
+	}
+	encoded, err := json.Marshal(tools[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "additionalProperties") {
+		t.Fatalf("Gemini request retains additionalProperties: %s", encoded)
+	}
+	// Other JSON Schema keywords must survive sanitization.
+	for _, keyword := range []string{`"minItems":1`, `"required":["requests"]`, `"agent_id"`} {
+		if !strings.Contains(string(encoded), keyword) {
+			t.Fatalf("Gemini request lost %s: %s", keyword, encoded)
+		}
+	}
+	if _, ok := original["additionalProperties"]; !ok {
+		t.Fatal("sanitization mutated the shared tool schema")
+	}
+}
+
 func response(status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Status: http.StatusText(status), Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 }

@@ -191,7 +191,14 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 	}
 	tools := make([]openAITool, 0, len(input.Tools))
 	for _, tool := range input.Tools {
-		tools = append(tools, openAITool{Type: "function", Function: tool})
+		parameters := tool.Parameters
+		if p.name == "gemini" {
+			// Gemini's OpenAI compatibility layer rejects additionalProperties
+			// in function schemas with 400 INVALID_ARGUMENT. Shared schemas
+			// keep it for other providers, so sanitize a copy here.
+			parameters = geminiToolParameters(parameters)
+		}
+		tools = append(tools, openAITool{Type: "function", Function: Tool{Name: tool.Name, Description: tool.Description, Parameters: parameters}})
 	}
 	body := make(map[string]any, 8)
 	if p.name != "gemini" {

@@ -96,6 +96,41 @@ func (p *openAIProvider) geminiThinkingCapability(model string) ThinkingCapabili
 	return capability
 }
 
+// Gemini's OpenAI-compatible function-calling translator rejects JSON Schema's
+// additionalProperties keyword with a generic 400 INVALID_ARGUMENT
+// ("Request contains an invalid argument."). qcode's shared tool schemas set
+// additionalProperties:false for strict validation on other providers, so strip
+// it recursively on the Gemini route only. All other keywords are preserved
+// and caller maps are never mutated.
+func geminiToolParameters(params map[string]any) map[string]any {
+	if params == nil {
+		return nil
+	}
+	out := make(map[string]any, len(params))
+	for key, value := range params {
+		if key == "additionalProperties" {
+			continue
+		}
+		out[key] = geminiStripSchemaValue(value)
+	}
+	return out
+}
+
+func geminiStripSchemaValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return geminiToolParameters(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = geminiStripSchemaValue(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
 func (p *openAIProvider) geminiValidateThinking(model, level string) error {
 	level = strings.ToLower(strings.TrimSpace(level))
 	if level == "" {
