@@ -167,6 +167,11 @@ type interactiveController interface {
 	SetInteractiveMode(bool)
 }
 
+type autoreviewController interface {
+	AutoreviewEnabled() bool
+	SetAutoreviewEnabled(bool)
+}
+
 type skillPlanController interface {
 	SkillPlanMode() bool
 	SetSkillPlanMode(bool)

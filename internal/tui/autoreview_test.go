@@ -243,3 +243,70 @@ func TestMaybeTriggerAutoreviewBoundedLoop(t *testing.T) {
 		t.Fatalf("round = %d, want idle", round)
 	}
 }
+
+func TestMaybeTriggerAutoreviewSkipsWhenNoChanges(t *testing.T) {
+	var output bytes.Buffer
+	fake := &autoreviewFakeManager{summaries: map[string]session.Summary{
+		"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "is this issue fixed", LastOutcome: "Yes, the issue is fixed. Verified by reading logs."},
+	}}
+	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
+	u.SetAutoreview(true, "ollama", "review-model")
+	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "is this issue fixed"}})
+	if len(fake.submitted) != 0 {
+		t.Fatalf("read-only answer must not trigger review, submitted=%d", len(fake.submitted))
+	}
+}
+
+func TestMaybeTriggerAutoreviewSkipsWhenAgentOptsOut(t *testing.T) {
+	var output bytes.Buffer
+	fake := &autoreviewFakeManager{summaries: map[string]session.Summary{
+		"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "update docs", LastOutcome: "Updated README. Skip review, docs only.", ChangedFiles: []string{"README.md"}},
+	}}
+	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
+	u.SetAutoreview(true, "ollama", "review-model")
+	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "update docs"}})
+	if len(fake.submitted) != 0 {
+		t.Fatalf("agent opt-out must not trigger review, submitted=%d", len(fake.submitted))
+	}
+	if !strings.Contains(output.String(), "agent requested no review") {
+		t.Fatalf("opt-out should explain skip, got %q", output.String())
+	}
+}
+
+func TestAutoreviewSkipReason(t *testing.T) {
+	if reason, skip := autoreviewSkipReason(session.Summary{LastOutcome: "done"}); !skip || reason != autoreviewSkipClean {
+		t.Fatalf("empty changes should skip as clean, got %q %v", reason, skip)
+	}
+	if _, skip := autoreviewSkipReason(session.Summary{ChangedFiles: []string{"", "  "}, LastOutcome: "done"}); !skip {
+		t.Fatal("blank paths must count as no changes")
+	}
+	if reason, skip := autoreviewSkipReason(session.Summary{ChangedFiles: []string{"a.go"}, LastOutcome: "fixed, no review needed"}); !skip || reason != autoreviewSkipAgent {
+		t.Fatalf("skip marker should opt out, got %q %v", reason, skip)
+	}
+	if _, skip := autoreviewSkipReason(session.Summary{ChangedFiles: []string{"a.go"}, LastOutcome: "fixed the bug"}); skip {
+		t.Fatal("code change without marker must trigger review")
+	}
+}
+
+func TestAutoreviewAgentSkippedMarkers(t *testing.T) {
+	for _, outcome := range []string{
+		"Please [skip review], trivial change",
+		"[NO REVIEW] docs only",
+		"Skip Review: already validated",
+		"No review needed, verified manually",
+		"no code review needed",
+	} {
+		if !autoreviewAgentSkipped(outcome) {
+			t.Fatalf("should skip: %q", outcome)
+		}
+	}
+	for _, outcome := range []string{
+		"fixed the bug, please review",
+		"reviewed the code myself",
+		"",
+	} {
+		if autoreviewAgentSkipped(outcome) {
+			t.Fatalf("should not skip: %q", outcome)
+		}
+	}
+}

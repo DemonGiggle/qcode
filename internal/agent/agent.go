@@ -82,6 +82,7 @@ type Agent struct {
 	skillPlanMode            atomic.Bool
 	interactiveMode          atomic.Bool
 	interactiveAvailable     atomic.Bool
+	autoreviewEnabled        atomic.Bool
 	nonInteractiveNotice     atomic.Bool
 	questionsAsked           int
 	askedQuestions           map[string]bool

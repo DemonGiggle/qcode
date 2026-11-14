@@ -93,6 +93,17 @@ func (a *Agent) SetInteractiveAvailable(available bool) {
 	a.updateModeSystem()
 }
 
+// AutoreviewEnabled reports whether the automatic code-review suffix is
+// advertised to this agent. Only main uses it; sub-agents never inherit it.
+func (a *Agent) AutoreviewEnabled() bool { return a.autoreviewEnabled.Load() }
+
+// SetAutoreviewEnabled toggles the review-decision suffix in normal mode.
+// Plan and Skill Plan modes stay read-only and never advertise review.
+func (a *Agent) SetAutoreviewEnabled(enabled bool) {
+	a.autoreviewEnabled.Store(enabled)
+	a.updateModeSystem()
+}
+
 func (a *Agent) modeSystem(skills []prompt.SkillSummary) string {
 	filtered := make(map[string]string, len(a.alwaysContents))
 	for name, body := range a.alwaysContents {
@@ -106,6 +117,9 @@ func (a *Agent) modeSystem(skills []prompt.SkillSummary) string {
 	base := prompt.SystemForInteractiveWithAlways(skills, filtered, a.PlanMode(), a.SkillPlanMode(), a.InteractiveMode(), a.interactiveAvailable.Load())
 	if !a.PlanMode() && !a.SkillPlanMode() && a.nonInteractiveNotice.Load() {
 		base += prompt.NonInteractiveSuffix
+	}
+	if !a.PlanMode() && !a.SkillPlanMode() && a.autoreviewEnabled.Load() {
+		base += prompt.AutoreviewSuffix
 	}
 	return base
 }

@@ -515,6 +515,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			if saved == nil {
 				runner.SetInteractiveMode(opts.interactive)
 			}
+			if isMain {
+				runner.SetAutoreviewEnabled(ui.AutoreviewEnabled())
+			}
 			if saved == nil && len(autoloadSkills) > 0 {
 				currentSelection.SetSelection(skillNames(autoloadSkills), skillAlwaysNames(autoloadSkills))
 				runner.SetSkillsWithContents(autoloadSkills, autoloadAlwaysBodies)

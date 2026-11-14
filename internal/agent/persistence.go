@@ -54,6 +54,7 @@ type SavedState struct {
 	LatestPlan                                      *Plan
 	SkillPlanMode                                   bool
 	InteractiveMode                                 bool
+	AutoreviewEnabled                               bool
 	LatestSkillDraft                                *SkillDraft
 	LatestTodo                                      *Todo
 	Tools                                           json.RawMessage
@@ -106,7 +107,7 @@ func (a *Agent) publishCheckpoint() {
 		ContextUsage: a.contextUsage, AutoCompact: a.autoCompact, AutoCompactThreshold: a.autoCompactThreshold,
 		MaxSteps: a.MaxSteps(), LearningContext: a.learningContext, LearningSessionID: a.learningSessionID,
 		LearningBudget: a.learningBudget, Skills: a.selectedSkills, AlwaysContents: a.alwaysContents, PendingImages: a.pendingImages,
-		PlanMode: a.PlanMode(), SkillPlanMode: a.SkillPlanMode(), InteractiveMode: a.InteractiveMode()}
+		PlanMode: a.PlanMode(), SkillPlanMode: a.SkillPlanMode(), InteractiveMode: a.InteractiveMode(), AutoreviewEnabled: a.AutoreviewEnabled()}
 	if plan, ok := a.LatestPlan(); ok {
 		s.LatestPlan = &plan
 	}
@@ -201,6 +202,7 @@ func (a *Agent) RestoreFreshState(data json.RawMessage) error {
 		AutoCompact: saved.AutoCompact, AutoCompactThreshold: saved.AutoCompactThreshold,
 		MaxSteps: saved.MaxSteps, LearningBudget: saved.LearningBudget,
 		Skills: saved.Skills, AlwaysContents: saved.AlwaysContents, InteractiveMode: saved.InteractiveMode,
+		AutoreviewEnabled: saved.AutoreviewEnabled,
 	}
 	settings, err := json.Marshal(fresh)
 	if err != nil {
@@ -327,6 +329,7 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 	a.planMode.Store(s.PlanMode)
 	a.skillPlanMode.Store(s.SkillPlanMode)
 	a.interactiveMode.Store(s.InteractiveMode)
+	a.autoreviewEnabled.Store(s.AutoreviewEnabled)
 	if s.LatestPlan != nil {
 		plan := s.LatestPlan.clone()
 		a.latestPlan = &plan

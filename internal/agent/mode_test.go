@@ -450,3 +450,31 @@ func TestPlanModeSavesSubmittedPlan(t *testing.T) {
 		t.Fatal("restored agent lost latest plan")
 	}
 }
+
+func TestAutoreviewSuffixAdvertisedOnlyInNormalMode(t *testing.T) {
+	a := New(&modePlanProvider{}, "model", &modeTestToolset{}, trace.New(io.Discard, false), io.Discard, 2)
+	if strings.Contains(a.system, "Automatic code review is enabled") {
+		t.Fatal("autoreview suffix must be off by default")
+	}
+	a.SetAutoreviewEnabled(true)
+	if !strings.Contains(a.system, "Automatic code review is enabled") {
+		t.Fatalf("autoreview suffix missing: %q", a.system)
+	}
+	if !strings.Contains(a.system, "skip review") {
+		t.Fatalf("autoreview suffix should document opt-out: %q", a.system)
+	}
+	a.SetPlanMode(true)
+	if strings.Contains(a.system, "Automatic code review is enabled") {
+		t.Fatal("Plan mode must not advertise autoreview")
+	}
+	a.SetPlanMode(false)
+	a.SetSkillPlanMode(true)
+	if strings.Contains(a.system, "Automatic code review is enabled") {
+		t.Fatal("Skill Plan mode must not advertise autoreview")
+	}
+	a.SetSkillPlanMode(false)
+	a.SetAutoreviewEnabled(false)
+	if strings.Contains(a.system, "Automatic code review is enabled") {
+		t.Fatal("disabling autoreview must remove suffix")
+	}
+}

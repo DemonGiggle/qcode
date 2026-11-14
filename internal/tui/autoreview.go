@@ -52,12 +52,33 @@ func (u *UI) AutoreviewReviewer() (provider, model string) {
 // provider/model clears the reviewer.
 func (u *UI) SetAutoreview(enabled bool, provider, model string) {
 	u.screenMu.Lock()
-	defer u.screenMu.Unlock()
 	u.autoreviewEnabled = enabled
 	u.autoreviewProvider = strings.TrimSpace(provider)
 	u.autoreviewModel = strings.TrimSpace(model)
 	if !enabled {
 		u.autoreviewRound = autoreviewRoundIdle
+	}
+	u.screenMu.Unlock()
+	u.syncAutoreviewToMain()
+}
+
+// syncAutoreviewToMain advertises the toggle to main's system prompt so the
+// agent knows when it decides review eligibility. Best-effort: main may not
+// exist yet at startup or during restore.
+func (u *UI) syncAutoreviewToMain() {
+	defer func() { _ = recover() }()
+	if u.manager == nil {
+		return
+	}
+	u.screenMu.Lock()
+	enabled := u.autoreviewEnabled
+	u.screenMu.Unlock()
+	value, ok := u.manager.Runner("main")
+	if !ok {
+		return
+	}
+	if controller, ok := value.(autoreviewController); ok {
+		controller.SetAutoreviewEnabled(enabled)
 	}
 }
 
@@ -154,6 +175,7 @@ func (u *UI) handleAutoreviewCommand(ctx context.Context, fields []string) {
 		}
 		provider, model := u.autoreviewProvider, u.autoreviewModel
 		u.screenMu.Unlock()
+		u.syncAutoreviewToMain()
 		u.persistAutoreviewPreference(enabled)
 		u.drawStatusBar()
 		if enabled {
@@ -291,6 +313,7 @@ func (u *UI) pickAutoreviewReviewer(ctx context.Context) bool {
 		u.autoreviewRound = autoreviewRoundIdle
 	}
 	u.screenMu.Unlock()
+	u.syncAutoreviewToMain()
 	u.persistAutoreviewModel(provider, strings.TrimSpace(selectedModel))
 	u.persistAutoreviewPreference(true)
 	u.drawStatusBar()
@@ -362,7 +385,11 @@ func (u *UI) autoreviewHasGit() bool {
 
 // maybeTriggerAutoreview starts a review when main becomes fully idle with an
 // empty queue. It is called from handleAgentEvent. Normal user tasks start
-// the first review (round 0->1); delegation-callback completions advance the
+// the first review (round 0->1) only when the agent actually changed files;
+// read-only answers (e.g. "is this issue fixed" with no edits) and tasks
+// where the agent explicitly opts out never trigger a review. The agent
+// decides via its actions and via an explicit skip marker in its final
+// response (see AutoreviewSuffix). Delegation-callback completions advance the
 // bounded loop (round 1->final, round 2->idle).
 func (u *UI) maybeTriggerAutoreview(event session.Event) {
 	if u.manager == nil {
@@ -397,6 +424,22 @@ func (u *UI) maybeTriggerAutoreview(event session.Event) {
 		return
 	}
 	isCallback := strings.Contains(event.Agent.CurrentTask, "Sub-agent callback")
+	if !isCallback {
+		if reason, skip := autoreviewSkipReason(summary); skip {
+			// New read-only or explicitly-skipped work cancels any in-flight
+			// chain so a stale reviewer verdict cannot restart the loop.
+			if round != autoreviewRoundIdle {
+				u.screenMu.Lock()
+				u.autoreviewRound = autoreviewRoundIdle
+				u.screenMu.Unlock()
+			}
+			if reason == autoreviewSkipAgent {
+				u.printSystemMessage(dim + "Autoreview skipped (agent requested no review)." + reset)
+				u.drawStatusBar()
+			}
+			return
+		}
+	}
 	switch {
 	case !isCallback && round == autoreviewRoundIdle:
 		u.startAutoreview(summary, false)
@@ -418,6 +461,58 @@ func (u *UI) maybeTriggerAutoreview(event session.Event) {
 	default:
 		// Unexpected callback while idle; ignore to avoid review storms.
 	}
+}
+
+// autoreview skip reasons for maybeTriggerAutoreview.
+const (
+	autoreviewSkipNone  = ""
+	autoreviewSkipClean = "no file changes"
+	autoreviewSkipAgent = "agent requested no review"
+)
+
+// autoreviewSkipReason reports whether the just-finished main task should not
+// trigger a review. The agent decides: read-only work with no file changes
+// never triggers, and an explicit skip marker in the final response opts out
+// even when files changed.
+func autoreviewSkipReason(summary session.Summary) (string, bool) {
+	if !autoreviewHasChanges(summary) {
+		return autoreviewSkipClean, true
+	}
+	if autoreviewAgentSkipped(summary.LastOutcome) {
+		return autoreviewSkipAgent, true
+	}
+	return autoreviewSkipNone, false
+}
+
+// autoreviewHasChanges reports whether the last main request touched code.
+func autoreviewHasChanges(summary session.Summary) bool {
+	for _, path := range summary.ChangedFiles {
+		if strings.TrimSpace(path) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// autoreviewAgentSkipped reports whether main's final response explicitly opts
+// out of review. Matching is case-insensitive and intentionally narrow so
+// ordinary prose never skips by accident.
+func autoreviewAgentSkipped(outcome string) bool {
+	lowered := strings.ToLower(outcome)
+	for _, marker := range []string{
+		"[skip review]",
+		"[no review]",
+		"skip review",
+		"skip code review",
+		"no review needed",
+		"no review required",
+		"no code review needed",
+	} {
+		if strings.Contains(lowered, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // startAutoreview ensures the reusable reviewer tab and submits the review

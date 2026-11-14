@@ -113,6 +113,21 @@ show expectations: the latest checklist is reviewable by the user at any
 time, so keep it accurate. These tools are unavailable in Plan and Skill Plan
 modes.`
 
+// AutoreviewSuffix tells main when automatic code review applies and how to
+// opt out. It is appended only while /autoreview is enabled so read-only
+// answers stay quiet: only tasks that change files trigger a review, and the
+// agent can skip even those by stating it in its final response.
+const AutoreviewSuffix = `
+
+Automatic code review is enabled. A separate reviewer looks at your changes
+only when this request actually changed files. Read-only answers (questions,
+explanations, status checks like "is this issue fixed" with no edits) never
+trigger a review, so answer them normally. When you do change code and the
+change is trivial or unreviewable (for example docs-only, generated output, or
+you already validated it), say so in your final response with "skip review" or
+"no review needed" to opt out. Otherwise end normally and the reviewer runs
+automatically.`
+
 // ConversationCompact is used to summarize a conversation before replacing
 // older turns. Like the system prompt, it remains deliberately visible here
 // so users can audit and tune every model-facing instruction.
