@@ -231,7 +231,7 @@ Worker-tab edits remain session-only; persistence failures are reported.
 Each provider can have its own optional `[providers.<name>]` table containing
 `base_url`, `api_key_path` (preferred), `api_key` (deprecated inline),
 `model`, and `thinking`. Supported names match the built-in registry: `ollama`,
-`openai`, `opencode-go`, and `chatgpt`. Connection profiles do not add providers
+`openai`, `gemini`, `opencode-go`, and `chatgpt`. Connection profiles do not add providers
 or change the active provider by themselves; the root `provider` selects the
 startup default, and `/provider` changes the active terminal tab.
 
@@ -245,6 +245,13 @@ thinking = "high"
 
 [providers.ollama]
 base_url = "http://127.0.0.1:11434"
+
+[providers.gemini]
+api_key_path = "~/.config/qcode/gemini.key"
+model = "gemini-3-flash-preview"
+thinking = "high"
+# Optional; Google's OpenAI-compatible endpoint is the default.
+# base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
 ```
 
 Profiles merge **field by field** through the usual config layers. An omitted
@@ -292,10 +299,12 @@ or flag credentials are never copied into config.
 Launch `--base-url`, `--api-key`, `QCODE_BASE_URL`, and `QCODE_API_KEY` overrides
 stay associated with the provider selected at launch, including when switching
 back to it. Switching to another provider uses its own profile/defaults instead
-of forwarding the old connection. `OPENAI_API_KEY` is also available when
-switching to OpenAI. At startup the precedence is `--api-key` >
-`QCODE_API_KEY` > `OPENAI_API_KEY` (openai only) > `api_key_path` file >
-`providers.<name>.api_key` / legacy config.
+of forwarding the launch overrides. Provider-specific environment keys remain
+available for their matching provider: `OPENAI_API_KEY` for OpenAI, and
+`GEMINI_API_KEY` (preferred) or `GOOGLE_API_KEY` for Gemini. At startup, key
+precedence is `--api-key` > `QCODE_API_KEY` > provider-specific environment key
+> `[providers.<name>].api_key_path` > deprecated inline `api_key` / legacy config.
+For Gemini, `GEMINI_API_KEY` takes precedence over `GOOGLE_API_KEY`.
 
 Main-tab `/provider` writes root `provider` and `[providers.<name>]`
 model/thinking together atomically so switching back restores it; an empty
@@ -363,7 +372,7 @@ Explicit command-line flags take precedence over environment variables, which ta
 
 When a flag or environment variable selects a provider different from the configured provider, the configured `model`, `thinking`, and `context_window` are not inherited; set them explicitly if they should apply to the selected provider. The provider's `[providers.<name>]` model/thinking (then deprecated `[provider_models]` / `[provider_thinking]` memory, then root `model`/`thinking`) still applies when no explicit `--model` / `--thinking` override is given. The selected provider's own connection profile is used; legacy credentials owned by another provider are not inherited. A configured `context_window` also applies only when the configured model is unset or matches the selected model.
 
-API keys can be set with `[providers.<name>].api_key_path` (preferred file, `0600`/`0400`) or deprecated inline `[providers.<name>].api_key` (or legacy root `api_key`), though `QCODE_API_KEY` or `OPENAI_API_KEY` is preferable on shared systems. `--api-key` takes precedence over both environment variables and the configuration file. Keep key files and any config containing an inline key private. The `chatgpt` provider uses `qcode login chatgpt` OAuth instead of an API key; set its file with `[chatgpt] oauth_path` (default `~/.config/qcode/chatgpt-oauth.json`).
+API keys can be set with `[providers.<name>].api_key_path` (preferred file, `0600`/`0400`) or deprecated inline `[providers.<name>].api_key` (or legacy root `api_key`), though `QCODE_API_KEY` or the provider-specific environment key (`OPENAI_API_KEY` for OpenAI; `GEMINI_API_KEY` or `GOOGLE_API_KEY` for Gemini) is preferable on shared systems. `--api-key` takes precedence over both environment variables and the configuration file. Keep key files and any config containing an inline key private. The `chatgpt` provider uses `qcode login chatgpt` OAuth instead of an API key; set its file with `[chatgpt] oauth_path` (default `~/.config/qcode/chatgpt-oauth.json`).
 
 `thinking` (or `--thinking` / `QCODE_THINKING`) is an optional level such as
 `off`, `low`, `high`, or `max`. It is validated against the selected provider

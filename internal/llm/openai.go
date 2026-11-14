@@ -103,9 +103,16 @@ func (p *openAIProvider) Models(ctx context.Context) ([]string, error) {
 	}
 	models := make([]string, 0, len(payload.Data))
 	for _, model := range payload.Data {
-		if model.ID != "" {
-			models = append(models, model.ID)
+		if model.ID == "" {
+			continue
 		}
+		// Google's OpenAI-compatible model list exposes IDs, not chat/tool
+		// capability metadata. Exclude only model IDs documented as embedding-only;
+		// do not infer that every other (including unknown) ID supports tools.
+		if p.name == "gemini" && isKnownGeminiEmbeddingModel(model.ID) {
+			continue
+		}
+		models = append(models, model.ID)
 	}
 	return models, nil
 }
@@ -115,11 +122,18 @@ type openAITool struct {
 	Function Tool   `json:"function"`
 }
 
+type geminiToolExtraContent struct {
+	Google struct {
+		ThoughtSignature string `json:"thought_signature,omitempty"`
+	} `json:"google,omitempty"`
+}
+
 type openAIToolCall struct {
-	Index    int    `json:"index,omitempty"`
-	ID       string `json:"id,omitempty"`
-	Type     string `json:"type,omitempty"`
-	Function struct {
+	Index        int                     `json:"index,omitempty"`
+	ID           string                  `json:"id,omitempty"`
+	Type         string                  `json:"type,omitempty"`
+	ExtraContent *geminiToolExtraContent `json:"extra_content,omitempty"`
+	Function     struct {
 		Name      string `json:"name,omitempty"`
 		Arguments string `json:"arguments,omitempty"`
 	} `json:"function"`
@@ -136,6 +150,11 @@ type openAIMessage struct {
 }
 
 func (p *openAIProvider) Complete(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
+	if p.name == "gemini" {
+		if err := p.geminiValidateThinking(input.Model, input.Thinking); err != nil {
+			return Response{}, err
+		}
+	}
 	if p.name == "opencode-go" && openCodeGoModelRoutes[input.Model] == openCodeGoResponsesRoute {
 		return p.completeResponses(ctx, input, onText)
 	}
@@ -160,6 +179,10 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 		}
 		for i, call := range message.ToolCalls {
 			item := openAIToolCall{Index: i, ID: call.ID, Type: "function"}
+			if p.name == "gemini" && call.ThoughtSignature != "" {
+				item.ExtraContent = &geminiToolExtraContent{}
+				item.ExtraContent.Google.ThoughtSignature = call.ThoughtSignature
+			}
 			item.Function.Name = call.Name
 			item.Function.Arguments = string(call.Arguments)
 			converted.ToolCalls = append(converted.ToolCalls, item)
@@ -170,7 +193,11 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 	for _, tool := range input.Tools {
 		tools = append(tools, openAITool{Type: "function", Function: tool})
 	}
-	body := map[string]any{"stream_options": map[string]any{"include_usage": true}, "model": input.Model, "messages": messages, "stream": true}
+	body := make(map[string]any, 8)
+	if p.name != "gemini" {
+		body["stream_options"] = map[string]any{"include_usage": true}
+	}
+	body["model"], body["messages"], body["stream"] = input.Model, messages, true
 	if input.Temperature != nil && (p.name != "openai" || !capability.Supported) {
 		body["temperature"] = *input.Temperature
 	}
@@ -284,7 +311,7 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 	// for the fields it reports. Merge by presence and validate once at the
 	// end so a later snapshot missing a field never erases earlier values.
 	accumulated := &Usage{}
-	type partialCall struct{ id, name, arguments string }
+	type partialCall struct{ id, name, arguments, thoughtSignature string }
 	partials := map[int]*partialCall{}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -355,6 +382,9 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 				if delta.ID != "" {
 					part.id = delta.ID
 				}
+				if delta.ExtraContent != nil && delta.ExtraContent.Google.ThoughtSignature != "" {
+					part.thoughtSignature = delta.ExtraContent.Google.ThoughtSignature
+				}
 				part.name += delta.Function.Name
 				part.arguments += delta.Function.Arguments
 			}
@@ -372,7 +402,7 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 		if len(arguments) == 0 {
 			arguments = json.RawMessage(`{}`)
 		}
-		result.ToolCalls = append(result.ToolCalls, ToolCall{ID: part.id, Name: part.name, Arguments: arguments})
+		result.ToolCalls = append(result.ToolCalls, ToolCall{ID: part.id, Name: part.name, Arguments: arguments, ThoughtSignature: part.thoughtSignature})
 	}
 	return Response{Message: result, Usage: NormalizeUsage(accumulated)}, nil
 }

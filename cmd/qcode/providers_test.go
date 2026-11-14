@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,94 @@ func profileValue(value string) *string { return &value }
 type providerHTTPFunc func(*http.Request) (*http.Response, error)
 
 func (f providerHTTPFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestGeminiLaunchCredentialPrecedence(t *testing.T) {
+	t.Setenv("QCODE_API_KEY", "qcode-key")
+	t.Setenv("GEMINI_API_KEY", "gemini-key")
+	t.Setenv("GOOGLE_API_KEY", "google-key")
+	profile := "profile-key"
+	cfg := config.Config{Providers: map[string]config.ProviderProfile{"gemini": {APIKey: &profile}}}
+	for _, tc := range []struct {
+		name string
+		set  map[string]string
+		flag string
+		want string
+	}{
+		{name: "flag", flag: "flag-key", want: "flag-key"},
+		{name: "QCODE_API_KEY", set: map[string]string{"QCODE_API_KEY": "qcode-key"}, want: "qcode-key"},
+		{name: "GEMINI_API_KEY", set: map[string]string{"QCODE_API_KEY": "", "GEMINI_API_KEY": "gemini-key"}, want: "gemini-key"},
+		{name: "GOOGLE_API_KEY", set: map[string]string{"QCODE_API_KEY": "", "GEMINI_API_KEY": "", "GOOGLE_API_KEY": "google-key"}, want: "google-key"},
+		{name: "profile", set: map[string]string{"QCODE_API_KEY": "", "GEMINI_API_KEY": "", "GOOGLE_API_KEY": ""}, want: "profile-key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for key, value := range tc.set {
+				t.Setenv(key, value)
+			}
+			opts := options{provider: "gemini", apiKey: tc.flag}
+			flags := map[string]bool{}
+			if tc.flag != "" {
+				flags["api-key"] = true
+			}
+			applyProviderConnection(&opts, cfg, flags)
+			if opts.apiKey != tc.want {
+				t.Fatalf("api key = %q, want %q", opts.apiKey, tc.want)
+			}
+		})
+	}
+}
+
+func TestGeminiProviderCredentialsAndDefaultEndpoint(t *testing.T) {
+	t.Setenv("QCODE_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "gemini-env")
+	t.Setenv("GOOGLE_API_KEY", "google-env")
+	t.Setenv("OPENAI_API_KEY", "openai-env")
+	policy, _ := redaction.New(redaction.Config{}, nil)
+	builder := &providerBuilder{config: config.Config{Providers: map[string]config.ProviderProfile{
+		"gemini": {APIKey: profileValue("profile-key")},
+	}}, launchProvider: "openai", policy: policy}
+	connection := builder.connection("gemini", nil)
+	if connection.APIKey != "gemini-env" || connection.BaseURL != "" {
+		t.Fatalf("Gemini connection = %+v", connection)
+	}
+	if ok, _ := builder.availability("gemini"); !ok {
+		t.Fatal("Gemini environment key should enable the default provider")
+	}
+	prepared, err := builder.prepare(context.Background(), "gemini", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Provider.Name() != "gemini" || prepared.Endpoint != "" {
+		t.Fatalf("prepared Gemini provider = %+v", prepared)
+	}
+	t.Setenv("OPENAI_API_KEY", "")
+	if ok, _ := builder.availability("openai"); ok {
+		t.Fatal("Gemini environment key must not enable OpenAI")
+	}
+	t.Setenv("GEMINI_API_KEY", "")
+	if got := builder.connection("gemini", nil).APIKey; got != "google-env" {
+		t.Fatalf("GOOGLE_API_KEY fallback = %q", got)
+	}
+	t.Setenv("GOOGLE_API_KEY", "")
+	if got := builder.connection("gemini", nil).APIKey; got != "profile-key" {
+		t.Fatalf("profile fallback = %q", got)
+	}
+	delete(builder.config.Providers, "gemini")
+	if got := builder.connection("gemini", nil).APIKey; got != "" {
+		t.Fatalf("missing key = %q", got)
+	}
+	if ok, hint := builder.availability("gemini"); ok || !strings.Contains(hint, "GEMINI_API_KEY") {
+		t.Fatalf("missing-key availability = %v, %q", ok, hint)
+	}
+	if _, err := builder.prepare(context.Background(), "gemini", nil); err == nil || !strings.Contains(err.Error(), "GOOGLE_API_KEY") {
+		t.Fatalf("missing-key guidance = %v", err)
+	}
+	custom := "https://proxy.example/v1"
+	builder.config.Providers["gemini"] = config.ProviderProfile{BaseURL: profileValue(custom), APIKey: profileValue("proxy-key")}
+	prepared, err = builder.prepare(context.Background(), "gemini", nil)
+	if err != nil || prepared.Endpoint != custom {
+		t.Fatalf("custom endpoint = %+v, %v", prepared, err)
+	}
+}
 
 func TestApplyProviderProfilesAndLaunchPrecedence(t *testing.T) {
 	for _, name := range []string{"QCODE_PROVIDER", "QCODE_MODEL", "QCODE_BASE_URL", "QCODE_API_KEY", "OPENAI_API_KEY"} {
@@ -202,6 +291,50 @@ func (*providerBuilderTools) Schemas() []llm.Tool        { return nil }
 func (*providerBuilderTools) EnabledSchemas() []llm.Tool { return nil }
 func (*providerBuilderTools) ExecuteDetailed(context.Context, llm.ToolCall) (llm.ToolResult, error) {
 	return llm.ToolResult{}, nil
+}
+
+func TestOpenAIGeminiOpenAIRoundTripKeepsCredentialsIsolated(t *testing.T) {
+	for _, name := range []string{"QCODE_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"} {
+		t.Setenv(name, "")
+	}
+	newCatalog := func(wantKey string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/models" {
+				t.Errorf("unexpected catalog path %q", r.URL.Path)
+			}
+			if got := r.Header.Get("Authorization"); got != "Bearer "+wantKey {
+				t.Errorf("credential = %q, want provider-specific key", got)
+			}
+			io.WriteString(w, `{"data":[{"id":"shared-model"}]}`)
+		}))
+	}
+	openaiServer := newCatalog("openai-profile-secret")
+	defer openaiServer.Close()
+	geminiServer := newCatalog("gemini-profile-secret")
+	defer geminiServer.Close()
+	policy, _ := redaction.New(redaction.Config{}, []string{"launch-only-secret", "openai-profile-secret", "gemini-profile-secret"})
+	builder := &providerBuilder{
+		launchProvider: "ollama",
+		launch:         llm.Config{APIKey: "launch-only-secret"},
+		policy:         policy,
+		config: config.Config{Providers: map[string]config.ProviderProfile{
+			"openai": {BaseURL: profileValue(openaiServer.URL), APIKey: profileValue("openai-profile-secret")},
+			"gemini": {BaseURL: profileValue(geminiServer.URL), APIKey: profileValue("gemini-profile-secret")},
+		}},
+	}
+	for _, name := range []string{"openai", "gemini", "openai"} {
+		prepared, err := builder.prepare(context.Background(), name, nil)
+		if err != nil {
+			t.Fatalf("prepare %s: %v", name, err)
+		}
+		if prepared.Provider.Name() != name {
+			t.Fatalf("prepared provider = %q, want %q", prepared.Provider.Name(), name)
+		}
+		models, err := prepared.Provider.(llm.ModelLister).Models(context.Background())
+		if err != nil || !reflect.DeepEqual(models, []string{"shared-model"}) {
+			t.Fatalf("%s model discovery = %v, %v", name, models, err)
+		}
+	}
 }
 
 func TestProviderBuilderMixedSessionUsesCurrentProfileCredentials(t *testing.T) {

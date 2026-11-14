@@ -54,6 +54,7 @@ func TestOpenCodeGoThinkingUsesOnlyModelValidEncoding(t *testing.T) {
 		{"hy no-think", "hy4-preview", "none", "none", ""},
 		{"deepseek off", "deepseek-v4-flash", "off", "", "disabled"},
 		{"glm toggle", "glm-5", "on", "", "enabled"},
+		{"always-on kimi effort", "kimi-k3", "max", "max", ""},
 		{"unknown omits", "future-model", "max", "", ""},
 	}
 	for _, test := range tests {

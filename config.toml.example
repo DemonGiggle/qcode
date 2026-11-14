@@ -1,4 +1,4 @@
-# Default provider selected at startup: ollama, openai, opencode-go, or chatgpt.
+# Default provider selected at startup: ollama, openai, gemini, opencode-go, or chatgpt.
 # Root keeps only the global default; connection settings live under
 # [providers.<name>] below.
 provider = "ollama"
@@ -48,12 +48,20 @@ max_steps = 32
 # [providers.opencode-go]
 # base_url = "https://your-endpoint.example/v1"
 # api_key_path = "~/.config/qcode/opencode-go.key"
+# [providers.gemini]
+# api_key_path = "~/.config/qcode/gemini.key"
+# model = "gemini-3-flash-preview"
+# thinking = "high" # choices depend on the exact model; see docs/providers.md
+# Google OpenAI-compatible endpoint is the default; override only if needed.
+# base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
 # The chatgpt provider uses OAuth; providers.chatgpt.api_key/api_key_path are invalid.
 # Run `qcode login chatgpt` first, then select provider = "chatgpt".
 
 # API keys: prefer api_key_path files (0600 or 0400, owner-only, no symlink,
-# one line, no quotes) or QCODE_API_KEY / OPENAI_API_KEY / --api-key.
-# Launch precedence: --api-key > QCODE_API_KEY > OPENAI_API_KEY (openai only)
+# one line, no quotes) or QCODE_API_KEY / OPENAI_API_KEY /
+# GEMINI_API_KEY / GOOGLE_API_KEY / --api-key.
+# At startup: --api-key > QCODE_API_KEY > provider-specific environment key
+# (OPENAI_API_KEY for OpenAI; GEMINI_API_KEY then GOOGLE_API_KEY for Gemini)
 # > api_key_path file > providers.<name>.api_key (deprecated).
 # A profile with both api_key and api_key_path fails to load; keep one source.
 # Broken key files warn at startup (the provider shows Need Setup First) and

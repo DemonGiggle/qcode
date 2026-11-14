@@ -1,6 +1,6 @@
 # Providers and modes
 
-qcode talks to Ollama and OpenAI-compatible APIs, plus OpenCode Go and ChatGPT subscriptions. Provider-specific wire formats stay isolated behind the small `llm.Provider` interface; see [Extending providers](extending-providers.md) to add one.
+qcode talks to Ollama, OpenAI-compatible APIs (including Google's Gemini API), OpenCode Go, and ChatGPT subscriptions. Provider-specific wire formats stay isolated behind the small `llm.Provider` interface; see [Extending providers](extending-providers.md) to add one.
 
 Normal agent turns leave temperature unspecified, preserving the provider's
 model defaults, including parameters stored in an Ollama model.
@@ -12,6 +12,7 @@ In the normal terminal UI:
 ```text
 /provider
 /provider openai
+/provider gemini
 /provider opencode-go
 /provider chatgpt
 ```
@@ -46,8 +47,7 @@ capacity override. Because reasoning/tool history can be backend-specific, qcode
 warns that the next request may fail; run `/new` if a fresh conversation is needed.
 
 Configure separate endpoints/keys with [connection profiles](configuration.md#provider-connection-profiles).
-Official OpenAI/OpenCode Go endpoints require API credentials; custom endpoints
-can remain unauthenticated. For ChatGPT, run `qcode login chatgpt` beforehand.
+Official OpenAI, Gemini, and OpenCode Go endpoints require API credentials; custom endpoints can remain unauthenticated. For ChatGPT, run `qcode login chatgpt` beforehand.
 Missing credentials produce setup guidance rather than changing the live tab.
 On main, provider/model/thinking save to the user config. Worker selections are
 session-local. New tabs inherit their creator's provider, and `/resume` restores
@@ -107,6 +107,59 @@ with multiple choices show the thinking selector. Custom OpenAI-compatible
 base URLs do not load this metadata and retain their existing behavior. Ollama
 continues to discover installed-model thinking support from its local API.
 
+## Gemini
+
+Gemini is a separate provider identity that uses Google's OpenAI-compatible
+Chat Completions API, by default at
+`https://generativelanguage.googleapis.com/v1beta/openai/`. It can be selected
+at startup or switched to in the terminal UI without occupying the OpenAI
+provider slot:
+
+```sh
+export GEMINI_API_KEY=...
+qcode --provider gemini --model gemini-3-flash-preview
+```
+
+`GOOGLE_API_KEY` is also supported as a fallback environment variable. For a
+persistent setup, use a Gemini key file and provider-specific model settings:
+
+```toml
+[providers.gemini]
+api_key_path = "~/.config/qcode/gemini.key"
+model = "gemini-3-flash-preview"
+thinking = "high"
+# base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+```
+
+The API key file should contain only the key on one line and have mode `0600`
+or `0400`; see [provider connection profiles](configuration.md#provider-connection-profiles)
+for validation and precedence. The `base_url` can also be set with
+`--base-url`; omitting it uses Google's default endpoint. `qcode --list-providers`
+includes `gemini`, and `/provider gemini` discovers models through the
+OpenAI-compatible `/models` endpoint. `qcode --provider gemini --update-model-meta`
+refreshes the per-user thinking metadata cache.
+
+Google's compatible `/models` endpoint returns model IDs but does not certify
+chat or tool capability. qcode filters known embedding-only IDs (including the
+`gemini-embedding-*` family) from the picker, but other IDs may still be
+unavailable for chat or tool calling, and availability varies by key/account.
+Unknown IDs are not assigned inferred thinking capabilities. An explicitly
+configured model may still fail if the API does not support Chat Completions
+for it. qcode does not add Google's native API protocol, OAuth, audio UI, or
+Google-specific extra request-body configuration.
+
+### Gemini thinking levels
+
+Thinking controls are exact-model specific. The built-in mappings expose
+`none`, `minimal`, `low`, `medium`, and `high` for Gemini 2.5 Flash and Flash
+Lite; Gemini 2.5 Pro, Gemini 3 Flash/Pro, and Gemini 3.1 Flash-Lite expose
+`minimal`, `low`, `medium`, and `high` (thinking cannot be disabled); Gemini 4
+Hydrogen also supports `xhigh`. Metadata can narrow these documented choices,
+but does not create capabilities for unknown models. With no explicit choice,
+qcode omits `reasoning_effort` and leaves Google's model default in effect.
+Unsupported explicit levels fail before the model request. Exact model IDs and
+availability can change; see Google's [OpenAI compatibility documentation](https://ai.google.dev/gemini-api/docs/openai#thinking).
+
 ## OpenCode Go
 
 ```sh
@@ -140,8 +193,8 @@ checking for updates. Refresh it explicitly with:
 qcode --provider opencode-go --update-model-meta
 ```
 
-`--update-model-meta` also refreshes the OpenAI catalog when used with
-`--provider openai`.
+`--update-model-meta` also refreshes the OpenAI or Gemini catalog when used with
+`--provider openai` or `--provider gemini`, respectively.
 
 A failed first fetch leaves qcode running without selectable thinking choices;
 a failed refresh keeps the last valid cache. Custom `--base-url` endpoints do

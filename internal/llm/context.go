@@ -18,7 +18,8 @@ var contextCatalog []byte
 func (p *openAIProvider) ContextWindow(_ context.Context, model string) (int, error) {
 	// A custom endpoint may impose different limits even for familiar model IDs.
 	if (p.name == "openai" && p.baseURL != "https://api.openai.com/v1") ||
-		(p.name == "opencode-go" && p.baseURL != openCodeGoBaseURL) {
+		(p.name == "opencode-go" && p.baseURL != openCodeGoBaseURL) ||
+		(p.name == "gemini" && p.baseURL != geminiBaseURL) {
 		return 0, nil
 	}
 	var catalog map[string]map[string]int

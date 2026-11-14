@@ -21,6 +21,28 @@ func writeKeyFile(t *testing.T, content string, mode os.FileMode) string {
 	return path
 }
 
+func TestGeminiAPIKeyPathResolvesIntoConnection(t *testing.T) {
+	keyPath := writeKeyFile(t, "gemini-file-secret\n", 0600)
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	text := "[providers.gemini]\napi_key_path = '" + strings.ReplaceAll(keyPath, "'", "") + "'\n"
+	if err := os.WriteFile(cfgPath, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, diagnostics := load([]string{cfgPath})
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %v", diagnostics)
+	}
+	if _, key := cfg.ProviderConnection("gemini"); key != "gemini-file-secret" {
+		t.Fatalf("Gemini key = %q", key)
+	}
+	if !strings.Contains(strings.Join(cfg.Secrets(), "\n"), "gemini-file-secret") {
+		t.Fatal("Gemini file key missing from registered secrets")
+	}
+	if cfg.Providers["gemini"].APIKeyPath == nil {
+		t.Fatal("Gemini APIKeyPath lost after load")
+	}
+}
+
 func TestAPIKeyPathResolvesIntoConnection(t *testing.T) {
 	keyPath := writeKeyFile(t, "file-secret\n", 0600)
 	cfgPath := filepath.Join(t.TempDir(), "config.toml")
