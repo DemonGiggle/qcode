@@ -66,7 +66,6 @@ func (u *UI) SetAutoreview(enabled bool, provider, model string) {
 // agent knows when it decides review eligibility. Best-effort: main may not
 // exist yet at startup or during restore.
 func (u *UI) syncAutoreviewToMain() {
-	defer func() { _ = recover() }()
 	if u.manager == nil {
 		return
 	}
@@ -362,8 +361,8 @@ func truncateAutoreview(s string, max int) string {
 	return s[:max] + "…"
 }
 
-// autoreviewHasGit reports whether the workspace root has version control.
-func (u *UI) autoreviewHasGit() bool {
+// autoreviewWorkdir resolves the workspace directory for git checks.
+func (u *UI) autoreviewWorkdir() string {
 	u.screenMu.Lock()
 	root := u.root
 	runner := u.runner
@@ -376,7 +375,13 @@ func (u *UI) autoreviewHasGit() bool {
 			}
 		}
 	}
-	if strings.TrimSpace(cwd) == "" {
+	return strings.TrimSpace(cwd)
+}
+
+// autoreviewHasGit reports whether the workspace root has version control.
+func (u *UI) autoreviewHasGit() bool {
+	cwd := u.autoreviewWorkdir()
+	if cwd == "" {
 		return false
 	}
 	st, err := os.Stat(filepath.Join(cwd, ".git"))
@@ -384,13 +389,14 @@ func (u *UI) autoreviewHasGit() bool {
 }
 
 // maybeTriggerAutoreview starts a review when main becomes fully idle with an
-// empty queue. It is called from handleAgentEvent. Normal user tasks start
-// the first review (round 0->1) only when the agent actually changed files;
-// read-only answers (e.g. "is this issue fixed" with no edits) and tasks
-// where the agent explicitly opts out never trigger a review. The agent
-// decides via its actions and via an explicit skip marker in its final
-// response (see AutoreviewSuffix). Delegation-callback completions advance the
-// bounded loop (round 1->final, round 2->idle).
+// empty queue. It is called from handleAgentEvent. Normal user tasks and
+// delegated-work callbacks start the first review (round 0->1) only when the
+// agent actually changed files, including delegated edits now attributed to
+// main's callback summary; read-only answers (e.g. "is this issue fixed" with
+// no edits) and tasks where the agent explicitly opts out never trigger a
+// review. The agent decides via its actions and via an explicit skip marker
+// in its final response (see AutoreviewSuffix). Reviewer callbacks advance
+// the bounded loop (round 1->final, round 2->idle).
 func (u *UI) maybeTriggerAutoreview(event session.Event) {
 	if u.manager == nil {
 		return
@@ -409,6 +415,7 @@ func (u *UI) maybeTriggerAutoreview(event session.Event) {
 	provider := strings.TrimSpace(u.autoreviewProvider)
 	model := strings.TrimSpace(u.autoreviewModel)
 	round := u.autoreviewRound
+	reviewerID := strings.TrimSpace(u.autoreviewReviewerID)
 	u.screenMu.Unlock()
 	if !enabled || provider == "" || model == "" {
 		return
@@ -423,44 +430,79 @@ func (u *UI) maybeTriggerAutoreview(event session.Event) {
 	if summary.Status == session.StatusRunning || summary.Status == session.StatusWaitingForApproval || summary.Status == session.StatusClosing {
 		return
 	}
-	isCallback := strings.Contains(event.Agent.CurrentTask, "Sub-agent callback")
-	if !isCallback {
-		if reason, skip := autoreviewSkipReason(summary); skip {
-			// New read-only or explicitly-skipped work cancels any in-flight
-			// chain so a stale reviewer verdict cannot restart the loop.
-			if round != autoreviewRoundIdle {
-				u.screenMu.Lock()
-				u.autoreviewRound = autoreviewRoundIdle
-				u.screenMu.Unlock()
-			}
-			if reason == autoreviewSkipAgent {
-				u.printSystemMessage(dim + "Autoreview skipped (agent requested no review)." + reset)
-				u.drawStatusBar()
-			}
-			return
+	isReviewer := autoreviewIsReviewerCallback(event.Agent.CurrentTask, reviewerID, round)
+	if isReviewer {
+		// Reviewer callbacks advance the bounded loop without eligibility
+		// checks: the review was already deemed necessary when it started,
+		// and the reviewer itself is read-only.
+		switch {
+		case round == autoreviewRoundFirst:
+			u.startAutoreview(summary, true)
+		case round == autoreviewRoundFinal:
+			u.screenMu.Lock()
+			u.autoreviewRound = autoreviewRoundIdle
+			u.screenMu.Unlock()
+			u.printSystemMessage(dim + "Autoreview final verdict processed." + reset)
+			u.drawStatusBar()
+		default:
+			// Unexpected reviewer callback while idle; ignore.
 		}
+		return
+	}
+	if reason, skip := autoreviewSkipReason(summary); skip {
+		// Read-only or explicitly-skipped work cancels any in-flight chain
+		// so a stale reviewer verdict cannot restart the loop. Clean skips
+		// stay silent to keep read-only answers quiet; explicit agent
+		// skips print so the decision is visible.
+		// Delegated edits are already attributed to main's callback
+		// summary via the manager, so no workspace-dirty fallback is
+		// needed here and global dirt would over-trigger on pristine
+		// questions.
+		if round != autoreviewRoundIdle {
+			u.screenMu.Lock()
+			u.autoreviewRound = autoreviewRoundIdle
+			u.screenMu.Unlock()
+		}
+		if reason == autoreviewSkipAgent {
+			u.printSystemMessage(dim + "Autoreview skipped (agent requested no review)." + reset)
+			u.drawStatusBar()
+		}
+		return
 	}
 	switch {
-	case !isCallback && round == autoreviewRoundIdle:
+	case round == autoreviewRoundIdle:
+		// Covers both fresh user work and delegated-work callbacks
+		// (isCallback) whose files were attributed to main. Starts the
+		// first review once.
 		u.startAutoreview(summary, false)
-	case !isCallback && round != autoreviewRoundIdle:
-		// New user work landed while a review chain was in flight; restart
-		// the chain for the latest task so every task gets reviewed once.
+	case round != autoreviewRoundIdle:
+		// New work (user task or delegated completion) landed while a
+		// review chain was in flight; restart the chain for the latest
+		// task so every change gets reviewed once.
 		u.screenMu.Lock()
 		u.autoreviewRound = autoreviewRoundIdle
 		u.screenMu.Unlock()
 		u.startAutoreview(summary, false)
-	case isCallback && round == autoreviewRoundFirst:
-		u.startAutoreview(summary, true)
-	case isCallback && round == autoreviewRoundFinal:
-		u.screenMu.Lock()
-		u.autoreviewRound = autoreviewRoundIdle
-		u.screenMu.Unlock()
-		u.printSystemMessage(dim + "Autoreview final verdict processed." + reset)
-		u.drawStatusBar()
 	default:
-		// Unexpected callback while idle; ignore to avoid review storms.
+		// Unreachable; kept to avoid review storms on future rounds.
 	}
+}
+
+// autoreviewIsReviewerCallback reports whether a main completion is the
+// automatic callback from the reusable reviewer tab. Reviewer callbacks
+// advance the bounded loop without eligibility checks. Normal delegation
+// callbacks fall through to the regular ChangedFiles gate so delegated
+// edits are reviewed once via attribution.
+func autoreviewIsReviewerCallback(currentTask, reviewerID string, round int) bool {
+	if !strings.Contains(currentTask, "Sub-agent callback") {
+		return false
+	}
+	if strings.TrimSpace(reviewerID) != "" {
+		return strings.Contains(currentTask, strings.TrimSpace(reviewerID))
+	}
+	// Fallback for tests and pre-ID state: treat in-flight callbacks as
+	// reviewer callbacks to preserve the bounded loop.
+	return round == autoreviewRoundFirst || round == autoreviewRoundFinal
 }
 
 // autoreview skip reasons for maybeTriggerAutoreview.
@@ -495,15 +537,15 @@ func autoreviewHasChanges(summary session.Summary) bool {
 }
 
 // autoreviewAgentSkipped reports whether main's final response explicitly opts
-// out of review. Matching is case-insensitive and intentionally narrow so
-// ordinary prose never skips by accident.
+// out of review. Matching is case-insensitive and requires either a bracketed
+// tag or an explicit no-review phrase so ordinary prose (for example "I did
+// not skip review") never skips by accident. The prompt suffix tells the
+// model to lead with the tag so it survives LastOutcome head-truncation.
 func autoreviewAgentSkipped(outcome string) bool {
 	lowered := strings.ToLower(outcome)
 	for _, marker := range []string{
 		"[skip review]",
 		"[no review]",
-		"skip review",
-		"skip code review",
 		"no review needed",
 		"no review required",
 		"no code review needed",

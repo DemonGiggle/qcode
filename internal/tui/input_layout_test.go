@@ -32,6 +32,9 @@ func (m *layoutManager) ClearLatestPrompt(id string) {
 func (m *layoutManager) Summary(id string) (session.Summary, error) {
 	return session.Summary{ID: id, Name: id, Status: m.states[id], QueueDepth: len(m.queued[id])}, nil
 }
+
+// Runner is a test stub: no live runners exist in layout tests.
+func (m *layoutManager) Runner(string) (any, bool) { return nil, false }
 func (m *layoutManager) QueuedPrompts(id string) []session.QueuedPrompt {
 	return append([]session.QueuedPrompt(nil), m.queued[id]...)
 }

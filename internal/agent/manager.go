@@ -87,6 +87,10 @@ type promptRequest struct {
 	finished     bool
 	abortErr     error
 	input        *taskInput
+	// files carries delegated sub-agent ChangedFiles into main's callback
+	// request so the autoreview gate sees delegated edits. Seeded at
+	// request start; main's own tool calls append via AddChangedFiles.
+	files []string
 }
 
 // AgentManager owns independent agent lifecycles and the shared workspace
@@ -610,7 +614,13 @@ func (m *AgentManager) startRequestLocked(id string, s *managedSession, req *pro
 	if !req.compact && !strings.HasPrefix(req.prompt, "/") {
 		s.latestPrompt = req.prompt
 	}
-	s.summary.ChangedFiles = nil
+	if req.source == delegationCallbackSource && len(req.files) > 0 {
+		// Seed delegated edits so main's callback summary includes them.
+		// Main's own tool calls during the callback append on top.
+		s.summary.ChangedFiles = append([]string(nil), req.files...)
+	} else {
+		s.summary.ChangedFiles = nil
+	}
 	s.summary.Error = ""
 	runner := s.runner
 	m.wg.Add(1)
@@ -1039,7 +1049,9 @@ func (m *AgentManager) enqueueDelegationCallbackLocked(completed *promptRequest,
 		merged := pending.prompt + "\n\n---\n\n" + callbackText
 		merged = truncateUTF8(merged, 2*maxHandoffBytes)
 		pending.prompt = merged
+		pending.files = mergeDelegationFiles(pending.files, files)
 		m.work[pending.journalIndex].Prompt = merged
+		m.work[pending.journalIndex].ChangedFiles = append([]string(nil), pending.files...)
 		m.recordDelegationEventLocked(session.DelegationEvent{
 			AgentID: completed.targetID, RequestID: completed.id,
 			CallbackID: pending.id, Status: status,
@@ -1060,10 +1072,11 @@ func (m *AgentManager) enqueueDelegationCallbackLocked(completed *promptRequest,
 		id: fmt.Sprintf("request-%d", m.nextRequestID), targetID: "main",
 		prompt: callbackText, source: delegationCallbackSource, actor: completed.targetID,
 		done: make(chan struct{}), journalIndex: len(m.work),
+		files: append([]string(nil), files...),
 	}
 	m.work = append(m.work, session.WorkRecord{
 		Source: req.source, Actor: req.actor, RequestID: req.id, AgentID: "main", AgentName: main.summary.Name, Model: main.summary.Model,
-		Prompt: req.prompt, Status: "queued", Created: time.Now().UTC(),
+		Prompt: req.prompt, Status: "queued", Created: time.Now().UTC(), ChangedFiles: append([]string(nil), files...),
 	})
 	if main.active == nil {
 		m.startRequestLocked("main", main, req)
@@ -1241,6 +1254,31 @@ func changedStateFiles(before, after map[string]string) []string {
 	}
 	sort.Strings(changed)
 	return changed
+}
+
+// mergeDelegationFiles unions delegated ChangedFiles for coalesced main
+// callbacks, preserving sorted order for stable prompts and tests.
+func mergeDelegationFiles(dst, src []string) []string {
+	if len(src) == 0 {
+		return dst
+	}
+	seen := make(map[string]bool, len(dst)+len(src))
+	for _, p := range dst {
+		if strings.TrimSpace(p) != "" {
+			seen[p] = true
+		}
+	}
+	for _, p := range src {
+		if strings.TrimSpace(p) != "" {
+			seen[p] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (t *managedToolset) listAgents() (llm.ToolResult, error) {

@@ -219,6 +219,7 @@ func TestMaybeTriggerAutoreviewBoundedLoop(t *testing.T) {
 	u.SetAutoreview(true, "ollama", "review-model")
 	u.screenMu.Lock()
 	u.autoreviewRound = autoreviewRoundFirst
+	u.autoreviewReviewerID = "agent-9"
 	u.screenMu.Unlock()
 	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-9"}})
 	if len(fake.submitted) != 1 {
@@ -244,6 +245,52 @@ func TestMaybeTriggerAutoreviewBoundedLoop(t *testing.T) {
 	}
 }
 
+func TestMaybeTriggerAutoreviewDelegatedEditsTrigger(t *testing.T) {
+	var output bytes.Buffer
+	fake := &autoreviewFakeManager{summaries: map[string]session.Summary{
+		"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-2", LastOutcome: "delegated fix applied", ChangedFiles: []string{"delegated.go"}},
+	}}
+	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
+	u.SetAutoreview(true, "ollama", "review-model")
+	// No reviewer yet (round idle, no reviewer ID): normal delegation
+	// completion with attributed files must start the first review.
+	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-2"}})
+	if len(fake.submitted) != 1 {
+		t.Fatalf("delegated edits should trigger review, submitted=%d", len(fake.submitted))
+	}
+}
+
+func TestMaybeTriggerAutoreviewDelegatedReadOnlySkips(t *testing.T) {
+	var output bytes.Buffer
+	fake := &autoreviewFakeManager{summaries: map[string]session.Summary{
+		"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-2", LastOutcome: "looked, no changes"},
+	}}
+	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
+	u.SetAutoreview(true, "ollama", "review-model")
+	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-2"}})
+	if len(fake.submitted) != 0 {
+		t.Fatalf("delegated read-only callback must not trigger review, submitted=%d", len(fake.submitted))
+	}
+}
+
+func TestAutoreviewIsReviewerCallback(t *testing.T) {
+	if !autoreviewIsReviewerCallback("Sub-agent callback Agent: agent-9", "agent-9", autoreviewRoundFirst) {
+		t.Fatal("reviewer callback should be detected")
+	}
+	if autoreviewIsReviewerCallback("Sub-agent callback Agent: agent-2", "agent-9", autoreviewRoundIdle) {
+		t.Fatal("normal delegation must not be mistaken for reviewer")
+	}
+	if !autoreviewIsReviewerCallback("Sub-agent callback Agent: agent-9", "", autoreviewRoundFirst) {
+		t.Fatal("fallback should treat in-flight callback as reviewer")
+	}
+	if autoreviewIsReviewerCallback("Sub-agent callback Agent: agent-9", "", autoreviewRoundIdle) {
+		t.Fatal("fallback must not treat idle callback as reviewer")
+	}
+	if autoreviewIsReviewerCallback("do work", "agent-9", autoreviewRoundFirst) {
+		t.Fatal("non-callback must never be reviewer")
+	}
+}
+
 func TestMaybeTriggerAutoreviewSkipsWhenNoChanges(t *testing.T) {
 	var output bytes.Buffer
 	fake := &autoreviewFakeManager{summaries: map[string]session.Summary{
@@ -260,7 +307,7 @@ func TestMaybeTriggerAutoreviewSkipsWhenNoChanges(t *testing.T) {
 func TestMaybeTriggerAutoreviewSkipsWhenAgentOptsOut(t *testing.T) {
 	var output bytes.Buffer
 	fake := &autoreviewFakeManager{summaries: map[string]session.Summary{
-		"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "update docs", LastOutcome: "Updated README. Skip review, docs only.", ChangedFiles: []string{"README.md"}},
+		"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "update docs", LastOutcome: "[skip review]\nUpdated README, docs only.", ChangedFiles: []string{"README.md"}},
 	}}
 	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
 	u.SetAutoreview(true, "ollama", "review-model")
@@ -280,8 +327,11 @@ func TestAutoreviewSkipReason(t *testing.T) {
 	if _, skip := autoreviewSkipReason(session.Summary{ChangedFiles: []string{"", "  "}, LastOutcome: "done"}); !skip {
 		t.Fatal("blank paths must count as no changes")
 	}
-	if reason, skip := autoreviewSkipReason(session.Summary{ChangedFiles: []string{"a.go"}, LastOutcome: "fixed, no review needed"}); !skip || reason != autoreviewSkipAgent {
+	if reason, skip := autoreviewSkipReason(session.Summary{ChangedFiles: []string{"a.go"}, LastOutcome: "[skip review]\nfixed docs"}); !skip || reason != autoreviewSkipAgent {
 		t.Fatalf("skip marker should opt out, got %q %v", reason, skip)
+	}
+	if reason, skip := autoreviewSkipReason(session.Summary{ChangedFiles: []string{"a.go"}, LastOutcome: "fixed, no review needed"}); !skip || reason != autoreviewSkipAgent {
+		t.Fatalf("no-review phrase should opt out, got %q %v", reason, skip)
 	}
 	if _, skip := autoreviewSkipReason(session.Summary{ChangedFiles: []string{"a.go"}, LastOutcome: "fixed the bug"}); skip {
 		t.Fatal("code change without marker must trigger review")
@@ -290,11 +340,13 @@ func TestAutoreviewSkipReason(t *testing.T) {
 
 func TestAutoreviewAgentSkippedMarkers(t *testing.T) {
 	for _, outcome := range []string{
+		"[skip review]\ntrivial change",
 		"Please [skip review], trivial change",
 		"[NO REVIEW] docs only",
-		"Skip Review: already validated",
+		"[no review]\nverified manually",
 		"No review needed, verified manually",
 		"no code review needed",
+		"no review required",
 	} {
 		if !autoreviewAgentSkipped(outcome) {
 			t.Fatalf("should skip: %q", outcome)
@@ -303,6 +355,9 @@ func TestAutoreviewAgentSkippedMarkers(t *testing.T) {
 	for _, outcome := range []string{
 		"fixed the bug, please review",
 		"reviewed the code myself",
+		"I did not skip review, please check",
+		"skip review",
+		"skip code review",
 		"",
 	} {
 		if autoreviewAgentSkipped(outcome) {

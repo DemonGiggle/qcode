@@ -773,3 +773,13 @@ func TestChangedStateFiles(t *testing.T) {
 		t.Fatalf("non-Git state produced files: %v", got)
 	}
 }
+
+func TestMergeDelegationFiles(t *testing.T) {
+	if got := mergeDelegationFiles(nil, nil); len(got) != 0 {
+		t.Fatalf("empty merge = %v", got)
+	}
+	got := mergeDelegationFiles([]string{"b.go"}, []string{"a.go", "b.go", " ", ""})
+	if strings.Join(got, ",") != "a.go,b.go" {
+		t.Fatalf("merge = %v", got)
+	}
+}
