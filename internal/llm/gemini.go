@@ -42,8 +42,13 @@ var geminiThinkingCatalog = map[string]ThinkingCapability{
 	"gemini-3-flash-preview":        {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
 	"gemini-3-pro-preview":          {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
 	"gemini-3.1-flash-lite-preview": {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
-	// Google documents xhigh only for Gemini 4 Hydrogen.
-	"gemini-4-hydrogen": {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high", "xhigh"}, RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	// Gemini 4 uses thinking_level (low/medium/high, plus xhigh for Hydrogen).
+	// MINIMAL is not supported on any Gemini 4 model: the API rejects it with
+	// 400 INVALID_ARGUMENT, so it must not be offered. Defaults follow Google:
+	// Carbon/Argon default to medium, Hydrogen defaults to high.
+	"gemini-4-carbon":   {Supported: true, Adjustable: true, Levels: []string{"low", "medium", "high"}, Default: "medium", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-4-argon":    {Supported: true, Adjustable: true, Levels: []string{"low", "medium", "high"}, Default: "medium", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-4-hydrogen": {Supported: true, Adjustable: true, Levels: []string{"low", "medium", "high", "xhigh"}, Default: "high", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
 }
 
 func (p *openAIProvider) geminiThinkingCapability(model string) ThinkingCapability {

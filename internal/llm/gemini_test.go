@@ -34,8 +34,20 @@ func TestGeminiProviderDefaultsModelsAndThinking(t *testing.T) {
 		t.Fatalf("request = %s auth=%q", seenURL, auth)
 	}
 	thinking := p.(ThinkingProvider)
-	if !reflect.DeepEqual(thinking.ThinkingCapability("gemini-4-hydrogen").Levels, []string{"minimal", "low", "medium", "high", "xhigh"}) {
+	if !reflect.DeepEqual(thinking.ThinkingCapability("gemini-4-hydrogen").Levels, []string{"low", "medium", "high", "xhigh"}) {
 		t.Fatalf("Gemini 4 capability = %+v", thinking.ThinkingCapability("gemini-4-hydrogen"))
+	}
+	if got := thinking.ThinkingCapability("gemini-4-hydrogen").Default; got != "high" {
+		t.Fatalf("Gemini 4 default = %q, want high", got)
+	}
+	if containsChoice(thinking.ThinkingCapability("gemini-4-hydrogen").Levels, "minimal") {
+		t.Fatal("Gemini 4 must not expose minimal thinking (API rejects it with 400)")
+	}
+	if !reflect.DeepEqual(thinking.ThinkingCapability("gemini-4-carbon").Levels, []string{"low", "medium", "high"}) {
+		t.Fatalf("Gemini 4 Carbon capability = %+v", thinking.ThinkingCapability("gemini-4-carbon"))
+	}
+	if !reflect.DeepEqual(thinking.ThinkingCapability("gemini-4-argon").Levels, []string{"low", "medium", "high"}) {
+		t.Fatalf("Gemini 4 Argon capability = %+v", thinking.ThinkingCapability("gemini-4-argon"))
 	}
 	if containsChoice(thinking.ThinkingCapability("gemini-3-pro-preview").Levels, "none") {
 		t.Fatal("Gemini 3 must not expose disabled thinking")
@@ -146,6 +158,33 @@ func TestGeminiThinkingValidationAndEffortRequest(t *testing.T) {
 	}
 	if body["reasoning_effort"] != "high" {
 		t.Fatalf("reasoning_effort = %#v", body["reasoning_effort"])
+	}
+}
+
+func TestGemini4HydrogenRejectsMinimal(t *testing.T) {
+	calls := 0
+	p, err := newGemini(Config{HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return response(http.StatusOK, "data: [DONE]\n\n"), nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// MINIMAL is not supported on any Gemini 4 model; the API rejects it with
+	// 400 INVALID_ARGUMENT. Fail fast before the request instead.
+	if _, err := p.Complete(context.Background(), Request{Model: "gemini-4-hydrogen", Thinking: "minimal"}, nil); err == nil {
+		t.Fatal("minimal effort was accepted for gemini-4-hydrogen")
+	}
+	if calls != 0 {
+		t.Fatalf("invalid request sent; calls=%d", calls)
+	}
+	for _, level := range []string{"low", "medium", "high", "xhigh"} {
+		if _, err := p.Complete(context.Background(), Request{Model: "gemini-4-hydrogen", Thinking: level}, nil); err != nil {
+			t.Fatalf("level %q rejected: %v", level, err)
+		}
+	}
+	if calls != 4 {
+		t.Fatalf("calls = %d, want 4", calls)
 	}
 }
 

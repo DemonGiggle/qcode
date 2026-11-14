@@ -34,6 +34,7 @@ func TestProviderTemperature(t *testing.T) {
 		},
 		{name: "opencode-go-responses", factory: newOpenCodeGo, model: "gpt-5.6-luna", path: "/responses", omit: true},
 		{name: "opencode-go-messages", factory: newOpenCodeGo, model: "qwen3.8-max", path: "/messages", omit: true},
+		{name: "gemini", factory: newGemini, model: "gemini-4-hydrogen", path: "/chat/completions", omit: true},
 	} {
 		t.Run(adapter.name, func(t *testing.T) {
 			for _, test := range []struct {

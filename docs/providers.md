@@ -153,8 +153,11 @@ Google-specific extra request-body configuration.
 Thinking controls are exact-model specific. The built-in mappings expose
 `none`, `minimal`, `low`, `medium`, and `high` for Gemini 2.5 Flash and Flash
 Lite; Gemini 2.5 Pro, Gemini 3 Flash/Pro, and Gemini 3.1 Flash-Lite expose
-`minimal`, `low`, `medium`, and `high` (thinking cannot be disabled); Gemini 4
-Hydrogen also supports `xhigh`. Metadata can narrow these documented choices,
+`minimal`, `low`, `medium`, and `high` (thinking cannot be disabled). Gemini 4
+Carbon and Argon expose `low`, `medium`, and `high` (default `medium`);
+Gemini 4 Hydrogen exposes `low`, `medium`, `high` (default), and `xhigh`.
+`minimal` is not supported on any Gemini 4 model and is rejected by the API
+with 400 INVALID_ARGUMENT. Metadata can narrow these documented choices,
 but does not create capabilities for unknown models. With no explicit choice,
 qcode omits `reasoning_effort` and leaves Google's model default in effect.
 Unsupported explicit levels fail before the model request. Exact model IDs and

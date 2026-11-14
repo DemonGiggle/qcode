@@ -198,7 +198,10 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 		body["stream_options"] = map[string]any{"include_usage": true}
 	}
 	body["model"], body["messages"], body["stream"] = input.Model, messages, true
-	if input.Temperature != nil && (p.name != "openai" || !capability.Supported) {
+	// Gemini uses fixed sampling defaults (temperature 1.0, topP 0.95, topK 64);
+	// custom values are ignored and strict validation can reject them, so omit
+	// temperature on the Gemini route even when Request carries one.
+	if input.Temperature != nil && p.name != "gemini" && (p.name != "openai" || !capability.Supported) {
 		body["temperature"] = *input.Temperature
 	}
 	if len(tools) > 0 {
