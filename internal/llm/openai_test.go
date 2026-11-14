@@ -134,3 +134,86 @@ func TestOpenAIListsModels(t *testing.T) {
 		t.Fatalf("models = %v", models)
 	}
 }
+
+func TestOpenAIStreamDuplicateIndexSplitsParallelCalls(t *testing.T) {
+	// Gemini's OpenAI-compatible endpoint reuses index 0 for parallel calls.
+	// Keying accumulation on index alone merges them into
+	// "todo_addtodo_addtodo_add" with concatenated arguments.
+	stream := strings.Join([]string{
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"todo_add","arguments":"{\"title\":\"one\"}"}}]}}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-2","function":{"name":"todo_add","arguments":"{\"title\":\"two\"}"}}]}}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-3","function":{"name":"todo_add","arguments":"{\"title\":\"three\"}"}}]}}]}`,
+		`data: [DONE]`, "",
+	}, "\n")
+	resp, err := parseOpenAIStream(strings.NewReader(stream), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Message.ToolCalls) != 3 {
+		t.Fatalf("tool calls = %#v, want 3 distinct calls", resp.Message.ToolCalls)
+	}
+	for i, want := range []struct{ id, args string }{
+		{"call-1", `{"title":"one"}`},
+		{"call-2", `{"title":"two"}`},
+		{"call-3", `{"title":"three"}`},
+	} {
+		got := resp.Message.ToolCalls[i]
+		if got.ID != want.id || got.Name != "todo_add" || string(got.Arguments) != want.args {
+			t.Errorf("call %d = %#v, want id=%q args=%s", i, got, want.id, want.args)
+		}
+	}
+}
+
+func TestOpenAIStreamMissingIndexSplitsByID(t *testing.T) {
+	// Missing "index" decodes as 0 with a plain int field; it must route by
+	// ID instead of merging into one call.
+	stream := strings.Join([]string{
+		`data: {"choices":[{"delta":{"tool_calls":[{"id":"call-a","function":{"name":"todo_add","arguments":"{\"title\":\"a\"}"}}]}}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"id":"call-b","function":{"name":"todo_add","arguments":"{\"title\":\"b\"}"}}]}}]}`,
+		`data: [DONE]`, "",
+	}, "\n")
+	resp, err := parseOpenAIStream(strings.NewReader(stream), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Message.ToolCalls) != 2 {
+		t.Fatalf("tool calls = %#v, want 2", resp.Message.ToolCalls)
+	}
+	if resp.Message.ToolCalls[0].ID != "call-a" || resp.Message.ToolCalls[1].ID != "call-b" {
+		t.Fatalf("ids = %q %q", resp.Message.ToolCalls[0].ID, resp.Message.ToolCalls[1].ID)
+	}
+	if resp.Message.ToolCalls[0].Name != "todo_add" || resp.Message.ToolCalls[1].Name != "todo_add" {
+		t.Fatalf("names merged: %#v", resp.Message.ToolCalls)
+	}
+}
+
+func TestOpenAIStreamSameEventDuplicateIndexSplits(t *testing.T) {
+	// Two calls in one delta array sharing index 0.
+	stream := strings.Join([]string{
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"lookup","arguments":"{\"q\":\"one\"}"}},{"index":0,"id":"call-2","function":{"name":"inspect","arguments":"{\"q\":\"two\"}"}}]}}]}`,
+		`data: [DONE]`, "",
+	}, "\n")
+	resp, err := parseOpenAIStream(strings.NewReader(stream), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Message.ToolCalls) != 2 {
+		t.Fatalf("tool calls = %#v, want 2", resp.Message.ToolCalls)
+	}
+}
+
+func TestOpenAIStreamSparseIndexesAreNotDropped(t *testing.T) {
+	// Old emission looped 0..len(map)-1, dropping sparse indexes.
+	stream := strings.Join([]string{
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call-1","function":{"name":"a","arguments":"{}"}}]}}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":3,"id":"call-2","function":{"name":"b","arguments":"{}"}}]}}]}`,
+		`data: [DONE]`, "",
+	}, "\n")
+	resp, err := parseOpenAIStream(strings.NewReader(stream), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Message.ToolCalls) != 2 {
+		t.Fatalf("tool calls = %#v, want 2 sparse calls preserved", resp.Message.ToolCalls)
+	}
+}

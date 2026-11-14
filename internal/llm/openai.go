@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 )
 
@@ -130,6 +131,22 @@ type geminiToolExtraContent struct {
 
 type openAIToolCall struct {
 	Index        int                     `json:"index,omitempty"`
+	ID           string                  `json:"id,omitempty"`
+	Type         string                  `json:"type,omitempty"`
+	ExtraContent *geminiToolExtraContent `json:"extra_content,omitempty"`
+	Function     struct {
+		Name      string `json:"name,omitempty"`
+		Arguments string `json:"arguments,omitempty"`
+	} `json:"function"`
+}
+
+// openAIStreamToolCall mirrors openAIToolCall on the wire, but Index is a
+// pointer so a missing "index" field (nil) can be distinguished from an
+// explicit index 0. Some OpenAI-compatible providers (notably Gemini) reuse
+// index 0 or omit it for parallel calls; keying accumulation on int index
+// alone merges distinct calls into e.g. "todo_addtodo_addtodo_add".
+type openAIStreamToolCall struct {
+	Index        *int                    `json:"index"`
 	ID           string                  `json:"id,omitempty"`
 	Type         string                  `json:"type,omitempty"`
 	ExtraContent *geminiToolExtraContent `json:"extra_content,omitempty"`
@@ -321,8 +338,38 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 	// for the fields it reports. Merge by presence and validate once at the
 	// end so a later snapshot missing a field never erases earlier values.
 	accumulated := &Usage{}
-	type partialCall struct{ id, name, arguments, thoughtSignature string }
+	type partialCall struct {
+		id, name, arguments, thoughtSignature string
+		sourceIndex                            int // original wire index, -1 when missing
+	}
 	partials := map[int]*partialCall{}
+	order := []int{}
+	byID := map[string]int{}
+	sourceGroups := map[int][]int{}
+	maxUsed := -1
+	alloc := func(source int) int {
+		maxUsed++
+		slot := maxUsed
+		partials[slot] = &partialCall{sourceIndex: source}
+		order = append(order, slot)
+		sourceGroups[source] = append(sourceGroups[source], slot)
+		return slot
+	}
+	// ensureSlot returns the slot for an explicit wire index, creating it on
+	// first use while keeping creation order for final emission.
+	ensureExplicit := func(idx int) int {
+		if part, ok := partials[idx]; ok {
+			_ = part
+			return idx
+		}
+		if idx > maxUsed {
+			maxUsed = idx
+		}
+		partials[idx] = &partialCall{sourceIndex: idx}
+		order = append(order, idx)
+		sourceGroups[idx] = append(sourceGroups[idx], idx)
+		return idx
+	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
@@ -345,11 +392,11 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 			} `json:"error,omitempty"`
 			Choices []struct {
 				Delta struct {
-					Content          string           `json:"content"`
-					ReasoningContent string           `json:"reasoning_content"`
-					Reasoning        string           `json:"reasoning"`
-					ReasoningDetails json.RawMessage  `json:"reasoning_details"`
-					ToolCalls        []openAIToolCall `json:"tool_calls"`
+					Content          string                 `json:"content"`
+					ReasoningContent string                 `json:"reasoning_content"`
+					Reasoning        string                 `json:"reasoning"`
+					ReasoningDetails json.RawMessage        `json:"reasoning_details"`
+					ToolCalls        []openAIStreamToolCall `json:"tool_calls"`
 				} `json:"delta"`
 			} `json:"choices"`
 		}
@@ -384,28 +431,231 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 				}
 			}
 			for _, delta := range choice.Delta.ToolCalls {
-				part := partials[delta.Index]
-				if part == nil {
-					part = &partialCall{}
-					partials[delta.Index] = part
+				sig := ""
+				if delta.ExtraContent != nil {
+					sig = delta.ExtraContent.Google.ThoughtSignature
 				}
+				hasPayload := delta.ID != "" || delta.Function.Name != "" || delta.Function.Arguments != ""
+				if delta.Index != nil {
+					idx := *delta.Index
+					// Route by ID first: a known call ID may arrive with a
+					// different index after a provider re-orders chunks.
+					if delta.ID != "" {
+						if slot, ok := byID[delta.ID]; ok {
+							part := partials[slot]
+							if sig != "" {
+								part.thoughtSignature = sig
+							}
+							part.name += delta.Function.Name
+							part.arguments += delta.Function.Arguments
+							continue
+						}
+					}
+					if existing, ok := partials[idx]; ok {
+						if sig != "" && !hasPayload {
+							// Thought-signature-only delta: attach to the
+							// first sibling from the same wire index that
+							// still lacks a signature.
+							target := idx
+							for _, s := range sourceGroups[idx] {
+								if partials[s].thoughtSignature == "" {
+									target = s
+									break
+								}
+							}
+							partials[target].thoughtSignature = sig
+							continue
+						}
+						if delta.ID != "" && existing.id != "" && delta.ID != existing.id {
+							// Same wire index reused for a distinct call
+							// (Gemini parallel calls). Split instead of
+							// concatenating names/arguments.
+							slot := alloc(idx)
+							part := partials[slot]
+							part.id = delta.ID
+							byID[delta.ID] = slot
+							if sig != "" {
+								part.thoughtSignature = sig
+							}
+							part.name = delta.Function.Name
+							part.arguments = delta.Function.Arguments
+							continue
+						}
+						if delta.ID != "" && existing.id == "" && (existing.name != "" || existing.arguments != "") {
+							// Existing slot has content but no ID and a new
+							// ID arrives on the same index: distinct call.
+							slot := alloc(idx)
+							part := partials[slot]
+							part.id = delta.ID
+							byID[delta.ID] = slot
+							if sig != "" {
+								part.thoughtSignature = sig
+							}
+							part.name = delta.Function.Name
+							part.arguments = delta.Function.Arguments
+							continue
+						}
+						slot := ensureExplicit(idx)
+						part := partials[slot]
+						if delta.ID != "" {
+							part.id = delta.ID
+							byID[delta.ID] = slot
+						}
+						if sig != "" {
+							part.thoughtSignature = sig
+						}
+						part.name += delta.Function.Name
+						part.arguments += delta.Function.Arguments
+						continue
+					}
+					// First use of this explicit index.
+					if delta.ID != "" {
+						if slot, ok := byID[delta.ID]; ok {
+							part := partials[slot]
+							if sig != "" {
+								part.thoughtSignature = sig
+							}
+							part.name += delta.Function.Name
+							part.arguments += delta.Function.Arguments
+							continue
+						}
+					}
+					slot := ensureExplicit(idx)
+					part := partials[slot]
+					if delta.ID != "" {
+						part.id = delta.ID
+						byID[delta.ID] = slot
+					}
+					if sig != "" {
+						part.thoughtSignature = sig
+					}
+					part.name += delta.Function.Name
+					part.arguments += delta.Function.Arguments
+					continue
+				}
+				// Missing index: route by ID when available, otherwise by
+				// shape. Standard continuations have empty name; a new
+				// non-empty name after a completed call is a new call.
 				if delta.ID != "" {
+					if slot, ok := byID[delta.ID]; ok {
+						part := partials[slot]
+						if sig != "" {
+							part.thoughtSignature = sig
+						}
+						part.name += delta.Function.Name
+						part.arguments += delta.Function.Arguments
+						continue
+					}
+					slot := alloc(-1)
+					part := partials[slot]
 					part.id = delta.ID
+					byID[delta.ID] = slot
+					if sig != "" {
+						part.thoughtSignature = sig
+					}
+					part.name = delta.Function.Name
+					part.arguments = delta.Function.Arguments
+					continue
 				}
-				if delta.ExtraContent != nil && delta.ExtraContent.Google.ThoughtSignature != "" {
-					part.thoughtSignature = delta.ExtraContent.Google.ThoughtSignature
+				if sig != "" && !hasPayload {
+					if len(order) == 0 {
+						slot := alloc(-1)
+						partials[slot].thoughtSignature = sig
+						continue
+					}
+					target := order[len(order)-1]
+					for _, s := range sourceGroups[-1] {
+						if partials[s].thoughtSignature == "" {
+							target = s
+							break
+						}
+					}
+					// Prefer a sibling from the missing-index group, but
+					// fall back to the most recent slot overall so the
+					// signature is not dropped.
+					if len(sourceGroups[-1]) == 0 {
+						for i := len(order) - 1; i >= 0; i-- {
+							if partials[order[i]].thoughtSignature == "" {
+								target = order[i]
+								break
+							}
+						}
+					}
+					partials[target].thoughtSignature = sig
+					continue
 				}
-				part.name += delta.Function.Name
-				part.arguments += delta.Function.Arguments
+				if len(order) == 0 {
+					slot := alloc(-1)
+					part := partials[slot]
+					if sig != "" {
+						part.thoughtSignature = sig
+					}
+					part.name = delta.Function.Name
+					part.arguments = delta.Function.Arguments
+					continue
+				}
+				last := order[len(order)-1]
+				lastPart := partials[last]
+				if delta.Function.Name != "" && lastPart.name != "" && lastPart.arguments != "" && json.Valid(json.RawMessage(lastPart.arguments)) {
+					// Complete JSON followed by a new name with no ID/index:
+					// likely a new call whose framing was dropped. Split
+					// rather than concatenating into an unknown tool.
+					slot := alloc(-1)
+					part := partials[slot]
+					if sig != "" {
+						part.thoughtSignature = sig
+					}
+					part.name = delta.Function.Name
+					part.arguments = delta.Function.Arguments
+					continue
+				}
+				if sig != "" {
+					lastPart.thoughtSignature = sig
+				}
+				lastPart.name += delta.Function.Name
+				lastPart.arguments += delta.Function.Arguments
 			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return Response{}, err
 	}
-	for i := 0; i < len(partials); i++ {
-		part := partials[i]
+	// Emit in first-seen order, not 0..len(map)-1, so sparse or split
+	// indexes are never dropped.
+	seen := make(map[int]bool, len(order))
+	for _, slot := range order {
+		if seen[slot] {
+			continue
+		}
+		seen[slot] = true
+		part := partials[slot]
 		if part == nil {
+			continue
+		}
+		// Skip empty placeholders that never received a name.
+		if part.id == "" && part.name == "" && part.arguments == "" && part.thoughtSignature == "" {
+			continue
+		}
+		arguments := json.RawMessage(part.arguments)
+		if len(arguments) == 0 {
+			arguments = json.RawMessage(`{}`)
+		}
+		result.ToolCalls = append(result.ToolCalls, ToolCall{ID: part.id, Name: part.name, Arguments: arguments, ThoughtSignature: part.thoughtSignature})
+	}
+	// Any explicit-index slot missed by order (defensive: should be none).
+	rest := make([]int, 0, len(partials))
+	for idx := range partials {
+		if !seen[idx] {
+			rest = append(rest, idx)
+		}
+	}
+	sort.Ints(rest)
+	for _, idx := range rest {
+		part := partials[idx]
+		if part == nil {
+			continue
+		}
+		if part.id == "" && part.name == "" && part.arguments == "" && part.thoughtSignature == "" {
 			continue
 		}
 		arguments := json.RawMessage(part.arguments)

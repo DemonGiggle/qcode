@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 )
 
@@ -282,7 +283,14 @@ func parseAnthropicStream(reader io.Reader, onText StreamCallback) (Response, er
 	if err := scanner.Err(); err != nil {
 		return Response{}, err
 	}
-	for index := 0; index < len(tools); index++ {
+	for _, index := range func() []int {
+		indexes := make([]int, 0, len(tools))
+		for index := range tools {
+			indexes = append(indexes, index)
+		}
+		sort.Ints(indexes)
+		return indexes
+	}() {
 		part := tools[index]
 		if part == nil {
 			continue
