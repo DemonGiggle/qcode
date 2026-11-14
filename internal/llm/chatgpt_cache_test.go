@@ -111,11 +111,64 @@ func TestChatGPTCacheBoundariesSurviveContinuation(t *testing.T) {
 	}
 }
 
-func TestChatGPTCacheRejectionDoesNotRetry(t *testing.T) {
+func TestChatGPTCacheRejectionRetriesWithoutCache(t *testing.T) {
+	calls := 0
+	var bodies []map[string]any
+	p, err := newChatGPT(Config{ChatGPTOAuthPath: writeChatGPTOAuth(t, chatgptoauth.Tokens{AccessToken: "test", RefreshToken: "refresh"}), HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		bodies = append(bodies, body)
+		if calls == 1 {
+			return &http.Response{StatusCode: 400, Status: "400 Bad Request", Body: io.NopCloser(strings.NewReader(`{"error":{"message":"prompt_cache_options is not supported on this model","type":"invalid_request_error","param":"prompt_cache_options","code":"invalid_parameter"}}`))}, nil
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(responsesStream("ok")))}, nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := p.Complete(context.Background(), Request{Model: "gpt-6.1-terra", PromptCacheKey: "session-key", Messages: []Message{{Role: "system", Content: "durable"}, {Role: "user", Content: "hi"}}}, nil)
+	if err != nil || calls != 2 {
+		t.Fatalf("err=%v requests=%d", err, calls)
+	}
+	if resp.Message.Content != "ok" {
+		t.Fatalf("text=%q", resp.Message.Content)
+	}
+	first, _ := json.Marshal(bodies[0])
+	if !strings.Contains(string(first), "prompt_cache_options") || !strings.Contains(string(first), "prompt_cache_breakpoint") {
+		t.Fatalf("first attempt must carry cache fields: %s", first)
+	}
+	second, _ := json.Marshal(bodies[1])
+	if strings.Contains(string(second), "prompt_cache") {
+		t.Fatalf("fallback must strip all cache fields: %s", second)
+	}
+	if _, ok := bodies[1]["instructions"]; ok == false {
+		t.Fatalf("fallback must restore top-level instructions: %s", second)
+	}
+}
+
+func TestChatGPTCacheRejectionGivesUpAfterFallback(t *testing.T) {
 	calls := 0
 	p, err := newChatGPT(Config{ChatGPTOAuthPath: writeChatGPTOAuth(t, chatgptoauth.Tokens{AccessToken: "test", RefreshToken: "refresh"}), HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
 		calls++
 		return &http.Response{StatusCode: 400, Status: "400 Bad Request", Body: io.NopCloser(strings.NewReader(`{"error":"unsupported cache field"}`))}, nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.Complete(context.Background(), Request{Model: "gpt-6.1-sol", Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
+	if err == nil || calls != 2 {
+		t.Fatalf("err=%v requests=%d", err, calls)
+	}
+}
+
+func TestChatGPTNonCache400DoesNotRetry(t *testing.T) {
+	calls := 0
+	p, err := newChatGPT(Config{ChatGPTOAuthPath: writeChatGPTOAuth(t, chatgptoauth.Tokens{AccessToken: "test", RefreshToken: "refresh"}), HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 400, Status: "400 Bad Request", Body: io.NopCloser(strings.NewReader(`{"error":{"message":"invalid model","param":"model","code":"invalid_parameter"}}`))}, nil
 	})})
 	if err != nil {
 		t.Fatal(err)

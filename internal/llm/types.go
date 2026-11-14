@@ -59,7 +59,9 @@ type Request struct {
 	// The agent sets it for normal, compaction, and learning requests with
 	// purpose namespacing; only OpenAI and ChatGPT adapters with an official endpoint
 	// emits it as prompt_cache_key. All other adapters must omit it even
-	// when set, and no adapter may retry after a cache-field rejection.
+	// when set. ChatGPT may retry once without any cache fields after a 400
+	// cache-field rejection (safe: a 400 rejects before execution); no adapter
+	// may replay a potentially billable completion.
 	PromptCacheKey string
 }
 

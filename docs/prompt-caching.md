@@ -686,9 +686,9 @@ routes omit it even when `Request` carries a key.
   is unchanged on all three OpenCode Go routes; the cache identity is a
   different lifecycle.
 - **Failures:** no explicit cache markers, TTL/retention, prewarm,
-  model-route additions, config UI, or automatic retry after a
-  cache-field rejection. Rejections fail normally rather than replaying a
-  potentially billable completion.
+  model-route additions, or config UI. A 400 cache-field rejection is retried
+  once without any cache fields (safe: a 400 rejects before execution, so no
+  billable completion is replayed).
 
 Session partitioning prioritizes isolation and a stable identity per agent.
 Separate agents never share an identity, which may reduce cross-session
@@ -744,7 +744,11 @@ Older and unknown model families keep their original input/instructions format
 and receive only the key. Custom endpoints and legacy backend-api routes receive
 none of these changes. OpenAI, OpenCode Go, Anthropic and Ollama adapters are
 unchanged. Retention remains the server default, `store:false` and `stream:true`
-remain required, and a cache-field rejection is not automatically retried.
+remain required. A 400 cache-field rejection (`prompt_cache_* is not
+supported on this model`, e.g. `prompt_cache_options` on `gpt-6.1-terra` or
+`prompt_cache_breakpoint` on Codex-backend models) is retried once with the
+pre-cache baseline contract (top-level `instructions`, plain `input`, no
+`prompt_cache_*` fields). Other 400s are not retried.
 
 Sources: [SIWC models and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)
 establishes the public Responses endpoint and stateless streaming contract;

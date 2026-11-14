@@ -302,8 +302,7 @@ func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText St
 	return resp, nil
 }
 
-func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chatgptoauth.Tokens, onText StreamCallback) (Response, error) {
-	instructions, rest := splitChatGPTMessages(input.Messages)
+func (p *chatGPTProvider) buildCodexBody(input Request, instructions string, rest []Message, useCache bool) map[string]any {
 	body := map[string]any{
 		"model":  input.Model,
 		"input":  responsesInput(rest),
@@ -316,7 +315,7 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 	if strings.TrimSpace(instructions) != "" {
 		body["instructions"] = instructions
 	}
-	if IsOfficialOpenAIEndpoint(p.baseURL) {
+	if useCache && IsOfficialOpenAIEndpoint(p.baseURL) {
 		if input.PromptCacheKey != "" {
 			body["prompt_cache_key"] = input.PromptCacheKey
 		}
@@ -335,10 +334,62 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 		}
 		body["tools"] = tools
 	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return Response{}, err
+	return body
+}
+
+// isChatGPTCacheFieldRejection reports whether a non-2xx Responses body is a
+// cache-control rejection (for example, "prompt_cache_options is not
+// supported on this model" on gpt-6.1-terra, or "prompt_cache_breakpoint is
+// not supported on this model" on Codex-backend models). A 400 means the
+// request was rejected before execution, so retrying once without any
+// prompt_cache_* fields is safe and cannot double-bill.
+func isChatGPTCacheFieldRejection(statusCode int, body string) bool {
+	if statusCode != http.StatusBadRequest {
+		return false
 	}
+	lower := strings.ToLower(body)
+	if strings.Contains(lower, "prompt_cache") {
+		return true
+	}
+	// Generic historical shape used in fixtures (no param name).
+	if strings.Contains(lower, "cache") && (strings.Contains(lower, "unsupported") || strings.Contains(lower, "not supported") || strings.Contains(lower, "invalid_parameter")) {
+		return true
+	}
+	return false
+}
+
+// chatGPTStatusError preserves the HTTP status for retry decisions while
+// keeping the user-facing "provider returned ..." message unchanged.
+type chatGPTStatusError struct {
+	statusCode int
+	status     string
+	body       string
+}
+
+func (e *chatGPTStatusError) Error() string {
+	return fmt.Sprintf("provider returned %s: %s", e.status, e.body)
+}
+
+func asChatGPTStatusError(err error) (chatGPTStatusError, bool) {
+	if err == nil {
+		return chatGPTStatusError{}, false
+	}
+	// errors.As via manual unwrap to avoid importing errors for one call site.
+	for cur := err; cur != nil; {
+		if v, ok := cur.(*chatGPTStatusError); ok {
+			return *v, true
+		}
+		type unwrapper interface{ Unwrap() error }
+		u, ok := cur.(unwrapper)
+		if !ok {
+			break
+		}
+		cur = u.Unwrap()
+	}
+	return chatGPTStatusError{}, false
+}
+
+func (p *chatGPTProvider) postCodexRaw(ctx context.Context, creds chatgptoauth.Tokens, payload []byte, onText StreamCallback) (Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/responses", bytes.NewReader(payload))
 	if err != nil {
 		return Response{}, err
@@ -355,9 +406,57 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return Response{}, fmt.Errorf("provider returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		body := strings.TrimSpace(string(data))
+		return Response{}, &chatGPTStatusError{statusCode: resp.StatusCode, status: resp.Status, body: body}
 	}
 	return parseResponsesStream(resp.Body, onText)
+}
+
+func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chatgptoauth.Tokens, onText StreamCallback) (Response, error) {
+	instructions, rest := splitChatGPTMessages(input.Messages)
+	body := p.buildCodexBody(input, instructions, rest, true)
+	usedCache := false
+	if _, ok := body["prompt_cache_key"]; ok {
+		usedCache = true
+	}
+	if _, ok := body["prompt_cache_options"]; ok {
+		usedCache = true
+	}
+	if encoded, _ := json.Marshal(body); strings.Contains(string(encoded), "prompt_cache_breakpoint") {
+		usedCache = true
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return Response{}, err
+	}
+	resp, err := p.postCodexRaw(ctx, creds, payload, onText)
+	if err == nil {
+		return resp, nil
+	}
+	if !usedCache {
+		return Response{}, err
+	}
+	var statusCode int
+	var bodyText string
+	if se, ok := asChatGPTStatusError(err); ok {
+		statusCode = se.statusCode
+		bodyText = se.body
+	} else {
+		return Response{}, err
+	}
+	if !isChatGPTCacheFieldRejection(statusCode, bodyText) {
+		return Response{}, err
+	}
+	// Fall back once to the pre-cache baseline contract (top-level
+	// instructions, plain input, no prompt_cache_* fields). This heals
+	// models such as gpt-6.1-terra that reject prompt_cache_options and
+	// Codex-backend models that reject prompt_cache_breakpoint.
+	clean := p.buildCodexBody(input, instructions, rest, false)
+	cleanPayload, err := json.Marshal(clean)
+	if err != nil {
+		return Response{}, err
+	}
+	return p.postCodexRaw(ctx, creds, cleanPayload, onText)
 }
 
 func isChatGPTUnauthorized(err error) bool {
