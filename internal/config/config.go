@@ -257,7 +257,11 @@ func validAgentRole(role string) bool {
 // normalizeAllowedAgentModels trims, drops invalid entries, dedupes by
 // provider+model (last wins), and sorts deterministically. Invalid entries
 // are dropped for startup tolerance; `qcode config check` warns about them.
-func normalizeAllowedAgentModels(entries []AllowedAgentModel) []AllowedAgentModel {
+func normalizeAllowedAgentModels(entries []AllowedAgentModel, validators ...func(string) bool) []AllowedAgentModel {
+	valid := validProvider
+	if len(validators) > 0 {
+		valid = validators[0]
+	}
 	byKey := map[string]AllowedAgentModel{}
 	order := map[string]int{}
 	idx := 0
@@ -271,7 +275,7 @@ func normalizeAllowedAgentModels(entries []AllowedAgentModel) []AllowedAgentMode
 		if !utf8.ValidString(provider) || !utf8.ValidString(model) || !utf8.ValidString(raw.Role) {
 			continue
 		}
-		if !validProvider(provider) {
+		if !valid(provider) {
 			continue
 		}
 		if !validAgentRole(role) {
@@ -318,7 +322,7 @@ func (c Config) NormalizedAllowedAgentModels() []AllowedAgentModel {
 	if c.Agents.AllowModels == nil {
 		return nil
 	}
-	normalized := normalizeAllowedAgentModels(c.Agents.AllowModels)
+	normalized := normalizeAllowedAgentModels(c.Agents.AllowModels, c.HasProvider)
 	if len(normalized) == 0 {
 		return []AllowedAgentModel{}
 	}
@@ -329,7 +333,7 @@ func (c Config) NormalizedAllowedAgentModels() []AllowedAgentModel {
 // list (including an explicit empty list) replaces lower layers.
 func mergeAllowedAgentModels(dst *Agents, incoming Agents) {
 	if incoming.AllowModels != nil {
-		normalized := normalizeAllowedAgentModels(incoming.AllowModels)
+		normalized := normalizeAllowedAgentModels(incoming.AllowModels, validInstanceName)
 		// Preserve explicit empty as empty (not nil) so clearing works.
 		if len(normalized) == 0 {
 			// incoming could be nil vs empty; incoming != nil means explicit.
@@ -464,7 +468,7 @@ func load(paths []string) (Config, []string, []error) {
 			diagnostics = append(diagnostics, fmt.Errorf("parse config %s: %w", path, err))
 			continue
 		}
-		if err := validate(path, cfg); err != nil {
+		if err := validateLayer(path, cfg); err != nil {
 			diagnostics = append(diagnostics, err)
 			continue
 		}
@@ -489,7 +493,7 @@ func load(paths []string) (Config, []string, []error) {
 		if raw.BaseURL != nil || raw.APIKey != nil {
 			legacy.Providers = map[string]ProviderProfile{owner: {BaseURL: raw.BaseURL, APIKey: raw.APIKey}}
 		}
-		if err := validate(path, legacy); err != nil {
+		if err := validateLayer(path, legacy); err != nil {
 			diagnostics = append(diagnostics, err)
 			continue
 		}
@@ -517,6 +521,10 @@ func load(paths []string) (Config, []string, []error) {
 			merged.legacyConnectionOwners[filepath.Clean(path)] = owner
 		}
 		merged.connectionsLoaded = true
+	}
+	if err := inheritInstances(&merged, apiKeyPathDirs); err != nil {
+		diagnostics = append(diagnostics, fmt.Errorf("provider instances: %v: %w", err, errFatalProviderConfig))
+		return merged, inspected, diagnostics
 	}
 	// Resolve merged api_key_path files last so higher-priority paths win and
 	// relative entries resolve from their declaring file. Failures are
@@ -562,16 +570,14 @@ func load(paths []string) (Config, []string, []error) {
 
 func validate(path string, cfg Config) error {
 	for name, profile := range cfg.Providers {
-		if !validProvider(name) {
-			return fmt.Errorf("parse config %s: unknown provider profile %q", path, name)
-		}
-		if _, err := cfg.ProviderKind(name); err != nil {
+		kind, err := cfg.ProviderKind(name)
+		if err != nil {
 			return fmt.Errorf("parse config %s: %w", path, err)
 		}
-		if name == "chatgpt" && profile.APIKey != nil && *profile.APIKey != "" {
+		if kind == "chatgpt" && profile.APIKey != nil && *profile.APIKey != "" {
 			return fmt.Errorf("parse config %s: providers.chatgpt.api_key is unsupported (use OAuth): %w", path, errFatalProviderConfig)
 		}
-		if name == "chatgpt" && profile.APIKeyPath != nil && strings.TrimSpace(*profile.APIKeyPath) != "" {
+		if kind == "chatgpt" && profile.APIKeyPath != nil && strings.TrimSpace(*profile.APIKeyPath) != "" {
 			return fmt.Errorf("parse config %s: providers.chatgpt.api_key_path is unsupported (use OAuth): %w", path, errFatalProviderConfig)
 		}
 		if err := validateProfileCredentials(path, name, profile); err != nil {

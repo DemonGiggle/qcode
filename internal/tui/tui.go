@@ -259,6 +259,8 @@ type UI struct {
 	in                   *os.File
 	out                  *os.File
 	runner               Runner
+	providerNames        []string
+	providerKinds        map[string]string
 	providerFactory      ProviderFactory
 	providerAvailable    ProviderAvailability
 	provider             string
@@ -1355,7 +1357,7 @@ func (u *UI) chooseModel(ctx context.Context) {
 		message += interfaceGlyph(u.unicode, " · thinking: ", " | thinking: ") + level
 	}
 	u.printSystemMessage(message + reset)
-	if openCodeGoBackendChanged(provider, oldModel, selected) {
+	if openCodeGoBackendChanged(u.providerKind(provider), oldModel, selected) {
 		u.printSystemMessage(yellow + "History kept. This model uses a different backend than the previous one, so the next request may fail — if it does, run /new to start fresh." + reset)
 	}
 }
@@ -1448,7 +1450,7 @@ func (u *UI) setModelCommand(ctx context.Context, fields []string) {
 	}
 	u.drawStatusBar()
 	u.printSystemMessage(green + "Model: " + sanitizeDiffLine(fields[1], "<ESC>") + reset)
-	if openCodeGoBackendChanged(provider, oldModel, fields[1]) {
+	if openCodeGoBackendChanged(u.providerKind(provider), oldModel, fields[1]) {
 		u.printSystemMessage(yellow + "History kept. This model uses a different backend than the previous one, so the next request may fail — if it does, run /new to start fresh." + reset)
 	}
 }

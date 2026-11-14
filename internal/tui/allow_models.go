@@ -262,7 +262,7 @@ func (u *UI) handleAllowModelsCommand(ctx context.Context, fields []string) {
 			provider = "*"
 		} else {
 			var ok bool
-			provider, ok = resolveProviderID(fields[3], llm.Names())
+			provider, ok = u.resolveProviderID(fields[3], u.availableProviderNames())
 			if !ok {
 				u.agentUsage()
 				return
@@ -287,13 +287,13 @@ func (u *UI) chooseAllowProvider(ctx context.Context) {
 		return
 	}
 	for {
-		names := llm.Names()
+		names := u.availableProviderNames()
 		current := u.currentAllowProvider()
 		isAvailable := func(name string) bool { return u.isProviderSelectable(name, current) }
 		labels := make([]string, len(names))
 		disabled := make(map[string]bool, len(names))
 		for i, name := range names {
-			labels[i] = fmt.Sprintf("%s · %d selected", providerDisplayName(name), len(u.currentAllowedForProvider(name)))
+			labels[i] = fmt.Sprintf("%s · %d selected", u.providerLabel(name), len(u.currentAllowedForProvider(name)))
 			if !isAvailable(name) {
 				labels[i] += providerNeedsSetupSuffix
 				disabled[labels[i]] = true
@@ -355,7 +355,7 @@ func (u *UI) listAllowModels(provider string) {
 	} else if reader, ok := u.manager.(allowedModelsReader); ok {
 		entries = reader.AllowedAgentModels()
 	}
-	label := providerDisplayName(provider)
+	label := u.providerLabel(provider)
 	if label == "" {
 		label = "all providers"
 	}
@@ -413,7 +413,7 @@ func (u *UI) clearAllowModels(provider string) {
 	}
 	writer.SetAllowedAgentModels(kept)
 	u.persistAllowModelsPreference(kept)
-	u.printSystemMessage(green + "Cleared allowed models for " + sanitizeDiffLine(providerDisplayName(provider), "<ESC>") + ". When the complete roster is empty, sub-agents use main’s current provider and model." + reset)
+	u.printSystemMessage(green + "Cleared allowed models for " + sanitizeDiffLine(u.providerLabel(provider), "<ESC>") + ". When the complete roster is empty, sub-agents use main’s current provider and model." + reset)
 }
 
 func (u *UI) chooseAllowModels(ctx context.Context, provider string) {
@@ -468,7 +468,7 @@ func (u *UI) chooseAllowModels(ctx context.Context, provider string) {
 		}
 	}
 	if len(models) == 0 {
-		u.printSystemMessage(dim + "No models available for " + providerDisplayName(provider) + reset)
+		u.printSystemMessage(dim + "No models available for " + u.providerLabel(provider) + reset)
 		return
 	}
 	sorted := append([]string(nil), models...)
@@ -542,7 +542,7 @@ func (u *UI) chooseAllowModels(ctx context.Context, provider string) {
 	}
 	u.persistAllowModelsPreference(merged)
 	if len(chosen) == 0 {
-		u.printSystemMessage(green + "Allowed models for " + sanitizeDiffLine(providerDisplayName(provider), "<ESC>") + " cleared. When the complete roster is empty, sub-agents use main’s current provider and model." + reset)
+		u.printSystemMessage(green + "Allowed models for " + sanitizeDiffLine(u.providerLabel(provider), "<ESC>") + " cleared. When the complete roster is empty, sub-agents use main’s current provider and model." + reset)
 		return
 	}
 	sort.Slice(chosen, func(i, j int) bool { return chosen[i].Model < chosen[j].Model })
@@ -550,7 +550,7 @@ func (u *UI) chooseAllowModels(ctx context.Context, provider string) {
 	for _, entry := range chosen {
 		parts = append(parts, entry.Model+"("+entry.Role+")")
 	}
-	u.printSystemMessage(green + "Allowed models for " + sanitizeDiffLine(providerDisplayName(provider), "<ESC>") + ": " + sanitizeDiffLine(strings.Join(parts, ", "), "<ESC>") + reset)
+	u.printSystemMessage(green + "Allowed models for " + sanitizeDiffLine(u.providerLabel(provider), "<ESC>") + ": " + sanitizeDiffLine(strings.Join(parts, ", "), "<ESC>") + reset)
 	u.printSystemMessage(dim + "main will call list_allow_agent_models to pick by hardness: hard->smart, routine->balanced, trivial->cheap" + reset)
 }
 

@@ -447,3 +447,51 @@ func TestProviderAvailabilityMirrorsCredentials(t *testing.T) {
 		t.Fatal("custom openai endpoint should not require a key")
 	}
 }
+
+func TestNamedInstancesKeepEndpointsAndCatalogsSeparate(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	for _, kind := range []string{"ollama", "openai"} {
+		t.Run(kind, func(t *testing.T) {
+			policy, _ := redaction.New(redaction.Config{}, nil)
+			cfg := config.Config{Providers: map[string]config.ProviderProfile{}}
+			for _, name := range []string{"local", "lab"} {
+				name := name
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if kind == "openai" && r.Header.Get("Authorization") != "Bearer "+name+"-key" {
+						t.Error("credential crossed instances")
+					}
+					if kind == "ollama" {
+						io.WriteString(w, `{"models":[{"name":"`+name+`","capabilities":["completion"]}]}`)
+					} else {
+						io.WriteString(w, `{"data":[{"id":"`+name+`"}]}`)
+					}
+				}))
+				defer server.Close()
+				cfg.Providers[name] = config.ProviderProfile{Type: profileValue(kind), BaseURL: profileValue(server.URL), APIKey: profileValue(name + "-key")}
+			}
+			builder := providerBuilder{config: cfg, policy: policy}
+			local, err := builder.prepare(context.Background(), "local", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lab, err := builder.prepare(context.Background(), "lab", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range []preparedProvider{local, lab, local} {
+				models, err := p.Provider.(llm.ModelLister).Models(context.Background())
+				if err != nil || len(models) != 1 || models[0] != p.Provider.Name() {
+					t.Fatalf("%s catalog = %v, %v", p.Provider.Name(), models, err)
+				}
+				if llm.Kind(p.Provider) != kind {
+					t.Fatal("wrong protocol kind")
+				}
+			}
+			// Rebuilding a saved instance retains its identity and saved endpoint.
+			restored, err := builder.prepare(context.Background(), "lab", &lab.Endpoint)
+			if err != nil || restored.Provider.Name() != "lab" || restored.Endpoint != lab.Endpoint {
+				t.Fatalf("restore = %+v, %v", restored, err)
+			}
+		})
+	}
+}

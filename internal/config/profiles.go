@@ -31,6 +31,9 @@ func (w *RuntimePreferenceWriter) SetLegacyConfig(cfg Config) {
 	if w == nil {
 		return
 	}
+	w.mu.Lock()
+	w.providerConfig = cfg
+	w.mu.Unlock()
 	owner := cfg.legacyConnectionOwners[filepath.Clean(w.path)]
 	if owner == "" {
 		owner = cfg.Provider
@@ -53,7 +56,7 @@ func (w *RuntimePreferenceWriter) PersistProvider(provider, model, thinking stri
 		return errors.New("runtime preference writer is nil")
 	}
 	provider, model, thinking = strings.TrimSpace(provider), strings.TrimSpace(model), strings.TrimSpace(thinking)
-	if !validProvider(provider) {
+	if !w.hasProvider(provider) {
 		return fmt.Errorf("unknown provider %q", provider)
 	}
 	if model == "" {
@@ -87,7 +90,7 @@ func migrateLegacyConnection(data []byte, fallback string) ([]byte, error) {
 	if owner == "" {
 		owner = fallback
 	}
-	if !validProvider(owner) {
+	if !validInstanceName(owner) {
 		return nil, errors.New("legacy connection owner is unknown; call SetLegacyProvider before switching")
 	}
 	profile := cfg.Providers[owner]

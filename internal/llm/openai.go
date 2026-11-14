@@ -18,13 +18,14 @@ import (
 const openAIBaseURL = "https://api.openai.com/v1"
 
 type openAIProvider struct {
-	baseURL   string
-	apiKey    string
-	client    HTTPDoer
-	name      string
-	userAgent string
-	sessionID string
-	modelMeta *ProviderModelMeta
+	instanceName string
+	baseURL      string
+	apiKey       string
+	client       HTTPDoer
+	name         string
+	userAgent    string
+	sessionID    string
+	modelMeta    *ProviderModelMeta
 }
 
 // SessionIdentity preserves the non-secret routing identity used by OpenCode Go.
@@ -66,10 +67,16 @@ func newOpenAICompatible(config Config, defaultBaseURL, name, userAgent, session
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
-	return &openAIProvider{baseURL: baseURL, apiKey: config.APIKey, client: httpClient(config), name: name, userAgent: userAgent, sessionID: sessionID}, nil
+	return &openAIProvider{instanceName: config.InstanceName, baseURL: baseURL, apiKey: config.APIKey, client: httpClient(config), name: name, userAgent: userAgent, sessionID: sessionID}, nil
 }
 
-func (p *openAIProvider) Name() string { return p.name }
+func (p *openAIProvider) Name() string {
+	if p.instanceName != "" {
+		return p.instanceName
+	}
+	return p.name
+}
+func (p *openAIProvider) Kind() string { return p.name }
 
 func (p *openAIProvider) Models(ctx context.Context) ([]string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/models", nil)
@@ -347,7 +354,7 @@ func parseOpenAIStream(reader io.Reader, onText StreamCallback) (Response, error
 	accumulated := &Usage{}
 	type partialCall struct {
 		id, name, arguments, thoughtSignature string
-		sourceIndex                            int // original wire index, -1 when missing
+		sourceIndex                           int // original wire index, -1 when missing
 	}
 	partials := map[int]*partialCall{}
 	order := []int{}

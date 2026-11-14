@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -54,7 +55,7 @@ func (u *UI) providerSetupHintMessage(name string) string {
 	if available {
 		return ""
 	}
-	message := "Provider " + providerDisplayName(name) + " needs setup first"
+	message := "Provider " + u.providerLabel(name) + " needs setup first"
 	if strings.TrimSpace(hint) != "" {
 		message += ": " + strings.TrimSpace(hint)
 	} else {
@@ -85,23 +86,23 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 	if thinking, ok := runner.(thinkingRunner); ok {
 		oldThinking = thinking.ThinkingLevel()
 	}
-	names := llm.Names()
+	names := u.availableProviderNames()
 	isAvailable := func(name string) bool { return u.isProviderSelectable(name, oldProvider) }
-	labels, disabled := providerPickerLabelsWithAvailability(names, isAvailable)
+	labels, disabled := u.providerLabelsWithAvailability(names, isAvailable)
 	for {
 		name := ""
 		if len(fields) >= 2 {
 			raw := fields[1]
 			if len(fields) > 2 {
 				joined := strings.Join(fields[1:], " ")
-				if _, ok := resolveProviderID(joined, names); ok {
+				if _, ok := u.resolveProviderID(joined, names); ok {
 					raw = joined
 				} else {
 					u.printSystemMessage(yellow + "Usage: /provider [name]" + reset)
 					return
 				}
 			}
-			resolved, ok := resolveProviderID(raw, names)
+			resolved, ok := u.resolveProviderID(raw, names)
 			if !ok {
 				u.printSystemMessage(yellow + "Unknown provider: " + sanitizeDiffLine(raw, "<ESC>") + ". Supported: " + strings.Join(labels, ", ") + reset)
 				return
@@ -110,7 +111,7 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 				if message := u.providerSetupHintMessage(resolved); message != "" {
 					u.printSystemMessage(yellow + sanitizeDiffLine(message, "<ESC>") + reset)
 				} else {
-					u.printSystemMessage(yellow + "Provider " + providerDisplayName(resolved) + " needs setup first." + reset)
+					u.printSystemMessage(yellow + "Provider " + u.providerLabel(resolved) + " needs setup first." + reset)
 				}
 				return
 			}
@@ -118,7 +119,7 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 		} else {
 			u.input.setRaw(true)
 			u.beginRawSelector()
-			selectedDisplay, accepted, err := selectOptionWithDisabled(u.input, u.themedSelectorWriter(), labels, disabled, providerDisplayName(oldProvider), min(12, max(3, u.height-6)), u.width, ColorEnabled(u.out), "provider", false)
+			selectedDisplay, accepted, err := selectOptionWithDisabled(u.input, u.themedSelectorWriter(), labels, disabled, u.providerLabel(oldProvider), min(12, max(3, u.height-6)), u.width, ColorEnabled(u.out), "provider", false)
 			u.input.setRaw(false)
 			u.endRawSelector()
 			if err != nil {
@@ -128,7 +129,7 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 			if !accepted {
 				return
 			}
-			resolved, ok := resolveProviderID(stripProviderSetupSuffix(selectedDisplay), names)
+			resolved, ok := u.resolveProviderID(stripProviderSetupSuffix(selectedDisplay), names)
 			if !ok {
 				u.printSystemMessage(yellow + "Unknown provider: " + sanitizeDiffLine(selectedDisplay, "<ESC>") + ". Supported: " + strings.Join(labels, ", ") + reset)
 				return
@@ -137,7 +138,7 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 				if message := u.providerSetupHintMessage(resolved); message != "" {
 					u.printSystemMessage(yellow + sanitizeDiffLine(message, "<ESC>") + reset)
 				} else {
-					u.printSystemMessage(yellow + "Provider " + providerDisplayName(resolved) + " needs setup first." + reset)
+					u.printSystemMessage(yellow + "Provider " + u.providerLabel(resolved) + " needs setup first." + reset)
 				}
 				continue
 			}
@@ -152,7 +153,7 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 				return
 			}
 			u.persistProviderPreference(writer, id, name, oldModel, oldThinking)
-			u.printSystemMessage(green + "Provider: " + providerDisplayName(name) + " (unchanged)" + reset)
+			u.printSystemMessage(green + "Provider: " + u.providerLabel(name) + " (unchanged)" + reset)
 			return
 		}
 		fetchCtx, cancel := context.WithCancel(ctx)
@@ -171,7 +172,7 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 			} else if lister, ok := provider.(llm.ModelLister); ok {
 				models, err = lister.Models(lookupCtx)
 			} else {
-				err = fmt.Errorf("provider %s does not support model discovery", providerDisplayName(name))
+				err = fmt.Errorf("provider %s does not support model discovery", u.providerLabel(name))
 			}
 		}
 		stopLookup()
@@ -200,7 +201,7 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 				level = ""
 			}
 		} else if !containsOption(models, oldModel) {
-			u.printSystemMessage(dim + "The current model is unavailable on " + providerDisplayName(name) + "; select a model before switching." + reset)
+			u.printSystemMessage(dim + "The current model is unavailable on " + u.providerLabel(name) + "; select a model before switching." + reset)
 			var accepted bool
 			var back bool
 			model, level, accepted, back, err = u.selectProviderModel(candidate)
@@ -243,7 +244,7 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 		u.persistProviderPreference(writer, id, name, model, level)
 		u.signalPresentation()
 		u.drawStatusBar()
-		u.printSystemMessage(green + "Provider: " + providerDisplayName(name) + interfaceGlyph(u.unicode, " · model: ", " | model: ") + sanitizeDiffLine(model, "<ESC>") + reset)
+		u.printSystemMessage(green + "Provider: " + u.providerLabel(name) + interfaceGlyph(u.unicode, " · model: ", " | model: ") + sanitizeDiffLine(model, "<ESC>") + reset)
 		if oldThinking != "" && level == "" {
 			u.printSystemMessage(dim + "Thinking reset to the target provider/model default." + reset)
 		}
@@ -357,4 +358,70 @@ func (u *UI) createAgentWithProvider(model string) (session.Summary, error) {
 		return manager.CreateWithProvider(model, backend)
 	}
 	return u.manager.Create(model)
+}
+
+// SetProviderInstances installs the configured identities without mutating the
+// process-wide protocol registry. Call before starting the UI.
+func (u *UI) SetProviderInstances(kinds map[string]string) {
+	u.providerKinds = make(map[string]string, len(kinds))
+	seen := map[string]bool{}
+	u.providerNames = llm.Names()
+	for _, name := range u.providerNames {
+		seen[name] = true
+	}
+	for name, kind := range kinds {
+		u.providerKinds[name] = kind
+		if !seen[name] {
+			u.providerNames = append(u.providerNames, name)
+		}
+	}
+	sort.Strings(u.providerNames)
+}
+
+func (u *UI) availableProviderNames() []string {
+	if u.providerNames == nil {
+		return llm.Names()
+	}
+	return append([]string(nil), u.providerNames...)
+}
+
+func (u *UI) providerKind(name string) string {
+	if kind := u.providerKinds[name]; kind != "" {
+		return kind
+	}
+	return name
+}
+
+func (u *UI) providerLabel(name string) string {
+	if kind := u.providerKind(name); kind != name {
+		return name + " (" + kind + ")"
+	}
+	return providerDisplayName(name)
+}
+
+func (u *UI) resolveProviderID(input string, names []string) (string, bool) {
+	input = stripProviderSetupSuffix(strings.TrimSpace(input))
+	if name, ok := resolveProviderID(input, names); ok {
+		return name, true
+	}
+	for _, name := range names {
+		if strings.EqualFold(input, u.providerLabel(name)) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+func (u *UI) providerLabelsWithAvailability(names []string, available func(string) bool) ([]string, map[string]bool) {
+	labels := make([]string, len(names))
+	disabled := map[string]bool{}
+	for i, name := range names {
+		label := u.providerLabel(name)
+		if available != nil && !available(name) {
+			label += providerNeedsSetupSuffix
+			disabled[label] = true
+		}
+		labels[i] = label
+	}
+	return labels, disabled
 }

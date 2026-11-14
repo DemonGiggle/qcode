@@ -50,3 +50,85 @@ func TestInstanceTypeLayering(t *testing.T) {
 		t.Fatal("lost profile fields")
 	}
 }
+
+func TestInstanceInheritanceAcrossFiles(t *testing.T) {
+	dir := t.TempDir()
+	low := writeConfig(t, dir, "low.toml", "[providers.ollama]\nbase_url = 'http://local'\nmodel = 'base-model'\nthinking = 'high'\napi_key = 'parent-secret'\n[providers.lab]\ntype = 'ollama'\n")
+	high := writeConfig(t, dir, "high.toml", "[providers.lab]\nbase_url = 'http://lab'\nthinking = ''\napi_key = ''\n")
+	cfg, _, diagnostics := load([]string{high, low})
+	if len(diagnostics) != 0 {
+		t.Fatal(diagnostics)
+	}
+	base, key := cfg.ProviderConnection("lab")
+	if base != "http://lab" || key != "" {
+		t.Fatalf("connection = %q, %q", base, key)
+	}
+	model, thinking, ok := cfg.ProviderModel("lab")
+	if !ok || model != "base-model" || thinking != "" {
+		t.Fatalf("model = %q, thinking = %q, ok = %v", model, thinking, ok)
+	}
+	for _, issue := range CheckPaths([]string{high, low}) {
+		if issue.Severity == SeverityError {
+			t.Fatal(issue)
+		}
+	}
+}
+
+func TestInstanceRejectsChatGPTCredentials(t *testing.T) {
+	dir := t.TempDir()
+	low := writeConfig(t, dir, "low.toml", "[providers.work]\ntype = 'chatgpt'\n")
+	high := writeConfig(t, dir, "high.toml", "[providers.work]\napi_key = 'forbidden'\n")
+	_, _, diagnostics := load([]string{high, low})
+	if len(diagnostics) == 0 {
+		t.Fatal("accepted API key on ChatGPT instance")
+	}
+	found := false
+	for _, issue := range CheckPaths([]string{high, low}) {
+		if issue.Severity == SeverityError {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("config check accepted API key on ChatGPT instance")
+	}
+}
+
+func TestInstancePreferencesAndRosterRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	low := writeConfig(t, dir, "base.toml", "[providers.ollama]\nmodel = 'parent'\nthinking = 'high'\n[providers.lab]\ntype = 'ollama'\n")
+	high := writeConfig(t, dir, "user.toml", "")
+	cfg, _, diagnostics := load([]string{high, low})
+	if len(diagnostics) != 0 {
+		t.Fatal(diagnostics)
+	}
+	writer := newRuntimePreferenceWriter(high)
+	writer.SetLegacyConfig(cfg)
+	if err := writer.PersistProvider("lab", "lab-model", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.PersistAllowedAgentModels([]AllowedAgentModel{{Provider: "lab", Model: "lab-model", Role: AgentRoleSmart}}); err != nil {
+		t.Fatal(err)
+	}
+	restored, _, diagnostics := load([]string{high, low})
+	if len(diagnostics) != 0 {
+		t.Fatal(diagnostics)
+	}
+	if restored.Provider != "lab" {
+		t.Fatal(restored.Provider)
+	}
+	model, thinking, ok := restored.ProviderModel("lab")
+	if !ok || model != "lab-model" || thinking != "" {
+		t.Fatalf("restored = %q %q %v", model, thinking, ok)
+	}
+	parent, _, _ := restored.ProviderModel("ollama")
+	if parent != "parent" {
+		t.Fatal("instance save changed parent")
+	}
+	roster := restored.NormalizedAllowedAgentModels()
+	if len(roster) != 1 || roster[0].Provider != "lab" {
+		t.Fatal(roster)
+	}
+	if err := writer.PersistProvider("unknown", "model", ""); err == nil {
+		t.Fatal("accepted unknown instance")
+	}
+}

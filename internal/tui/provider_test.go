@@ -553,3 +553,20 @@ func TestAgentNewRefreshesContext(t *testing.T) {
 		t.Fatalf("expected refreshed context capacity 16000, got capacity=%d, known=%v", capacity, known)
 	}
 }
+
+func TestConfiguredInstancePickerLabels(t *testing.T) {
+	u := &UI{}
+	u.SetProviderInstances(map[string]string{"lab": "ollama"})
+	names := u.availableProviderNames()
+	if name, ok := u.resolveProviderID("lab (ollama)", names); !ok || name != "lab" {
+		t.Fatal("instance label did not resolve")
+	}
+	labels, disabled := u.providerLabelsWithAvailability([]string{"lab"}, func(string) bool { return false })
+	want := "lab (ollama)" + providerNeedsSetupSuffix
+	if len(labels) != 1 || labels[0] != want || !disabled[want] {
+		t.Fatalf("labels = %v, disabled = %v", labels, disabled)
+	}
+	if _, ok := u.resolveProviderID("unknown", names); ok {
+		t.Fatal("unknown instance accepted")
+	}
+}

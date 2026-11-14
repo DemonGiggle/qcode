@@ -16,6 +16,7 @@ import (
 const ollamaThinkingCapability = "thinking"
 
 type ollamaProvider struct {
+	instanceName string
 	baseURL      string
 	client       HTTPDoer
 	capabilityMu sync.RWMutex
@@ -29,10 +30,16 @@ func newOllama(config Config) (Provider, error) {
 	if baseURL == "" {
 		baseURL = "http://127.0.0.1:11434"
 	}
-	return &ollamaProvider{baseURL: baseURL, client: httpClient(config), capabilities: make(map[string]ThinkingCapability)}, nil
+	return &ollamaProvider{instanceName: config.InstanceName, baseURL: baseURL, client: httpClient(config), capabilities: make(map[string]ThinkingCapability)}, nil
 }
 
-func (p *ollamaProvider) Name() string { return "ollama" }
+func (p *ollamaProvider) Name() string {
+	if p.instanceName != "" {
+		return p.instanceName
+	}
+	return "ollama"
+}
+func (p *ollamaProvider) Kind() string { return "ollama" }
 
 func (p *ollamaProvider) ThinkingCapability(model string) ThinkingCapability {
 	p.capabilityMu.RLock()

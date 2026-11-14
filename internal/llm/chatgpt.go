@@ -38,6 +38,7 @@ func isLegacyChatGPTBaseURL(baseURL string) bool {
 }
 
 type chatGPTProvider struct {
+	instanceName    string
 	baseURL         string
 	tokensPath      string
 	client          HTTPDoer
@@ -121,11 +122,17 @@ func newChatGPT(config Config) (Provider, error) {
 	if baseURL == "" {
 		baseURL = chatGPTBaseURL
 	}
-	return &chatGPTProvider{baseURL: baseURL, tokensPath: config.ChatGPTOAuthPath, client: httpClient(config), registerSecrets: config.RegisterSecrets}, nil
+	return &chatGPTProvider{instanceName: config.InstanceName, baseURL: baseURL, tokensPath: config.ChatGPTOAuthPath, client: httpClient(config), registerSecrets: config.RegisterSecrets}, nil
 }
 
 // Name returns the registry name.
-func (p *chatGPTProvider) Name() string { return "chatgpt" }
+func (p *chatGPTProvider) Name() string {
+	if p.instanceName != "" {
+		return p.instanceName
+	}
+	return "chatgpt"
+}
+func (p *chatGPTProvider) Kind() string { return "chatgpt" }
 
 // ValidateModel accepts any non-empty model; the Codex catalog moves fast.
 func (p *chatGPTProvider) ValidateModel(model string) error {

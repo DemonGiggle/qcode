@@ -120,7 +120,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	var sandboxCommandPathFlags sandboxCommandPathsFlag
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
 	flags.SetOutput(diagnosticsOut)
-	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider: ollama, openai, opencode-go, chatgpt, or gemini")
+	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider kind or configured instance name")
 	flags.StringVar(&opts.model, "model", env("QCODE_MODEL", "qwen2.5-coder:7b"), "model identifier")
 	flags.StringVar(&opts.thinking, "thinking", os.Getenv("QCODE_THINKING"), "thinking level for a model that supports it (for example: low, high, max, off)")
 	flags.StringVar(&opts.baseURL, "base-url", os.Getenv("QCODE_BASE_URL"), "provider API base URL")
@@ -131,7 +131,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	flags.IntVar(&opts.maxSteps, "max-steps", 32, "maximum model turns per request")
 	flags.DurationVar(&opts.agentTimeout, "agent-timeout", agent.DefaultConsultationTimeout, "time allowed for agent consultations, including queue time")
 	flags.BoolVar(&opts.jsonEvents, "json-events", false, "emit action events as JSON Lines")
-	flags.BoolVar(&opts.listProviders, "list-providers", false, "list built-in providers")
+	flags.BoolVar(&opts.listProviders, "list-providers", false, "list built-in providers and configured instances")
 	flags.BoolVar(&opts.updateModelMeta, "update-model-meta", false, "refresh provider thinking choices from Models.dev and exit")
 	flags.BoolVar(&opts.showVersion, "version", false, "print version")
 	flags.BoolVar(&opts.demo, "demo", false, "run without an LLM or real tool execution")
@@ -157,8 +157,13 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		return nil
 	}
 	if opts.listProviders {
-		fmt.Fprintln(stdout, strings.Join(llm.Names(), "\n"))
-		return nil
+		cfg, _, diagnostics, err := config.Load()
+		policy.RegisterSecrets(cfg.Secrets()...)
+		writeConfigDiagnostics(diagnosticsOut, diagnostics, err)
+		if err != nil {
+			return err
+		}
+		return listConfiguredProviders(stdout, cfg, policy)
 	}
 	if !opts.demo {
 		cfg, inspectedPaths, diagnostics, err := config.Load()
@@ -196,16 +201,20 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	}
 	diagnosticsOut.Policy = policy
 	if opts.updateModelMeta {
-		if opts.provider != "openai" && opts.provider != "opencode-go" && opts.provider != "gemini" {
+		kind, err := resolveProviderKind(loadedConfig, opts.provider)
+		if err != nil {
+			return err
+		}
+		if kind != "openai" && kind != "opencode-go" && kind != "gemini" {
 			return errors.New("--update-model-meta requires --provider openai, opencode-go, or gemini")
 		}
-		cachePath, err := llm.ProviderModelMetaCachePath(opts.provider)
+		cachePath, err := llm.ProviderModelMetaCachePath(kind)
 		if err != nil {
 			return err
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		meta, err := llm.RefreshProviderModelMeta(ctx, cachePath, opts.provider, nil)
+		meta, err := llm.RefreshProviderModelMeta(ctx, cachePath, kind, nil)
 		if err != nil {
 			return err
 		}
@@ -319,6 +328,13 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		}
 	}
 	installProviderFactory := func(ui *tui.UI) {
+		kinds := map[string]string{}
+		for name := range loadedConfig.Providers {
+			if kind, err := loadedConfig.ProviderKind(name); err == nil {
+				kinds[name] = kind
+			}
+		}
+		ui.SetProviderInstances(kinds)
 		if !opts.demo && !opts.jsonEvents {
 			ui.SetProviderFactory(func(ctx context.Context, name string) (llm.Provider, string, error) {
 				prepared, err := providers.prepare(ctx, name, nil)

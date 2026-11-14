@@ -137,7 +137,7 @@ func CheckPaths(paths []string) []Issue {
 			})
 			continue
 		}
-		if err := validate(path, cfg); err != nil {
+		if err := validateLayer(path, cfg); err != nil {
 			issues = append(issues, validateErrorToIssue(path, err))
 			// Still collect warnings from the raw layer? No: an invalid layer
 			// is skipped at startup, so warnings would be noise. Continue to
@@ -173,7 +173,6 @@ func CheckPaths(paths []string) []Issue {
 		}
 		// Warnings: deprecated shapes that still run.
 		issues = append(issues, deprecationWarnings(path, data, cfg)...)
-		issues = append(issues, allowModelsWarnings(path, cfg)...)
 		layers = append(layers, layer{path: path, cfg: cfg, data: data})
 	}
 	// Merged cross-layer checks (only over valid layers, like load).
@@ -212,6 +211,9 @@ func CheckPaths(paths []string) []Issue {
 			merge(&merged, Config{Providers: map[string]ProviderProfile{owner: {BaseURL: raw.BaseURL, APIKey: raw.APIKey}}})
 		}
 	}
+	if err := inheritInstances(&merged, apiKeyPathDirs); err != nil {
+		issues = append(issues, validateErrorToIssue("(merged)", err))
+	}
 	for name, profile := range merged.Providers {
 		hasInline := profile.APIKey != nil && *profile.APIKey != ""
 		hasPath := profile.APIKeyPath != nil && strings.TrimSpace(*profile.APIKeyPath) != ""
@@ -225,6 +227,11 @@ func CheckPaths(paths []string) []Issue {
 			})
 		}
 		_ = apiKeyPathDirs
+	}
+	for _, layer := range layers {
+		cfg := layer.cfg
+		cfg.Providers = merged.Providers
+		issues = append(issues, allowModelsWarnings(layer.path, cfg)...)
 	}
 	return sortIssues(issues)
 }
@@ -252,13 +259,13 @@ func allowModelsWarnings(path string, cfg Config) []Issue {
 			})
 			continue
 		}
-		if provider == "" || !validProvider(provider) {
+		if provider == "" || !cfg.HasProvider(provider) {
 			out = append(out, Issue{
 				Severity: SeverityWarning,
 				File:     path,
 				Key:      base,
 				Message:  "allow_models entry has unknown or empty provider (entry ignored)",
-				Fix:      "Set provider to one of ollama, openai, opencode-go, chatgpt.",
+				Fix:      "Set provider to a built-in kind or a configured named instance.",
 			})
 		}
 		if model == "" {
