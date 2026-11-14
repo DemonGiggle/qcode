@@ -988,7 +988,7 @@ func (c Config) Secrets() []string {
 
 func validateProviderModels(path string, models, thinking map[string]string) error {
 	for name, model := range models {
-		if !validProvider(name) {
+		if !validProvider(name) && !validInstanceName(name) {
 			return fmt.Errorf("parse config %s: unknown provider_models entry %q", path, name)
 		}
 		if strings.TrimSpace(model) == "" {
@@ -999,7 +999,7 @@ func validateProviderModels(path string, models, thinking map[string]string) err
 		}
 	}
 	for name, level := range thinking {
-		if !validProvider(name) {
+		if !validProvider(name) && !validInstanceName(name) {
 			return fmt.Errorf("parse config %s: unknown provider_thinking entry %q", path, name)
 		}
 		if !utf8.ValidString(level) {
