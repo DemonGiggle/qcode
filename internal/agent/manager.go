@@ -1239,21 +1239,36 @@ func changedStateFiles(before, after map[string]string) []string {
 	if before == nil || after == nil {
 		return nil
 	}
-	seen := make(map[string]bool, len(before)+len(after))
-	for path := range before {
-		seen[path] = true
-	}
-	for path := range after {
-		seen[path] = true
-	}
+	// Values are a 2-char git status code plus a working-tree fingerprint
+	// (":size:mtime:mode" or ":missing"). Only the fingerprint reflects
+	// actual content edits: a pure `git add` flips only the status code,
+	// and a pure `git commit`/`stash`/`reset` makes entries disappear while
+	// leaving working-tree files untouched. Neither is a content edit worth
+	// attributing (and the latter falsely retriggered autoreview on
+	// commit-only tasks), so both are skipped.
 	changed := make([]string, 0)
-	for path := range seen {
-		if before[path] != after[path] {
+	for path, afterVal := range after {
+		beforeVal, ok := before[path]
+		if !ok {
+			// Newly dirty (edited, created, or deleted on disk).
+			changed = append(changed, path)
+			continue
+		}
+		if workspaceFingerprint(beforeVal) != workspaceFingerprint(afterVal) {
 			changed = append(changed, path)
 		}
 	}
 	sort.Strings(changed)
 	return changed
+}
+
+// workspaceFingerprint strips the 2-char git status code, leaving the
+// working-tree fingerprint used to detect real content edits.
+func workspaceFingerprint(state string) string {
+	if len(state) >= 2 {
+		return state[2:]
+	}
+	return state
 }
 
 // mergeDelegationFiles unions delegated ChangedFiles for coalesced main

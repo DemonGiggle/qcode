@@ -762,15 +762,34 @@ func TestWorkspaceMutationsAreSerialized(t *testing.T) {
 }
 
 func TestChangedStateFiles(t *testing.T) {
-	before := map[string]string{"existing.go": " M:10:1", "removed.go": " M:4:1"}
-	after := map[string]string{"existing.go": " M:12:2", "added.go": "??:3:2"}
+	before := map[string]string{"existing.go": " M:10:100:1", "removed.go": " M:4:100:1"}
+	after := map[string]string{"existing.go": " M:12:200:1", "added.go": "??:3:200:1"}
 	got := changedStateFiles(before, after)
-	want := []string{"added.go", "existing.go", "removed.go"}
+	want := []string{"added.go", "existing.go"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("changed files = %v, want %v", got, want)
 	}
 	if got := changedStateFiles(nil, after); got != nil {
 		t.Fatalf("non-Git state produced files: %v", got)
+	}
+	// Pure commit (dirty -> clean) leaves working-tree files untouched, so a
+	// commit-only shell task must not attribute changes (and must not
+	// retrigger autoreview).
+	commitBefore := map[string]string{"a.go": "M :10:100:1"}
+	commitAfter := map[string]string{}
+	if got := changedStateFiles(commitBefore, commitAfter); len(got) != 0 {
+		t.Fatalf("commit-only produced files: %v", got)
+	}
+	// Pure stage (`git add`) flips only the status code with the same
+	// working-tree fingerprint; not a content edit.
+	stageBefore := map[string]string{"a.go": "??:10:100:1"}
+	stageAfter := map[string]string{"a.go": "A :10:100:1"}
+	if got := changedStateFiles(stageBefore, stageAfter); len(got) != 0 {
+		t.Fatalf("stage-only produced files: %v", got)
+	}
+	// Deleting a clean tracked file appears as D:missing and is a real edit.
+	if got := changedStateFiles(map[string]string{}, map[string]string{"del.go": " D:missing"}); len(got) != 1 || got[0] != "del.go" {
+		t.Fatalf("delete produced files: %v", got)
 	}
 }
 
