@@ -107,13 +107,20 @@ func (p *openAIProvider) Models(ctx context.Context) ([]string, error) {
 		if model.ID == "" {
 			continue
 		}
-		// Google's OpenAI-compatible model list exposes IDs, not chat/tool
-		// capability metadata. Exclude only model IDs documented as embedding-only;
+		id := model.ID
+		// Google's OpenAI-compatible model list exposes IDs (often prefixed
+		// with "models/"), not chat/tool capability metadata. Normalize the
+		// prefix and exclude only model IDs documented as embedding-only;
 		// do not infer that every other (including unknown) ID supports tools.
-		if p.name == "gemini" && isKnownGeminiEmbeddingModel(model.ID) {
+		if p.name == "gemini" {
+			id = normalizeGeminiModelID(id)
+			if id == "" || isKnownGeminiEmbeddingModel(id) {
+				continue
+			}
+			models = appendUnique(models, id)
 			continue
 		}
-		models = append(models, model.ID)
+		models = append(models, id)
 	}
 	return models, nil
 }

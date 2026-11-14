@@ -26,6 +26,9 @@ func (p *openAIProvider) ContextWindow(_ context.Context, model string) (int, er
 	if err := json.Unmarshal(contextCatalog, &catalog); err != nil {
 		return 0, err
 	}
+	if p.name == "gemini" {
+		model = normalizeGeminiModelID(model)
+	}
 	return catalog[p.name][model], nil
 }
 

@@ -36,6 +36,11 @@ func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 			u.printSystemMessage(yellow + err.Error() + reset)
 			return
 		}
+		if created, ok := u.manager.Runner(summary.ID); ok {
+			if tracker, ok := created.(contextRunner); ok {
+				tracker.RefreshContext(ctx)
+			}
+		}
 		if err := u.switchAgent(summary.ID); err != nil {
 			u.printSystemMessage(yellow + err.Error() + reset)
 			return
@@ -155,14 +160,17 @@ func (u *UI) createAgent(ctx context.Context) {
 		u.printSystemMessage(yellow + err.Error() + reset)
 		return
 	}
-	if thinking != "" {
-		if created, ok := u.manager.Runner(summary.ID); ok {
+	if created, ok := u.manager.Runner(summary.ID); ok {
+		if thinking != "" {
 			if configured, ok := created.(thinkingRunner); ok {
 				if err := configured.SetThinking(thinking); err != nil {
 					u.printSystemMessage(yellow + err.Error() + reset)
 					return
 				}
 			}
+		}
+		if tracker, ok := created.(contextRunner); ok {
+			tracker.RefreshContext(ctx)
 		}
 	}
 	if err := u.switchAgent(summary.ID); err != nil {

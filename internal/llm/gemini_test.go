@@ -34,6 +34,23 @@ func TestGeminiProviderDefaultsModelsAndThinking(t *testing.T) {
 		t.Fatalf("request = %s auth=%q", seenURL, auth)
 	}
 	thinking := p.(ThinkingProvider)
+	// Models with "models/" prefix resolve thinking and context properly.
+	if got := thinking.ThinkingCapability("models/gemini-4-hydrogen").Default; got != "high" {
+		t.Fatalf("Gemini 4 prefixed default = %q, want high", got)
+	}
+	if got, err := p.(ContextWindowProvider).ContextWindow(context.Background(), "models/gemini-3-flash-preview"); err != nil || got != 1048576 {
+		t.Fatalf("prefixed context window = %d, err = %v", got, err)
+	}
+	// Gemini default thinking levels are documented and visible.
+	if got := thinking.ThinkingCapability("gemini-3-flash-preview").Default; got != "high" {
+		t.Fatalf("Gemini 3 Flash default = %q, want high", got)
+	}
+	if got := thinking.ThinkingCapability("gemini-2.5-flash").Default; got != "medium" {
+		t.Fatalf("Gemini 2.5 Flash default = %q, want medium", got)
+	}
+	if got := thinking.ThinkingCapability("gemini-2.5-flash-lite").Default; got != "none" {
+		t.Fatalf("Gemini 2.5 Flash Lite default = %q, want none", got)
+	}
 	if !reflect.DeepEqual(thinking.ThinkingCapability("gemini-4-hydrogen").Levels, []string{"low", "medium", "high", "xhigh"}) {
 		t.Fatalf("Gemini 4 capability = %+v", thinking.ThinkingCapability("gemini-4-hydrogen"))
 	}

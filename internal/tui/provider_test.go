@@ -528,7 +528,28 @@ func TestProviderPickerSkipsUnconfigured(t *testing.T) {
 		return false, "setup"
 	})
 	u.handleProviderCommand(context.Background(), []string{"/provider"})
-	if got := providerState(t, h, "main"); got.Provider != "opencode-go" {
+	if got := providerState(t, h, "main").Provider; got != "opencode-go" {
 		t.Fatalf("picker did not skip disabled: %+v", got)
+	}
+}
+
+func TestAgentNewRefreshesContext(t *testing.T) {
+	u, h, _ := newProviderUI(t, "")
+	u.handleAgentCommand(context.Background(), []string{"/agent", "new", "shared"})
+	if u.activeAgent == "main" {
+		t.Fatal("agent new did not switch to child")
+	}
+	// The runner's context capacity should be refreshed for the new agent.
+	childRunner, ok := h.Runner(u.activeAgent)
+	if !ok {
+		t.Fatalf("missing child runner %q", u.activeAgent)
+	}
+	type capRunner interface{ ContextCapacity() (int, bool) }
+	capProvider, ok := childRunner.(capRunner)
+	if !ok {
+		t.Fatalf("child runner does not implement ContextCapacity")
+	}
+	if capacity, known := capProvider.ContextCapacity(); !known || capacity != 16000 {
+		t.Fatalf("expected refreshed context capacity 16000, got capacity=%d, known=%v", capacity, known)
 	}
 }

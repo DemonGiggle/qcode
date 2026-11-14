@@ -61,4 +61,13 @@ func TestThinkingLabelFor(t *testing.T) {
 	if got := thinkingLabelFor(noThinkStub{}); got != "" {
 		t.Fatalf("non-thinking runner = %q, want empty", got)
 	}
+
+	// Gemini model default shows up when explicit level is empty.
+	got = thinkingLabelFor(thinkLabelStub{
+		level:      "",
+		capability: llm.ThinkingCapability{Supported: true, Adjustable: true, Levels: []string{"low", "medium", "high", "xhigh"}, Default: "high"},
+	})
+	if got != "high" {
+		t.Fatalf("Gemini default thinking label = %q, want high", got)
+	}
 }

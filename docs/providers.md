@@ -150,17 +150,24 @@ Google-specific extra request-body configuration.
 
 ### Gemini thinking levels
 
-Thinking controls are exact-model specific. The built-in mappings expose
-`none`, `minimal`, `low`, `medium`, and `high` for Gemini 2.5 Flash and Flash
-Lite; Gemini 2.5 Pro, Gemini 3 Flash/Pro, and Gemini 3.1 Flash-Lite expose
-`minimal`, `low`, `medium`, and `high` (thinking cannot be disabled). Gemini 4
-Carbon and Argon expose `low`, `medium`, and `high` (default `medium`);
-Gemini 4 Hydrogen exposes `low`, `medium`, `high` (default), and `xhigh`.
-`minimal` is not supported on any Gemini 4 model and is rejected by the API
-with 400 INVALID_ARGUMENT. Metadata can narrow these documented choices,
-but does not create capabilities for unknown models. With no explicit choice,
-qcode omits `reasoning_effort` and leaves Google's model default in effect.
-Unsupported explicit levels fail before the model request. Exact model IDs and
+Thinking controls are exact-model specific, and the status bar shows the
+effective level (your explicit choice, or the provider default when omitted).
+The built-in mappings expose `none`, `minimal`, `low`, `medium`, and `high`
+for Gemini 2.5 Flash (default `medium`) and Flash-Lite (default `none`);
+Gemini 2.5 Pro exposes `minimal`, `low`, `medium`, and `high` (default `high`,
+thinking cannot be disabled). Gemini 3 / 3.x Flash and Pro models expose their
+documented efforts (for example `minimal`, `low`, `medium`, `high` for
+`gemini-3-flash-preview` with default `high`; `low`, `medium`, `high` for
+`gemini-3.1-pro-preview`, `gemini-3.7-flash`, `gemini-3.8-flash`, and the
+`-latest` aliases). Gemini 4 Carbon and Argon expose `low`, `medium`, and
+`high` (default `medium`); Gemini 4 Hydrogen exposes `low`, `medium`, `high`
+(default), and `xhigh`. `minimal` is not supported on any Gemini 4 model and
+is rejected by the API with 400 INVALID_ARGUMENT. Model IDs prefixed with
+`models/` (as returned by the live `/models` endpoint) are normalized before
+lookup. Metadata can narrow these documented choices, but does not create
+capabilities for unknown models. With no explicit choice, qcode omits
+`reasoning_effort` and leaves Google's model default in effect. Unsupported
+explicit levels fail before the model request. Exact model IDs and
 availability can change; see Google's [OpenAI compatibility documentation](https://ai.google.dev/gemini-api/docs/openai#thinking).
 
 ## OpenCode Go

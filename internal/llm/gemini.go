@@ -7,6 +7,11 @@ import (
 
 const geminiBaseURL = "https://generativelanguage.googleapis.com/v1beta/openai"
 
+func normalizeGeminiModelID(modelID string) string {
+	modelID = strings.TrimSpace(modelID)
+	return strings.TrimPrefix(modelID, "models/")
+}
+
 // Google's OpenAI-compatible /models endpoint returns IDs but no capability
 // flags. The official embeddings documentation identifies this family and
 // legacy IDs as embedding-only; exclude those IDs without claiming capabilities
@@ -14,8 +19,7 @@ const geminiBaseURL = "https://generativelanguage.googleapis.com/v1beta/openai"
 // https://ai.google.dev/gemini-api/docs/openai#list-models
 // https://ai.google.dev/gemini-api/docs/embeddings
 func isKnownGeminiEmbeddingModel(modelID string) bool {
-	modelID = strings.TrimSpace(modelID)
-	modelID = strings.TrimPrefix(modelID, "models/")
+	modelID = normalizeGeminiModelID(modelID)
 	return strings.HasPrefix(modelID, "gemini-embedding-") || modelID == "embedding-001" || modelID == "text-embedding-004"
 }
 
@@ -36,12 +40,26 @@ func newGemini(config Config) (Provider, error) {
 
 var geminiThinkingCatalog = map[string]ThinkingCapability{
 	// Gemini 2.5 Flash can disable reasoning. Gemini 2.5 Pro does not.
-	"gemini-2.5-flash":              {Supported: true, Adjustable: true, Levels: []string{"none", "minimal", "low", "medium", "high"}, RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
-	"gemini-2.5-flash-lite":         {Supported: true, Adjustable: true, Levels: []string{"none", "minimal", "low", "medium", "high"}, RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
-	"gemini-2.5-pro":                {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
-	"gemini-3-flash-preview":        {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
-	"gemini-3-pro-preview":          {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
-	"gemini-3.1-flash-lite-preview": {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	// Google documents dynamic thinking ("on") by default for 2.5 Flash/Pro and
+	// disabled ("none") for 2.5 Flash-Lite.
+	"gemini-2.5-flash":      {Supported: true, Adjustable: true, Levels: []string{"none", "minimal", "low", "medium", "high"}, Default: "medium", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-2.5-flash-lite": {Supported: true, Adjustable: true, Levels: []string{"none", "minimal", "low", "medium", "high"}, Default: "none", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-2.5-pro":        {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, Default: "high", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	// Gemini 3 / 3.x models and "-latest" aliases.
+	"gemini-3-flash-preview":             {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, Default: "high", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-3-pro-preview":               {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, Default: "high", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-3.1-flash-lite":              {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, Default: "minimal", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-3.1-flash-lite-preview":      {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, Default: "minimal", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-3.1-pro-preview":             {Supported: true, Adjustable: true, Levels: []string{"low", "medium", "high"}, Default: "high", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-3.1-pro-preview-customtools": {Supported: true, Adjustable: true, Levels: []string{"low", "medium", "high"}, Default: "high", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-3.5-flash":                   {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, Default: "medium", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-3.5-flash-lite":              {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, Default: "minimal", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-3.6-flash":                   {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, Default: "medium", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-3.7-flash":                   {Supported: true, Adjustable: true, Levels: []string{"low", "medium", "high"}, Default: "medium", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-3.8-flash":                   {Supported: true, Adjustable: true, Levels: []string{"low", "medium", "high"}, Default: "medium", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-flash-latest":                {Supported: true, Adjustable: true, Levels: []string{"low", "medium", "high"}, Default: "medium", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-flash-lite-latest":           {Supported: true, Adjustable: true, Levels: []string{"minimal", "low", "medium", "high"}, Default: "minimal", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
+	"gemini-pro-latest":                  {Supported: true, Adjustable: true, Levels: []string{"low", "medium", "high"}, Default: "high", RequestFormat: ThinkingRequestReasoningEffort, ReplayFormat: ThinkingReplayNone},
 	// Gemini 4 uses thinking_level (low/medium/high, plus xhigh for Hydrogen).
 	// MINIMAL is not supported on any Gemini 4 model: the API rejects it with
 	// 400 INVALID_ARGUMENT, so it must not be offered. Defaults follow Google:
@@ -55,6 +73,7 @@ func (p *openAIProvider) geminiThinkingCapability(model string) ThinkingCapabili
 	if p.name != "gemini" || p.baseURL == "" {
 		return ThinkingCapability{RequestFormat: ThinkingRequestNone, ReplayFormat: ThinkingReplayNone}
 	}
+	model = normalizeGeminiModelID(model)
 
 	// Only exact model IDs with locally documented Gemini effort mappings may
 	// expose thinking controls. Models.dev metadata can narrow these choices,
