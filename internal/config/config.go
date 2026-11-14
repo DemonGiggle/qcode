@@ -208,6 +208,8 @@ type ChatGPT struct {
 // Model and Thinking are the per-provider counterparts of the deprecated root
 // model/thinking and provider_models/provider_thinking memory tables.
 type ProviderProfile struct {
+	// Type identifies the built-in protocol used by a named instance.
+	Type       *string `toml:"type"`
 	BaseURL    *string `toml:"base_url"`
 	APIKey     *string `toml:"api_key"`
 	APIKeyPath *string `toml:"api_key_path"`
@@ -547,6 +549,7 @@ func load(paths []string) (Config, []string, []error) {
 			continue
 		}
 		merged.Providers[name] = ProviderProfile{
+			Type:       profile.Type,
 			BaseURL:    profile.BaseURL,
 			APIKey:     stringPointer(key),
 			APIKeyPath: profile.APIKeyPath,
@@ -561,6 +564,9 @@ func validate(path string, cfg Config) error {
 	for name, profile := range cfg.Providers {
 		if !validProvider(name) {
 			return fmt.Errorf("parse config %s: unknown provider profile %q", path, name)
+		}
+		if _, err := cfg.ProviderKind(name); err != nil {
+			return fmt.Errorf("parse config %s: %w", path, err)
 		}
 		if name == "chatgpt" && profile.APIKey != nil && *profile.APIKey != "" {
 			return fmt.Errorf("parse config %s: providers.chatgpt.api_key is unsupported (use OAuth): %w", path, errFatalProviderConfig)
@@ -676,6 +682,10 @@ func merge(dst *Config, incoming Config) {
 			dst.Providers = make(map[string]ProviderProfile)
 		}
 		current := dst.Providers[name]
+		if profile.Type != nil {
+			value := *profile.Type
+			current.Type = &value
+		}
 		if profile.BaseURL != nil {
 			value := *profile.BaseURL
 			current.BaseURL = &value
