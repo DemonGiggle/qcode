@@ -161,7 +161,18 @@ func TestListProvidersIncludesGemini(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains("\n"+string(output), "\ngemini\n") {
+	// --list-providers annotates entries with kind and setup status
+	// (e.g. "gemini (Need Setup First)"), so match the gemini line prefix
+	// rather than a bare "gemini" line.
+	found := false
+	for _, line := range strings.Split(string(output), "\n") {
+		name := strings.TrimSpace(line)
+		if name == "gemini" || strings.HasPrefix(name, "gemini ") || strings.HasPrefix(name, "gemini (") {
+			found = true
+			break
+		}
+	}
+	if !found {
 		t.Fatalf("provider listing omitted Gemini: %q", output)
 	}
 }

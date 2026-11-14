@@ -25,6 +25,7 @@ type RuntimePreferenceWriter struct {
 	mu             sync.Mutex
 	path           string
 	legacyProvider string
+	providerConfig Config
 }
 
 // RuntimePreferences is kept as a descriptive alias for callers that refer
@@ -92,7 +93,7 @@ func (w *RuntimePreferenceWriter) PersistModel(provider, model, thinking string)
 		return errors.New("runtime preference writer is nil")
 	}
 	provider, model, thinking = strings.TrimSpace(provider), strings.TrimSpace(model), strings.TrimSpace(thinking)
-	if !validProvider(provider) {
+	if !w.hasProvider(provider) {
 		return fmt.Errorf("unknown provider %q", provider)
 	}
 	if model == "" {
@@ -214,7 +215,7 @@ func (w *RuntimePreferenceWriter) PersistAllowedAgentModels(entries []AllowedAge
 			return errors.New("allowed agent model must not set thinking_level; main decides thinking at runtime")
 		}
 	}
-	normalized := normalizeAllowedAgentModels(entries)
+	normalized := normalizeAllowedAgentModels(entries, w.hasProvider)
 	// Validate after normalization: normalization drops invalid rows, so any
 	// drop means the caller passed a bad entry. Report it instead of silently
 	// persisting a subset.
@@ -230,7 +231,7 @@ func (w *RuntimePreferenceWriter) PersistAllowedAgentModels(entries []AllowedAge
 				continue
 			}
 			seen[key] = true
-			if provider == "" || model == "" || !validProvider(provider) || !validAgentRole(role) {
+			if provider == "" || model == "" || !w.hasProvider(provider) || !validAgentRole(role) {
 				return fmt.Errorf("invalid allowed agent model %q %q %q (want valid provider, non-empty model, role smart|balanced|cheap)", raw.Provider, raw.Model, raw.Role)
 			}
 		}
@@ -380,6 +381,11 @@ func (w *RuntimePreferenceWriter) persist(changes map[string]*string) error {
 // non-nil; thinkingLiteral nil removes the profile thinking override. The
 // caller must hold w.mu.
 func (w *RuntimePreferenceWriter) persistWithProviderProfile(rootChanges map[string]*string, provider string, modelLiteral, thinkingLiteral *string) error {
+	// Saving the default on an instance must clear inherited thinking.
+	if !validProvider(provider) && thinkingLiteral == nil {
+		thinkingLiteral = stringPointer(tomlString(""))
+	}
+
 	if strings.TrimSpace(w.path) == "" {
 		return errors.New("runtime preference path is empty")
 	}
@@ -1595,4 +1601,10 @@ func writeRuntimeConfigAtomically(path string, data []byte, mode os.FileMode) er
 		return err
 	}
 	return nil
+}
+
+func (w *RuntimePreferenceWriter) hasProvider(name string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.providerConfig.HasProvider(name)
 }

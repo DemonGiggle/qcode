@@ -208,6 +208,8 @@ type ChatGPT struct {
 // Model and Thinking are the per-provider counterparts of the deprecated root
 // model/thinking and provider_models/provider_thinking memory tables.
 type ProviderProfile struct {
+	// Type identifies the built-in protocol used by a named instance.
+	Type       *string `toml:"type"`
 	BaseURL    *string `toml:"base_url"`
 	APIKey     *string `toml:"api_key"`
 	APIKeyPath *string `toml:"api_key_path"`
@@ -255,7 +257,11 @@ func validAgentRole(role string) bool {
 // normalizeAllowedAgentModels trims, drops invalid entries, dedupes by
 // provider+model (last wins), and sorts deterministically. Invalid entries
 // are dropped for startup tolerance; `qcode config check` warns about them.
-func normalizeAllowedAgentModels(entries []AllowedAgentModel) []AllowedAgentModel {
+func normalizeAllowedAgentModels(entries []AllowedAgentModel, validators ...func(string) bool) []AllowedAgentModel {
+	valid := validProvider
+	if len(validators) > 0 {
+		valid = validators[0]
+	}
 	byKey := map[string]AllowedAgentModel{}
 	order := map[string]int{}
 	idx := 0
@@ -269,7 +275,7 @@ func normalizeAllowedAgentModels(entries []AllowedAgentModel) []AllowedAgentMode
 		if !utf8.ValidString(provider) || !utf8.ValidString(model) || !utf8.ValidString(raw.Role) {
 			continue
 		}
-		if !validProvider(provider) {
+		if !valid(provider) {
 			continue
 		}
 		if !validAgentRole(role) {
@@ -316,7 +322,7 @@ func (c Config) NormalizedAllowedAgentModels() []AllowedAgentModel {
 	if c.Agents.AllowModels == nil {
 		return nil
 	}
-	normalized := normalizeAllowedAgentModels(c.Agents.AllowModels)
+	normalized := normalizeAllowedAgentModels(c.Agents.AllowModels, c.HasProvider)
 	if len(normalized) == 0 {
 		return []AllowedAgentModel{}
 	}
@@ -327,7 +333,7 @@ func (c Config) NormalizedAllowedAgentModels() []AllowedAgentModel {
 // list (including an explicit empty list) replaces lower layers.
 func mergeAllowedAgentModels(dst *Agents, incoming Agents) {
 	if incoming.AllowModels != nil {
-		normalized := normalizeAllowedAgentModels(incoming.AllowModels)
+		normalized := normalizeAllowedAgentModels(incoming.AllowModels, validInstanceName)
 		// Preserve explicit empty as empty (not nil) so clearing works.
 		if len(normalized) == 0 {
 			// incoming could be nil vs empty; incoming != nil means explicit.
@@ -462,7 +468,7 @@ func load(paths []string) (Config, []string, []error) {
 			diagnostics = append(diagnostics, fmt.Errorf("parse config %s: %w", path, err))
 			continue
 		}
-		if err := validate(path, cfg); err != nil {
+		if err := validateLayer(path, cfg); err != nil {
 			diagnostics = append(diagnostics, err)
 			continue
 		}
@@ -487,7 +493,7 @@ func load(paths []string) (Config, []string, []error) {
 		if raw.BaseURL != nil || raw.APIKey != nil {
 			legacy.Providers = map[string]ProviderProfile{owner: {BaseURL: raw.BaseURL, APIKey: raw.APIKey}}
 		}
-		if err := validate(path, legacy); err != nil {
+		if err := validateLayer(path, legacy); err != nil {
 			diagnostics = append(diagnostics, err)
 			continue
 		}
@@ -515,6 +521,10 @@ func load(paths []string) (Config, []string, []error) {
 			merged.legacyConnectionOwners[filepath.Clean(path)] = owner
 		}
 		merged.connectionsLoaded = true
+	}
+	if err := inheritInstances(&merged, apiKeyPathDirs); err != nil {
+		diagnostics = append(diagnostics, fmt.Errorf("provider instances: %v: %w", err, errFatalProviderConfig))
+		return merged, inspected, diagnostics
 	}
 	// Resolve merged api_key_path files last so higher-priority paths win and
 	// relative entries resolve from their declaring file. Failures are
@@ -547,6 +557,7 @@ func load(paths []string) (Config, []string, []error) {
 			continue
 		}
 		merged.Providers[name] = ProviderProfile{
+			Type:       profile.Type,
 			BaseURL:    profile.BaseURL,
 			APIKey:     stringPointer(key),
 			APIKeyPath: profile.APIKeyPath,
@@ -557,16 +568,22 @@ func load(paths []string) (Config, []string, []error) {
 	return merged, inspected, diagnostics
 }
 
-func validate(path string, cfg Config) error {
+func validate(path string, cfg Config) error { return validateConfig(path, cfg, false) }
+
+func validateConfig(path string, cfg Config, partial bool) error {
 	for name, profile := range cfg.Providers {
-		if !validProvider(name) {
-			return fmt.Errorf("parse config %s: unknown provider profile %q", path, name)
+		kind, err := cfg.ProviderKind(name)
+		if partial && profile.Type == nil && !validProvider(name) && validInstanceName(name) {
+			kind, err = "", nil
 		}
-		if name == "chatgpt" && profile.APIKey != nil && *profile.APIKey != "" {
-			return fmt.Errorf("parse config %s: providers.chatgpt.api_key is unsupported (use OAuth): %w", path, errFatalProviderConfig)
+		if err != nil {
+			return fmt.Errorf("parse config %s: %w", path, err)
 		}
-		if name == "chatgpt" && profile.APIKeyPath != nil && strings.TrimSpace(*profile.APIKeyPath) != "" {
-			return fmt.Errorf("parse config %s: providers.chatgpt.api_key_path is unsupported (use OAuth): %w", path, errFatalProviderConfig)
+		if kind == "chatgpt" && profile.APIKey != nil && *profile.APIKey != "" {
+			return fmt.Errorf("parse config %s: providers.%s.api_key is unsupported (use OAuth): %w", path, name, errFatalProviderConfig)
+		}
+		if kind == "chatgpt" && profile.APIKeyPath != nil && strings.TrimSpace(*profile.APIKeyPath) != "" {
+			return fmt.Errorf("parse config %s: providers.%s.api_key_path is unsupported (use OAuth): %w", path, name, errFatalProviderConfig)
 		}
 		if err := validateProfileCredentials(path, name, profile); err != nil {
 			return err
@@ -676,6 +693,10 @@ func merge(dst *Config, incoming Config) {
 			dst.Providers = make(map[string]ProviderProfile)
 		}
 		current := dst.Providers[name]
+		if profile.Type != nil {
+			value := *profile.Type
+			current.Type = &value
+		}
 		if profile.BaseURL != nil {
 			value := *profile.BaseURL
 			current.BaseURL = &value
@@ -967,7 +988,7 @@ func (c Config) Secrets() []string {
 
 func validateProviderModels(path string, models, thinking map[string]string) error {
 	for name, model := range models {
-		if !validProvider(name) {
+		if !validProvider(name) && !validInstanceName(name) {
 			return fmt.Errorf("parse config %s: unknown provider_models entry %q", path, name)
 		}
 		if strings.TrimSpace(model) == "" {
@@ -978,7 +999,7 @@ func validateProviderModels(path string, models, thinking map[string]string) err
 		}
 	}
 	for name, level := range thinking {
-		if !validProvider(name) {
+		if !validProvider(name) && !validInstanceName(name) {
 			return fmt.Errorf("parse config %s: unknown provider_thinking entry %q", path, name)
 		}
 		if !utf8.ValidString(level) {

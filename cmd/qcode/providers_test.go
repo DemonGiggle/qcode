@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -445,5 +447,108 @@ func TestProviderAvailabilityMirrorsCredentials(t *testing.T) {
 	}
 	if ok, _ := builder.availability("openai"); !ok {
 		t.Fatal("custom openai endpoint should not require a key")
+	}
+}
+
+func TestNamedInstancesKeepEndpointsAndCatalogsSeparate(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	for _, kind := range []string{"ollama", "openai"} {
+		t.Run(kind, func(t *testing.T) {
+			policy, _ := redaction.New(redaction.Config{}, nil)
+			cfg := config.Config{Providers: map[string]config.ProviderProfile{}}
+			for _, name := range []string{"local", "lab"} {
+				name := name
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if kind == "openai" && r.Header.Get("Authorization") != "Bearer "+name+"-key" {
+						t.Error("credential crossed instances")
+					}
+					if kind == "ollama" {
+						io.WriteString(w, `{"models":[{"name":"`+name+`","capabilities":["completion"]}]}`)
+					} else {
+						io.WriteString(w, `{"data":[{"id":"`+name+`"}]}`)
+					}
+				}))
+				defer server.Close()
+				cfg.Providers[name] = config.ProviderProfile{Type: profileValue(kind), BaseURL: profileValue(server.URL), APIKey: profileValue(name + "-key")}
+			}
+			builder := providerBuilder{config: cfg, policy: policy}
+			local, err := builder.prepare(context.Background(), "local", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lab, err := builder.prepare(context.Background(), "lab", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range []preparedProvider{local, lab, local} {
+				models, err := p.Provider.(llm.ModelLister).Models(context.Background())
+				if err != nil || len(models) != 1 || models[0] != p.Provider.Name() {
+					t.Fatalf("%s catalog = %v, %v", p.Provider.Name(), models, err)
+				}
+				if llm.Kind(p.Provider) != kind {
+					t.Fatal("wrong protocol kind")
+				}
+			}
+			// Rebuilding a saved instance retains its identity and saved endpoint.
+			restored, err := builder.prepare(context.Background(), "lab", &lab.Endpoint)
+			if err != nil || restored.Provider.Name() != "lab" || restored.Endpoint != lab.Endpoint {
+				t.Fatalf("restore = %+v, %v", restored, err)
+			}
+		})
+	}
+}
+
+func TestCLISelectsAndListsNamedInstance(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux config path fixture")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, key := range []string{"QCODE_PROVIDER", "QCODE_MODEL", "QCODE_BASE_URL", "QCODE_API_KEY", "QCODE_THINKING", "OPENAI_API_KEY"} {
+		t.Setenv(key, "")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), `"model":"lab-model"`) {
+			t.Error("instance model not selected")
+		}
+		if r.Header.Get("Authorization") != "Bearer lab-key" {
+			t.Error("instance credentials not selected")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"instance answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	dir := filepath.Join(home, ".local", "etc", "qcode")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	text := "[providers.lab]\ntype = 'openai'\nbase_url = '" + server.URL + "'\napi_key = 'lab-key'\nmodel = 'lab-model'\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, listing := range []bool{true, false} {
+		in, _ := os.CreateTemp(t.TempDir(), "in")
+		defer in.Close()
+		out, _ := os.CreateTemp(t.TempDir(), "out")
+		defer out.Close()
+		errOut, _ := os.CreateTemp(t.TempDir(), "err")
+		defer errOut.Close()
+		args := []string{"--provider", "lab", "--cwd", t.TempDir(), "hello"}
+		want := "instance answer"
+		if listing {
+			args = []string{"--list-providers"}
+			want = "lab (openai)"
+		}
+		if err := run(args, in, out, errOut); err != nil {
+			t.Fatal(err)
+		}
+		output, _ := os.ReadFile(out.Name())
+		if !strings.Contains(string(output), want) {
+			t.Fatalf("output = %q, want %q", output, want)
+		}
 	}
 }

@@ -138,6 +138,8 @@ type ModelValidator interface {
 type Factory func(Config) (Provider, error)
 
 type Config struct {
+	// InstanceName is the configured identity; empty uses the built-in kind.
+	InstanceName string
 	// RegisterSecrets optionally registers credentials with the shared output
 	// redaction policy. The callback must be concurrency-safe.
 	RegisterSecrets func(...string)
@@ -199,4 +201,12 @@ func Names() []string {
 // when unknown. Discovery must not prevent a completion from succeeding.
 type ContextWindowProvider interface {
 	ContextWindow(context.Context, string) (int, error)
+}
+
+// Kind returns a provider's protocol kind independently of its configured name.
+func Kind(p Provider) string {
+	if typed, ok := p.(interface{ Kind() string }); ok {
+		return typed.Kind()
+	}
+	return p.Name()
 }

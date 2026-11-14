@@ -327,3 +327,21 @@ do not select a real model. Interactive commands remain usable, including
 ## Environment variables
 
 Flags can also be set with `QCODE_PROVIDER`, `QCODE_MODEL`, `QCODE_THINKING`, `QCODE_BASE_URL`, and `QCODE_API_KEY`. See [Configuration](configuration.md) for precedence rules.
+
+## Multiple endpoints of the same kind
+
+Configure `[providers.ollama-lab]` with `type = "ollama"` and its own `base_url`
+to add a second Ollama server. See [named instances](configuration.md#named-provider-instances)
+for a complete example and inheritance rules. Use `qcode --list-providers`,
+`--provider ollama-lab`, or `/provider ollama-lab` to discover and select it.
+
+Each tab retains its instance, connection, and model/thinking state. Saved
+sessions retain the instance name and endpoint, while credentials are resolved
+from the current configuration when resumed. Sub-agent model rosters also accept
+instance names. ChatGPT instances use the shared OAuth configuration.
+
+Live model catalogs and Ollama thinking discovery belong to each client instance.
+Models.dev disk metadata is shared by kind only for the official endpoint: it is
+public model metadata, not a credential or endpoint-specific catalog. Custom
+endpoints do not load official metadata. `--update-model-meta` accepts an instance
+and refreshes its kind's Models.dev metadata.

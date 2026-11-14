@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -45,14 +45,14 @@ func (b *providerBuilder) connection(name string, endpoint *string) llm.Config {
 	if name == b.launchProvider {
 		base, key = b.launch.BaseURL, b.launch.APIKey
 	} else {
-		if value := config.ProviderEnvironmentAPIKey(name); value != "" {
+		if value := config.ProviderEnvironmentAPIKey(providerKind(b.config, name)); value != "" {
 			key = value
 		}
 	}
 	if endpoint != nil {
 		base = *endpoint // An empty saved endpoint means the provider's default.
 	}
-	return llm.Config{BaseURL: base, APIKey: key, HTTP: b.launch.HTTP,
+	return llm.Config{InstanceName: name, BaseURL: base, APIKey: key, HTTP: b.launch.HTTP,
 		InsecureSkipVerify: b.launch.InsecureSkipVerify, ChatGPTOAuthPath: b.config.ChatGPT.OAuthPath,
 		RegisterSecrets: b.policy.RegisterSecrets}
 }
@@ -64,10 +64,14 @@ func (b *providerBuilder) connection(name string, endpoint *string) llm.Config {
 // resolved into the connection during config load, so an empty key here means
 // neither inline, file, nor env provided one.
 func (b *providerBuilder) availability(name string) (bool, string) {
+	kind, err := resolveProviderKind(b.config, name)
+	if err != nil {
+		return false, err.Error()
+	}
 	connection := b.connection(name, nil)
-	if name == "chatgpt" {
+	if kind == "chatgpt" {
 		if connection.APIKey != "" {
-			return false, "provider chatgpt uses ChatGPT OAuth (qcode login chatgpt); clear api-key"
+			return false, fmt.Sprintf("provider %s (chatgpt) uses ChatGPT OAuth (qcode login chatgpt); clear api-key", name)
 		}
 		if tokens, err := chatgptoauth.Load(connection.ChatGPTOAuthPath); err != nil {
 			return false, "run `qcode login chatgpt` to connect a ChatGPT subscription"
@@ -78,13 +82,13 @@ func (b *providerBuilder) availability(name string) (bool, string) {
 		}
 		return true, ""
 	}
-	if name == "gemini" && isGeminiOfficialEndpoint(connection.BaseURL) && connection.APIKey == "" {
-		return false, "provider gemini requires an API key: set [providers.gemini].api_key_path (preferred), GEMINI_API_KEY, GOOGLE_API_KEY, QCODE_API_KEY, or --api-key"
+	if kind == "gemini" && isGeminiOfficialEndpoint(connection.BaseURL) && connection.APIKey == "" {
+		return false, fmt.Sprintf("provider %s (gemini) requires an API key: set [providers.%s].api_key_path (preferred), GEMINI_API_KEY, GOOGLE_API_KEY, QCODE_API_KEY, or --api-key", name, name)
 	}
-	if (name == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
-		(name == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL)) {
+	if (kind == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
+		(kind == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL)) {
 		if connection.APIKey == "" {
-			return false, fmt.Sprintf("provider %s requires an API key: set [providers.%s].api_key_path (preferred), QCODE_API_KEY, or a launch API-key override", name, name)
+			return false, fmt.Sprintf("provider %s ("+kind+") requires an API key: set [providers.%s].api_key_path (preferred), QCODE_API_KEY, or a launch API-key override", name, name)
 		}
 	}
 	return true, ""
@@ -92,12 +96,16 @@ func (b *providerBuilder) availability(name string) (bool, string) {
 
 func (b *providerBuilder) prepare(ctx context.Context, name string, endpoint *string) (result preparedProvider, err error) {
 	defer func() { err = b.policy.Error(redaction.Terminal, err) }()
+	kind, kindErr := resolveProviderKind(b.config, name)
+	if kindErr != nil {
+		return result, kindErr
+	}
 	connection := b.connection(name, endpoint)
 	b.policy.RegisterSecrets(connection.APIKey)
 	result.Endpoint = connection.BaseURL
-	if name == "chatgpt" {
+	if kind == "chatgpt" {
 		if connection.APIKey != "" {
-			return result, errors.New("provider chatgpt uses ChatGPT OAuth (qcode login chatgpt); clear api-key")
+			return result, fmt.Errorf("provider %s (chatgpt) uses ChatGPT OAuth (qcode login chatgpt); clear api-key", name)
 		}
 		client := connection.HTTP
 		if client == nil {
@@ -114,25 +122,25 @@ func (b *providerBuilder) prepare(ctx context.Context, name string, endpoint *st
 			return result, err
 		}
 	}
-	if name == "gemini" && isGeminiOfficialEndpoint(connection.BaseURL) && connection.APIKey == "" {
-		return result, errors.New("provider gemini requires an API key: set [providers.gemini].api_key_path (preferred), GEMINI_API_KEY, GOOGLE_API_KEY, QCODE_API_KEY, or --api-key")
+	if kind == "gemini" && isGeminiOfficialEndpoint(connection.BaseURL) && connection.APIKey == "" {
+		return result, fmt.Errorf("provider %s (gemini) requires an API key: set [providers.%s].api_key_path (preferred), GEMINI_API_KEY, GOOGLE_API_KEY, QCODE_API_KEY, or --api-key", name, name)
 	}
-	if connection.APIKey == "" && ((name == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
-		(name == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL))) {
-		return result, fmt.Errorf("provider %s requires an API key: set [providers.%s].api_key_path (preferred), QCODE_API_KEY, or a launch API-key override", name, name)
+	if connection.APIKey == "" && ((kind == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
+		(kind == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL))) {
+		return result, fmt.Errorf("provider %s ("+kind+") requires an API key: set [providers.%s].api_key_path (preferred), QCODE_API_KEY, or a launch API-key override", name, name)
 	}
-	if (name == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
-		(name == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL)) ||
-		(name == "gemini" && isGeminiOfficialEndpoint(connection.BaseURL)) {
-		meta := llm.EmptyProviderModelMeta(name)
-		path, metaErr := llm.ProviderModelMetaCachePath(name)
+	if (kind == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
+		(kind == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL)) ||
+		(kind == "gemini" && isGeminiOfficialEndpoint(connection.BaseURL)) {
+		meta := llm.EmptyProviderModelMeta(kind)
+		path, metaErr := llm.ProviderModelMetaCachePath(kind)
 		if metaErr == nil {
 			load := b.loadMetadata
 			if load == nil {
 				load = llm.LoadProviderModelMeta
 			}
 			metaCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			meta, metaErr = load(metaCtx, path, name, connection.HTTP)
+			meta, metaErr = load(metaCtx, path, kind, connection.HTTP)
 			cancel()
 		}
 		connection.ModelMeta = meta
@@ -144,7 +152,7 @@ func (b *providerBuilder) prepare(ctx context.Context, name string, endpoint *st
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	result.Provider, err = llm.New(name, connection)
+	result.Provider, err = llm.New(kind, connection)
 	return result, err
 }
 
@@ -158,10 +166,59 @@ func applyProviderConnection(opts *options, cfg config.Config, flags map[string]
 	if !flags["api-key"] {
 		if value := os.Getenv("QCODE_API_KEY"); value != "" {
 			opts.apiKey = value
-		} else if value := config.ProviderEnvironmentAPIKey(opts.provider); value != "" {
+		} else if value := config.ProviderEnvironmentAPIKey(providerKind(cfg, opts.provider)); value != "" {
 			opts.apiKey = value
 		} else {
 			opts.apiKey = key
 		}
 	}
+}
+
+func providerKind(cfg config.Config, name string) string {
+	kind, _ := resolveProviderKind(cfg, name)
+	return kind
+}
+
+// Registered extensions without a config profile retain their registry identity.
+func resolveProviderKind(cfg config.Config, name string) (string, error) {
+	if _, configured := cfg.Providers[name]; !configured {
+		for _, registered := range llm.Names() {
+			if registered == name {
+				return name, nil
+			}
+		}
+	}
+	return cfg.ProviderKind(name)
+}
+
+func listConfiguredProviders(out io.Writer, cfg config.Config, policy *redaction.Policy) error {
+	names := llm.Names()
+	seen := map[string]bool{}
+	for _, name := range names {
+		seen[name] = true
+	}
+	for name := range cfg.Providers {
+		if !seen[name] {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	builder := providerBuilder{config: cfg, policy: policy}
+	for _, name := range names {
+		kind, err := resolveProviderKind(cfg, name)
+		if err != nil {
+			return err
+		}
+		label := name
+		if kind != name {
+			label += " (" + kind + ")"
+		}
+		if available, _ := builder.availability(name); !available {
+			label += " (Need Setup First)"
+		}
+		if _, err := fmt.Fprintln(out, label); err != nil {
+			return err
+		}
+	}
+	return nil
 }

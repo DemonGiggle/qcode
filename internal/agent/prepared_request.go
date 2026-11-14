@@ -269,7 +269,7 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 		messages[0].Content += "\n\n" + recoveryInstruction
 		recovery = recoveryInstruction
 	}
-	if a.provider != nil && a.provider.Name() == "chatgpt" && len(messages) > 0 && messages[0].Role == "system" {
+	if a.provider != nil && llm.Kind(a.provider) == "chatgpt" && len(messages) > 0 && messages[0].Role == "system" {
 		// Keep request-only context after history. ChatGPT lifts the stable
 		// system message into instructions; a developer message preserves
 		// instruction authority and the existing trust wrappers on context.
