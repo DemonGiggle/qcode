@@ -205,3 +205,68 @@ func TestProviderAwareCreationAndInheritance(t *testing.T) {
 		t.Fatal("explicit backend or new provider identity lost")
 	}
 }
+
+func TestNamedInstanceCreationSwitchAndResume(t *testing.T) {
+	m := newTestManager(t, 5)
+	makeProvider := func(name, endpoint string) llm.Provider {
+		p, err := llm.New("ollama", llm.Config{InstanceName: name, BaseURL: endpoint})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	rev, _ := m.ConfigurationRevision("main")
+	if err := m.SwitchBackend("main", rev, BackendSwitch{Provider: makeProvider("lab", "http://lab"), Model: "lab-model", Endpoint: "http://lab"}); err != nil {
+		t.Fatal(err)
+	}
+	m.SetProviderFactory(func(id, name, model string, main bool, backend CreationBackend) (*Agent, error) {
+		a := New(makeProvider(backend.Provider, backend.Endpoint), model, m.WrapToolset(id, &managerToolset{}, main), trace.New(io.Discard, false), io.Discard, 4)
+		a.SetEndpoint(backend.Endpoint)
+		return a, nil
+	})
+	inherited, err := m.CreateInheritedAt(context.Background(), "main", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicit, err := m.CreateWithProvider("local-model", CreationBackend{Provider: "local", Endpoint: "http://local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, next := m.SaveAgents()
+	restored := NewAgentManager(context.Background(), 5)
+	defer restored.Shutdown()
+	restored.SetFactory(func(id, name, model string, main bool) (*Agent, error) {
+		// The application restore factory reconstructs each backend from saved identity.
+		var state SavedState
+		for _, tab := range saved {
+			if tab.Summary.ID == id {
+				if err := json.Unmarshal(tab.State, &state); err != nil {
+					return nil, err
+				}
+				break
+			}
+		}
+		return New(makeProvider(state.Provider, state.Endpoint), model, restored.WrapToolset(id, &managerToolset{}, main), trace.New(io.Discard, false), io.Discard, 4), nil
+	})
+	if err := restored.RestoreAgents(saved, next); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]CreationBackend{"main": {Provider: "lab", Endpoint: "http://lab"}, inherited.ID: {Provider: "lab", Endpoint: "http://lab"}, explicit.ID: {Provider: "local", Endpoint: "http://local"}} {
+		got, err := restored.Backend(id)
+		if err != nil || got != want {
+			t.Fatalf("%s backend = %+v, %v; want %+v", id, got, err, want)
+		}
+	}
+	parent, _ := restored.Agent("main")
+	child, _ := restored.Agent(inherited.ID)
+	if parent.provider == child.provider {
+		t.Fatal("restored agents share client")
+	}
+	rev, _ = restored.ConfigurationRevision(inherited.ID)
+	if err := restored.SwitchBackend(inherited.ID, rev, BackendSwitch{Provider: makeProvider("local", "http://local"), Model: "local-model", Endpoint: "http://local"}); err != nil {
+		t.Fatal(err)
+	}
+	if parent.provider.Name() != "lab" || parent.model != "lab-model" {
+		t.Fatal("child switch changed parent")
+	}
+}

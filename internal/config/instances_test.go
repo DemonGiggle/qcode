@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestProviderKind(t *testing.T) {
 	for _, tc := range []struct {
@@ -130,5 +134,33 @@ func TestInstancePreferencesAndRosterRoundTrip(t *testing.T) {
 	}
 	if err := writer.PersistProvider("unknown", "model", ""); err == nil {
 		t.Fatal("accepted unknown instance")
+	}
+}
+
+func TestInheritedInstanceKeyPathUsesDeclaringDirectory(t *testing.T) {
+	parentDir, instanceDir := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(parentDir, "provider.key"), []byte("parent-secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(instanceDir, "provider.key"), []byte("wrong-secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	low := writeConfig(t, parentDir, "config.toml", "[providers.openai]\napi_key_path = 'provider.key'\n")
+	high := writeConfig(t, instanceDir, "config.toml", "[providers.work]\ntype = 'openai'\n")
+	cfg, _, diagnostics := load([]string{high, low})
+	if len(diagnostics) != 0 {
+		t.Fatal(diagnostics)
+	}
+	_, key := cfg.ProviderConnection("work")
+	if key != "parent-secret" {
+		t.Fatal("inherited key resolved relative to instance instead of declaring file")
+	}
+	if cfg.Providers["work"].Type == nil || *cfg.Providers["work"].Type != "openai" {
+		t.Fatal("key resolution lost type")
+	}
+	for _, issue := range CheckPaths([]string{high, low}) {
+		if issue.Severity == SeverityError {
+			t.Fatal(issue)
+		}
 	}
 }

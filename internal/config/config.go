@@ -568,17 +568,22 @@ func load(paths []string) (Config, []string, []error) {
 	return merged, inspected, diagnostics
 }
 
-func validate(path string, cfg Config) error {
+func validate(path string, cfg Config) error { return validateConfig(path, cfg, false) }
+
+func validateConfig(path string, cfg Config, partial bool) error {
 	for name, profile := range cfg.Providers {
 		kind, err := cfg.ProviderKind(name)
+		if partial && profile.Type == nil && !validProvider(name) && validInstanceName(name) {
+			kind, err = "", nil
+		}
 		if err != nil {
 			return fmt.Errorf("parse config %s: %w", path, err)
 		}
 		if kind == "chatgpt" && profile.APIKey != nil && *profile.APIKey != "" {
-			return fmt.Errorf("parse config %s: providers.chatgpt.api_key is unsupported (use OAuth): %w", path, errFatalProviderConfig)
+			return fmt.Errorf("parse config %s: providers.%s.api_key is unsupported (use OAuth): %w", path, name, errFatalProviderConfig)
 		}
 		if kind == "chatgpt" && profile.APIKeyPath != nil && strings.TrimSpace(*profile.APIKeyPath) != "" {
-			return fmt.Errorf("parse config %s: providers.chatgpt.api_key_path is unsupported (use OAuth): %w", path, errFatalProviderConfig)
+			return fmt.Errorf("parse config %s: providers.%s.api_key_path is unsupported (use OAuth): %w", path, name, errFatalProviderConfig)
 		}
 		if err := validateProfileCredentials(path, name, profile); err != nil {
 			return err

@@ -29,3 +29,13 @@ Registration makes the provider available to `--provider` and
 [provider guide](providers.md) with its setup. Use fixture-based HTTP tests
 for payload encoding, stream parsing, usage, errors, and cancellation, then
 run `go test ./internal/llm ./internal/agent ./cmd/qcode`.
+
+## Named instances versus new providers
+
+A second endpoint does not need a new provider implementation. Configure
+`[providers.<name>]` with `type = "<built-in-kind>"`; see
+[named instances](configuration.md#named-provider-instances). Runtime `Name()`
+identifies the instance for persistence and routing; `llm.Kind(provider)` identifies
+its wire protocol. Protocol-specific logic must use the kind. Instances preserve
+the underlying provider's optional capability interfaces and do not register
+aliases in the global factory registry.

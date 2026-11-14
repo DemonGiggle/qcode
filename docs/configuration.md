@@ -230,9 +230,10 @@ Worker-tab edits remain session-only; persistence failures are reported.
 
 Each provider can have its own optional `[providers.<name>]` table containing
 `base_url`, `api_key_path` (preferred), `api_key` (deprecated inline),
-`model`, and `thinking`. Supported names match the built-in registry: `ollama`,
-`openai`, `gemini`, `opencode-go`, and `chatgpt`. Connection profiles do not add providers
-or change the active provider by themselves; the root `provider` selects the
+`model`, and `thinking`. Built-in profiles are `ollama`, `openai`, `gemini`,
+`opencode-go`, and `chatgpt`. Named instances add a `type` field identifying one
+of these kinds; see [named instances](#named-provider-instances). Profiles do not
+change the active provider by themselves; the root `provider` selects the
 startup default, and `/provider` changes the active terminal tab.
 
 ```toml
@@ -422,3 +423,51 @@ Lines over 64 KiB are replaced in full through their terminator.
 
 See [Privacy and local redaction](privacy.md) for retained operational metadata,
 legacy-session behavior, and the limits of local filtering.
+
+### Named provider instances
+
+Use a flat `[providers.<instance>]` table with `type` naming a built-in kind:
+
+```toml
+[providers.ollama]
+base_url = "http://127.0.0.1:11434"
+model = "qwen2.5-coder:7b"
+
+[providers.ollama-lab]
+type = "ollama"
+base_url = "http://192.168.1.50:11434"
+model = "qwen2.5-coder:32b"
+
+[providers.openai-work]
+type = "openai"
+base_url = "https://inference.example.com/v1"
+api_key_path = "~/.config/qcode/work.key"
+model = "work-coder"
+```
+
+Names contain 1–64 lowercase letters, digits, hyphens or underscores. `custom`
+is reserved. Built-in names retain their kind. `type` must reference a built-in
+kind, including Gemini; instance-to-instance inheritance is unsupported. The
+flat schema keeps existing profile tables and preference writes compatible;
+`[providers.custom.<name>]` and `inherit_provider` are not supported.
+
+Layers merge by instance name first. Missing instance fields then inherit the
+merged built-in profile. Explicit empty values clear inherited values. Either
+credential field on an instance replaces the parent's credential source; omit
+both to inherit it. Setting nonempty `api_key` and `api_key_path` together is an
+error, including across layers. Relative key paths retain the directory of the
+file that declared them, even when inherited. Key files retain the existing
+owner-only permission and symlink checks. An inherited key is intentionally
+shared: set the instance's credentials explicitly when using a different service.
+
+Launch precedence remains `--api-key` > `QCODE_API_KEY` > the kind's environment
+key > the resolved profile. `--base-url` and `QCODE_BASE_URL` override the launch
+instance only. Other tabs resolve their own profiles and kind-specific environment
+keys. ChatGPT instances share `[chatgpt].oauth_path` and cannot use API keys.
+
+Run `qcode config check` to validate the merged configuration, and
+`qcode --list-providers` to see instance names, kinds, and setup status. Select
+with `--provider ollama-lab` or `/provider ollama-lab`. Existing configs need no
+migration. Main-tab saves, model/thinking memory, and sub-agent roster entries
+use instance names. Saving default thinking writes an explicit empty value so
+it does not accidentally inherit the parent's setting after restart.

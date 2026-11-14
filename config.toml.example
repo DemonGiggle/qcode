@@ -1,4 +1,4 @@
-# Default provider selected at startup: ollama, openai, gemini, opencode-go, or chatgpt.
+# Default provider: a built-in kind or a configured named instance.
 # Root keeps only the global default; connection settings live under
 # [providers.<name>] below.
 provider = "ollama"
@@ -185,3 +185,21 @@ sensitive_fields = []
 # opencode-go = "muse-spark-1.3-contributor"
 # [provider_thinking]          # deprecated: use [providers.<name>] thinking
 # opencode-go = "high"
+
+# Multiple endpoints: built-in profiles remain unchanged; add named instances.
+# [providers.ollama-lab]
+# type = "ollama"
+# base_url = "http://192.168.1.50:11434"
+# model = "qwen2.5-coder:32b"
+# thinking = "" # explicitly clear inherited thinking
+#
+# [providers.openai-work]
+# type = "openai"
+# base_url = "https://inference.example.com/v1"
+# api_key_path = "~/.config/qcode/work.key"
+# model = "work-coder"
+#
+# Select with --provider ollama-lab or /provider ollama-lab.
+# Omitted fields inherit the built-in profile after config layers merge.
+# Set credentials explicitly for a different service; omitting both credential
+# fields inherits the parent's key. See docs/configuration.md for details.

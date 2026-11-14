@@ -36,15 +36,7 @@ func validInstanceName(name string) bool {
 // validateLayer permits an instance override whose type is supplied by another
 // layer. The complete merged configuration must still pass validate.
 func validateLayer(path string, cfg Config) error {
-	copy := cfg
-	copy.Providers = make(map[string]ProviderProfile, len(cfg.Providers))
-	for name, p := range cfg.Providers {
-		if !validProvider(name) && validInstanceName(name) && p.Type == nil {
-			p.Type = stringPointer("ollama")
-		}
-		copy.Providers[name] = p
-	}
-	return validate(path, copy)
+	return validateConfig(path, cfg, true)
 }
 
 // inheritInstances runs once, after layers merge and before key files are read.
@@ -52,6 +44,10 @@ func validateLayer(path string, cfg Config) error {
 // are one choice: any explicit instance credential field replaces the parent's
 // credential source, including an explicit empty value.
 func inheritInstances(cfg *Config, keyDirs map[string]string) error {
+	if cfg.Provider != "" && !cfg.HasProvider(cfg.Provider) {
+		return fmt.Errorf("unknown default provider %q: select a built-in kind or configure providers.%s.type", cfg.Provider, cfg.Provider)
+	}
+
 	for name, p := range cfg.Providers {
 		kind, err := cfg.ProviderKind(name)
 		if err != nil {

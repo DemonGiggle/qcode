@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -72,7 +71,7 @@ func (b *providerBuilder) availability(name string) (bool, string) {
 	connection := b.connection(name, nil)
 	if kind == "chatgpt" {
 		if connection.APIKey != "" {
-			return false, "provider chatgpt uses ChatGPT OAuth (qcode login chatgpt); clear api-key"
+			return false, fmt.Sprintf("provider %s (chatgpt) uses ChatGPT OAuth (qcode login chatgpt); clear api-key", name)
 		}
 		if tokens, err := chatgptoauth.Load(connection.ChatGPTOAuthPath); err != nil {
 			return false, "run `qcode login chatgpt` to connect a ChatGPT subscription"
@@ -84,12 +83,12 @@ func (b *providerBuilder) availability(name string) (bool, string) {
 		return true, ""
 	}
 	if kind == "gemini" && isGeminiOfficialEndpoint(connection.BaseURL) && connection.APIKey == "" {
-		return false, "provider gemini requires an API key: set [providers.gemini].api_key_path (preferred), GEMINI_API_KEY, GOOGLE_API_KEY, QCODE_API_KEY, or --api-key"
+		return false, fmt.Sprintf("provider %s (gemini) requires an API key: set [providers.%s].api_key_path (preferred), GEMINI_API_KEY, GOOGLE_API_KEY, QCODE_API_KEY, or --api-key", name, name)
 	}
 	if (kind == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
 		(kind == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL)) {
 		if connection.APIKey == "" {
-			return false, fmt.Sprintf("provider %s requires an API key: set [providers.%s].api_key_path (preferred), QCODE_API_KEY, or a launch API-key override", name, name)
+			return false, fmt.Sprintf("provider %s ("+kind+") requires an API key: set [providers.%s].api_key_path (preferred), QCODE_API_KEY, or a launch API-key override", name, name)
 		}
 	}
 	return true, ""
@@ -106,7 +105,7 @@ func (b *providerBuilder) prepare(ctx context.Context, name string, endpoint *st
 	result.Endpoint = connection.BaseURL
 	if kind == "chatgpt" {
 		if connection.APIKey != "" {
-			return result, errors.New("provider chatgpt uses ChatGPT OAuth (qcode login chatgpt); clear api-key")
+			return result, fmt.Errorf("provider %s (chatgpt) uses ChatGPT OAuth (qcode login chatgpt); clear api-key", name)
 		}
 		client := connection.HTTP
 		if client == nil {
@@ -124,11 +123,11 @@ func (b *providerBuilder) prepare(ctx context.Context, name string, endpoint *st
 		}
 	}
 	if kind == "gemini" && isGeminiOfficialEndpoint(connection.BaseURL) && connection.APIKey == "" {
-		return result, errors.New("provider gemini requires an API key: set [providers.gemini].api_key_path (preferred), GEMINI_API_KEY, GOOGLE_API_KEY, QCODE_API_KEY, or --api-key")
+		return result, fmt.Errorf("provider %s (gemini) requires an API key: set [providers.%s].api_key_path (preferred), GEMINI_API_KEY, GOOGLE_API_KEY, QCODE_API_KEY, or --api-key", name, name)
 	}
 	if connection.APIKey == "" && ((kind == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
 		(kind == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL))) {
-		return result, fmt.Errorf("provider %s requires an API key: set [providers.%s].api_key_path (preferred), QCODE_API_KEY, or a launch API-key override", name, name)
+		return result, fmt.Errorf("provider %s ("+kind+") requires an API key: set [providers.%s].api_key_path (preferred), QCODE_API_KEY, or a launch API-key override", name, name)
 	}
 	if (kind == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
 		(kind == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL)) ||
