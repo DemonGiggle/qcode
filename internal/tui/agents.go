@@ -615,6 +615,7 @@ func (u *UI) handleAgentEvent(event session.Event) {
 	if event.Agent.ID != "main" && event.Agent.Status != session.StatusRunning {
 		u.notifyMain(event.Agent)
 	}
+	u.maybeTriggerAutoreview(event)
 }
 
 func (u *UI) notifyMain(summary session.Summary) {

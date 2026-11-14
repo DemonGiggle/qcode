@@ -77,6 +77,13 @@ type runtimePreferenceRecorder struct {
 	interactive      bool
 	interactiveCalls int
 	interactiveErr   error
+	autoreview       bool
+	autoreviewCalls  int
+	autoreviewErr    error
+	reviewProvider   string
+	reviewModel      string
+	reviewCalls      int
+	reviewErr        error
 	selected         []string
 	selectedAlways   []string
 	skillsCalls      int
@@ -120,6 +127,18 @@ func (r *runtimePreferenceRecorder) PersistInteractive(enabled bool) error {
 	r.interactiveCalls++
 	r.interactive = enabled
 	return r.interactiveErr
+}
+
+func (r *runtimePreferenceRecorder) PersistAutoreview(enabled bool) error {
+	r.autoreviewCalls++
+	r.autoreview = enabled
+	return r.autoreviewErr
+}
+
+func (r *runtimePreferenceRecorder) PersistAutoreviewModel(provider, model string) error {
+	r.reviewCalls++
+	r.reviewProvider, r.reviewModel = provider, model
+	return r.reviewErr
 }
 
 func (r *runtimePreferenceRecorder) PersistSelectedSkills(selected, always []string) error {
@@ -202,7 +221,7 @@ func TestMatchingSlashCommands(t *testing.T) {
 		want []string
 	}{
 		{line: "", want: nil},
-		{line: "/", want: []string{"/agent", "/bash", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/history", "/interactive", "/learn", "/maxsteps", "/memo", "/model", "/new", "/plan", "/provider", "/resume", "/remote", "/skill", "/skillplan", "/quit", "/statusline", "/theme", "/todo", "/tool", "/usage", "/verbose"}},
+		{line: "/", want: []string{"/autoreview", "/agent", "/bash", "/clear", "/compact", "/diff", "/exit", "/export", "/help", "/history", "/interactive", "/learn", "/maxsteps", "/memo", "/model", "/new", "/plan", "/provider", "/resume", "/remote", "/skill", "/skillplan", "/quit", "/statusline", "/theme", "/todo", "/tool", "/usage", "/verbose"}},
 		{line: "/d", want: []string{"/diff"}},
 		{line: "/h", want: []string{"/help", "/history"}},
 		{line: "/m", want: []string{"/maxsteps", "/memo", "/model"}},
@@ -900,9 +919,20 @@ func TestMatchingSlashSubcommands(t *testing.T) {
 	if _, _, ok = matchingSlashSubcommands("/s"); ok {
 		t.Fatalf("/s matches multiple commands and should not match subcommands")
 	}
-	hints, parent, ok = matchingSlashSubcommands("/a")
+	if _, _, ok = matchingSlashSubcommands("/a"); ok {
+		t.Fatalf("/a matches /agent and /autoreview and should not match subcommands")
+	}
+	hints, parent, ok = matchingSlashSubcommands("/ag")
 	if !ok || parent.name != "/agent" || len(hints) != 7 {
-		t.Fatalf("/a prefix-unique = %v, parent=%q, ok=%v", hintNames(hints), parent.name, ok)
+		t.Fatalf("/ag prefix-unique = %v, parent=%q, ok=%v", hintNames(hints), parent.name, ok)
+	}
+	hints, parent, ok = matchingSlashSubcommands("/autoreview")
+	if !ok || parent.name != "/autoreview" || join(hintNames(hints)) != "on,off" {
+		t.Fatalf("/autoreview hints = %v, parent=%q, ok=%v", hintNames(hints), parent.name, ok)
+	}
+	hints, _, ok = matchingSlashSubcommands("/autoreview o")
+	if !ok || join(hintNames(hints)) != "on,off" {
+		t.Fatalf("/autoreview o = %v, ok=%v", hintNames(hints), ok)
 	}
 }
 

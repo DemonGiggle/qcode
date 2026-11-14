@@ -418,7 +418,8 @@ func (u *UI) remoteStatusBar() string {
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
 	hidden := append([]string(nil), u.statuslineHidden...)
-	return statusBarWithStatuslineHidden(u.provider, u.model, u.redaction.Text(redaction.Remote, displayRoot(u.workingDirectory())), u.width, u.unicode, true, remote, hidden, webStatusModelColor, webStatusWorkspaceColor, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+	bar := statusBarWithStatuslineHidden(u.provider, u.model, u.redaction.Text(redaction.Remote, displayRoot(u.workingDirectory())), u.width, u.unicode, true, remote, hidden, webStatusModelColor, webStatusWorkspaceColor, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+	return autoreviewPrefixFor(bar, u.autoreviewEnabled, u.unicode, true)
 }
 
 func (u *UI) remoteAgentStatusBar(id, provider, model, cwd string) string {
@@ -433,7 +434,8 @@ func (u *UI) remoteAgentStatusBar(id, provider, model, cwd string) string {
 	}
 	u.screenMu.Lock()
 	defer u.screenMu.Unlock()
-	return statusBarWithStatuslineHidden(provider, model, u.redaction.Text(redaction.Remote, displayRoot(cwd)), u.width, u.unicode, true, remote, u.statuslineHidden, webStatusModelColor, webStatusWorkspaceColor, contextLabelFor(runner), usageLabelFor(runner, u.unicode), stepsLabelFor(runner), modeLabelFor(runner), thinkingLabelFor(runner))
+	bar := statusBarWithStatuslineHidden(provider, model, u.redaction.Text(redaction.Remote, displayRoot(cwd)), u.width, u.unicode, true, remote, u.statuslineHidden, webStatusModelColor, webStatusWorkspaceColor, contextLabelFor(runner), usageLabelFor(runner, u.unicode), stepsLabelFor(runner), modeLabelFor(runner), thinkingLabelFor(runner))
+	return autoreviewPrefixFor(bar, u.autoreviewEnabled, u.unicode, true)
 }
 
 func (u *UI) SubscribePresentation(ctx context.Context) <-chan struct{} {

@@ -116,6 +116,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	var configuredSelectedAlwaysSkills []string
 	var configuredStatuslineHidden []string
 	var configuredTheme string
+	var configuredAutoreview bool
+	var configuredAutoreviewProvider string
+	var configuredAutoreviewModel string
 	var loadedConfig config.Config
 	var sandboxCommandPathFlags sandboxCommandPathsFlag
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
@@ -182,6 +185,11 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		configuredSelectedSkills, configuredSelectedAlwaysSkills = cfg.Skills.NormalizedSelection()
 		configuredStatuslineHidden = append([]string(nil), cfg.StatuslineHidden...)
 		configuredTheme = cfg.Theme
+		if cfg.AutoReview != nil {
+			configuredAutoreview = *cfg.AutoReview
+		}
+		configuredAutoreviewProvider = cfg.AutoReviewProvider
+		configuredAutoreviewModel = cfg.AutoReviewModel
 		redactionConfig = cfg.Redaction
 		setFlags := make(map[string]bool)
 		flags.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
@@ -387,6 +395,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	ui.SetRememberedProviderModels(seededModels, seededThinking)
 	ui.RememberProviderModel(opts.provider, opts.model, opts.thinking)
 	ui.SetStatuslineHidden(configuredStatuslineHidden)
+	ui.SetAutoreview(configuredAutoreview, configuredAutoreviewProvider, configuredAutoreviewModel)
 	if configuredTheme != "" {
 		if err := ui.SetTheme(configuredTheme); err != nil {
 			return err
@@ -568,6 +577,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			staged.SetRememberedProviderModels(seededModels, seededThinking)
 			staged.RememberProviderModel(opts.provider, opts.model, opts.thinking)
 			staged.SetStatuslineHidden(configuredStatuslineHidden)
+			staged.SetAutoreview(configuredAutoreview, configuredAutoreviewProvider, configuredAutoreviewModel)
 			if configuredTheme != "" {
 				if err := staged.SetTheme(configuredTheme); err != nil {
 					return nil, err

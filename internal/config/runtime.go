@@ -135,6 +135,48 @@ func (w *RuntimePreferenceWriter) PersistInteractive(enabled bool) error {
 	return w.persist(map[string]*string{"interactive": &value})
 }
 
+// PersistAutoreview records the default autoreview toggle for future sessions.
+func (w *RuntimePreferenceWriter) PersistAutoreview(enabled bool) error {
+	if w == nil {
+		return errors.New("runtime preference writer is nil")
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	value := strconv.FormatBool(enabled)
+	return w.persist(map[string]*string{"autoreview": &value})
+}
+
+// PersistAutoreviewModel records the reviewer provider/model for future sessions.
+// Empty provider and model clear the stored reviewer.
+func (w *RuntimePreferenceWriter) PersistAutoreviewModel(provider, model string) error {
+	if w == nil {
+		return errors.New("runtime preference writer is nil")
+	}
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	if !utf8.ValidString(provider) || !utf8.ValidString(model) {
+		return errors.New("autoreview model contains invalid UTF-8")
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	changes := map[string]*string{}
+	if provider == "" {
+		changes["autoreview_provider"] = nil
+	} else {
+		value := tomlString(provider)
+		changes["autoreview_provider"] = &value
+	}
+	if model == "" {
+		changes["autoreview_model"] = nil
+	} else {
+		value := tomlString(model)
+		changes["autoreview_model"] = &value
+	}
+	return w.persist(changes)
+}
+
 // statuslineHiddenOrder is the canonical order used when persisting the
 // statusline_hidden denylist. It follows status bar priority from highest to
 // lowest so the stored list stays deterministic.
@@ -1264,7 +1306,7 @@ func runtimeConfigEntries(data []byte) (map[string]runtimeConfigEntry, int, erro
 				continue
 			}
 			name := string(key.Data)
-			if name != "provider" && name != "base_url" && name != "api_key" && name != "model" && name != "thinking" && name != "max_steps" && name != "interactive" && name != "statusline_hidden" && name != "theme" {
+			if name != "provider" && name != "base_url" && name != "api_key" && name != "model" && name != "thinking" && name != "max_steps" && name != "interactive" && name != "autoreview" && name != "autoreview_provider" && name != "autoreview_model" && name != "statusline_hidden" && name != "theme" {
 				continue
 			}
 			// Array nodes do not carry a Raw range. Derive the value span
@@ -1292,7 +1334,7 @@ func runtimeConfigEntries(data []byte) (map[string]runtimeConfigEntry, int, erro
 
 func renderRuntimeKeys(changes map[string]*string, newline string) []byte {
 	var output bytes.Buffer
-	for _, key := range []string{"provider", "model", "thinking", "max_steps", "interactive", "statusline_hidden", "theme"} {
+	for _, key := range []string{"provider", "model", "thinking", "max_steps", "interactive", "autoreview", "autoreview_provider", "autoreview_model", "statusline_hidden", "theme"} {
 		value, ok := changes[key]
 		if !ok || value == nil {
 			continue

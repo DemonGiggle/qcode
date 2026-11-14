@@ -366,6 +366,9 @@ type Config struct {
 	ChatGPT              ChatGPT           `toml:"chatgpt"`
 	Agents               Agents            `toml:"agents"`
 	Interactive          *bool             `toml:"interactive"`
+	AutoReview           *bool             `toml:"autoreview"`
+	AutoReviewProvider   string            `toml:"autoreview_provider"`
+	AutoReviewModel      string            `toml:"autoreview_model"`
 	ContextWindow        *int              `toml:"context_window"`
 	AutoCompactThreshold *int              `toml:"auto_compact_threshold"`
 	DisableAutoCompact   *bool             `toml:"disable_auto_compact"`
@@ -601,6 +604,9 @@ func validateConfig(path string, cfg Config, partial bool) error {
 	if err := redaction.Validate(cfg.Redaction); err != nil {
 		return fmt.Errorf("parse config %s: %w", path, err)
 	}
+	if !utf8.ValidString(cfg.AutoReviewProvider) || !utf8.ValidString(cfg.AutoReviewModel) {
+		return fmt.Errorf("parse config %s: autoreview_provider/autoreview_model contains invalid UTF-8", path)
+	}
 	if cfg.Learning.ContextBudget != nil && (*cfg.Learning.ContextBudget < 0 || *cfg.Learning.ContextBudget > 12000) {
 		return fmt.Errorf("parse config %s: learning.context_budget must be between 0 and 12000", path)
 	}
@@ -762,6 +768,15 @@ func merge(dst *Config, incoming Config) {
 	}
 	if incoming.Interactive != nil {
 		dst.Interactive = incoming.Interactive
+	}
+	if incoming.AutoReview != nil {
+		dst.AutoReview = incoming.AutoReview
+	}
+	if strings.TrimSpace(incoming.AutoReviewProvider) != "" {
+		dst.AutoReviewProvider = strings.TrimSpace(incoming.AutoReviewProvider)
+	}
+	if strings.TrimSpace(incoming.AutoReviewModel) != "" {
+		dst.AutoReviewModel = strings.TrimSpace(incoming.AutoReviewModel)
 	}
 	if incoming.ContextWindow != nil {
 		dst.ContextWindow = incoming.ContextWindow

@@ -30,8 +30,14 @@ type shellCommandRunner interface {
 
 var slashCommands = []slashCommand{
 	{
-		name: "/agent", usage: "/agent [new [model]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]|allow-models [list [provider]|clear [provider|--all]]]",
-		description: "Create and manage extra agents",
+		name: "/autoreview", usage: "/autoreview [on|off]", description: "Toggle automatic code review after main finishes",
+		arguments: []helpArgument{
+			{name: "on|off", description: "Enable or disable autoreview; omit to open the reviewer provider/model picker."},
+		},
+		examples: []string{"/autoreview", "/autoreview on", "/autoreview off"},
+	},
+	{
+		name: "/agent", usage: "/agent [new [model]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]|allow-models [list [provider]|clear [provider|--all]]]", description: "Create and manage extra agents",
 		arguments: []helpArgument{
 			{name: "new [model]", description: "Create an agent with a model ID, or open the model picker when omitted. Use rename to set its display name."},
 			{name: "list", description: "Show agents and their current status."},

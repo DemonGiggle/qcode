@@ -15,6 +15,13 @@ max_steps = 32
 # Positive duration (e.g. "90s", "5m", "15m"); default is five minutes.
 # agent_timeout = "5m"
 
+# Automatic code review after main finishes. /autoreview on|off toggles it
+# from the main tab (works while busy); bare /autoreview picks any provider
+# model as the reviewer (bypasses /agent allow-models). Off by default.
+# autoreview = true
+# autoreview_provider = "ollama"
+# autoreview_model = "qwen2.5-coder:7b"
+
 # Isolate model-triggered tools with bubblewrap on Linux. Disabled by default.
 # Fresh sandbox sessions disable both web tools and block networking.
 # Enabling either web tool through /tool allows web and shell networking;

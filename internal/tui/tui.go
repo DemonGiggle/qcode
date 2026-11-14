@@ -142,6 +142,8 @@ type RuntimePreferenceWriter interface {
 	PersistProvider(provider, model, thinking string) error
 	PersistMaxSteps(maxSteps int) error
 	PersistInteractive(enabled bool) error
+	PersistAutoreview(enabled bool) error
+	PersistAutoreviewModel(provider, model string) error
 	PersistStatuslineHidden(hidden []string) error
 	PersistTheme(id string) error
 	PersistSelectedSkills(selected, always []string) error
@@ -319,6 +321,11 @@ type UI struct {
 	persistence          *sessionPersistence
 	sessionHost          *UI
 	statuslineHidden     []string
+	autoreviewEnabled    bool   // Guarded by screenMu; AR badge when true.
+	autoreviewProvider   string // Guarded by screenMu; reviewer backend.
+	autoreviewModel      string // Guarded by screenMu; reviewer model.
+	autoreviewReviewerID string // Guarded by screenMu; reusable reviewer tab.
+	autoreviewRound      int    // Guarded by screenMu; 0 idle, 1 first review, 2 fix, 3 final review.
 	themeMu              sync.RWMutex
 	themePalette         qtheme.Palette
 	remoteService        RemoteService
@@ -955,6 +962,10 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		if len(fields) > 0 && fields[0] == "/interactive" {
 			u.handleInteractiveCommand(fields)
+			continue
+		}
+		if len(fields) > 0 && fields[0] == "/autoreview" {
+			u.handleAutoreviewCommand(ctx, fields)
 			continue
 		}
 		if len(fields) > 0 && fields[0] == "/skillplan" {
@@ -2327,7 +2338,8 @@ func (u *UI) statusBar() string {
 	if u.remoteService != nil {
 		remote = u.remoteService.Status().Running
 	}
-	return statusBarWithStatuslineHidden(u.provider, u.model, u.redaction.Text(redaction.Terminal, displayRoot(u.workingDirectory())), u.width, u.unicode, ColorEnabled(u.out), remote, u.statuslineHidden, magenta, blue, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+	bar := statusBarWithStatuslineHidden(u.provider, u.model, u.redaction.Text(redaction.Terminal, displayRoot(u.workingDirectory())), u.width, u.unicode, ColorEnabled(u.out), remote, u.statuslineHidden, magenta, blue, u.contextLabel(), u.usageLabel(), u.stepsLabel(), u.modeLabel(), u.thinkingLabel())
+	return u.withAutoreviewPrefix(bar)
 }
 
 // Called with screenMu held, just like the status bar's other runner accessors.

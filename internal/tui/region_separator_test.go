@@ -82,7 +82,7 @@ func TestRegionsHaveOneLineSeparator(t *testing.T) {
 			if strings.Contains(l, "last output") && idxOut < 0 {
 				idxOut = i
 			}
-			if strings.Contains(l, "  /agent") && idxFirstSugg < 0 {
+			if idxFirstSugg < 0 && strings.Contains(l, "  /") {
 				idxFirstSugg = i
 			}
 			if strings.HasPrefix(strings.TrimSpace(stripSeparatorANSI(l)), "/") && strings.Contains(l, "  /") {
