@@ -101,6 +101,42 @@ func providerOutput(u *UI, id string) string {
 	return strings.Join(u.views[id].display.history.Lines(), "\n")
 }
 
+func TestOpenAIGeminiOpenAIRoundTripRestoresRememberedModelAndThinking(t *testing.T) {
+	u, h, recorder := newProviderUI(t, "")
+	u.SetRememberedProviderModels(map[string]string{"gemini": "gemini-model"}, map[string]string{"gemini": "high"})
+	u.SetProviderFactory(func(_ context.Context, name string) (llm.Provider, string, error) {
+		switch name {
+		case "openai":
+			return &providerUIBackend{name: name, models: []string{"shared"}, levels: []string{"high"}}, "https://openai-profile.test/v1", nil
+		case "gemini":
+			return &providerUIBackend{name: name, models: []string{"gemini-model"}, levels: []string{"high"}}, "https://gemini-profile.test/v1", nil
+		default:
+			return nil, "", errors.New("unexpected provider")
+		}
+	})
+
+	u.handleProviderCommand(context.Background(), []string{"/provider", "openai"})
+	openAIState := providerState(t, h, "main")
+	if openAIState.Provider != "openai" || openAIState.Model != "shared" || openAIState.Thinking != "high" || openAIState.Endpoint != "https://openai-profile.test/v1" {
+		t.Fatalf("initial OpenAI selection = %+v", openAIState)
+	}
+
+	u.handleProviderCommand(context.Background(), []string{"/provider", "gemini"})
+	geminiState := providerState(t, h, "main")
+	if geminiState.Provider != "gemini" || geminiState.Model != "gemini-model" || geminiState.Thinking != "high" || geminiState.Endpoint != "https://gemini-profile.test/v1" {
+		t.Fatalf("Gemini selection did not restore its profile state: %+v", geminiState)
+	}
+
+	u.handleProviderCommand(context.Background(), []string{"/provider", "openai"})
+	restoredOpenAI := providerState(t, h, "main")
+	if restoredOpenAI.Provider != "openai" || restoredOpenAI.Model != "shared" || restoredOpenAI.Thinking != "high" || restoredOpenAI.Endpoint != "https://openai-profile.test/v1" {
+		t.Fatalf("OpenAI state was not restored: %+v", restoredOpenAI)
+	}
+	if recorder.providerCalls != 3 || recorder.provider != "openai" || recorder.model != "shared" || recorder.thinking != "high" {
+		t.Fatalf("persisted round-trip state = %+v", recorder)
+	}
+}
+
 func TestProviderSwitchKeepsModelHistoryAndOtherTabs(t *testing.T) {
 	u, h, recorder := newProviderUI(t, "")
 	child, err := h.Create("shared")
@@ -286,7 +322,7 @@ func TestProviderPickerRegistryHighlightCancellationAndSameProvider(t *testing.T
 func TestProviderDisplayNamesAccepted(t *testing.T) {
 	names := llm.Names()
 	labels := providerPickerLabels(names)
-	want := []string{"ChatGPT", "Ollama", "OpenAI", "OpenCode Go"}
+	want := []string{"ChatGPT", "Gemini", "Ollama", "OpenAI", "OpenCode Go"}
 	if !reflect.DeepEqual(labels, want) {
 		t.Fatalf("picker labels = %q, want %q", labels, want)
 	}

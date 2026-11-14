@@ -9,9 +9,10 @@ import (
 )
 
 type ToolCall struct {
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
+	ID               string          `json:"id,omitempty"`
+	Name             string          `json:"name"`
+	Arguments        json.RawMessage `json:"arguments"`
+	ThoughtSignature string          `json:"thought_signature,omitempty"`
 }
 
 // Image is provider-neutral binary image input attached to a message.

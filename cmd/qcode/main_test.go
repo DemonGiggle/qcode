@@ -138,6 +138,34 @@ func TestAgentTimeoutConfigPrecedence(t *testing.T) {
 	}
 }
 
+func TestListProvidersIncludesGemini(t *testing.T) {
+	stdin, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdin.Close()
+	stdout, err := os.CreateTemp(t.TempDir(), "stdout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdout.Close()
+	stderr, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stderr.Close()
+	if err := run([]string{"--list-providers"}, stdin, stdout, stderr); err != nil {
+		t.Fatal(err)
+	}
+	output, err := os.ReadFile(stdout.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains("\n"+string(output), "\ngemini\n") {
+		t.Fatalf("provider listing omitted Gemini: %q", output)
+	}
+}
+
 func TestApplyConfig(t *testing.T) {
 	t.Setenv("QCODE_PROVIDER", "")
 	t.Setenv("QCODE_MODEL", "")

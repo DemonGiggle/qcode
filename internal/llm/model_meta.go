@@ -61,6 +61,15 @@ func ProviderModelMetaCachePath(provider string) (string, error) {
 	return filepath.Join(dir, "qcode", provider+"-model-meta-v1.json"), nil
 }
 
+func modelsDevProviderID(provider string) string {
+	// qcode exposes Gemini as its own provider, while Models.dev groups the
+	// Gemini models under Google's provider catalog.
+	if provider == "gemini" {
+		return "google"
+	}
+	return provider
+}
+
 // ParseProviderModelMeta extracts supported effort and toggle choices from
 // one provider in the Models.dev catalog. Unsupported option types are ignored.
 func ParseProviderModelMeta(data []byte, providerID string) (*ProviderModelMeta, error) {
@@ -74,9 +83,10 @@ func ParseProviderModelMeta(data []byte, providerID string) (*ProviderModelMeta,
 	if providers == nil {
 		return nil, errors.New("decode Models.dev catalog: expected provider object")
 	}
-	providerData, ok := providers[providerID]
+	catalogProvider := modelsDevProviderID(providerID)
+	providerData, ok := providers[catalogProvider]
 	if !ok {
-		return nil, fmt.Errorf("Models.dev catalog has no %s provider", providerID)
+		return nil, fmt.Errorf("Models.dev catalog has no %s provider (mapped from %s)", catalogProvider, providerID)
 	}
 	var provider struct {
 		Models map[string]json.RawMessage `json:"models"`
@@ -316,7 +326,7 @@ func validateProviderModelMeta(meta *ProviderModelMeta) error {
 }
 
 func supportedModelMetaProvider(provider string) bool {
-	return provider == "openai" || provider == "opencode-go"
+	return provider == "openai" || provider == "opencode-go" || provider == "gemini"
 }
 
 func normalizeThinkingChoice(value string) (string, bool) {

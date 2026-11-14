@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"qcode/internal/chatgptoauth"
@@ -15,6 +16,11 @@ import (
 	"qcode/internal/llm"
 	"qcode/internal/redaction"
 )
+
+func isGeminiOfficialEndpoint(endpoint string) bool {
+	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	return endpoint == "" || endpoint == "https://generativelanguage.googleapis.com/v1beta/openai"
+}
 
 // providerBuilder owns the launch snapshot. Generic flags/environment overrides
 // belong to the launch provider; a different backend must resolve its own profile.
@@ -38,8 +44,8 @@ func (b *providerBuilder) connection(name string, endpoint *string) llm.Config {
 	base, key := b.config.ProviderConnection(name)
 	if name == b.launchProvider {
 		base, key = b.launch.BaseURL, b.launch.APIKey
-	} else if name == "openai" {
-		if value := os.Getenv("OPENAI_API_KEY"); value != "" {
+	} else {
+		if value := config.ProviderEnvironmentAPIKey(name); value != "" {
 			key = value
 		}
 	}
@@ -71,6 +77,9 @@ func (b *providerBuilder) availability(name string) (bool, string) {
 			return false, "run `qcode login chatgpt` to connect a ChatGPT subscription"
 		}
 		return true, ""
+	}
+	if name == "gemini" && isGeminiOfficialEndpoint(connection.BaseURL) && connection.APIKey == "" {
+		return false, "provider gemini requires an API key: set [providers.gemini].api_key_path (preferred), GEMINI_API_KEY, GOOGLE_API_KEY, QCODE_API_KEY, or --api-key"
 	}
 	if (name == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
 		(name == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL)) {
@@ -105,12 +114,16 @@ func (b *providerBuilder) prepare(ctx context.Context, name string, endpoint *st
 			return result, err
 		}
 	}
+	if name == "gemini" && isGeminiOfficialEndpoint(connection.BaseURL) && connection.APIKey == "" {
+		return result, errors.New("provider gemini requires an API key: set [providers.gemini].api_key_path (preferred), GEMINI_API_KEY, GOOGLE_API_KEY, QCODE_API_KEY, or --api-key")
+	}
 	if connection.APIKey == "" && ((name == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
 		(name == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL))) {
 		return result, fmt.Errorf("provider %s requires an API key: set [providers.%s].api_key_path (preferred), QCODE_API_KEY, or a launch API-key override", name, name)
 	}
 	if (name == "openai" && llm.IsOfficialOpenAIEndpoint(connection.BaseURL)) ||
-		(name == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL)) {
+		(name == "opencode-go" && llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL)) ||
+		(name == "gemini" && isGeminiOfficialEndpoint(connection.BaseURL)) {
 		meta := llm.EmptyProviderModelMeta(name)
 		path, metaErr := llm.ProviderModelMetaCachePath(name)
 		if metaErr == nil {
@@ -142,7 +155,13 @@ func applyProviderConnection(opts *options, cfg config.Config, flags map[string]
 	if !flags["base-url"] && os.Getenv("QCODE_BASE_URL") == "" {
 		opts.baseURL = base
 	}
-	if !flags["api-key"] && firstEnv("QCODE_API_KEY", "OPENAI_API_KEY") == "" {
-		opts.apiKey = key
+	if !flags["api-key"] {
+		if value := os.Getenv("QCODE_API_KEY"); value != "" {
+			opts.apiKey = value
+		} else if value := config.ProviderEnvironmentAPIKey(opts.provider); value != "" {
+			opts.apiKey = value
+		} else {
+			opts.apiKey = key
+		}
 	}
 }

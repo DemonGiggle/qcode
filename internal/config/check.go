@@ -447,7 +447,7 @@ func validateErrorToIssue(path string, err error) Issue {
 func keyAndFixForValidateError(msg string) (string, string) {
 	switch {
 	case strings.Contains(msg, "unknown provider profile"):
-		return "providers.<name>", "Rename to one of ollama, openai, opencode-go, chatgpt, or remove the table."
+		return "providers.<name>", "Rename to one of ollama, openai, opencode-go, chatgpt, gemini, or remove the table."
 	case strings.Contains(msg, "providers.chatgpt.api_key_path"):
 		return "providers.chatgpt.api_key_path", "Remove api_key_path; ChatGPT uses OAuth. Run `qcode login chatgpt` and optionally set [chatgpt] oauth_path."
 	case strings.Contains(msg, "providers.chatgpt.api_key"):

@@ -45,6 +45,44 @@ func TestParseProviderModelMeta(t *testing.T) {
 	}
 }
 
+func TestParseGeminiProviderModelMeta(t *testing.T) {
+	catalog := `{"google":{"models":{"gemini-4-hydrogen":{"reasoning_options":[{"type":"effort","values":["low","high","xhigh"]}]}}}}`
+	meta, err := ParseProviderModelMeta([]byte(catalog), "gemini")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Provider != "gemini" {
+		t.Fatalf("normalized metadata provider = %q, want gemini", meta.Provider)
+	}
+	if got, want := meta.Models["gemini-4-hydrogen"].Effort, []string{"low", "high", "xhigh"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Gemini effort metadata = %v, want %v", got, want)
+	}
+}
+
+func TestLoadGeminiModelMetaMapsCatalogProviderAndKeepsGeminiCacheIdentity(t *testing.T) {
+	cachePath := filepath.Join(t.TempDir(), "gemini-model-meta.json")
+	catalog := `{"google":{"models":{"gemini-4-hydrogen":{"reasoning_options":[{"type":"effort","values":["low","high"]}]}}}}`
+	meta, err := LoadProviderModelMeta(context.Background(), cachePath, "gemini", metadataDoer(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodGet || request.URL.String() != modelsDevCatalogURL {
+			t.Errorf("request = %s %s", request.Method, request.URL)
+		}
+		return metadataResponse(http.StatusOK, catalog), nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Provider != "gemini" || len(meta.Models) != 1 {
+		t.Fatalf("loaded metadata = %+v", meta)
+	}
+	cached, err := readProviderModelMeta(cachePath, "gemini")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached.Provider != "gemini" || !reflect.DeepEqual(cached.Models, meta.Models) {
+		t.Fatalf("cached metadata = %+v", cached)
+	}
+}
+
 func TestLoadProviderModelMetaFetchesOnlyOnCacheMiss(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "cache", "metadata.json")
 	calls := 0

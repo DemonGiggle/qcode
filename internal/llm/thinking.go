@@ -116,6 +116,9 @@ var openCodeGoThinkingCatalog = map[string]ThinkingCapability{
 }
 
 func (p *openAIProvider) ThinkingCapability(model string) ThinkingCapability {
+	if p.name == "gemini" {
+		return p.geminiThinkingCapability(model)
+	}
 	if p.name == "openai" {
 		if p.baseURL != openAIBaseURL || p.modelMeta == nil || p.modelMeta.Provider != "openai" {
 			return ThinkingCapability{RequestFormat: ThinkingRequestNone, ReplayFormat: ThinkingReplayNone}
@@ -215,7 +218,7 @@ func validThinkingLevel(capability ThinkingCapability, level string) bool {
 // enabled tiers; this prevents sending mutually exclusive fields together.
 func thinkingFields(capability ThinkingCapability, level string) map[string]any {
 	level = strings.ToLower(strings.TrimSpace(level))
-	if level == "" || !capability.Adjustable || !validThinkingLevel(capability, level) {
+	if level == "" || (!capability.Adjustable && !capability.AlwaysOn) || !validThinkingLevel(capability, level) {
 		return nil
 	}
 	if capability.RequestFormat == ThinkingRequestOllamaThink {

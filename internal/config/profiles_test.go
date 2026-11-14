@@ -11,6 +11,25 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+func TestGeminiProviderRegistrationAndEnvironmentKeys(t *testing.T) {
+	if !validProvider("gemini") {
+		t.Fatal("Gemini config profiles should be accepted")
+	}
+	t.Setenv("GEMINI_API_KEY", "gemini-key")
+	t.Setenv("GOOGLE_API_KEY", "google-key")
+	if got := ProviderEnvironmentAPIKey("gemini"); got != "gemini-key" {
+		t.Fatalf("preferred environment key = %q", got)
+	}
+	t.Setenv("GEMINI_API_KEY", "")
+	if got := ProviderEnvironmentAPIKey("gemini"); got != "google-key" {
+		t.Fatalf("fallback environment key = %q", got)
+	}
+	t.Setenv("OPENAI_API_KEY", "openai-key")
+	if got := ProviderEnvironmentAPIKey("openai"); got != "openai-key" {
+		t.Fatalf("OpenAI environment key = %q", got)
+	}
+}
+
 func TestProviderProfileLayersAndProvenance(t *testing.T) {
 	dir := t.TempDir()
 	low, mid, high := filepath.Join(dir, "low"), filepath.Join(dir, "mid"), filepath.Join(dir, "high")

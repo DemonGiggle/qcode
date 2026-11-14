@@ -896,10 +896,24 @@ func mergeRedaction(dst *redaction.Config, src redaction.Config) {
 
 func validProvider(name string) bool {
 	switch name {
-	case "ollama", "openai", "opencode-go", "chatgpt":
+	case "ollama", "openai", "opencode-go", "chatgpt", "gemini":
 		return true
 	}
 	return false
+}
+
+func ProviderEnvironmentAPIKey(name string) string {
+	switch name {
+	case "openai":
+		return os.Getenv("OPENAI_API_KEY")
+	case "gemini":
+		if value := os.Getenv("GEMINI_API_KEY"); value != "" {
+			return value
+		}
+		return os.Getenv("GOOGLE_API_KEY")
+	default:
+		return ""
+	}
 }
 
 // ProviderConnection resolves a provider's merged connection. Directly constructed
@@ -910,7 +924,7 @@ func validProvider(name string) bool {
 //
 // api_key_path files are resolved during load into the profile APIKey, so the
 // returned key already includes file content. Launch precedence stays in the
-// caller: --api-key > QCODE_API_KEY > OPENAI_API_KEY (openai only) > config.
+// caller: --api-key > QCODE_API_KEY > provider-specific environment key > config.
 func (c Config) ProviderConnection(name string) (baseURL, apiKey string) {
 	if !c.connectionsLoaded && (c.Provider == "" || name == c.Provider) {
 		baseURL, apiKey = c.BaseURL, c.APIKey

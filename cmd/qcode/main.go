@@ -120,11 +120,11 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	var sandboxCommandPathFlags sandboxCommandPathsFlag
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
 	flags.SetOutput(diagnosticsOut)
-	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider: ollama, openai, opencode-go, or chatgpt")
+	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider: ollama, openai, opencode-go, chatgpt, or gemini")
 	flags.StringVar(&opts.model, "model", env("QCODE_MODEL", "qwen2.5-coder:7b"), "model identifier")
 	flags.StringVar(&opts.thinking, "thinking", os.Getenv("QCODE_THINKING"), "thinking level for a model that supports it (for example: low, high, max, off)")
 	flags.StringVar(&opts.baseURL, "base-url", os.Getenv("QCODE_BASE_URL"), "provider API base URL")
-	flags.StringVar(&opts.apiKey, "api-key", firstEnv("QCODE_API_KEY", "OPENAI_API_KEY"), "API key (prefer QCODE_API_KEY or OPENAI_API_KEY)")
+	flags.StringVar(&opts.apiKey, "api-key", os.Getenv("QCODE_API_KEY"), "API key (prefer QCODE_API_KEY or the provider-specific environment variable)")
 	flags.StringVar(&opts.root, "cwd", ".", "workspace root")
 	flags.IntVar(&opts.contextWindow, "context-window", 0, "model context capacity in tokens for status display (0: automatic)")
 	flags.BoolVar(&opts.disableAutoCompact, "disable-auto-compact", false, "disable automatic conversation compaction")
@@ -196,8 +196,8 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	}
 	diagnosticsOut.Policy = policy
 	if opts.updateModelMeta {
-		if opts.provider != "openai" && opts.provider != "opencode-go" {
-			return errors.New("--update-model-meta requires --provider openai or opencode-go")
+		if opts.provider != "openai" && opts.provider != "opencode-go" && opts.provider != "gemini" {
+			return errors.New("--update-model-meta requires --provider openai, opencode-go, or gemini")
 		}
 		cachePath, err := llm.ProviderModelMetaCachePath(opts.provider)
 		if err != nil {

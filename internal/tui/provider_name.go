@@ -19,6 +19,8 @@ func providerDisplayName(provider string) string {
 		return "OpenCode Go"
 	case "chatgpt":
 		return "ChatGPT"
+	case "gemini":
+		return "Gemini"
 	default:
 		return provider
 	}
