@@ -28,7 +28,7 @@ qcode is a lightweight, keyboard-driven AI coding assistant that runs entirely i
 - 🔒 **Sandbox mode** for isolated tool execution on Linux
 - 🛡️ **Local redaction** for detected credentials and payment-card data in output, saved sessions, and exports
 - 📊 **Context tracking** with real-time token usage display
-- 🎨 **Terminal themes** with Default (Auto), 22 dark/light palettes, and live previews
+- 🎨 **Terminal themes** with Default (Auto), 29 dark/light palettes, and live previews
 - 💾 **Saved sessions** with transcript previews, rename, pin, and confirmed deletion
 - 🌐 **Browser control** for the same live agents, steering, queues, and approvals
 

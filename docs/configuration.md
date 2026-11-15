@@ -81,6 +81,10 @@ families are adapted to qcode's prompt, Markdown, status, and diff roles.
 | [Everforest](https://github.com/sainnhe/everforest) | `everforest-dark` | `everforest-light` |
 | [Kanagawa](https://github.com/rebelot/kanagawa.nvim) | `kanagawa-wave` | `kanagawa-lotus` |
 | [Ayu](https://github.com/ayu-theme/ayu-colors) | `ayu-dark` | `ayu-light` |
+| [Flexoki](https://stephango.com/flexoki) | `flexoki-dark` | `flexoki-light` |
+| [Night Owl](https://github.com/sdras/night-owl-vscode-theme) | `night-owl` | `light-owl` |
+| [Monokai](https://monokai.pro/) | `monokai` | — |
+| [GitHub](https://primer.style/foundations/color) | `github-dark` | `github-light` |
 
 Command-line flags, environment variables, and higher-priority configuration
 files retain their usual precedence.

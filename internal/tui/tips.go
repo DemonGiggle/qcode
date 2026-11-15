@@ -47,7 +47,7 @@ var tipTexts = []string{
 	"In pickers type to filter, move with Up/Down or PgUp/PgDn, Enter to apply, Esc to go back, Ctrl+C to cancel all.",
 	"Run `/compact` to summarize old context; watch STEP, CTX % left, and MODE PLAN in the status bar.",
 	"Run `/theme` to preview terminal color palettes; Enter applies and saves your choice for future sessions.",
-	"The theme picker has Default (Auto) plus 22 dark/light palettes; use Up/Down to preview and Enter to save from any tab.",
+	"The theme picker has Default (Auto) plus 29 dark/light palettes; use Up/Down to preview and Enter to save from any tab.",
 	"Model work shows Waiting, Receiving model thinking, or Receiving model response with elapsed time above the status bar.",
 	"In a command view, Ctrl+C closes the view while agents keep working; return to the composer to cancel active work.",
 	"Set `NO_COLOR=1` before launch to disable styling, or `QCODE_ASCII=1` for ASCII interface glyphs.",

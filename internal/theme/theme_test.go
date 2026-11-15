@@ -21,8 +21,10 @@ func TestPresetRoster(t *testing.T) {
 	want := []string{
 		"default", "catppuccin-mocha", "dracula", "gruvbox-dark", "solarized-dark", "nord-dark",
 		"tokyo-night", "one-dark", "rose-pine", "everforest-dark", "kanagawa-wave", "ayu-dark",
+		"flexoki-dark", "night-owl", "monokai", "github-dark",
 		"catppuccin-latte", "alucard", "gruvbox-light", "solarized-light", "nord-light",
 		"tokyo-night-day", "one-light", "rose-pine-dawn", "everforest-light", "kanagawa-lotus", "ayu-light",
+		"flexoki-light", "light-owl", "github-light",
 	}
 	got := All()
 	if len(got) != len(want) {
