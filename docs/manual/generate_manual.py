@@ -700,7 +700,7 @@ def build_pdf(images: dict[str, Path]):
     body(pdf, "qcode is one program you run in your terminal. Build it once, then start it in any project folder.")
     code(pdf, "# Build from source (needs Go 1.22+)\nmake build\n./bin/qcode")
     body(pdf, "The remaining shell examples assume qcode is on your PATH. From this source checkout, use ./bin/qcode instead. make build creates the binary but does not install it.")
-    body(pdf, "Pick the assistant you want to use. The two common choices are a local model (Ollama) or a hosted model (OpenAI or OpenCode Go).")
+    body(pdf, "Pick the assistant you want to use. Common choices are a local model (Ollama), a hosted model (OpenAI, Gemini, or OpenCode Go), or a ChatGPT subscription.")
     code(
         pdf,
         "# Local model (default provider)\nollama pull qwen2.5-coder:7b\nqcode --model qwen2.5-coder:7b\n\n# Hosted model\n"
@@ -718,13 +718,13 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             "--cwd DIRECTORY selects the workspace for tools, skills, and saved-session lookup without changing your shell directory (default `.`).",
-            "--provider, --model, --thinking, --base-url, and --api-key select the assistant. Flags beat QCODE_PROVIDER, QCODE_MODEL, QCODE_THINKING, QCODE_BASE_URL, QCODE_API_KEY (or OPENAI_API_KEY fallback), which beat config.toml, which beats built-ins. There is no --interactive or --theme flag: set interactive and theme in config.toml or use /interactive and /theme.",
+            "--provider, --model, --thinking, --base-url, and --api-key select the assistant (a built-in kind or a named instance such as --provider ollama-lab). Flags beat QCODE_PROVIDER, QCODE_MODEL, QCODE_THINKING, QCODE_BASE_URL, QCODE_API_KEY (or OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY fallbacks), which beat config.toml, which beats built-ins. There is no --interactive or --theme flag: set interactive and theme in config.toml or use /interactive and /theme.",
             "--max-steps N sets the per-request model-turn limit (default 32); /maxsteps shows or changes it later. --agent-timeout DURATION sets how long main waits for a batch of agent consultations including queue time (default 5m, for example 90s).",
             "--context-window N overrides terminal-agent context accounting for an unlisted model (0 means automatic); switching models clears it. --disable-auto-compact disables automatic summaries in terminal sessions; /compact stays available. One-shot runs use provider capacity and the built-in 80% threshold.",
             "--sandbox requests Linux bubblewrap isolation; --sandbox=false overrides config. Repeat --sandbox-command-path for each trusted executable directory (it replaces sandbox_command_paths). Check the startup notice to confirm isolation is active.",
             "--danger-skip-tls-verify disables certificate verification for qcode HTTP clients and supplies insecure-TLS settings to supported shell clients.",
             "--json-events emits JSON Lines trace, activity, and token-usage events and never waits for questions; answers stay on stdout while activity goes to stderr. --demo runs the offline scripted tour with mocked tools and skips configuration and saved sessions. --demo with a quoted prompt runs one text demo.",
-            "--list-providers prints built-in provider names and exits. --update-model-meta refreshes cached thinking choices for --provider openai or opencode-go and exits; it does not update the binary or context-window catalog.",
+            "--list-providers prints built-in providers and configured named instances with kind and setup status and exits. --update-model-meta refreshes cached thinking choices for --provider openai, gemini, or opencode-go (a named instance refreshes its kind) and exits; it does not update the binary or context-window catalog.",
         ],
     )
 
@@ -748,7 +748,7 @@ def build_pdf(images: dict[str, Path]):
             "Pending area: shows the current steer separately from FIFO tasks.",
             "Todo panel: a live `Todo done/total` checklist sits above the steer/queue area while multi-step work is incomplete (`[ ]` todo, half-circle doing, `[x]` done). Alt+T expands it; Esc collapses; /todo show reviews it any time. On very short terminals the panel can shrink to its header row until more room is available.",
             "Prompt: `>` idle, `(Plan)>` planning, `(Skill plan)>` skill design, `(Steer)>` working. You can keep typing while work runs.",
-            "Status bar: provider, MODEL, WS folder, CTX percent left, STEP n/max, and TOK input/output plus total when it fits. THINK shows the effective level, including the provider default when you omit it, MODE shows PLAN, SKILL PLAN, or INTERACTIVE, and REMOTE while browser control runs. Narrow windows shorten the workspace path first, then wrap to a second left-aligned row before dropping low-priority segments (tok first). Hide parts with /statusline.",
+            "Status bar: provider, MODEL, WS folder, CTX percent left, STEP n/max, and TOK input/output plus total when it fits. THINK shows the effective level, including the provider default when you omit it, MODE shows PLAN, SKILL PLAN, or INTERACTIVE, REMOTE while browser control runs, and AR first when /autoreview is on. Narrow windows shorten the workspace path first, then wrap to a second left-aligned row before dropping low-priority segments (tok first). Hide parts with /statusline.",
             "Pastes: long pastes stay together as one `[paste N characters]` block (100+ characters or more than 3 lines; one trailing newline does not count as a line). Short pastes stay inline and editable. Pasting never submits: press Enter to submit the full draft. Type before or after a collapsed block; Left/Right moves across it as a whole, Backspace/Delete removes the whole block.",
         ],
     )
@@ -904,7 +904,8 @@ def build_pdf(images: dict[str, Path]):
             ("/theme", "Preview, apply, and save a terminal color theme."),
             ("/compact [show]", "Summarize old context; show inspects the compacted context."),
             ("/export", "Export conversations or full transcript as HTML."),
-            ("/provider [name]", "Switch the active idle tab without restarting; terminal-only."),
+            ("/provider [name]", "Switch the active idle tab without restarting (kinds and named instances); terminal-only."),
+            ("/autoreview ...", "Toggle automatic code review after main finishes; bare /autoreview picks the reviewer."),
             ("/todo show", "Review the live execution checklist; Alt+T expands it."),
             ("/agent ...", "Create, list, switch, rename, cancel, or close agent tabs."),
             ("/skill [...]", "Pick reusable skills; Space cycles off/lazy/always-load."),
@@ -932,6 +933,16 @@ def build_pdf(images: dict[str, Path]):
             "Terminal exports write in the workspace; browser exports download the same HTML without writing a host file.",
         ],
     )
+    h2(pdf, "Automatic code review (/autoreview)")
+    body(pdf, "Run `/autoreview on` from the main tab to review file-changing work automatically; `/autoreview off` disables it and bare `/autoreview` opens the reviewer provider/model picker. The picker lists every configured provider and bypasses /agent allow-models. While on, an `AR` badge shows first on the status bar and the toggle plus reviewer persist like /interactive.")
+    bullets(
+        pdf,
+        [
+            "After main goes fully idle with an empty queue, a reusable `review` tab runs only when main actually changed files, including delegated edits attributed to main. Read-only answers never trigger a review.",
+            "The reviewer is read-only plus shell for diffs: it self-serves `git diff` when available, otherwise it uses main's summary plus the changed files. Main judges the free-form verdict, applies a fix, then one final review confirms it.",
+            "To skip one answer, start the final response with `[skip review]` (also `no review needed`, `no review required`, or `no code review needed`). Configure defaults with `autoreview`, `autoreview_provider`, and `autoreview_model` in config.toml.",
+        ],
+    )
 
     # 5 Models
     h1(pdf, "5. Choosing models and providers")
@@ -943,19 +954,21 @@ def build_pdf(images: dict[str, Path]):
         [
             "Ollama (local default): pull a model first, then `qcode --model qwen2.5-coder:7b`. Thinking uses the model's native think setting.",
             "OpenAI-compatible: `export OPENAI_API_KEY=...` then `qcode --provider openai --model gpt-5`. Thinking uses reasoning effort where the model offers it.",
+            "Gemini (Google OpenAI-compatible API): `export GEMINI_API_KEY=...` then `qcode --provider gemini --model gemini-3-flash-preview`. `GOOGLE_API_KEY` also works as a fallback. Thinking levels are exact-model specific (for example minimal/low/medium/high); the status bar shows the effective level.",
+            "Named instances for extra endpoints: add `[providers.ollama-lab]` with `type = \"ollama\"` plus its own `base_url` (and credentials when it is a different service), then select it with `qcode --provider ollama-lab` or `/provider ollama-lab`. Omitted fields inherit the built-in profile; `qcode --list-providers` shows instance names, kinds, and setup status.",
             "OpenCode Go: `export QCODE_API_KEY=...` then `qcode --provider opencode-go --model kimi-k3`. Options vary per model. Known models may offer off, on, none, minimal, low, medium, high, xhigh, or max; the set is model-specific. With no setting, qcode preserves the provider default and omits optional thinking fields.",
 
             "ChatGPT subscription: `qcode login chatgpt` connects Sign in with ChatGPT (browser approval, loopback callback, 0600 OAuth file), then `qcode --provider chatgpt --model gpt-5.6-codex`. Requests use the SIWC Responses endpoint with store:false; thinking levels minimal/low/medium/high/xhigh map to Responses reasoning effort.",
-            "Use `/provider` (or `/provider openai`) to switch an idle tab without restarting; unconfigured providers are dimmed and cannot be chosen. Main-tab switches save the default; workers stay local. History is kept with a `/new` warning; browser provider commands are rejected. Keep separate endpoints/keys with [providers.<name>] connection profiles.",            "Flags can also come from QCODE_PROVIDER, QCODE_MODEL, QCODE_THINKING, QCODE_BASE_URL, QCODE_API_KEY.",
+            "Use `/provider` (or `/provider openai`, `/provider gemini`, `/provider ollama-lab`) to switch an idle tab without restarting; unconfigured providers are dimmed and cannot be chosen. Main-tab switches save the default; workers stay local. History is kept with a `/new` warning; browser provider commands are rejected. Keep separate endpoints/keys with [providers.<name>] connection profiles or named instances with a `type` field.",            "Flags can also come from QCODE_PROVIDER, QCODE_MODEL, QCODE_THINKING, QCODE_BASE_URL, QCODE_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY.",
         ],
     )
-    code(pdf, "qcode --provider ollama --model qwen3:8b --thinking high \"reply with OK\"\nqcode --provider opencode-go --model deepseek-v4-flash --thinking high \"reply with OK\"\nqcode login chatgpt\nqcode --provider chatgpt --model gpt-5.6-codex \"explain this repository\"")
+    code(pdf, "qcode --provider ollama --model qwen3:8b --thinking high \"reply with OK\"\nqcode --provider gemini --model gemini-3-flash-preview --thinking high \"reply with OK\"\nqcode --provider ollama-lab --model qwen2.5-coder:32b \"reply with OK\"\nqcode --provider opencode-go --model deepseek-v4-flash --thinking high \"reply with OK\"\nqcode login chatgpt\nqcode --provider chatgpt --model gpt-5.6-codex \"explain this repository\"")
     bullets(
         pdf,
         [
             "Switching to a model from a different provider family warns before applying; the same-backend switch applies silently. A failed or unsupported explicit level fails before any model request.",
             "New agent tabs label the effective thinking level as [THINK level]: your explicit choice wins, otherwise the provider default (for example high) is shown instead of hiding the segment.",
-            "OpenAI and OpenCode Go read thinking choices from the public Models.dev catalog, cached under your cache directory (openai-model-meta-v1.json, opencode-go-model-meta-v1.json). Refresh with qcode --provider openai --update-model-meta or qcode --provider opencode-go --update-model-meta. A failed first fetch runs without selectable thinking; a failed refresh keeps the last valid cache. Custom --base-url endpoints do not load this metadata.",
+            "OpenAI, Gemini, and OpenCode Go read thinking choices from the public Models.dev catalog, cached under your cache directory (openai-model-meta-v1.json, gemini-model-meta-v1.json, opencode-go-model-meta-v1.json). Refresh with qcode --provider openai --update-model-meta, qcode --provider gemini --update-model-meta, or qcode --provider opencode-go --update-model-meta (a named instance refreshes its kind). A failed first fetch runs without selectable thinking; a failed refresh keeps the last valid cache. Custom --base-url endpoints do not load this metadata.",
             "Ollama discovers thinking support from local model metadata and sends it through its native think field (GPT-OSS supports low/medium/high and cannot disable thinking that way). Unknown model IDs stay usable but omit optional thinking fields.",
             "Vision-capable models can inspect PNG, JPEG, WEBP, and GIF files inside the workspace (20 MiB each) when you name the image; the agent loads it with view_image through the active provider. The model and endpoint must support image input.",
         ],
@@ -1191,8 +1204,8 @@ def build_pdf(images: dict[str, Path]):
         [
             "Copy `config.toml.example` to your user config location; missing files are ignored. Priority, highest first: file beside the program, user config (~/.local/etc/qcode on Linux, ~/Library/Application Support on macOS, %AppData% on Windows), system config (/usr/local/etc/qcode), then etc/ beside the program.",
             "Command flags beat environment variables. Both beat config files. Config files beat built-ins. `--api-key` beats config and environment keys.",
-            "Prefer environment variables for keys: QCODE_API_KEY or OPENAI_API_KEY. Keep key files private (mode 0600).",
-            "Common knobs: provider/model/thinking, agent_timeout like \"5m\", interactive true/false, statusline_hidden, web_search backend, learning context_budget, skills paths, autoload_paths, selected/selected_always, [[agents.allow_models]] roster, [providers.<name>] profiles, [chatgpt] oauth_path, redaction sinks/patterns, context_window and auto_compact_threshold.",            "Restart after changing the web backend. /model, /maxsteps, /statusline, /skill, and /agent allow-models on main save automatically; worker-tab changes to these settings stay within the session.",
+            "Prefer environment variables for keys: QCODE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY/GOOGLE_API_KEY. Keep key files private (mode 0600).",
+            "Common knobs: provider/model/thinking, agent_timeout like \"5m\", interactive true/false, autoreview plus autoreview_provider/autoreview_model, statusline_hidden, web_search backend, learning context_budget, skills paths, autoload_paths, selected/selected_always, [[agents.allow_models]] roster, [providers.<name>] profiles and named instances with `type`, [chatgpt] oauth_path, redaction sinks/patterns, context_window and auto_compact_threshold.",            "Restart after changing the web backend. /model, /maxsteps, /statusline, /skill, /agent allow-models, and /autoreview on main save automatically; worker-tab changes to these settings stay within the session.",
         ],
     )
     h2(pdf, "Working directories under the sandbox")
@@ -1202,7 +1215,7 @@ def build_pdf(images: dict[str, Path]):
     code(pdf, "qcode --sandbox --sandbox-command-path ~/.local/bin\n\n# Persistent defaults in config.toml:\nsandbox = true\nsandbox_command_paths = [\"~/.local/bin\", \"~/go/bin\"]")
     body(pdf, "Configured sandbox = true and --sandbox use the same defaults; --sandbox=false overrides configuration, including web-tool defaults. Trusted command directories are mounted read-only at their original paths (only empty ancestors are created under the hidden home) and kept across /new, never read/write, and never prompt. Missing, invalid, duplicate, root, or protected directories produce warnings. Additional writable directories require your approval and are cleared by /new. Temporary shell files do not survive separate sandbox calls; use workspace files for results you need later.")
     h2(pdf, "TLS, keys, and provider routing")
-    body(pdf, "Prefer QCODE_API_KEY or OPENAI_API_KEY for credentials; --api-key beats both environment variables and the config file. danger_skip_tls_verify = true (or --danger-skip-tls-verify) disables certificate and hostname verification for provider and native web requests and supplies insecure-TLS settings to Git, Node.js, npm, and compatible Python shell clients; other shell programs may need their own insecure-TLS flag. When a flag or environment variable selects a different provider than the configured one, the configured model, thinking, base_url, api_key, and context_window are not inherited.")
+    body(pdf, "Prefer QCODE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY/GOOGLE_API_KEY for credentials; --api-key beats both environment variables and the config file. danger_skip_tls_verify = true (or --danger-skip-tls-verify) disables certificate and hostname verification for provider and native web requests and supplies insecure-TLS settings to Git, Node.js, npm, and compatible Python shell clients; other shell programs may need their own insecure-TLS flag. When a flag or environment variable selects a different provider than the configured one, the configured model, thinking, base_url, api_key, and context_window are not inherited. Named instances such as ollama-lab resolve their own profile plus the kind's environment key; use qcode --list-providers to confirm kind and setup status.")
     h2(pdf, "Context capacity")
     body(pdf, "CTX shows remaining capacity, with ~ for an estimate or unknown when no limit is available. Use --context-window 32768 or context_window = 32768 for an unlisted model; this sets terminal-agent accounting and compaction capacity without changing the provider's allocation. Switching models clears the override. --disable-auto-compact disables automatic summaries in terminal sessions; /compact remains available. One-shot runs use provider capacity and the built-in 80% threshold.")
 
@@ -1224,11 +1237,13 @@ def build_pdf(images: dict[str, Path]):
             ("Approval prompt?", "Review the exact proposed call. Untrusted page, file, or shell text never authorizes it. Approve only the current run when you understand the action; one-shot runs deny such calls."),
             ("Paste collapsed?", "Long pastes show [paste N characters]. Left/Right jumps the block; Backspace/Delete removes it whole. Short pastes stay inline. Pasting never submits."),
             ("Model switch warns?", "A cross-backend model switch warns before applying. Same-backend switches apply silently. Unsupported thinking levels fail before any request."),
+            ("Provider not set up?", "Run qcode --list-providers to see kinds, named instances, and setup hints; set GEMINI_API_KEY/GOOGLE_API_KEY for Gemini or OPENAI_API_KEY for OpenAI."),
+            ("No review after main?", "/autoreview runs only for file-changing work on main with an empty queue; read-only answers and [skip review] opt out."),
             ("Directory denied?", "Approve request_directory_access or change_directory to an approved directory. The root can never be granted. /new clears added grants and resets to launch."),
             ("Compacted context?", "Run /compact show to inspect system + summary + recent tail after any compaction."),
         ],
     )
-    tip(pdf, "Good defaults for most users: local model for drafts, stronger hosted model for final edits, Plan mode for risky changes, one agent per independent job. When Plan mode keeps asking, it is narrowing scope, edge cases, or validation: answer the round or say what to defer.")
+    tip(pdf, "Good defaults for most users: local model for drafts, stronger hosted model for final edits, Plan mode for risky changes, /autoreview for file-changing work, one agent per independent job. When Plan mode keeps asking, it is narrowing scope, edge cases, or validation: answer the round or say what to defer.")
 
     # 15 Cheat sheet
     h1(pdf, "15. Cheat sheet (copy this page)")
@@ -1239,6 +1254,7 @@ def build_pdf(images: dict[str, Path]):
             ("/bash <cmd>", "Run a shell command."),
             ("/model [id] [thinking]", "Switch model by name only (+ thinking)."),
             ("/agent ...", "Create, list, switch, rename, cancel, close."),
+            ("/autoreview ...", "Auto-review file changes (on/off/picker)."),
             ("/plan ...", "Plan, show, act, off."),
             ("/skill", "Enable instruction bundles."),
             ("/skillplan ...", "Draft, show, create, or leave skill design."),
@@ -1266,6 +1282,7 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         "qcode --model qwen2.5-coder:7b \"explain this repository\"\n"
         "qcode --provider openai --model gpt-5 \"summarize the diff\"\n"
+        "qcode --provider gemini --model gemini-3-flash-preview \"summarize the diff\"\n"
         "qcode --demo \"show me how qcode works\"",
     )
 

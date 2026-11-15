@@ -2,7 +2,7 @@
 
 Interactive mode supports up to 20 concurrent agent tabs, including permanent `main`. Use multiple agents to parallelize independent tasks—for example, one agent writing code while another runs tests, or separate agents exploring different parts of a large codebase.
 
-Use `/agent` or `/agent new` to choose a model for a new tab, or `/agent new <model-id>` to create it directly. The argument is a model ID from the current tab's provider. New terminal tabs use that provider and endpoint; switching a tab later does not affect any existing tab. Use `/provider [name]` to switch an idle tab; only main-tab switches save the startup default. Saved sessions retain each tab's provider and resolve its credentials from current configuration. New tabs receive IDs and initial names such as `agent-1`; use `/agent rename <id> <name>` to set a display name:
+Use `/agent` or `/agent new` to choose a model for a new tab, or `/agent new <model-id>` to create it directly. The argument is a model ID from the current tab's provider. New terminal tabs use that provider/instance and endpoint; switching a tab later does not affect any existing tab. Use `/provider [name]` to switch an idle tab (built-in kinds and named instances such as `ollama-lab` are both accepted); only main-tab switches save the startup default. Saved sessions retain each tab's provider/instance and resolve its credentials from current configuration. New tabs receive IDs and initial names such as `agent-1`; use `/agent rename <id> <name>` to set a display name:
 
 ```text
 /agent new qwen2.5-coder:7b

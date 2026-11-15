@@ -5,14 +5,15 @@ implementation and architecture details and shows how to use each feature.
 
 The **Use cases** pages after chapter 3 walk through repository onboarding,
 bug fixes with queued checks, planning with execution checklists, independent agent tabs, reusable skills,
-and resuming or sharing work. The guide also covers pinned latest prompts,
+and resuming or sharing work. The guide also covers automatic code review with `/autoreview`, pinned latest prompts,
 steering and pending-work removal, the live Todo panel with Alt+T, pasted-block handling, /compact show inspection,
-model-operation progress and elapsed time, working directories with
+model-operation progress and elapsed time, Gemini and named provider instances with
 change_directory and directory approvals, allowed-model roster for helper
 model choice with main-decided thinking levels, tool approvals and prompt-injection
 warnings, cross-backend model-switch warnings and /provider switching, ChatGPT subscription login,
 iterative Plan-mode question rounds, slash-command subcommand hints with Tab completion,
 word-wrapped composer drafts, latest-message /resume previews and snapshot-busy retries,
+provider/instance switching with `qcode --list-providers`,
 local redaction, terminal themes,
 transcript boundary navigation, token totals, workspace path shortening, skill
 autoloading, always-load and companion files, official skills, and sandbox command directories.

@@ -31,7 +31,7 @@ below are the built-in values before configuration and environment overrides.
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--provider NAME` | `ollama` | `ollama`, `openai`, `opencode-go`, or `chatgpt`. |
+| `--provider NAME` | `ollama` | Built-in kind (`ollama`, `openai`, `gemini`, `opencode-go`, `chatgpt`) or a configured named instance (e.g. `--provider ollama-lab`). |
 | `--model ID` | `qwen2.5-coder:7b` | Model ID for the selected provider. |
 | `--thinking LEVEL` | unset | An explicit level supported by that exact model. |
 | `--base-url URL` | provider default | Override the provider endpoint. |
@@ -46,8 +46,8 @@ below are the built-in values before configuration and environment overrides.
 | `--danger-skip-tls-verify` | `false` | Disable certificate verification for qcode HTTP clients and supply insecure-TLS settings to supported shell clients. |
 | `--json-events` | `false` | JSON Lines for trace, activity, and token-usage events; disables blocking questions. |
 | `--demo` | `false` | Offline scripted provider and mocked tools; skips configuration and saved sessions. |
-| `--list-providers` | `false` | Print registered providers and exit. |
-| `--update-model-meta` | `false` | Refresh thinking metadata for `openai` or `opencode-go` and exit. |
+| `--list-providers` | `false` | Print built-in providers and configured named instances (with kind and setup status) and exit. |
+| `--update-model-meta` | `false` | Refresh thinking metadata for `openai`, `gemini`, or `opencode-go` (named instances refresh their kind) and exit. |
 | `--version` | `false` | Print the build version and exit. |
 | `--help`, `-h` | — | Print startup help and exit. |
 
@@ -79,8 +79,10 @@ inheritance and file lookup order.
 | `QCODE_MODEL` | Model ID. |
 | `QCODE_THINKING` | Explicit thinking level. |
 | `QCODE_BASE_URL` | Provider endpoint. |
-| `QCODE_API_KEY` | Provider credential; takes priority over `OPENAI_API_KEY`. |
-| `OPENAI_API_KEY` | Fallback credential when `QCODE_API_KEY` is empty. |
+| `QCODE_API_KEY` | Provider credential; takes priority over provider-specific keys. |
+| `OPENAI_API_KEY` | Fallback credential for `openai` (and its instances) when `QCODE_API_KEY` is empty. |
+| `GEMINI_API_KEY` | Preferred fallback credential for `gemini` (and its instances); takes priority over `GOOGLE_API_KEY`. |
+| `GOOGLE_API_KEY` | Fallback credential for `gemini` when `QCODE_API_KEY` and `GEMINI_API_KEY` are empty. |
 | `NO_COLOR` | Any nonempty value disables terminal styling. |
 | `QCODE_ASCII` | `1` forces ASCII interface glyphs; `0`, `false`, `no`, or `off` enables Unicode. |
 
@@ -96,8 +98,15 @@ qcode update --arch arm64
 qcode update --pre
 qcode update --help
 qcode --provider openai --update-model-meta
+qcode --provider gemini --update-model-meta
 qcode --provider opencode-go --update-model-meta
+qcode --provider ollama-lab --update-model-meta
 ```
+
+Named instances such as `ollama-lab` are accepted anywhere `--provider` is
+accepted, including `--update-model-meta` (which refreshes that instance's
+kind metadata) and `--list-providers` (which shows instance names alongside
+their kind and setup status). See [named instances](configuration.md#named-provider-instances).
 
 ## ChatGPT login
 

@@ -23,7 +23,8 @@ qcode is a lightweight, keyboard-driven AI coding assistant that runs entirely i
 - 💬 **Interactive questions** to clarify ambiguous tasks before broad searches (inline, per-agent toggle)
 - 🧠 **Global learning** that persists preferences across sessions
 - 🎯 **Skills system** with lazy loading and always-load, per-tab selection, and [official release skills](docs/skills/)
-- 🔌 **Providers** for Ollama, OpenAI-compatible, OpenCode Go, and ChatGPT subscriptions (`qcode login chatgpt`, `/provider` switching without restart)
+- 🔌 **Providers** for Ollama, OpenAI-compatible, Gemini, OpenCode Go, and ChatGPT subscriptions (`qcode login chatgpt`, `/provider` switching without restart, named `[providers.<instance>]` endpoints with `type`)
+- ✅ **Automatic code review** with `/autoreview` (reusable `review` tab, `AR` status badge, file-change-gated review-fix loop; `[skip review]` opts out)
 - 🔒 **Sandbox mode** for isolated tool execution on Linux
 - 🛡️ **Local redaction** for detected credentials and payment-card data in output, saved sessions, and exports
 - 📊 **Context tracking** with real-time token usage display
@@ -80,7 +81,7 @@ qcode update --arch arm64
 - [Token usage](docs/token-usage.md) - Per-session totals and structured usage events
 - [Context usage](docs/context.md) - Remaining capacity, estimates, and automatic compaction
 - [Prompt caching](docs/prompt-caching.md) - Provider usage semantics and cache capability evidence (#70)
-- [Providers](docs/providers.md) - Ollama, OpenAI, and OpenCode Go setup
+- [Providers](docs/providers.md) - Ollama, OpenAI, Gemini, and OpenCode Go setup, plus named provider instances
 - [Multi-agent](docs/agents.md) - Concurrent agent tabs and orchestration
 - [Skills](docs/skills.md) - Workspace-local instruction bundles, [official release skills](docs/skills/), and authoring guidance
 - [Web Tools](docs/web-tools.md) - HTTP fetching and search capabilities
