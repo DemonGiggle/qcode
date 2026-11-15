@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"qcode/internal/session"
+	qtheme "qcode/internal/theme"
 )
 
 func TestAutoreviewToggleOnOff(t *testing.T) {
@@ -74,8 +75,25 @@ func TestAutoreviewBadgeFirst(t *testing.T) {
 		t.Fatalf("plain badge = %q", got)
 	}
 	colored := autoreviewBadge(true)
-	if !strings.Contains(colored, "AR") {
-		t.Fatalf("colored badge = %q", colored)
+	if colored != yellow+bold+"[AR]"+reset {
+		t.Fatalf("colored badge = %q, want warning-yellow segment style", colored)
+	}
+	// The badge joins the foreground-only status bar: background fills
+	// resolve to near-white on near-white under dark themes, so they are
+	// banned here in both standalone and multi-parameter SGR forms.
+	for _, background := range []string{"\x1b[40m", "\x1b[41m", "\x1b[42m", "\x1b[43m", "\x1b[44m", "\x1b[45m", "\x1b[46m", "\x1b[47m", "\x1b[100m", "\x1b[101m", "\x1b[102m", "\x1b[103m", "\x1b[104m", "\x1b[105m", "\x1b[106m", "\x1b[107m", ";40m", ";41m", ";42m", ";43m", ";44m", ";45m", ";46m", ";47m", ";100m", ";101m", ";102m", ";103m", ";104m", ";105m", ";106m", ";107m"} {
+		if strings.Contains(colored, background) {
+			t.Fatalf("colored badge %q contains background fill %q", colored, background)
+		}
+	}
+	// The badge must stay theme-governed: under a dark palette the semantic
+	// yellow must remap to the Warning role foreground (mocha #f9e2af).
+	mocha, ok := qtheme.Lookup("catppuccin-mocha")
+	if !ok {
+		t.Fatal("catppuccin-mocha palette missing")
+	}
+	if themed := qtheme.TransformANSI(colored, mocha); !strings.Contains(themed, "38;2;249;226;175") {
+		t.Fatalf("themed badge %q does not use the Warning role", themed)
 	}
 	bar := "PROVIDER [MODEL m]"
 	prefixed := autoreviewPrefixFor(bar, true, true, false)

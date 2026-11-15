@@ -26,12 +26,17 @@ const (
 const autoreviewDelegationSource = "delegation"
 
 // autoreviewBadge returns the AR status badge. It is always rendered first
-// when autoreview is enabled and is never hidden by /statusline.
+// when autoreview is enabled and is never hidden by /statusline. It uses the
+// same foreground-only segment style as the rest of the status bar (no
+// background fill): the semantic yellow maps to the theme's Warning role via
+// TransformANSI, so contrast follows the active palette like MODE and STEP.
+// A filled badge cannot work here: under dark themes the Text foreground and
+// the Warning background both resolve to near-white, yielding ~1.1:1 contrast.
 func autoreviewBadge(color bool) string {
 	if !color {
 		return "[AR]"
 	}
-	return "\x1b[1;30;43m AR " + reset
+	return yellow + bold + "[AR]" + reset
 }
 
 // AutoreviewEnabled reports whether automatic review is on.

@@ -12,7 +12,7 @@ import (
 
 func TestSelectThemeUpdatesLivePreviewAndAccepts(t *testing.T) {
 	var output bytes.Buffer
-	id, accepted, err := selectTheme(bytes.NewBufferString(arrowDownSequence+"\r"), &output, qtheme.All(), "default", len(qtheme.All()), 90, 24, true)
+	id, accepted, err := selectTheme(bytes.NewBufferString(arrowDownSequence+"\r"), &output, qtheme.All(), "default", len(qtheme.All()), 90, 40, true)
 	if err != nil || !accepted || id != "catppuccin-mocha" {
 		t.Fatalf("selection = (%q, %v, %v)", id, accepted, err)
 	}
@@ -49,10 +49,87 @@ func TestThemePickerNarrowLayoutFitsTerminalWidth(t *testing.T) {
 	}
 }
 
+func TestThemePickerFitsShortViewport(t *testing.T) {
+	options := qtheme.All()
+	for _, viewport := range []int{3, 4, 11, 13, 15} {
+		budget := max(1, viewport-1)
+		visible := themePickerVisible(budget, len(options))
+		var output bytes.Buffer
+		rows := renderThemePicker(&output, options, 0, 0, visible, 80, budget, false)
+		if rows > budget {
+			t.Fatalf("viewport %d: rendered %d rows, want at most budget %d", viewport, rows, budget)
+		}
+		if rows >= viewport {
+			t.Fatalf("viewport %d: rendered %d rows, must leave one cursor row", viewport, rows)
+		}
+		lines := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
+		if len(lines) != rows {
+			t.Fatalf("viewport %d: rendered %d rows, want %d", viewport, len(lines), rows)
+		}
+		if !strings.Contains(lines[0], "Terminal theme  1/") {
+			t.Fatalf("viewport %d: header scrolled out of view: %q", viewport, lines[0])
+		}
+		if !strings.Contains(lines[1], "Default (Auto)") {
+			t.Fatalf("viewport %d: first option missing: %q", viewport, lines[1])
+		}
+	}
+}
+
+func TestThemePickerPreviewAnchoredAcrossPages(t *testing.T) {
+	options := qtheme.All()
+	visible := 8
+	budget := themePickerHeaderRows + visible + themePickerGapRows + themePickerPreviewRows
+	firstStart := selectorStart(0, len(options), visible, 0)
+	lastSelected := len(options) - 1
+	lastStart := selectorStart(lastSelected, len(options), visible, 0)
+	if lastStart == firstStart {
+		t.Fatalf("need multiple pages for anchoring test: visible=%d total=%d", visible, len(options))
+	}
+	if len(options)%visible == 0 {
+		t.Fatalf("anchoring test needs a short final page: total=%d visible=%d", len(options), visible)
+	}
+	var firstOut, lastOut bytes.Buffer
+	firstRows := renderThemePicker(&firstOut, options, 0, firstStart, visible, 80, budget, false)
+	lastRows := renderThemePicker(&lastOut, options, lastSelected, lastStart, visible, 80, budget, false)
+	if firstRows != lastRows {
+		t.Fatalf("row count moved: first=%d last=%d", firstRows, lastRows)
+	}
+	firstLines := strings.Split(strings.TrimSuffix(firstOut.String(), "\n"), "\n")
+	lastLines := strings.Split(strings.TrimSuffix(lastOut.String(), "\n"), "\n")
+	previewIndex := func(lines []string) int {
+		for i, line := range lines {
+			if strings.Contains(line, "Preview Output") {
+				return i
+			}
+		}
+		return -1
+	}
+	if got, want := previewIndex(firstLines), previewIndex(lastLines); got < 0 || got != want {
+		t.Fatalf("preview moved: first page at %d, last page at %d", got, want)
+	}
+	// Trimmed path: same visible window with a smaller budget must keep the
+	// preview at the same row, only showing fewer preview lines.
+	trimmedBudget := themePickerHeaderRows + visible + 4
+	var firstTrimOut, lastTrimOut bytes.Buffer
+	firstTrimRows := renderThemePicker(&firstTrimOut, options, 0, firstStart, visible, 80, trimmedBudget, false)
+	lastTrimRows := renderThemePicker(&lastTrimOut, options, lastSelected, lastStart, visible, 80, trimmedBudget, false)
+	if firstTrimRows != lastTrimRows {
+		t.Fatalf("trimmed row count moved: first=%d last=%d", firstTrimRows, lastTrimRows)
+	}
+	firstTrimLines := strings.Split(strings.TrimSuffix(firstTrimOut.String(), "\n"), "\n")
+	lastTrimLines := strings.Split(strings.TrimSuffix(lastTrimOut.String(), "\n"), "\n")
+	if got, want := previewIndex(firstTrimLines), previewIndex(lastTrimLines); got < 0 || got != want {
+		t.Fatalf("trimmed preview moved: first page at %d, last page at %d", got, want)
+	}
+	if got, want := previewIndex(firstTrimLines), previewIndex(firstLines); got != want {
+		t.Fatalf("trimmed preview row %d != untrimmed row %d", got, want)
+	}
+}
+
 func TestThemePickerPlacesPreviewBelowOptionsAndUsesStandardOptionColors(t *testing.T) {
 	var output bytes.Buffer
 	options := qtheme.All()
-	rows := renderThemePicker(&output, options, 0, 0, len(options), 90, 24, true)
+	rows := renderThemePicker(&output, options, 0, 0, len(options), 90, 40, true)
 	lines := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
 	if len(lines) != rows {
 		t.Fatalf("rendered %d rows, want %d", len(lines), rows)

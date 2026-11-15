@@ -15,9 +15,28 @@ func (u *UI) chooseTheme() {
 	}
 	u.input.setRaw(true)
 	u.beginRawSelector()
-	visibleRows := u.height - 12
-	visible := min(len(qtheme.All()), max(3, visibleRows))
-	selected, accepted, err := selectTheme(u.input, u.themedSelectorWriter(), qtheme.All(), u.currentTheme().ID, visible, u.width, u.height, ColorEnabled(u.out))
+	u.screenMu.Lock()
+	viewport := u.commandViewHeightLocked()
+	width := u.width
+	u.screenMu.Unlock()
+	// Minimum viable block is header + 1 option + 1 cursor row = 3 viewport
+	// rows. Smaller viewports cannot fit even header + 1 option once the
+	// trailing LF's cursor row is reserved, so bail out like the session
+	// picker instead of scrolling the header out of view.
+	if viewport < themePickerHeaderRows+2 {
+		u.input.setRaw(false)
+		u.endRawSelector()
+		u.printSystemMessage(yellow + "Enlarge the terminal to pick a theme." + reset)
+		return
+	}
+	// Rows are newline-terminated, so the last line's trailing LF is an IND
+	// when written on the scroll region's bottom margin. Leave one row for
+	// the cursor, mirroring loginHeight in remote_menu.go. Otherwise the
+	// region scrolls and the header/first option are lost, and the next
+	// clearSelector anchors one row too high.
+	budget := max(1, viewport-1)
+	visible := themePickerVisible(budget, len(qtheme.All()))
+	selected, accepted, err := selectTheme(u.input, u.themedSelectorWriter(), qtheme.All(), u.currentTheme().ID, visible, width, budget, ColorEnabled(u.out))
 	u.input.setRaw(false)
 	u.endRawSelector()
 	if err != nil {
@@ -48,7 +67,25 @@ func (u *UI) persistThemePreference(id string) {
 	}
 }
 
-func selectTheme(in io.Reader, out io.Writer, options []qtheme.Palette, current string, visible, width, height int, color bool) (string, bool, error) {
+const (
+	themePickerHeaderRows  = 1
+	themePickerGapRows     = 3
+	themePickerPreviewRows = 7 // len(renderThemePreview)
+	themePickerOverhead    = themePickerHeaderRows + themePickerGapRows + themePickerPreviewRows
+)
+
+// themePickerVisible caps the option window so header + options + gap +
+// preview fit within budget, where budget is the max rows the picker may
+// emit (viewport height minus one cursor row).
+func themePickerVisible(budget, total int) int {
+	maxVisible := budget - themePickerOverhead
+	if maxVisible < 1 {
+		maxVisible = 1
+	}
+	return min(total, maxVisible)
+}
+
+func selectTheme(in io.Reader, out io.Writer, options []qtheme.Palette, current string, visible, width, budget int, color bool) (string, bool, error) {
 	if len(options) == 0 {
 		return "", false, nil
 	}
@@ -61,7 +98,7 @@ func selectTheme(in io.Reader, out io.Writer, options []qtheme.Palette, current 
 	}
 	visible = selectorVisible(len(options), visible)
 	start := selectorInitialStart(selected, len(options), visible)
-	rows := renderThemePicker(out, options, selected, start, visible, width, height, color)
+	rows := renderThemePicker(out, options, selected, start, visible, width, budget, color)
 	for {
 		key, err := readSelectorKey(in)
 		if err != nil {
@@ -92,12 +129,12 @@ func selectTheme(in io.Reader, out io.Writer, options []qtheme.Palette, current 
 			}
 			start = selectorStart(selected, len(options), visible, start)
 			clearSelector(out, rows)
-			rows = renderThemePicker(out, options, selected, start, visible, width, height, color)
+			rows = renderThemePicker(out, options, selected, start, visible, width, budget, color)
 		}
 	}
 }
 
-func renderThemePicker(out io.Writer, options []qtheme.Palette, selected, start, visible, width, height int, color bool) int {
+func renderThemePicker(out io.Writer, options []qtheme.Palette, selected, start, visible, width, budget int, color bool) int {
 	if width < 1 {
 		width = 80
 	}
@@ -105,19 +142,72 @@ func renderThemePicker(out io.Writer, options []qtheme.Palette, selected, start,
 	if width < 42 {
 		heading = fmt.Sprintf("Theme %d/%d | Enter apply; Esc/Ctrl+C cancel", selected+1, len(options))
 	}
-	lines := []string{selectorHeader(heading, width)}
-	end := min(len(options), start+visible)
+	header := selectorHeader(heading, width)
 	if width < 42 {
-		lines[0] = truncateDiffLine(heading, width, false)
+		header = truncateDiffLine(heading, width, false)
 	}
+	end := min(len(options), start+visible)
+	// budget is the max rows the picker may emit (viewport height minus one
+	// cursor row; see chooseTheme). Never emit more rows than fit, otherwise
+	// the scroll region pushes the header and the first option out of view
+	// on short terminals. The caller sizes the option window via
+	// themePickerVisible, so only the preview and gap are trimmed here.
+	//
+	// Keep the preview anchored: short final pages are padded with blank
+	// menu rows so the preview starts at the same row as a full page.
+	optionRows := end - start
+	padRows := max(0, visible-optionRows)
+	layoutRows := optionRows + padRows
+	fullPreview := renderThemePreview(options[selected], width, color)
+	if budget > 0 {
+		if themePickerHeaderRows+layoutRows+themePickerGapRows+len(fullPreview) > budget {
+			remaining := budget - themePickerHeaderRows - layoutRows
+			if remaining < 0 {
+				// Caller bug: options alone exceed the budget. Emit header +
+				// options without gap/preview rather than desyncing start.
+				remaining = 0
+			}
+			gap := min(themePickerGapRows, remaining)
+			previewKeep := remaining - gap
+			preview := fullPreview
+			if previewKeep < len(preview) {
+				preview = preview[:max(0, previewKeep)]
+			}
+			lines := []string{header}
+			for index := start; index < end; index++ {
+				lines = append(lines, renderThemeOption(options[index], index == selected, width, color))
+			}
+			for range padRows {
+				lines = append(lines, "")
+			}
+			for range gap {
+				lines = append(lines, "")
+			}
+			lines = append(lines, preview...)
+			for index, line := range lines {
+				// Keep the sample in the candidate palette; menu rows use the active theme.
+				if index < themePickerHeaderRows+layoutRows+gap {
+					line = paintSelectorRow(out, line)
+				}
+				fmt.Fprintln(out, line)
+			}
+			return len(lines)
+		}
+	}
+	lines := []string{header}
 	for index := start; index < end; index++ {
 		lines = append(lines, renderThemeOption(options[index], index == selected, width, color))
 	}
-	lines = append(lines, "", "", "")
-	lines = append(lines, renderThemePreview(options[selected], width, color)...)
+	for range padRows {
+		lines = append(lines, "")
+	}
+	for range themePickerGapRows {
+		lines = append(lines, "")
+	}
+	lines = append(lines, fullPreview...)
 	for index, line := range lines {
 		// Keep the sample in the candidate palette; menu rows use the active theme.
-		if index < 1+end-start+3 {
+		if index < themePickerHeaderRows+layoutRows+themePickerGapRows {
 			line = paintSelectorRow(out, line)
 		}
 		fmt.Fprintln(out, line)
