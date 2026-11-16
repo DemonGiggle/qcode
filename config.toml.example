@@ -1,122 +1,73 @@
-# Default provider: a built-in kind or a configured named instance.
-# Root keeps only the global default; connection settings live under
-# [providers.<name>] below.
+# Default provider (built-in kind or named [providers.<name>] instance).
 provider = "ollama"
 
-# Terminal palette. Omit this field or choose "default" to keep the terminal's
-# current ANSI colors and background. /theme opens a live-preview picker.
-# See docs/configuration.md for all dark and light theme IDs.
+# Terminal theme ("default" keeps terminal ANSI colors; /theme previews live).
+# See docs/configuration.md for theme IDs.
 # theme = "catppuccin-mocha"
 
-# Maximum number of model turns allowed for each request.
+# Maximum model turns per request.
 max_steps = 32
 
-# Maximum wait for a batch of agent consultations, including queue time.
-# Positive duration (e.g. "90s", "5m", "15m"); default is five minutes.
+# Maximum wait for a batch of agent consultations (e.g. "90s", "5m").
 # agent_timeout = "5m"
 
-# Automatic code review after main finishes. /autoreview on|off toggles it
-# from the main tab (works while busy); bare /autoreview picks any provider
-# model as the reviewer (bypasses /agent allow-models). Off by default.
+# Automatic code review after main finishes (/autoreview on|off).
 # autoreview = true
 # autoreview_provider = "ollama"
 # autoreview_model = "qwen2.5-coder:7b"
 
-# Isolate model-triggered tools with bubblewrap on Linux. Disabled by default.
-# Fresh sandbox sessions disable both web tools and block networking.
-# Enabling either web tool through /tool allows web and shell networking;
-# disabling both blocks it again. /new restores these sandbox defaults.
+# Isolate model-triggered tools with bubblewrap on Linux (off by default).
+# Disables web tools and networking initially; /tool toggles web tools.
 # sandbox = true
 
-# Persistent trusted executable directories for sandbox mode. Each existing
-# directory is mounted read-only at its original path and prepended to the
-# sandbox PATH, while the rest of home stays hidden. Session
-# request_directory_access grants remain separate, read/write, and temporary.
-# Common user-installed tool directories; keep only paths that exist for you.
+# Trusted read-only executable directories prepended to sandbox PATH.
+# Keep only paths that exist on your machine.
 # sandbox_command_paths = [
 #   "~/.local/bin", "~/bin", "~/go/bin", "~/.cargo/bin",
 #   "~/.npm-global/bin", "~/.local/share/pnpm", "~/.bun/bin", "~/.deno/bin",
 # ]
-# With nvm, also add the active Node/npm version's bin directory, for example
-# "~/.nvm/versions/node/v22.16.0/bin" (replace with your installed version).
 
-# ChatGPT subscription (no API key). Run `qcode login chatgpt` first,
-# then use --provider chatgpt --model gpt-5.6-codex.
-# ChatGPT OAuth file written by `qcode login chatgpt`. Empty uses the
-# default ~/.config/qcode/chatgpt-oauth.json (0600, owner-only, no symlink).
+# ChatGPT OAuth token file written by `qcode login chatgpt` (0600, no symlink).
 # [chatgpt]
 # oauth_path = "~/.config/qcode/chatgpt-oauth.json"
 
-# Skip TLS certificate verification for qcode HTTP clients (insecure). Shell
-# commands receive opt-out settings for common clients but may need their own flags.
+# Skip TLS certificate verification for HTTP clients (insecure).
 # danger_skip_tls_verify = true
 
 # Context capacity in tokens for terminal agents (0 = automatic).
-# Set this for custom endpoints or models missing from the bundled catalog.
-# Used for the status bar and automatic compaction; the server's actual
-# context allocation is unchanged.
 # context_window = 32768
 
-# Compact the conversation automatically after this percentage of a known
-# context window is used (1-99, default 80). Manual /compact remains available.
+# Auto-compact percentage (1-99, default 80) or disable completely.
 # auto_compact_threshold = 80
 # disable_auto_compact = true
 
-# Allow the agent to ask up to three focused questions per prompt in an
-# interactive terminal. One-shot and JSON event runs never block for answers.
+# Allow up to 3 focused questions per prompt in interactive terminals.
 # interactive = true
 
-# Status bar segments to hide. Valid names: remote, mode, model, think, ws,
-# ctx, step, tok (model controls the combined provider prefix and MODEL unit).
-# Narrow terminals shorten the workspace, then wrap to two status rows before
-# dropping segments in the order tok, step, ctx, ws, think, model, mode, remote.
-# Use /statusline to toggle without editing this file; changes on main save
-# to the user-level config file.
+# Status bar segments to hide: remote, mode, model, think, ws, ctx, step, tok.
+# /statusline toggles and saves to the user config.
 # statusline_hidden = ["tok"]
 
-# Web tools start enabled outside sandbox mode, including in one-shot runs.
-# In sandbox mode both start disabled; /tool can change their selections.
-# Web search backend, read at startup. Currently only duckduckgo is supported.
-# Omitting this section defaults to duckduckgo. Changes require a restart.
-# This backend setting does not change tool enablement.
+# Web search backend (only "duckduckgo" is supported; requires restart).
 [web_search]
 backend = "duckduckgo"
 
-# Maximum approximate tokens of relevant global learning per model request.
-# Up to three items are retrieved. Set 0 to disable retrieval; /learn still works.
+# Max approximate tokens of global learning per request (0 disables retrieval).
 [learning]
 context_budget = 1200
 
-# Optional additional skill directories. Paths may be absolute or relative to
-# the selected workspace; a directory contains <name>/SKILL.md.
+# Additional skill directories (<name>/SKILL.md); see docs/configuration.md.
 # [skills]
 # paths = ["~/.config/my-skills", ".team/skills"]
-# Legacy lazy autoload: every valid skill in these directories is selected
-# at startup but stays lazy (catalog only).
 # autoload_paths = [".team/always-on-skills"]
-# New representation: mark autoload directories as lazy or always-load
-# (full text eagerly injected). always_load directories win on duplicate
-# skill names for the mode decision.
 # [[skills.autoload]]
 # path = ".team/always-on-skills"
 # always_load = true
-# [[skills.autoload]]
-# path = ".team/lazy-skills"
-# always_load = false
-# Persisted explicit selection: /skill on the main tab saves here.
-# Selected skills start enabled for new runs and are unioned with autoload;
-# selected_always skills are eagerly injected and must also appear in
-# selected. Resumed sessions keep their saved selection instead.
 # selected = ["review-go"]
 # selected_always = []
 
-# Human-curated roster of models main may use for sub-agents.
-# Managed by /agent allow-models on the main tab (role only: smart|balanced|cheap).
-# Empty roster: helpers use main's current provider/model.
-# Nonempty roster: main must choose a listed provider/model pair.
-# Providers may be mixed; each uses its configured connection and credentials.
-# Main picks thinking_level at creation time from target model capabilities.
-# To override a lower-priority roster with an empty list: [agents] allow_models = []
+# Sub-agent model roster (/agent allow-models; roles: smart|balanced|cheap).
+# Empty roster lets helpers use main's current provider/model.
 # [[agents.allow_models]]
 # provider = "openai"
 # model = "gpt-5"
@@ -130,36 +81,21 @@ context_budget = 1200
 # model = "qwen2.5-coder:7b"
 # role = "cheap"
 
-# Local text filtering is enabled at every output boundary by default.
-# Saved sessions are permanently redacted; legacy sessions are rewritten on resume.
-# This does not filter provider requests or inspect images. See docs/privacy.md.
+# Local output redaction (enabled at every output boundary by default; see docs/privacy.md).
 [redaction]
 terminal = true
 persistence = true
 exports = true
 json_events = true
 remote = true
-# Each regular expression matches one logical line (Go/RE2 syntax).
-custom_patterns = []
-# Literal paths; both configured and environment/home-expanded forms are masked.
-sensitive_paths = []
-# Additional credential field names (case, underscores, spaces and hyphens ignored).
-sensitive_fields = []
+custom_patterns = []   # Go/RE2 regexes (one per logical line)
+sensitive_paths = []   # Literal paths to mask
+sensitive_fields = []  # Extra credential field names
 
-# Connections are scoped to providers, independently of the default selection.
-# Omitted profile fields inherit from lower-priority config files; an explicit
-# empty string clears a lower-priority value. Relative api_key_path entries
-# resolve from the config file that declares them. Keep [providers.<name>]
-# tables AFTER all root-level settings (at end of file).
-#
-# API keys: prefer api_key_path files (0600 or 0400, owner-only, no symlink,
-# one line, no quotes) or QCODE_API_KEY / OPENAI_API_KEY /
-# GEMINI_API_KEY / GOOGLE_API_KEY / --api-key.
-# At startup: --api-key > QCODE_API_KEY > provider-specific environment key
-# (OPENAI_API_KEY for OpenAI; GEMINI_API_KEY then GOOGLE_API_KEY for Gemini)
-# > api_key_path file. A profile with both api_key and api_key_path fails to load.
-# Providers without configured credentials show `(Need Setup First)` in the UI
-# until you configure their key/OAuth; broken key files fail `qcode config check`.
+# Provider profiles (keep [providers.<name>] AFTER all root-level settings).
+# API key precedence: --api-key > QCODE_API_KEY > provider env key > api_key_path.
+# Use 0600/0400 key files (one line, no quotes). Unconfigured providers show
+# `(Need Setup First)` in the UI; broken key files fail `qcode config check`.
 
 [providers.ollama]
 base_url = "http://127.0.0.1:11434"
@@ -177,29 +113,22 @@ model = "qwen2.5-coder:7b"
 [providers.gemini]
 # api_key_path = "~/.config/qcode/gemini.key"
 # model = "gemini-3-flash-preview"
-# thinking = "high" # choices depend on the exact model; see docs/providers.md
-# Google OpenAI-compatible endpoint is the default; override only if needed.
+# thinking = "high" # see docs/providers.md for model-specific choices
 # base_url = "https://generativelanguage.googleapis.com/v1beta"
 
 [providers.chatgpt]
-# The chatgpt provider uses OAuth; providers.chatgpt.api_key/api_key_path are invalid.
-# Run `qcode login chatgpt` first, then select provider = "chatgpt".
+# Uses OAuth (`qcode login chatgpt`), not api_key/api_key_path.
 # model = "gpt-5.6-codex"
 
-# Multiple endpoints: built-in profiles remain unchanged; add named instances.
+# Named provider instances (select with --provider or /provider; see docs/configuration.md).
 # [providers.ollama-lab]
 # type = "ollama"
 # base_url = "http://192.168.1.50:11434"
 # model = "qwen2.5-coder:32b"
-# thinking = "" # explicitly clear inherited thinking
+# thinking = ""
 #
 # [providers.openai-work]
 # type = "openai"
 # base_url = "https://inference.example.com/v1"
 # api_key_path = "~/.config/qcode/work.key"
 # model = "work-coder"
-#
-# Select with --provider ollama-lab or /provider ollama-lab.
-# Omitted fields inherit the built-in profile after config layers merge.
-# Set credentials explicitly for a different service; omitting both credential
-# fields inherits the parent's key. See docs/configuration.md for details.
