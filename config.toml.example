@@ -60,7 +60,7 @@ max_steps = 32
 # model = "gemini-3-flash-preview"
 # thinking = "high" # choices depend on the exact model; see docs/providers.md
 # Google OpenAI-compatible endpoint is the default; override only if needed.
-# base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+# base_url = "https://generativelanguage.googleapis.com/v1beta"
 # The chatgpt provider uses OAuth; providers.chatgpt.api_key/api_key_path are invalid.
 # Run `qcode login chatgpt` first, then select provider = "chatgpt".
 

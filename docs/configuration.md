@@ -258,7 +258,7 @@ api_key_path = "~/.config/qcode/gemini.key"
 model = "gemini-3-flash-preview"
 thinking = "high"
 # Optional; Google's OpenAI-compatible endpoint is the default.
-# base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+# base_url = "https://generativelanguage.googleapis.com/v1beta"
 ```
 
 Profiles merge **field by field** through the usual config layers. An omitted

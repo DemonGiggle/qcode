@@ -109,9 +109,12 @@ continues to discover installed-model thinking support from its local API.
 
 ## Gemini
 
-Gemini is a separate provider identity that uses Google's OpenAI-compatible
-Chat Completions API, by default at
-`https://generativelanguage.googleapis.com/v1beta/openai/`. It can be selected
+Gemini is a separate provider identity that uses Google's native
+GenerateContent API, by default at
+`https://generativelanguage.googleapis.com/v1beta`.
+Custom `base_url` proxies keep the OpenAI-compatible Chat Completions wire
+(`.../v1beta/openai` + `/chat/completions`); official endpoints use
+`:streamGenerateContent` with `x-goog-api-key`. It can be selected
 at startup or switched to in the terminal UI without occupying the OpenAI
 provider slot:
 
@@ -128,7 +131,7 @@ persistent setup, use a Gemini key file and provider-specific model settings:
 api_key_path = "~/.config/qcode/gemini.key"
 model = "gemini-3-flash-preview"
 thinking = "high"
-# base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+# base_url = "https://generativelanguage.googleapis.com/v1beta"
 ```
 
 The API key file should contain only the key on one line and have mode `0600`
@@ -136,7 +139,7 @@ or `0400`; see [provider connection profiles](configuration.md#provider-connecti
 for validation and precedence. The `base_url` can also be set with
 `--base-url`; omitting it uses Google's default endpoint. `qcode --list-providers`
 includes `gemini`, and `/provider gemini` discovers models through the
-OpenAI-compatible `/models` endpoint. `qcode --provider gemini --update-model-meta`
+native `GET /v1beta/models` endpoint (proxies use compat `/models`). `qcode --provider gemini --update-model-meta`
 refreshes the per-user thinking metadata cache.
 
 Google's compatible `/models` endpoint returns model IDs but does not certify
@@ -144,9 +147,10 @@ chat or tool capability. qcode filters known embedding-only IDs (including the
 `gemini-embedding-*` family) from the picker, but other IDs may still be
 unavailable for chat or tool calling, and availability varies by key/account.
 Unknown IDs are not assigned inferred thinking capabilities. An explicitly
-configured model may still fail if the API does not support Chat Completions
-for it. qcode does not add Google's native API protocol, OAuth, audio UI, or
-Google-specific extra request-body configuration.
+configured model may still fail if the API does not support GenerateContent
+for it. qcode does not add OAuth, audio UI, or Vertex ADC; native
+GenerateContent (system_instruction/contents/tools/thinkingConfig/usageMetadata)
+is the official route, OpenAI-compat remains only for custom proxies.
 
 ### Gemini thinking levels
 
@@ -166,9 +170,12 @@ is rejected by the API with 400 INVALID_ARGUMENT. Model IDs prefixed with
 `models/` (as returned by the live `/models` endpoint) are normalized before
 lookup. Metadata can narrow these documented choices, but does not create
 capabilities for unknown models. With no explicit choice, qcode omits
-`reasoning_effort` and leaves Google's model default in effect. Unsupported
+`generationConfig.thinkingConfig` and leaves Google's model default in effect
+(official route uses `thinkingLevel` for 3/4-series and `thinkingBudget` for
+2.5-series; proxy compat still uses `reasoning_effort`). Unsupported
 explicit levels fail before the model request. Exact model IDs and
-availability can change; see Google's [OpenAI compatibility documentation](https://ai.google.dev/gemini-api/docs/openai#thinking).
+availability can change; see [thinking](https://ai.google.dev/gemini-api/docs/thinking)
+and [OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai#thinking).
 
 ## OpenCode Go
 

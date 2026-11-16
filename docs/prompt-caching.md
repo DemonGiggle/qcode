@@ -315,55 +315,56 @@ covers any `base_url`). Differences:
 - **Billing limitations:** local inference has no billing. Counts are
   informational.
 
-### 3.7 Gemini Developer API via OpenAI-compat (`/chat/completions`)
+### 3.7 Gemini Developer API via native GenerateContent (`:streamGenerateContent`)
 
 - **Endpoint / override handling (verified gateway,
-  `internal/llm/openai.go`, `internal/llm/gemini.go`):** `POST
-  {base}/chat/completions` with `base` defaulting to
-  `https://generativelanguage.googleapis.com/v1beta/openai`.
-  `IsOfficialOpenAIEndpoint` is false; the path stays `/chat/completions`
-  under the Google host. This is a compatibility shim, not the native
-  Gemini `generateContent` API. The official SDK reference
-  (`google-antigravity/antigravity-sdk-python`) connects natively via
-  `GeminiAPIEndpoint(api_key)` / `GEMINI_API_KEY` (or Vertex ADC) through a
-  Go harness and surfaces `UsageMetadata{cached_content_token_count,
-  thoughts_token_count, service_tier}`; that native shape is the future
-  source for true implicit-cache counts, not this shim.
-- **Usage fields (verified gateway):** `stream_options: {include_usage:
-  true}` is now always sent, including Gemini (#103). Previously omitted
-  as unsupported, it is now supported per forum + docs
-  (`https://discuss.ai.google.dev/t/gemini-openai-compatibility-does-it-support-the-stream-options-parameter/92785`,
-  `https://ai.google.dev/gemini-api/docs/openai#cached-content`); omitting
-  it yields `usage=None` / `Missing++` and hides `/usage`. Usage arrives as
-  a top-level `usage` object on any SSE `data:` line and is decoded via
-  `openAIUsageWire.mergeInto` into `llm.Usage`. The parser already maps
-  `prompt_tokens_details.cached_tokens` and
-  `completion_tokens_details.reasoning_tokens` when present.
-- **Cache read/write reporting (verified gateway + forum evidence):**
-  compat-route `usage` currently carries `prompt_tokens`,
-  `completion_tokens`, `total_tokens` without `prompt_tokens_details`
-  (see `https://discuss.ai.google.dev/t/question-with-usage-in-openai-compatibility/98760`).
-  `total_tokens` includes thinking, so `prompt + completion != total`.
-  When the compat route omits cache details, `CacheReadReported` stays 0
-  and `/usage` correctly shows `unavailable`, never `0`. Do not infer a
-  zero hit rate.
-- **Available controls (verified gateway):** `reasoning_effort` thinking
-  level for exact catalog models; tool definitions with
+  `internal/llm/gemini_native.go`, `internal/llm/gemini.go`):** `POST
+  {root}/models/{model}:streamGenerateContent?alt=sse` with `root`
+  defaulting to `https://generativelanguage.googleapis.com/v1beta`
+  (the `.../v1beta/openai` compat default is normalized to this root).
+  Auth is `x-goog-api-key`, not `Authorization: Bearer`. Custom `base_url`
+  proxies keep the OpenAI-compat `POST {base}/chat/completions` shim
+  (`internal/llm/openai.go`); only official roots use native. The SDK
+  reference (`google-antigravity/antigravity-sdk-python`) connects natively
+  via `GeminiAPIEndpoint(api_key)` / `GEMINI_API_KEY` and surfaces
+  `UsageMetadata{cached_content_token_count, thoughts_token_count,
+  service_tier}`; qcode now uses that native shape directly (#104).
+- **Usage fields (verified gateway):** every SSE `data:` chunk may carry
+  `usageMetadata{promptTokenCount, candidatesTokenCount, thoughtsTokenCount,
+  cachedContentTokenCount, totalTokenCount}` (cumulative, last wins).
+  Decoded via `geminiNativeUsageWire.mergeInto` into `llm.Usage`:
+  input = `promptTokenCount` (inclusive, includes cached per
+  `https://googleapis.github.io/js-genai/release_docs/interfaces/types.UsageMetadata.html`);
+  output = `candidatesTokenCount` + `thoughtsTokenCount` (reasoning is a
+  subset, never added); cache-read = `cachedContentTokenCount`;
+  reasoning = `thoughtsTokenCount`. `totalTokenCount` is informational.
+  The compat proxy path still uses `stream_options.include_usage` and maps
+  `prompt_tokens_details.cached_tokens` when present.
+- **Cache read/write reporting (verified gateway):**
+  native `cachedContentTokenCount` feeds `CacheReadReported` and the
+  `/usage` `Cached input share (reported subset)` ratio. When the route
+  omits cache details, `/usage` correctly shows `unavailable`, never `0`.
+  No write field exists on this route; writes are never inferred.
+- **Available controls (verified gateway):** `generationConfig.thinkingConfig`
+  with `thinkingLevel` (3/4-series, e.g. `HIGH`, `XHIGH` for Hydrogen) or
+  `thinkingBudget` (2.5-series, `none` → 0, best-effort budgets otherwise);
+  tool definitions as `tools[{functionDeclarations}]` with
   `additionalProperties` stripped (Gemini rejects it with 400); tool-call
-  `thought_signature` replay in `extra_content.google`. `temperature` is
-  never sent (fixed sampling defaults). No `prompt_cache_key` is sent
-  (frozen #81, OpenAI-official-only).
+  `thoughtSignature` replayed verbatim in the next `contents` (required for
+  Gemini 3 reasoning chains). `temperature` is never sent (fixed sampling
+  defaults). No `prompt_cache_key` is sent (frozen #81, OpenAI-official-only).
 - **Prefix stability (verified gateway, #103):** durable `messages[0]`
-  stays byte-stable; per-request cwd / learning / dynamic / work history /
-  notice / recovery moves to a trailing `user` message (ChatGPT uses
-  `developer`; Gemini uses `user` because developer-role support is
-  undocumented on this shim). Trust wrappers are preserved. `PrefixHash`
-  still changes on dynamic-only edits so calibration invalidates, while the
-  wire prefix stays stable for implicit-cache match.
-- **Billing limitations:** implicit caching only (Flash threshold 1024
-  tokens per `https://developers.googleblog.com/en/gemini-2-5-models-now-support-implicit-caching/`;
-  4-series may need 4096 per third-party reports). Counts are informational,
-  never bills.
+  becomes native `system_instruction` byte-stable; per-request cwd /
+  learning / dynamic / work history / notice / recovery moves to a trailing
+  `user` part (ChatGPT uses `developer`; Gemini uses `user` because
+  developer-role support is undocumented on compat and unnecessary natively).
+  Trust wrappers are preserved. `PrefixHash` still changes on dynamic-only
+  edits so calibration invalidates, while the wire prefix
+  (`system_instruction` + append-only `contents`) stays stable for
+  implicit-cache match.
+- **Billing limitations:** implicit caching only. Gemini 3/3.1/3.5 need
+  4096 minimum prefix, 2.5 needs 2048 (see Gemini Cache Billing); short
+  prompts never hit. Counts are informational, never bills.
 
 ### Unsupported versus unknown
 

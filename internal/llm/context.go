@@ -17,9 +17,10 @@ var contextCatalog []byte
 
 func (p *openAIProvider) ContextWindow(_ context.Context, model string) (int, error) {
 	// A custom endpoint may impose different limits even for familiar model IDs.
+	// Gemini official covers both the OpenAI-compat shim and the native root.
 	if (p.name == "openai" && p.baseURL != "https://api.openai.com/v1") ||
 		(p.name == "opencode-go" && p.baseURL != openCodeGoBaseURL) ||
-		(p.name == "gemini" && p.baseURL != geminiBaseURL) {
+		(p.name == "gemini" && !isGeminiOfficialBaseURL(p.baseURL)) {
 		return 0, nil
 	}
 	var catalog map[string]map[string]int
