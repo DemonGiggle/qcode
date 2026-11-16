@@ -47,7 +47,48 @@ func NewSetupUI(in io.Reader, out io.Writer) *SetupUI {
 	return ui
 }
 
+type rawLFWriter struct {
+	out    io.Writer
+	prevCR bool
+}
+
+func (w *rawLFWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	buf := make([]byte, 0, len(p)+8)
+	for _, b := range p {
+		if b == '\n' && !w.prevCR {
+			buf = append(buf, '\r', '\n')
+		} else {
+			buf = append(buf, b)
+		}
+		w.prevCR = b == '\r'
+	}
+	if _, err := w.out.Write(buf); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func (s *SetupUI) selectorOut() io.Writer {
+	if s.inFile == nil {
+		return s.out
+	}
+	return &rawLFWriter{out: s.out}
+}
+
+func (s *SetupUI) refreshSize() {
+	if f, ok := s.out.(*os.File); ok {
+		if w, h, err := term.GetSize(int(f.Fd())); err == nil && w > 0 && h > 0 {
+			s.width = w
+			s.height = h
+		}
+	}
+}
+
 func (s *SetupUI) withRawMode(fn func() error) error {
+	s.refreshSize()
 	if s.inFile == nil {
 		return fn()
 	}
@@ -82,7 +123,7 @@ func (s *SetupUI) SelectOption(noun string, options []string, disabled map[strin
 	err := s.withRawMode(func() error {
 		var selErr error
 		selected, accepted, selErr = selectOptionWithDisabled(
-			s.in, s.out, options, disabled, current,
+			s.in, s.selectorOut(), options, disabled, current,
 			s.visibleRows(len(options)), s.width, s.color, noun, searchable,
 		)
 		return selErr
@@ -97,7 +138,7 @@ func (s *SetupUI) SelectModel(models []string, current string) (string, bool, er
 	err := s.withRawMode(func() error {
 		var selErr error
 		selected, result, _, selErr = selectModelWithQuery(
-			s.in, s.out, models, current, "",
+			s.in, s.selectorOut(), models, current, "",
 			s.visibleRows(len(models)), s.width, s.color,
 		)
 		return selErr
@@ -112,7 +153,7 @@ func (s *SetupUI) SelectThinking(levels []string, current string) (string, bool,
 	err := s.withRawMode(func() error {
 		var selErr error
 		selected, accepted, selErr = selectThinking(
-			s.in, s.out, levels, current,
+			s.in, s.selectorOut(), levels, current,
 			s.visibleRows(len(levels)), s.width, s.color,
 		)
 		return selErr
@@ -123,20 +164,20 @@ func (s *SetupUI) SelectThinking(levels []string, current string) (string, bool,
 // SelectTheme displays the interactive theme picker with live preview.
 func (s *SetupUI) SelectTheme(current string) (string, bool, error) {
 	palettes := qtheme.All()
-	budget := s.height - 4
-	if budget < themePickerHeaderRows+4 {
-		budget = themePickerHeaderRows + 4
-	}
-	if budget > 24 {
-		budget = 24
-	}
-	visible := themePickerVisible(budget, len(palettes))
 	var selected string
 	var accepted bool
 	err := s.withRawMode(func() error {
+		budget := s.height - 4
+		if budget < themePickerHeaderRows+4 {
+			budget = themePickerHeaderRows + 4
+		}
+		if budget > 24 {
+			budget = 24
+		}
+		visible := themePickerVisible(budget, len(palettes))
 		var selErr error
 		selected, accepted, selErr = selectTheme(
-			s.in, s.out, palettes, current,
+			s.in, s.selectorOut(), palettes, current,
 			visible, s.width, budget, s.color,
 		)
 		return selErr
