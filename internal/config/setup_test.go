@@ -132,3 +132,46 @@ func TestPersistSandboxAndCommandPaths(t *testing.T) {
 		t.Fatalf("SandboxCommandPaths = %v, want [~/bin ~/.local/bin]", cfg.SandboxCommandPaths)
 	}
 }
+
+func TestBackupUserConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	// Missing file returns empty backup path without error.
+	backup, err := BackupUserConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("BackupUserConfig(missing) error = %v", err)
+	}
+	if backup != "" {
+		t.Fatalf("backup = %q, want empty", backup)
+	}
+
+	// Existing regular file is backed up to <path>.bak with same content.
+	content := "provider = \"ollama\"\n"
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	backup, err = BackupUserConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("BackupUserConfig() error = %v", err)
+	}
+	if backup != cfgPath+".bak" {
+		t.Fatalf("backup = %q, want %q", backup, cfgPath+".bak")
+	}
+	got, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", backup, err)
+	}
+	if string(got) != content {
+		t.Fatalf("backup content = %q, want %q", string(got), content)
+	}
+
+	// Reject symlinks.
+	sym := filepath.Join(dir, "sym.toml")
+	if err := os.Symlink(cfgPath, sym); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+	if _, err := BackupUserConfig(sym); err == nil {
+		t.Fatal("expected error when backing up a symlink")
+	}
+}

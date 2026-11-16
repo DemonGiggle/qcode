@@ -20,8 +20,6 @@ import (
 	"qcode/internal/tui"
 )
 
-const keepOriginalPrefix = "Keep original config"
-
 var setupBuiltInProviders = []string{"ollama", "openai", "opencode-go", "gemini", "chatgpt"}
 
 var defaultSandboxCandidatePaths = []string{
@@ -35,12 +33,14 @@ var defaultSandboxCandidatePaths = []string{
 	"~/.deno/bin",
 }
 
+const backMenuItem = "< Back"
+
 type setupUI interface {
-	SelectOption(noun string, options []string, disabled map[string]bool, current string, searchable bool) (string, bool, error)
-	SelectModel(models []string, current string) (string, bool, error)
-	SelectThinking(levels []string, current string) (string, bool, error)
-	SelectTheme(current string) (string, bool, error)
-	PromptLine(label, defaultVal string, secret bool) (string, bool, error)
+	SelectOptionNav(noun string, options []string, disabled map[string]bool, current string, searchable bool) (string, tui.SetupNavResult, error)
+	SelectModelNav(models []string, current string) (string, tui.SetupNavResult, error)
+	SelectThinkingNav(levels []string, current string) (string, tui.SetupNavResult, error)
+	SelectThemeNav(current string) (string, tui.SetupNavResult, error)
+	PromptLineNav(label, defaultVal string, secret bool) (string, tui.SetupNavResult, error)
 }
 
 type setupProbeResult struct {
@@ -54,6 +54,7 @@ type setupDeps struct {
 	userCfgPath  func() (string, error)
 	newWriter    func() (*config.RuntimePreferenceWriter, error)
 	writeKeyFile func(path, key string) (string, error)
+	backupConfig func(path string) (string, error)
 	chatgptLogin func(oauthPath string, stdin io.Reader, stdout io.Writer) error
 	probeModels  func(ctx context.Context, cfg config.Config, provider, overrideBaseURL, overrideAPIKey string, policy *redaction.Policy) (setupProbeResult, error)
 	checkConfig  func() ([]config.Issue, []string, error)
@@ -69,6 +70,7 @@ func defaultSetupDeps() setupDeps {
 		userCfgPath:  config.UserConfigPath,
 		newWriter:    config.NewRuntimePreferenceWriter,
 		writeKeyFile: config.WriteAPIKeyFile,
+		backupConfig: config.BackupUserConfig,
 		chatgptLogin: func(oauthPath string, stdin io.Reader, stdout io.Writer) error {
 			httpClient := &http.Client{Timeout: 30 * time.Second}
 			return chatGPTLoginFlow(oauthPath, stdin, stdout, httpClient)
@@ -120,51 +122,41 @@ func runSetupWithDeps(args []string, stdin io.Reader, stdout, stderr io.Writer, 
 	writer.SetLegacyConfig(cfg)
 
 	ui := deps.newUI(stdin, stdout)
-	fmt.Fprintln(stdout, "qcode setup wizard")
-	fmt.Fprintf(stdout, "User config: %s\n\n", userPath)
+	fmt.Fprintln(stdout, "qcode setup (menuconfig)")
+	fmt.Fprintf(stdout, "User config: %s\n", userPath)
+	fmt.Fprintln(stdout, "Navigate with Up/Down, Enter to open/select, Esc to go back.")
+	fmt.Fprintln(stdout, "")
 
-	plan, cancelled, err := runBasicSetup(ui, cfg, userPath, stdin, stdout, stderr, policy, deps)
+	state := newSetupState(cfg, userPath)
+	saveAndLeave, err := runMainMenu(ui, state, stdin, stdout, stderr, policy, deps)
 	if err != nil {
 		return err
 	}
-	if cancelled {
-		fmt.Fprintln(stdout, "Setup cancelled; no changes were saved.")
+	if !saveAndLeave {
+		fmt.Fprintln(stdout, "Exited without saving; no changes were written.")
 		return nil
 	}
 
-	advChoice, accepted, err := ui.SelectOption(
-		"next step",
-		[]string{
-			"Finish setup and save",
-			"Continue to Advanced Setup (theme, sandbox, autoreview, interactive)",
-		},
-		nil,
-		"Finish setup and save",
-		false,
-	)
-	if err != nil {
-		return err
-	}
-	if !accepted {
-		fmt.Fprintln(stdout, "Setup cancelled; no changes were saved.")
+	if !state.hasChanges() {
+		fmt.Fprintln(stdout, "No changes to save.")
 		return nil
 	}
-	if strings.HasPrefix(advChoice, "Continue to Advanced Setup") {
-		advCancelled, err := runAdvancedSetup(ui, cfg, &plan, deps.goos)
+
+	if deps.backupConfig != nil {
+		backupPath, err := deps.backupConfig(userPath)
 		if err != nil {
 			return err
 		}
-		if advCancelled {
-			fmt.Fprintln(stdout, "Setup cancelled; no changes were saved.")
-			return nil
+		if backupPath != "" {
+			fmt.Fprintf(stdout, "Backed up existing config to %s\n", backupPath)
 		}
 	}
 
-	if err := applySetupPlan(writer, &plan, deps); err != nil {
+	if err := applySetupState(writer, state, deps); err != nil {
 		return err
 	}
 
-	printSetupSummary(stdout, userPath, &plan)
+	printSetupSummary(stdout, userPath, state)
 
 	issues, inspected, err := deps.checkConfig()
 	if err != nil {
@@ -178,86 +170,511 @@ func runSetupWithDeps(args []string, stdin io.Reader, stdout, stderr io.Writer, 
 	return nil
 }
 
-type setupPlan struct {
-	provider        string
-	keepProvider    bool
-	baseURL         *string
-	apiKey          string
-	apiKeyPath      *string
-	model           string
-	keepModel       bool
-	thinking        string
-	keepThinking    bool
-	thinkingCleared bool
-
-	theme               string
-	keepTheme           bool
-	sandbox             *bool
-	sandboxCommandPaths []string
-	setSandboxPaths     bool
-	autoreview          *bool
-	interactive         *bool
+type providerDraft struct {
+	baseURL          *string
+	apiKey           string
+	apiKeyPath       *string
+	model            string
+	modelChanged     bool
+	thinking         string
+	thinkingChanged  bool
+	chatgptOAuthDone bool
 }
 
-func runBasicSetup(ui setupUI, cfg config.Config, userPath string, stdin io.Reader, stdout, stderr io.Writer, policy *redaction.Policy, deps setupDeps) (setupPlan, bool, error) {
-	var plan setupPlan
+type setupState struct {
+	initial  config.Config
+	userPath string
 
-	// 1. Provider selection
-	providerOptions := make([]string, 0, len(setupBuiltInProviders)+1)
-	labelToProvider := make(map[string]string, len(setupBuiltInProviders)+1)
-	currentProvider := strings.TrimSpace(cfg.Provider)
-	var keepProviderLabel string
-	if currentProvider != "" {
-		keepProviderLabel = fmt.Sprintf("%s (%s)", keepOriginalPrefix, currentProvider)
-		providerOptions = append(providerOptions, keepProviderLabel)
-		labelToProvider[keepProviderLabel] = currentProvider
-	}
-	defaultChoice := ""
-	for _, p := range setupBuiltInProviders {
-		label := p
-		if isProviderConfigured(cfg, p) {
-			label = p + " (configured)"
-		}
-		if p == currentProvider {
-			defaultChoice = label
-		}
-		providerOptions = append(providerOptions, label)
-		labelToProvider[label] = p
-	}
-	if keepProviderLabel != "" {
-		defaultChoice = keepProviderLabel
-	}
+	activeProvider  string
+	providerChanged bool
+	providers       map[string]*providerDraft
 
-	chosenLabel, accepted, err := ui.SelectOption("provider", providerOptions, nil, defaultChoice, false)
+	theme        string
+	themeChanged bool
+
+	sandbox             *bool
+	sandboxCommandPaths []string
+	sandboxPathsChanged bool
+
+	autoreview  *bool
+	interactive *bool
+}
+
+func newSetupState(cfg config.Config, userPath string) *setupState {
+	active := strings.TrimSpace(cfg.Provider)
+	if active == "" {
+		active = "ollama"
+	}
+	return &setupState{
+		initial:        cfg,
+		userPath:       userPath,
+		activeProvider: active,
+		providers:      make(map[string]*providerDraft),
+		theme:          strings.TrimSpace(cfg.Theme),
+	}
+}
+
+func (s *setupState) draft(provider string) *providerDraft {
+	d, ok := s.providers[provider]
+	if !ok {
+		d = &providerDraft{}
+		s.providers[provider] = d
+	}
+	return d
+}
+
+func (s *setupState) effectiveModel(provider string) (string, string) {
+	model, thinking := s.initial.EffectiveModel(provider)
+	if d, ok := s.providers[provider]; ok {
+		if d.modelChanged {
+			model = d.model
+		}
+		if d.thinkingChanged {
+			thinking = d.thinking
+		}
+	}
+	return model, thinking
+}
+
+func (s *setupState) effectiveConnection(provider string) (baseURL, apiKey string) {
+	baseURL, apiKey = s.initial.ProviderConnection(provider)
+	if d, ok := s.providers[provider]; ok {
+		if d.baseURL != nil {
+			baseURL = *d.baseURL
+		}
+			if d.apiKey != "" {
+				apiKey = d.apiKey
+			}
+	}
+	return baseURL, apiKey
+}
+
+func (s *setupState) isConfigured(provider string) bool {
+	if d, ok := s.providers[provider]; ok {
+		if provider == "chatgpt" && d.chatgptOAuthDone {
+			return true
+		}
+		if d.apiKey != "" || (d.apiKeyPath != nil && strings.TrimSpace(*d.apiKeyPath) != "") {
+			return true
+		}
+		if provider == "ollama" && ((d.baseURL != nil && strings.TrimSpace(*d.baseURL) != "") || d.modelChanged) {
+			return true
+		}
+	}
+	return isProviderConfigured(s.initial, provider)
+}
+
+func (s *setupState) effectiveTheme() string {
+	if s.themeChanged {
+		if s.theme == "" {
+			return "default"
+		}
+		return s.theme
+	}
+	if strings.TrimSpace(s.initial.Theme) == "" {
+		return "default"
+	}
+	return strings.TrimSpace(s.initial.Theme)
+}
+
+func (s *setupState) effectiveSandbox() bool {
+	if s.sandbox != nil {
+		return *s.sandbox
+	}
+	return s.initial.Sandbox != nil && *s.initial.Sandbox
+}
+
+func (s *setupState) effectiveSandboxPaths() []string {
+	if s.sandboxPathsChanged {
+		return s.sandboxCommandPaths
+	}
+	return s.initial.SandboxCommandPaths
+}
+
+func (s *setupState) effectiveAutoreview() bool {
+	if s.autoreview != nil {
+		return *s.autoreview
+	}
+	if s.initial.AutoReview != nil {
+		return *s.initial.AutoReview
+	}
+	return true
+}
+
+func (s *setupState) effectiveInteractive() bool {
+	if s.interactive != nil {
+		return *s.interactive
+	}
+	return s.initial.Interactive != nil && *s.initial.Interactive
+}
+
+func (s *setupState) hasChanges() bool {
+	if s.providerChanged || s.themeChanged || s.sandbox != nil || s.sandboxPathsChanged || s.autoreview != nil || s.interactive != nil {
+		return true
+	}
+	for _, d := range s.providers {
+		if d.baseURL != nil || d.apiKeyPath != nil || d.modelChanged || d.thinkingChanged {
+			return true
+		}
+	}
+	return false
+}
+
+func runMainMenu(ui setupUI, state *setupState, stdin io.Reader, stdout, stderr io.Writer, policy *redaction.Policy, deps setupDeps) (bool, error) {
+	current := ""
+	for {
+		model, _ := state.effectiveModel(state.activeProvider)
+		if model == "" {
+			model = "unset"
+		}
+		providersItem := fmt.Sprintf("Providers & Models  --->  (active: %s / %s)", state.activeProvider, model)
+		themeItem := fmt.Sprintf("Appearance (Theme)  --->  (%s)", state.effectiveTheme())
+
+		arStr := "on"
+		if !state.effectiveAutoreview() {
+			arStr = "off"
+		}
+		intStr := "off"
+		if state.effectiveInteractive() {
+			intStr = "on"
+		}
+		behaviorItem := fmt.Sprintf("Behavior            --->  (autoreview: %s, interactive: %s)", arStr, intStr)
+
+		options := []string{providersItem, themeItem}
+		var sandboxItem string
+		if deps.goos == "linux" {
+			sbStr := "disabled"
+			if state.effectiveSandbox() {
+				sbStr = "enabled"
+			}
+			sandboxItem = fmt.Sprintf("Sandbox (Linux)     --->  (%s)", sbStr)
+			options = append(options, sandboxItem)
+		}
+		options = append(options, behaviorItem, "Save and Leave", "Exit without saving")
+
+		choice, nav, err := ui.SelectOptionNav("main menu", options, nil, current, false)
+		if err != nil {
+			return false, err
+		}
+		if nav == tui.SetupCancelled {
+			return false, nil
+		}
+		if nav == tui.SetupBack {
+			// At main menu, Esc keeps the user in the menu rather than discarding staged work.
+			continue
+		}
+		current = choice
+
+		switch choice {
+		case providersItem:
+			cancelled, err := runProvidersMenu(ui, state, stdin, stdout, stderr, policy, deps)
+			if err != nil || cancelled {
+				return false, err
+			}
+		case themeItem:
+			chosen, tnav, err := ui.SelectThemeNav(state.effectiveTheme())
+			if err != nil {
+				return false, err
+			}
+			if tnav == tui.SetupAccepted && chosen != "" {
+				state.theme = chosen
+				state.themeChanged = true
+			}
+		case sandboxItem:
+			cancelled, err := runSandboxMenu(ui, state)
+			if err != nil || cancelled {
+				return false, err
+			}
+		case behaviorItem:
+			cancelled, err := runBehaviorMenu(ui, state)
+			if err != nil || cancelled {
+				return false, err
+			}
+		case "Save and Leave":
+			return true, nil
+		case "Exit without saving":
+			return false, nil
+		}
+	}
+}
+
+func runProvidersMenu(ui setupUI, state *setupState, stdin io.Reader, stdout, stderr io.Writer, policy *redaction.Policy, deps setupDeps) (bool, error) {
+	currentProvider := state.activeProvider
+	for {
+		options := make([]string, 0, len(setupBuiltInProviders)+1)
+		labelToProvider := make(map[string]string, len(setupBuiltInProviders))
+		defaultChoice := ""
+		for _, p := range setupBuiltInProviders {
+			var tags []string
+			if p == state.activeProvider {
+				tags = append(tags, "active")
+			}
+			if state.isConfigured(p) {
+				tags = append(tags, "configured")
+			}
+			label := p
+			if len(tags) > 0 {
+				label = fmt.Sprintf("%s (%s)", p, strings.Join(tags, ", "))
+			}
+			if p == currentProvider {
+				defaultChoice = label
+			}
+			options = append(options, label)
+			labelToProvider[label] = p
+		}
+		options = append(options, backMenuItem)
+
+		choice, nav, err := ui.SelectOptionNav("provider", options, nil, defaultChoice, false)
+		if err != nil {
+			return false, err
+		}
+		if nav == tui.SetupCancelled {
+			return true, nil
+		}
+		if nav == tui.SetupBack || choice == backMenuItem {
+			return false, nil
+		}
+
+		p := labelToProvider[choice]
+		currentProvider = p
+		cancelled, err := runProviderSubmenu(ui, state, p, stdin, stdout, stderr, policy, deps)
+		if err != nil || cancelled {
+			return cancelled, err
+		}
+	}
+}
+
+func runProviderSubmenu(ui setupUI, state *setupState, provider string, stdin io.Reader, stdout, stderr io.Writer, policy *redaction.Policy, deps setupDeps) (bool, error) {
+	currentItem := ""
+	for {
+		model, thinking := state.effectiveModel(provider)
+		if model == "" {
+			model = "unset"
+		}
+		modelSummary := model
+		if thinking != "" {
+			modelSummary = fmt.Sprintf("%s, thinking: %s", model, thinking)
+		}
+
+		activeLabel := "Set as active default provider"
+		if state.activeProvider == provider {
+			activeLabel = fmt.Sprintf("Active default provider (%s)", provider)
+		}
+		credLabel := "Configure credentials & endpoint"
+		if state.isConfigured(provider) {
+			credLabel = "Configure credentials & endpoint (configured)"
+		}
+		modelLabel := fmt.Sprintf("Verify connection & select model (%s)", modelSummary)
+
+		options := []string{activeLabel, credLabel, modelLabel, backMenuItem}
+		choice, nav, err := ui.SelectOptionNav(provider+" menu", options, nil, currentItem, false)
+		if err != nil {
+			return false, err
+		}
+		if nav == tui.SetupCancelled {
+			return true, nil
+		}
+		if nav == tui.SetupBack || choice == backMenuItem {
+			return false, nil
+		}
+		currentItem = choice
+
+		switch choice {
+		case activeLabel:
+			if state.activeProvider != provider {
+				state.activeProvider = provider
+				state.providerChanged = true
+			}
+		case credLabel:
+			navRes, err := configureProviderCredentials(ui, state, provider, stdin, stdout, stderr, policy, deps)
+			if err != nil {
+				return false, err
+			}
+			if navRes == tui.SetupCancelled {
+				return true, nil
+			}
+		case modelLabel:
+			navRes, err := verifyAndSelectModel(ui, state, provider, stdin, stdout, stderr, policy, deps)
+			if err != nil {
+				return false, err
+			}
+			if navRes == tui.SetupCancelled {
+				return true, nil
+			}
+		}
+	}
+}
+
+func configureProviderCredentials(ui setupUI, state *setupState, provider string, stdin io.Reader, stdout, stderr io.Writer, policy *redaction.Policy, deps setupDeps) (tui.SetupNavResult, error) {
+	existingBase, existingKey := state.effectiveConnection(provider)
+	profile := state.initial.Providers[provider]
+	draft := state.draft(provider)
+
+	switch provider {
+	case "chatgpt":
+		if state.isConfigured("chatgpt") {
+			choice, nav, err := ui.SelectOptionNav(
+				"ChatGPT authentication",
+				[]string{"Re-authenticate with ChatGPT", backMenuItem},
+				nil,
+				"Re-authenticate with ChatGPT",
+				false,
+			)
+			if err != nil || nav != tui.SetupAccepted {
+				return nav, err
+			}
+			if choice == backMenuItem {
+				return tui.SetupBack, nil
+			}
+		}
+		oauthPath := state.initial.ChatGPT.OAuthPath
+		if oauthPath == "" {
+			oauthPath = chatgptoauth.DefaultPath
+		}
+		if err := deps.chatgptLogin(oauthPath, stdin, stdout); err != nil {
+			return tui.SetupCancelled, err
+		}
+		draft.chatgptOAuthDone = true
+		return tui.SetupAccepted, nil
+
+	case "ollama":
+		defURL := existingBase
+		if defURL == "" {
+			defURL = "http://127.0.0.1:11434"
+		}
+		url, nav, err := ui.PromptLineNav("Ollama base URL", defURL, false)
+		if err != nil || nav != tui.SetupAccepted {
+			return nav, err
+		}
+		url = strings.TrimSpace(url)
+		if profile.BaseURL != nil || url != defURL {
+			draft.baseURL = &url
+		}
+		return tui.SetupAccepted, nil
+
+	default: // openai, opencode-go, gemini
+		var stagedKey string
+		var stagedKeyPath *string
+
+		if existingKey != "" || (profile.APIKeyPath != nil && strings.TrimSpace(*profile.APIKeyPath) != "") || draft.apiKeyPath != nil {
+			choice, nav, err := ui.SelectOptionNav(
+				provider+" API key",
+				[]string{"Keep existing API key", "Enter a new API key (saved to 0600 key file)", backMenuItem},
+				nil,
+				"Keep existing API key",
+				false,
+			)
+			if err != nil || nav != tui.SetupAccepted {
+				return nav, err
+			}
+			if choice == backMenuItem {
+				return tui.SetupBack, nil
+			}
+			if choice == "Enter a new API key (saved to 0600 key file)" {
+				k, kp, navRes, err := promptNewAPIKey(ui, provider, state.userPath, profile, draft)
+				if err != nil || navRes != tui.SetupAccepted {
+					return navRes, err
+				}
+				stagedKey = k
+				stagedKeyPath = &kp
+			}
+		} else {
+			k, kp, navRes, err := promptNewAPIKey(ui, provider, state.userPath, profile, draft)
+			if err != nil || navRes != tui.SetupAccepted {
+				return navRes, err
+			}
+			stagedKey = k
+			stagedKeyPath = &kp
+		}
+
+		// Optional custom base URL
+		endpointOpts := []string{"Use default endpoint", "Set custom base URL"}
+		defaultEndpointOpt := "Use default endpoint"
+		if (profile.BaseURL != nil && strings.TrimSpace(*profile.BaseURL) != "") || (draft.baseURL != nil && strings.TrimSpace(*draft.baseURL) != "") {
+			endpointOpts = []string{
+				fmt.Sprintf("Keep current (%s)", existingBase),
+				"Set custom base URL",
+				"Reset to provider default",
+			}
+			defaultEndpointOpt = endpointOpts[0]
+		}
+		endpointOpts = append(endpointOpts, backMenuItem)
+
+		epChoice, nav, err := ui.SelectOptionNav(provider+" endpoint", endpointOpts, nil, defaultEndpointOpt, false)
+		if err != nil || nav != tui.SetupAccepted {
+			return nav, err
+		}
+		if epChoice == backMenuItem {
+			return tui.SetupBack, nil
+		}
+
+		var stagedBaseURL *string
+		switch epChoice {
+		case "Set custom base URL":
+			u, navRes, err := ui.PromptLineNav(provider+" base URL", existingBase, false)
+			if err != nil || navRes != tui.SetupAccepted {
+				return navRes, err
+			}
+			u = strings.TrimSpace(u)
+			if u != "" {
+				stagedBaseURL = &u
+			}
+		case "Reset to provider default":
+			empty := ""
+			stagedBaseURL = &empty
+		}
+
+		if stagedKey != "" {
+			registerSetupSecret(policy, stderr, stagedKey)
+			draft.apiKey = stagedKey
+			draft.apiKeyPath = stagedKeyPath
+		}
+		if stagedBaseURL != nil {
+			draft.baseURL = stagedBaseURL
+		}
+		return tui.SetupAccepted, nil
+	}
+}
+
+func promptNewAPIKey(ui setupUI, provider, userPath string, profile config.ProviderProfile, draft *providerDraft) (string, string, tui.SetupNavResult, error) {
+	key, nav, err := ui.PromptLineNav(provider+" API key", "", true)
+	if err != nil || nav != tui.SetupAccepted {
+		return "", "", nav, err
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", "", tui.SetupBack, errors.New("API key must not be empty")
+	}
+	defaultPath, err := config.DefaultAPIKeyPath(provider)
 	if err != nil {
-		return plan, false, err
+		return "", "", tui.SetupCancelled, err
 	}
-	if !accepted {
-		return plan, true, nil
+	if draft.apiKeyPath != nil && strings.TrimSpace(*draft.apiKeyPath) != "" {
+		defaultPath = *draft.apiKeyPath
+	} else if profile.APIKeyPath != nil && strings.TrimSpace(*profile.APIKeyPath) != "" {
+		defaultPath = *profile.APIKeyPath
 	}
-	if chosenLabel == keepProviderLabel {
-		plan.keepProvider = true
-		plan.provider = currentProvider
-	} else {
-		plan.provider = labelToProvider[chosenLabel]
+	keyPath, nav, err := ui.PromptLineNav("Save API key to file", defaultPath, false)
+	if err != nil || nav != tui.SetupAccepted {
+		return "", "", nav, err
 	}
+	resolvedKeyPath, err := config.ResolveAPIKeyPath(strings.TrimSpace(keyPath), filepath.Dir(userPath))
+	if err != nil {
+		return "", "", tui.SetupCancelled, err
+	}
+	return key, resolvedKeyPath, tui.SetupAccepted, nil
+}
 
-	// 2. Credentials & Endpoint
-	overrideBaseURL, overrideAPIKey, cancelled, err := configureProviderCredentials(ui, cfg, userPath, &plan, stdin, stdout, deps)
-	if err != nil || cancelled {
-		return plan, cancelled, err
-	}
-	registerSetupSecret(policy, stderr, overrideAPIKey)
-
-	// 3. Live verification & Model selection
+func verifyAndSelectModel(ui setupUI, state *setupState, provider string, stdin io.Reader, stdout, stderr io.Writer, policy *redaction.Policy, deps setupDeps) (tui.SetupNavResult, error) {
 	var models []string
 	var thinkingCap func(string) llm.ThinkingCapability
 	manualModel := false
 
 	for {
-		fmt.Fprintf(stdout, "Verifying %s connection and fetching models...\n", plan.provider)
+		overrideBase, overrideKey := state.effectiveConnection(provider)
+		fmt.Fprintf(stdout, "Verifying %s connection and fetching models...\n", provider)
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		res, probeErr := deps.probeModels(ctx, cfg, plan.provider, overrideBaseURL, overrideAPIKey, policy)
+		res, probeErr := deps.probeModels(ctx, state.initial, provider, overrideBase, overrideKey, policy)
 		cancel()
 		if probeErr == nil {
 			models = res.models
@@ -271,30 +688,35 @@ func runBasicSetup(ui setupUI, cfg config.Config, userPath string, stdin io.Read
 		}
 		fmt.Fprintf(stdout, "Connection check failed: %s\n", msg)
 
-		action, ok, selErr := ui.SelectOption(
+		action, nav, selErr := ui.SelectOptionNav(
 			"connection failure action",
 			[]string{
 				"Retry connection",
-				"Re-enter credentials / endpoint",
+				"Re-enter credentials & endpoint",
 				"Enter model name manually (skip live check)",
-				"Cancel setup",
+				backMenuItem,
 			},
 			nil,
 			"Retry connection",
 			false,
 		)
 		if selErr != nil {
-			return plan, false, selErr
+			return tui.SetupCancelled, selErr
 		}
-		if !ok || action == "Cancel setup" {
-			return plan, true, nil
+		if nav == tui.SetupCancelled {
+			return tui.SetupCancelled, nil
 		}
-		if action == "Re-enter credentials / endpoint" {
-			overrideBaseURL, overrideAPIKey, cancelled, err = configureProviderCredentials(ui, cfg, userPath, &plan, stdin, stdout, deps)
-			if err != nil || cancelled {
-				return plan, cancelled, err
+		if nav == tui.SetupBack || action == backMenuItem {
+			return tui.SetupBack, nil
+		}
+		if action == "Re-enter credentials & endpoint" {
+			credNav, err := configureProviderCredentials(ui, state, provider, stdin, stdout, stderr, policy, deps)
+			if err != nil {
+				return tui.SetupCancelled, err
 			}
-			registerSetupSecret(policy, stderr, overrideAPIKey)
+			if credNav == tui.SetupCancelled {
+				return tui.SetupCancelled, nil
+			}
 			continue
 		}
 		if action == "Enter model name manually (skip live check)" {
@@ -303,93 +725,278 @@ func runBasicSetup(ui setupUI, cfg config.Config, userPath string, stdin io.Read
 		}
 	}
 
-	// 4. Model selection
-	currentModel, currentThinking := cfg.EffectiveModel(plan.provider)
-	if currentModel != "" {
-		keepModelLabel := fmt.Sprintf("%s (%s)", keepOriginalPrefix, currentModel)
-		choice, ok, err := ui.SelectOption(
-			"model action",
-			[]string{keepModelLabel, "Select a different model"},
-			nil,
-			keepModelLabel,
-			false,
-		)
-		if err != nil {
-			return plan, false, err
-		}
-		if !ok {
-			return plan, true, nil
-		}
-		if choice == keepModelLabel {
-			plan.keepModel = true
-			plan.model = currentModel
-		}
-	}
+	currentModel, currentThinking := state.effectiveModel(provider)
+	draft := state.draft(provider)
 
-	if !plan.keepModel {
+	for {
+		var chosenModel string
 		if manualModel || len(models) == 0 {
-			m, ok, err := ui.PromptLine(fmt.Sprintf("%s model", plan.provider), currentModel, false)
+			m, nav, err := ui.PromptLineNav(provider+" model", currentModel, false)
 			if err != nil {
-				return plan, false, err
+				return tui.SetupCancelled, err
 			}
-			if !ok {
-				return plan, true, nil
+			if nav != tui.SetupAccepted {
+				return nav, nil
 			}
 			m = strings.TrimSpace(m)
 			if m == "" {
-				return plan, false, errors.New("model must not be empty")
+				return tui.SetupBack, errors.New("model must not be empty")
 			}
-			plan.model = m
+			chosenModel = m
 		} else {
-			m, ok, err := ui.SelectModel(models, currentModel)
+			m, nav, err := ui.SelectModelNav(models, currentModel)
 			if err != nil {
-				return plan, false, err
+				return tui.SetupCancelled, err
 			}
-			if !ok {
-				return plan, true, nil
+			if nav != tui.SetupAccepted {
+				return nav, nil
 			}
-			plan.model = m
+			chosenModel = m
+		}
+
+		if thinkingCap != nil {
+			cap := thinkingCap(chosenModel)
+			if cap.Adjustable && len(cap.Levels) > 0 {
+				defaultThink := currentThinking
+				if defaultThink == "" {
+					defaultThink = cap.Default
+				}
+				chosenThink, nav, err := ui.SelectThinkingNav(cap.Levels, defaultThink)
+				if err != nil {
+					return tui.SetupCancelled, err
+				}
+				if nav == tui.SetupCancelled {
+					return tui.SetupCancelled, nil
+				}
+				if nav == tui.SetupBack {
+					// Step back from thinking picker to model picker.
+					currentModel = chosenModel
+					continue
+				}
+				draft.thinking = chosenThink
+				draft.thinkingChanged = true
+			}
+		}
+
+		draft.model = chosenModel
+		draft.modelChanged = true
+		return tui.SetupAccepted, nil
+	}
+}
+
+func runSandboxMenu(ui setupUI, state *setupState) (bool, error) {
+	currentItem := ""
+	for {
+		sbLabel := "Enable sandbox"
+		if state.effectiveSandbox() {
+			sbLabel = "Disable sandbox"
+		}
+		detected := detectExistingPaths(defaultSandboxCandidatePaths)
+		paths := state.effectiveSandboxPaths()
+		pathsLabel := fmt.Sprintf("sandbox_command_paths (%d configured, %d detected)", len(paths), len(detected))
+
+		options := []string{sbLabel}
+		if len(detected) > 0 || len(paths) > 0 {
+			options = append(options, pathsLabel)
+		}
+		options = append(options, backMenuItem)
+
+		choice, nav, err := ui.SelectOptionNav("Linux sandbox", options, nil, currentItem, false)
+		if err != nil {
+			return false, err
+		}
+		if nav == tui.SetupCancelled {
+			return true, nil
+		}
+		if nav == tui.SetupBack || choice == backMenuItem {
+			return false, nil
+		}
+		currentItem = choice
+
+		switch choice {
+		case sbLabel:
+			v := !state.effectiveSandbox()
+			state.sandbox = &v
+		case pathsLabel:
+			var subOpts []string
+			useDetected := fmt.Sprintf("Use detected executable paths (%d found)", len(detected))
+			if len(detected) > 0 {
+				subOpts = append(subOpts, useDetected)
+			}
+			if len(paths) > 0 {
+				subOpts = append(subOpts, "Clear sandbox_command_paths")
+			}
+			subOpts = append(subOpts, backMenuItem)
+			subChoice, subNav, err := ui.SelectOptionNav("sandbox_command_paths", subOpts, nil, subOpts[0], false)
+			if err != nil {
+				return false, err
+			}
+			if subNav == tui.SetupCancelled {
+				return true, nil
+			}
+			if subNav == tui.SetupAccepted {
+				if subChoice == useDetected {
+					state.sandboxCommandPaths = detected
+					state.sandboxPathsChanged = true
+				} else if subChoice == "Clear sandbox_command_paths" {
+					state.sandboxCommandPaths = nil
+					state.sandboxPathsChanged = true
+				}
+			}
 		}
 	}
+}
 
-	// 5. Thinking level selection
-	thinkingSelected := false
-	if thinkingCap != nil {
-		cap := thinkingCap(plan.model)
-		if cap.Adjustable && len(cap.Levels) > 0 {
-			thinkingSelected = true
-			levels := make([]string, 0, len(cap.Levels)+1)
-			keepThinkLabel := ""
-			if currentThinking != "" {
-				keepThinkLabel = fmt.Sprintf("%s (%s)", keepOriginalPrefix, currentThinking)
-				levels = append(levels, keepThinkLabel)
+func runBehaviorMenu(ui setupUI, state *setupState) (bool, error) {
+	currentItem := ""
+	for {
+		arState := "enabled"
+		if !state.effectiveAutoreview() {
+			arState = "disabled"
+		}
+		intState := "disabled"
+		if state.effectiveInteractive() {
+			intState = "enabled"
+		}
+		arLabel := fmt.Sprintf("Toggle autoreview (currently: %s)", arState)
+		intLabel := fmt.Sprintf("Toggle interactive questions (currently: %s)", intState)
+
+		choice, nav, err := ui.SelectOptionNav("behavior", []string{arLabel, intLabel, backMenuItem}, nil, currentItem, false)
+		if err != nil {
+			return false, err
+		}
+		if nav == tui.SetupCancelled {
+			return true, nil
+		}
+		if nav == tui.SetupBack || choice == backMenuItem {
+			return false, nil
+		}
+		currentItem = choice
+
+		switch choice {
+		case arLabel:
+			v := !state.effectiveAutoreview()
+			state.autoreview = &v
+		case intLabel:
+			v := !state.effectiveInteractive()
+			state.interactive = &v
+		}
+	}
+}
+
+func applySetupState(writer *config.RuntimePreferenceWriter, state *setupState, deps setupDeps) error {
+	for provider, d := range state.providers {
+		if d.baseURL != nil || d.apiKeyPath != nil {
+			if err := writer.PersistProviderConnection(provider, d.baseURL, d.apiKeyPath); err != nil {
+				return err
 			}
-			levels = append(levels, cap.Levels...)
-			defaultThink := cap.Default
-			if keepThinkLabel != "" {
-				defaultThink = keepThinkLabel
+		}
+		if d.apiKey != "" && d.apiKeyPath != nil {
+			if _, err := deps.writeKeyFile(*d.apiKeyPath, d.apiKey); err != nil {
+				return err
 			}
-			chosenThink, ok, err := ui.SelectThinking(levels, defaultThink)
-			if err != nil {
-				return plan, false, err
+		}
+		if d.modelChanged || d.thinkingChanged {
+			model, thinking := state.effectiveModel(provider)
+			if model != "" {
+				if provider == state.activeProvider && state.providerChanged {
+					if err := writer.PersistProvider(provider, model, thinking); err != nil {
+						return err
+					}
+				} else {
+					if err := writer.PersistModel(provider, model, thinking); err != nil {
+						return err
+					}
+				}
 			}
-			if !ok {
-				return plan, true, nil
-			}
-			if keepThinkLabel != "" && chosenThink == keepThinkLabel {
-				plan.keepThinking = true
-				plan.thinking = currentThinking
+		}
+	}
+	if state.providerChanged {
+		d := state.providers[state.activeProvider]
+		if d == nil || (!d.modelChanged && !d.thinkingChanged) {
+			model, thinking := state.effectiveModel(state.activeProvider)
+			if model == "" {
+				if err := writer.PersistProviderConnection(state.activeProvider, nil, nil); err != nil {
+					return err
+				}
 			} else {
-				plan.thinking = chosenThink
+				if err := writer.PersistProvider(state.activeProvider, model, thinking); err != nil {
+					return err
+				}
 			}
 		}
 	}
-	if !thinkingSelected && currentThinking != "" {
-		plan.keepThinking = true
-		plan.thinking = currentThinking
+	if state.themeChanged && state.theme != "" {
+		if err := writer.PersistTheme(state.theme); err != nil {
+			return err
+		}
 	}
+	if state.sandbox != nil {
+		if err := writer.PersistSandbox(*state.sandbox); err != nil {
+			return err
+		}
+	}
+	if state.sandboxPathsChanged {
+		if err := writer.PersistSandboxCommandPaths(state.sandboxCommandPaths); err != nil {
+			return err
+		}
+	}
+	if state.autoreview != nil {
+		if err := writer.PersistAutoreview(*state.autoreview); err != nil {
+			return err
+		}
+	}
+	if state.interactive != nil {
+		if err := writer.PersistInteractive(*state.interactive); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-	return plan, false, nil
+func printSetupSummary(out io.Writer, userPath string, state *setupState) {
+	fmt.Fprintln(out, "")
+	fmt.Fprintf(out, "Saved setup to %s:\n", userPath)
+	if state.providerChanged {
+		fmt.Fprintf(out, "  provider: %s\n", state.activeProvider)
+	}
+	for _, p := range setupBuiltInProviders {
+		d, ok := state.providers[p]
+		if !ok {
+			continue
+		}
+		if d.baseURL != nil {
+			if *d.baseURL == "" {
+				fmt.Fprintf(out, "  providers.%s.base_url: (reset to default)\n", p)
+			} else {
+				fmt.Fprintf(out, "  providers.%s.base_url: %s\n", p, *d.baseURL)
+			}
+		}
+		if d.apiKeyPath != nil {
+			fmt.Fprintf(out, "  providers.%s.api_key_path: %s (0600)\n", p, *d.apiKeyPath)
+		}
+		if d.modelChanged {
+			fmt.Fprintf(out, "  providers.%s.model: %s\n", p, d.model)
+		}
+		if d.thinkingChanged {
+			fmt.Fprintf(out, "  providers.%s.thinking: %s\n", p, d.thinking)
+		}
+	}
+	if state.themeChanged && state.theme != "" {
+		fmt.Fprintf(out, "  theme: %s\n", state.theme)
+	}
+	if state.sandbox != nil {
+		fmt.Fprintf(out, "  sandbox: %v\n", *state.sandbox)
+	}
+	if state.sandboxPathsChanged {
+		fmt.Fprintf(out, "  sandbox_command_paths: %d path(s)\n", len(state.sandboxCommandPaths))
+	}
+	if state.autoreview != nil {
+		fmt.Fprintf(out, "  autoreview: %v\n", *state.autoreview)
+	}
+	if state.interactive != nil {
+		fmt.Fprintf(out, "  interactive: %v\n", *state.interactive)
+	}
 }
 
 func registerSetupSecret(policy *redaction.Policy, stderr io.Writer, secret string) {
@@ -401,461 +1008,6 @@ func registerSetupSecret(policy *redaction.Policy, stderr io.Writer, secret stri
 	}
 	if writer, ok := stderr.(*redaction.DiagnosticWriter); ok && writer.Policy != nil {
 		writer.Policy.RegisterSecrets(secret)
-	}
-}
-
-func configureProviderCredentials(ui setupUI, cfg config.Config, userPath string, plan *setupPlan, stdin io.Reader, stdout io.Writer, deps setupDeps) (overrideBaseURL, overrideAPIKey string, cancelled bool, err error) {
-	existingBase, existingKey := cfg.ProviderConnection(plan.provider)
-	profile := cfg.Providers[plan.provider]
-
-	switch plan.provider {
-	case "chatgpt":
-		if isProviderConfigured(cfg, "chatgpt") {
-			keepLabel := fmt.Sprintf("%s (ChatGPT OAuth configured)", keepOriginalPrefix)
-			choice, ok, err := ui.SelectOption(
-				"ChatGPT authentication",
-				[]string{keepLabel, "Re-authenticate with ChatGPT"},
-				nil,
-				keepLabel,
-				false,
-			)
-			if err != nil {
-				return "", "", false, err
-			}
-			if !ok {
-				return "", "", true, nil
-			}
-			if choice == keepLabel {
-				return "", "", false, nil
-			}
-		}
-		oauthPath := cfg.ChatGPT.OAuthPath
-		if oauthPath == "" {
-			oauthPath = chatgptoauth.DefaultPath
-		}
-		if err := deps.chatgptLogin(oauthPath, stdin, stdout); err != nil {
-			return "", "", false, err
-		}
-		return "", "", false, nil
-
-	case "ollama":
-		if profile.BaseURL != nil && strings.TrimSpace(*profile.BaseURL) != "" {
-			keepLabel := fmt.Sprintf("%s (%s)", keepOriginalPrefix, *profile.BaseURL)
-			choice, ok, err := ui.SelectOption(
-				"Ollama base URL",
-				[]string{keepLabel, "Change Ollama base URL"},
-				nil,
-				keepLabel,
-				false,
-			)
-			if err != nil {
-				return "", "", false, err
-			}
-			if !ok {
-				return "", "", true, nil
-			}
-			if choice == keepLabel {
-				return *profile.BaseURL, "", false, nil
-			}
-		}
-		defURL := existingBase
-		if defURL == "" {
-			defURL = "http://127.0.0.1:11434"
-		}
-		url, ok, err := ui.PromptLine("Ollama base URL", defURL, false)
-		if err != nil {
-			return "", "", false, err
-		}
-		if !ok {
-			return "", "", true, nil
-		}
-		url = strings.TrimSpace(url)
-		if profile.BaseURL != nil || url != defURL {
-			plan.baseURL = &url
-		}
-		return url, "", false, nil
-
-	default: // openai, opencode-go, gemini
-		needNewKey := true
-		if existingKey != "" || (profile.APIKeyPath != nil && strings.TrimSpace(*profile.APIKeyPath) != "") {
-			keepLabel := fmt.Sprintf("%s (API key configured)", keepOriginalPrefix)
-			choice, ok, err := ui.SelectOption(
-				fmt.Sprintf("%s API key", plan.provider),
-				[]string{keepLabel, "Enter a new API key (saved to 0600 key file)"},
-				nil,
-				keepLabel,
-				false,
-			)
-			if err != nil {
-				return "", "", false, err
-			}
-			if !ok {
-				return "", "", true, nil
-			}
-			if choice == keepLabel {
-				needNewKey = false
-				overrideAPIKey = existingKey
-			}
-		}
-		if needNewKey {
-			key, ok, err := ui.PromptLine(fmt.Sprintf("%s API key", plan.provider), "", true)
-			if err != nil {
-				return "", "", false, err
-			}
-			if !ok {
-				return "", "", true, nil
-			}
-			key = strings.TrimSpace(key)
-			if key == "" {
-				return "", "", false, errors.New("API key must not be empty")
-			}
-			defaultPath, err := config.DefaultAPIKeyPath(plan.provider)
-			if err != nil {
-				return "", "", false, err
-			}
-			if profile.APIKeyPath != nil && strings.TrimSpace(*profile.APIKeyPath) != "" {
-				defaultPath = *profile.APIKeyPath
-			}
-			keyPath, ok, err := ui.PromptLine("Save API key to file", defaultPath, false)
-			if err != nil {
-				return "", "", false, err
-			}
-			if !ok {
-				return "", "", true, nil
-			}
-			keyPath = strings.TrimSpace(keyPath)
-			resolvedKeyPath, err := config.ResolveAPIKeyPath(keyPath, filepath.Dir(userPath))
-			if err != nil {
-				return "", "", false, err
-			}
-			plan.apiKey = key
-			plan.apiKeyPath = &resolvedKeyPath
-			overrideAPIKey = key
-		}
-
-		// Optional custom base URL
-		if profile.BaseURL != nil && strings.TrimSpace(*profile.BaseURL) != "" {
-			keepLabel := fmt.Sprintf("%s (%s)", keepOriginalPrefix, *profile.BaseURL)
-			choice, ok, err := ui.SelectOption(
-				fmt.Sprintf("%s base URL", plan.provider),
-				[]string{keepLabel, "Set custom base URL", "Reset to provider default"},
-				nil,
-				keepLabel,
-				false,
-			)
-			if err != nil {
-				return "", "", false, err
-			}
-			if !ok {
-				return "", "", true, nil
-			}
-			switch choice {
-			case keepLabel:
-				overrideBaseURL = *profile.BaseURL
-			case "Reset to provider default":
-				empty := ""
-				plan.baseURL = &empty
-				overrideBaseURL = ""
-			default:
-				u, ok, err := ui.PromptLine(fmt.Sprintf("%s base URL", plan.provider), *profile.BaseURL, false)
-				if err != nil || !ok {
-					return "", "", !ok, err
-				}
-				u = strings.TrimSpace(u)
-				plan.baseURL = &u
-				overrideBaseURL = u
-			}
-		} else {
-			choice, ok, err := ui.SelectOption(
-				fmt.Sprintf("%s endpoint", plan.provider),
-				[]string{"Use default endpoint", "Set custom base URL"},
-				nil,
-				"Use default endpoint",
-				false,
-			)
-			if err != nil {
-				return "", "", false, err
-			}
-			if !ok {
-				return "", "", true, nil
-			}
-			if choice == "Set custom base URL" {
-				u, ok, err := ui.PromptLine(fmt.Sprintf("%s base URL", plan.provider), existingBase, false)
-				if err != nil || !ok {
-					return "", "", !ok, err
-				}
-				u = strings.TrimSpace(u)
-				if u != "" {
-					plan.baseURL = &u
-					overrideBaseURL = u
-				}
-			} else {
-				overrideBaseURL = existingBase
-			}
-		}
-		return overrideBaseURL, overrideAPIKey, false, nil
-	}
-}
-
-func runAdvancedSetup(ui setupUI, cfg config.Config, plan *setupPlan, goos string) (bool, error) {
-	// 1. Theme
-	currentTheme := strings.TrimSpace(cfg.Theme)
-	themeDisplay := currentTheme
-	if themeDisplay == "" {
-		themeDisplay = "default"
-	} else {
-		themeDisplay += " (configured)"
-	}
-	keepThemeLabel := fmt.Sprintf("%s (%s)", keepOriginalPrefix, themeDisplay)
-	themeAction, ok, err := ui.SelectOption(
-		"terminal theme",
-		[]string{keepThemeLabel, "Choose a theme (live preview)"},
-		nil,
-		keepThemeLabel,
-		false,
-	)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		return true, nil
-	}
-	if themeAction == keepThemeLabel {
-		plan.keepTheme = true
-	} else {
-		chosenTheme, ok, err := ui.SelectTheme(cfg.Theme)
-		if err != nil {
-			return false, err
-		}
-		if !ok {
-			return true, nil
-		}
-		plan.theme = chosenTheme
-	}
-
-	// 2. Sandbox (Linux only)
-	if goos == "linux" {
-		sbDisplay := "default: disabled"
-		if cfg.Sandbox != nil {
-			if *cfg.Sandbox {
-				sbDisplay = "configured: enabled"
-			} else {
-				sbDisplay = "configured: disabled"
-			}
-		}
-		keepSandboxLabel := fmt.Sprintf("%s (%s)", keepOriginalPrefix, sbDisplay)
-		sbChoice, ok, err := ui.SelectOption(
-			"Linux bubblewrap sandbox",
-			[]string{keepSandboxLabel, "Enable sandbox", "Disable sandbox"},
-			nil,
-			keepSandboxLabel,
-			false,
-		)
-		if err != nil {
-			return false, err
-		}
-		if !ok {
-			return true, nil
-		}
-		sandboxEnabled := cfg.Sandbox != nil && *cfg.Sandbox
-		if sbChoice == "Enable sandbox" {
-			v := true
-			plan.sandbox = &v
-			sandboxEnabled = true
-		} else if sbChoice == "Disable sandbox" {
-			v := false
-			plan.sandbox = &v
-			sandboxEnabled = false
-		}
-
-		if sandboxEnabled {
-			detected := detectExistingPaths(defaultSandboxCandidatePaths)
-			if len(cfg.SandboxCommandPaths) > 0 || len(detected) > 0 {
-				var pathOpts []string
-				keepPathsLabel := ""
-				if len(cfg.SandboxCommandPaths) > 0 {
-					keepPathsLabel = fmt.Sprintf("%s (%d path(s) configured)", keepOriginalPrefix, len(cfg.SandboxCommandPaths))
-					pathOpts = append(pathOpts, keepPathsLabel)
-				}
-				useDetectedLabel := fmt.Sprintf("Use detected executable paths (%d found)", len(detected))
-				if len(detected) > 0 {
-					pathOpts = append(pathOpts, useDetectedLabel)
-				}
-				pathOpts = append(pathOpts, "Skip / leave empty")
-
-				defaultPathOpt := pathOpts[0]
-				pathChoice, ok, err := ui.SelectOption("sandbox_command_paths", pathOpts, nil, defaultPathOpt, false)
-				if err != nil {
-					return false, err
-				}
-				if !ok {
-					return true, nil
-				}
-				if pathChoice == useDetectedLabel {
-					plan.sandboxCommandPaths = detected
-					plan.setSandboxPaths = true
-				}
-			}
-		}
-	}
-
-	// 3. Autoreview
-	arDisplay := "default: enabled"
-	if cfg.AutoReview != nil {
-		if *cfg.AutoReview {
-			arDisplay = "configured: enabled"
-		} else {
-			arDisplay = "configured: disabled"
-		}
-	}
-	keepARLabel := fmt.Sprintf("%s (%s)", keepOriginalPrefix, arDisplay)
-	arChoice, ok, err := ui.SelectOption(
-		"automatic code review (autoreview)",
-		[]string{keepARLabel, "Enable autoreview", "Disable autoreview"},
-		nil,
-		keepARLabel,
-		false,
-	)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		return true, nil
-	}
-	if arChoice == "Enable autoreview" {
-		v := true
-		plan.autoreview = &v
-	} else if arChoice == "Disable autoreview" {
-		v := false
-		plan.autoreview = &v
-	}
-
-	// 4. Interactive questions
-	intDisplay := "default: disabled"
-	if cfg.Interactive != nil {
-		if *cfg.Interactive {
-			intDisplay = "configured: enabled"
-		} else {
-			intDisplay = "configured: disabled"
-		}
-	}
-	keepIntLabel := fmt.Sprintf("%s (%s)", keepOriginalPrefix, intDisplay)
-	intChoice, ok, err := ui.SelectOption(
-		"interactive clarifying questions",
-		[]string{keepIntLabel, "Enable interactive questions", "Disable interactive questions"},
-		nil,
-		keepIntLabel,
-		false,
-	)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		return true, nil
-	}
-	if intChoice == "Enable interactive questions" {
-		v := true
-		plan.interactive = &v
-	} else if intChoice == "Disable interactive questions" {
-		v := false
-		plan.interactive = &v
-	}
-
-	return false, nil
-}
-
-func applySetupPlan(writer *config.RuntimePreferenceWriter, plan *setupPlan, deps setupDeps) error {
-	if plan.baseURL != nil || plan.apiKeyPath != nil {
-		if err := writer.PersistProviderConnection(plan.provider, plan.baseURL, plan.apiKeyPath); err != nil {
-			return err
-		}
-	}
-	if plan.apiKey != "" && plan.apiKeyPath != nil {
-		if _, err := deps.writeKeyFile(*plan.apiKeyPath, plan.apiKey); err != nil {
-			return err
-		}
-	}
-	if !plan.keepProvider || !plan.keepModel || (!plan.keepThinking && plan.thinking != "") {
-		if plan.keepProvider {
-			if !plan.keepModel || !plan.keepThinking {
-				if err := writer.PersistModel(plan.provider, plan.model, plan.thinking); err != nil {
-					return err
-				}
-			}
-		} else {
-			if err := writer.PersistProvider(plan.provider, plan.model, plan.thinking); err != nil {
-				return err
-			}
-		}
-	}
-	if !plan.keepTheme && plan.theme != "" {
-		if err := writer.PersistTheme(plan.theme); err != nil {
-			return err
-		}
-	}
-	if plan.sandbox != nil {
-		if err := writer.PersistSandbox(*plan.sandbox); err != nil {
-			return err
-		}
-	}
-	if plan.setSandboxPaths {
-		if err := writer.PersistSandboxCommandPaths(plan.sandboxCommandPaths); err != nil {
-			return err
-		}
-	}
-	if plan.autoreview != nil {
-		if err := writer.PersistAutoreview(*plan.autoreview); err != nil {
-			return err
-		}
-	}
-	if plan.interactive != nil {
-		if err := writer.PersistInteractive(*plan.interactive); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func printSetupSummary(out io.Writer, userPath string, plan *setupPlan) {
-	fmt.Fprintln(out, "")
-	fmt.Fprintf(out, "Saved setup to %s:\n", userPath)
-	if plan.keepProvider {
-		fmt.Fprintf(out, "  provider: %s (kept original)\n", plan.provider)
-	} else {
-		fmt.Fprintf(out, "  provider: %s\n", plan.provider)
-	}
-	if plan.baseURL != nil {
-		if *plan.baseURL == "" {
-			fmt.Fprintln(out, "  base_url: (reset to default)")
-		} else {
-			fmt.Fprintf(out, "  base_url: %s\n", *plan.baseURL)
-		}
-	}
-	if plan.apiKeyPath != nil {
-		fmt.Fprintf(out, "  api_key_path: %s (0600)\n", *plan.apiKeyPath)
-	}
-	if plan.keepModel {
-		fmt.Fprintf(out, "  model: %s (kept original)\n", plan.model)
-	} else {
-		fmt.Fprintf(out, "  model: %s\n", plan.model)
-	}
-	if !plan.keepThinking && plan.thinking != "" {
-		fmt.Fprintf(out, "  thinking: %s\n", plan.thinking)
-	}
-	if !plan.keepTheme && plan.theme != "" {
-		fmt.Fprintf(out, "  theme: %s\n", plan.theme)
-	}
-	if plan.sandbox != nil {
-		fmt.Fprintf(out, "  sandbox: %v\n", *plan.sandbox)
-	}
-	if plan.setSandboxPaths {
-		fmt.Fprintf(out, "  sandbox_command_paths: %d path(s)\n", len(plan.sandboxCommandPaths))
-	}
-	if plan.autoreview != nil {
-		fmt.Fprintf(out, "  autoreview: %v\n", *plan.autoreview)
-	}
-	if plan.interactive != nil {
-		fmt.Fprintf(out, "  interactive: %v\n", *plan.interactive)
 	}
 }
 

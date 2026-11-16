@@ -116,23 +116,57 @@ func (s *SetupUI) visibleRows(total int) int {
 	return maxRows
 }
 
+// SetupNavResult describes how a standalone setup prompt or selector ended.
+type SetupNavResult int
+
+const (
+	SetupCancelled SetupNavResult = iota
+	SetupAccepted
+	SetupBack
+)
+
+func mapSelectorResult(res selectorResult) SetupNavResult {
+	switch res {
+	case selectorAccepted:
+		return SetupAccepted
+	case selectorBack:
+		return SetupBack
+	default:
+		return SetupCancelled
+	}
+}
+
 // SelectOption displays an interactive arrow-key option picker.
 func (s *SetupUI) SelectOption(noun string, options []string, disabled map[string]bool, current string, searchable bool) (string, bool, error) {
+	selected, res, err := s.SelectOptionNav(noun, options, disabled, current, searchable)
+	return selected, res == SetupAccepted, err
+}
+
+// SelectOptionNav displays an interactive arrow-key option picker and
+// distinguishes Esc (SetupBack) from Ctrl+C (SetupCancelled).
+func (s *SetupUI) SelectOptionNav(noun string, options []string, disabled map[string]bool, current string, searchable bool) (string, SetupNavResult, error) {
 	var selected string
-	var accepted bool
+	var result selectorResult
 	err := s.withRawMode(func() error {
 		var selErr error
-		selected, accepted, selErr = selectOptionWithDisabled(
+		selected, result, selErr = selectOptionWithResultAndDisabled(
 			s.in, s.selectorOut(), options, disabled, current,
 			s.visibleRows(len(options)), s.width, s.color, noun, searchable,
 		)
 		return selErr
 	})
-	return selected, accepted, err
+	return selected, mapSelectorResult(result), err
 }
 
 // SelectModel displays a searchable interactive model picker.
 func (s *SetupUI) SelectModel(models []string, current string) (string, bool, error) {
+	selected, res, err := s.SelectModelNav(models, current)
+	return selected, res == SetupAccepted, err
+}
+
+// SelectModelNav displays a searchable interactive model picker and
+// distinguishes Esc (SetupBack) from Ctrl+C (SetupCancelled).
+func (s *SetupUI) SelectModelNav(models []string, current string) (string, SetupNavResult, error) {
 	var selected string
 	var result selectorResult
 	err := s.withRawMode(func() error {
@@ -143,26 +177,40 @@ func (s *SetupUI) SelectModel(models []string, current string) (string, bool, er
 		)
 		return selErr
 	})
-	return selected, result == selectorAccepted, err
+	return selected, mapSelectorResult(result), err
 }
 
 // SelectThinking displays an interactive thinking-level picker.
 func (s *SetupUI) SelectThinking(levels []string, current string) (string, bool, error) {
+	selected, res, err := s.SelectThinkingNav(levels, current)
+	return selected, res == SetupAccepted, err
+}
+
+// SelectThinkingNav displays an interactive thinking-level picker and
+// distinguishes Esc (SetupBack) from Ctrl+C (SetupCancelled).
+func (s *SetupUI) SelectThinkingNav(levels []string, current string) (string, SetupNavResult, error) {
 	var selected string
-	var accepted bool
+	var result selectorResult
 	err := s.withRawMode(func() error {
 		var selErr error
-		selected, accepted, selErr = selectThinking(
+		selected, result, selErr = selectOptionWithResult(
 			s.in, s.selectorOut(), levels, current,
-			s.visibleRows(len(levels)), s.width, s.color,
+			s.visibleRows(len(levels)), s.width, s.color, "thinking level", false,
 		)
 		return selErr
 	})
-	return selected, accepted, err
+	return selected, mapSelectorResult(result), err
 }
 
 // SelectTheme displays the interactive theme picker with live preview.
 func (s *SetupUI) SelectTheme(current string) (string, bool, error) {
+	selected, res, err := s.SelectThemeNav(current)
+	return selected, res == SetupAccepted, err
+}
+
+// SelectThemeNav displays the interactive theme picker with live preview.
+// Esc/Ctrl+C returns SetupBack so the user returns to the previous menu.
+func (s *SetupUI) SelectThemeNav(current string) (string, SetupNavResult, error) {
 	palettes := qtheme.All()
 	var selected string
 	var accepted bool
@@ -182,7 +230,13 @@ func (s *SetupUI) SelectTheme(current string) (string, bool, error) {
 		)
 		return selErr
 	})
-	return selected, accepted, err
+	if err != nil {
+		return "", SetupCancelled, err
+	}
+	if accepted {
+		return selected, SetupAccepted, nil
+	}
+	return "", SetupBack, nil
 }
 
 // PromptLine prompts the user for a single line of text. If secret is true,
@@ -190,6 +244,13 @@ func (s *SetupUI) SelectTheme(current string) (string, bool, error) {
 // empty input returns defaultVal (if non-empty). Ctrl+C or Esc cancels and
 // returns accepted=false.
 func (s *SetupUI) PromptLine(label, defaultVal string, secret bool) (string, bool, error) {
+	val, res, err := s.PromptLineNav(label, defaultVal, secret)
+	return val, res == SetupAccepted, err
+}
+
+// PromptLineNav prompts the user for a single line of text, distinguishing Esc
+// (SetupBack) from Ctrl+C (SetupCancelled).
+func (s *SetupUI) PromptLineNav(label, defaultVal string, secret bool) (string, SetupNavResult, error) {
 	if defaultVal != "" && !secret {
 		fmt.Fprintf(s.out, "%s [%s]: ", label, defaultVal)
 	} else {
@@ -200,20 +261,20 @@ func (s *SetupUI) PromptLine(label, defaultVal string, secret bool) (string, boo
 		reader := bufio.NewReader(s.in)
 		line, err := reader.ReadString('\n')
 		if err != nil && err != io.EOF {
-			return "", false, err
+			return "", SetupCancelled, err
 		}
 		if err == io.EOF && line == "" {
-			return "", false, nil
+			return "", SetupCancelled, nil
 		}
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
-			return defaultVal, true, nil
+			return defaultVal, SetupAccepted, nil
 		}
-		return line, true, nil
+		return line, SetupAccepted, nil
 	}
 
 	var buf []rune
-	cancelled := false
+	nav := SetupAccepted
 	err := s.withRawMode(func() error {
 		b := make([]byte, 1)
 		var utf8Buf []byte
@@ -230,8 +291,12 @@ func (s *SetupUI) PromptLine(label, defaultVal string, secret bool) (string, boo
 			case '\r', '\n':
 				fmt.Fprint(s.out, "\r\n")
 				return nil
-			case ctrlC, 0x1b:
-				cancelled = true
+			case ctrlC:
+				nav = SetupCancelled
+				fmt.Fprint(s.out, "\r\n")
+				return nil
+			case 0x1b:
+				nav = SetupBack
 				fmt.Fprint(s.out, "\r\n")
 				return nil
 			case 0x7f, 0x08: // Backspace / DEL
@@ -262,14 +327,14 @@ func (s *SetupUI) PromptLine(label, defaultVal string, secret bool) (string, boo
 		}
 	})
 	if err != nil {
-		return "", false, err
+		return "", SetupCancelled, err
 	}
-	if cancelled {
-		return "", false, nil
+	if nav != SetupAccepted {
+		return "", nav, nil
 	}
 	val := string(buf)
 	if val == "" {
-		return defaultVal, true, nil
+		return defaultVal, SetupAccepted, nil
 	}
-	return val, true, nil
+	return val, SetupAccepted, nil
 }

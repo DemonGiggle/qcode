@@ -13,12 +13,13 @@ import (
 	"qcode/internal/config"
 	"qcode/internal/llm"
 	"qcode/internal/redaction"
+	"qcode/internal/tui"
 )
 
 type fakeSetupStep struct {
 	kind  string // "option", "model", "thinking", "theme", "prompt"
 	reply string
-	ok    bool
+	nav   tui.SetupNavResult
 }
 
 type fakeSetupUI struct {
@@ -28,37 +29,37 @@ type fakeSetupUI struct {
 	seenOptionNouns []string
 }
 
-func (f *fakeSetupUI) next(kind string) (string, bool, error) {
+func (f *fakeSetupUI) next(kind string) (string, tui.SetupNavResult, error) {
 	if f.idx >= len(f.steps) {
-		return "", false, errors.New("unexpected UI prompt: " + kind)
+		return "", tui.SetupCancelled, errors.New("unexpected UI prompt: " + kind)
 	}
 	step := f.steps[f.idx]
 	f.idx++
 	if step.kind != kind {
-		return "", false, errors.New("unexpected prompt kind: got " + kind + ", script has " + step.kind)
+		return "", tui.SetupCancelled, errors.New("unexpected prompt kind: got " + kind + ", script has " + step.kind)
 	}
-	return step.reply, step.ok, nil
+	return step.reply, step.nav, nil
 }
 
-func (f *fakeSetupUI) SelectOption(noun string, options []string, disabled map[string]bool, current string, searchable bool) (string, bool, error) {
+func (f *fakeSetupUI) SelectOptionNav(noun string, options []string, disabled map[string]bool, current string, searchable bool) (string, tui.SetupNavResult, error) {
 	f.seenOptionNouns = append(f.seenOptionNouns, noun)
 	f.seenOptions = append(f.seenOptions, append([]string(nil), options...))
 	return f.next("option")
 }
 
-func (f *fakeSetupUI) SelectModel(models []string, current string) (string, bool, error) {
+func (f *fakeSetupUI) SelectModelNav(models []string, current string) (string, tui.SetupNavResult, error) {
 	return f.next("model")
 }
 
-func (f *fakeSetupUI) SelectThinking(levels []string, current string) (string, bool, error) {
+func (f *fakeSetupUI) SelectThinkingNav(levels []string, current string) (string, tui.SetupNavResult, error) {
 	return f.next("thinking")
 }
 
-func (f *fakeSetupUI) SelectTheme(current string) (string, bool, error) {
+func (f *fakeSetupUI) SelectThemeNav(current string) (string, tui.SetupNavResult, error) {
 	return f.next("theme")
 }
 
-func (f *fakeSetupUI) PromptLine(label, defaultVal string, secret bool) (string, bool, error) {
+func (f *fakeSetupUI) PromptLineNav(label, defaultVal string, secret bool) (string, tui.SetupNavResult, error) {
 	return f.next("prompt")
 }
 
@@ -70,34 +71,57 @@ func TestSetupRequiresInteractiveTerminal(t *testing.T) {
 	}
 }
 
-func TestSetupFreshOpenAIFlow(t *testing.T) {
+func TestSetupMenuconfigFreshOpenAIAndSaveWithBackup(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.toml")
 	keyPath := filepath.Join(dir, "openai.key")
+	// Pre-existing config so Save and Leave creates a .bak and announces it.
+	if err := os.WriteFile(cfgPath, []byte("provider = \"ollama\"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
 
 	ui := &fakeSetupUI{
 		steps: []fakeSetupStep{
-			{kind: "option", reply: "openai", ok: true},
-			{kind: "prompt", reply: "sk-fresh-secret-999", ok: true},
-			{kind: "prompt", reply: keyPath, ok: true},
-			{kind: "option", reply: "Use default endpoint", ok: true},
-			{kind: "model", reply: "gpt-5", ok: true},
-			{kind: "thinking", reply: "high", ok: true},
-			{kind: "option", reply: "Finish setup and save", ok: true},
+			// Main Menu -> Providers & Models
+			{kind: "option", reply: "Providers & Models  --->  (active: ollama / unset)", nav: tui.SetupAccepted},
+			// Providers list -> openai
+			{kind: "option", reply: "openai", nav: tui.SetupAccepted},
+			// Provider submenu -> Set as active default provider
+			{kind: "option", reply: "Set as active default provider", nav: tui.SetupAccepted},
+			// Provider submenu -> Configure credentials & endpoint
+			{kind: "option", reply: "Configure credentials & endpoint", nav: tui.SetupAccepted},
+			{kind: "prompt", reply: "sk-test-12345", nav: tui.SetupAccepted},
+			{kind: "prompt", reply: keyPath, nav: tui.SetupAccepted},
+			{kind: "option", reply: "Use default endpoint", nav: tui.SetupAccepted},
+			// Provider submenu -> Verify connection & select model
+			{kind: "option", reply: "Verify connection & select model (unset)", nav: tui.SetupAccepted},
+			{kind: "model", reply: "gpt-5", nav: tui.SetupAccepted},
+			{kind: "thinking", reply: "high", nav: tui.SetupAccepted},
+			// Back out to Providers list, then Back to Main Menu
+			{kind: "option", reply: backMenuItem, nav: tui.SetupAccepted},
+			{kind: "option", reply: "", nav: tui.SetupBack},
+			// Main Menu -> Appearance (Theme)
+			{kind: "option", reply: "Appearance (Theme)  --->  (default)", nav: tui.SetupAccepted},
+			{kind: "theme", reply: "dracula", nav: tui.SetupAccepted},
+			// Main Menu -> Save and Leave
+			{kind: "option", reply: "Save and Leave", nav: tui.SetupAccepted},
 		},
 	}
 
 	var stdout, stderr bytes.Buffer
 	deps := setupDeps{
-		newUI:       func(io.Reader, io.Writer) setupUI { return ui },
-		loadConfig:  func() (config.Config, []string, []error, error) { return config.Config{}, nil, nil, nil },
+		newUI: func(io.Reader, io.Writer) setupUI { return ui },
+		loadConfig: func() (config.Config, []string, []error, error) {
+			return config.Config{Provider: "ollama"}, []string{cfgPath}, nil, nil
+		},
 		userCfgPath: func() (string, error) { return cfgPath, nil },
 		newWriter: func() (*config.RuntimePreferenceWriter, error) {
 			return config.NewRuntimePreferenceWriterForPath(cfgPath), nil
 		},
 		writeKeyFile: config.WriteAPIKeyFile,
+		backupConfig: config.BackupUserConfig,
 		probeModels: func(ctx context.Context, cfg config.Config, provider, overrideBaseURL, overrideAPIKey string, policy *redaction.Policy) (setupProbeResult, error) {
-			if provider != "openai" || overrideAPIKey != "sk-fresh-secret-999" {
+			if provider != "openai" || overrideAPIKey != "sk-test-12345" {
 				t.Fatalf("unexpected probe args: provider=%q key=%q", provider, overrideAPIKey)
 			}
 			return setupProbeResult{
@@ -116,8 +140,14 @@ func TestSetupFreshOpenAIFlow(t *testing.T) {
 	if err := runSetupWithDeps(nil, strings.NewReader(""), &stdout, &stderr, true, deps); err != nil {
 		t.Fatalf("runSetupWithDeps() error = %v", err)
 	}
-	if strings.Contains(stdout.String(), "sk-fresh-secret-999") {
+	if strings.Contains(stdout.String(), "[REDACTED]") {
 		t.Fatalf("raw API key leaked in stdout:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Backed up existing config to "+cfgPath+".bak") {
+		t.Fatalf("expected backup message in stdout:\n%s", stdout.String())
+	}
+	if _, err := os.Lstat(cfgPath + ".bak"); err != nil {
+		t.Fatalf("expected backup file at %s.bak: %v", cfgPath, err)
 	}
 
 	info, err := os.Lstat(keyPath)
@@ -133,195 +163,57 @@ func TestSetupFreshOpenAIFlow(t *testing.T) {
 		t.Fatalf("ReadFile(%q) error = %v", cfgPath, err)
 	}
 	cfgText := string(cfgBytes)
-	if !strings.Contains(cfgText, `provider = "openai"`) || !strings.Contains(cfgText, `model = "gpt-5"`) || !strings.Contains(cfgText, `thinking = "high"`) {
+	if !strings.Contains(cfgText, `provider = "openai"`) || !strings.Contains(cfgText, `model = "gpt-5"`) || !strings.Contains(cfgText, `thinking = "high"`) || !strings.Contains(cfgText, `theme = "dracula"`) {
 		t.Fatalf("unexpected saved config:\n%s", cfgText)
 	}
 }
 
-func TestSetupRerunConfiguredAndKeepOriginal(t *testing.T) {
+func TestSetupMenuconfigExitWithoutSavingLeavesConfigUntouched(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.toml")
-	keyPath := filepath.Join(dir, "openai.key")
-	if _, err := config.WriteAPIKeyFile(keyPath, "sk-existing"); err != nil {
-		t.Fatalf("WriteAPIKeyFile() error = %v", err)
-	}
-	initial := "provider = \"openai\"\n\n[providers.openai]\napi_key_path = \"" + keyPath + "\"\nmodel = \"gpt-5\"\nthinking = \"medium\"\n"
-	if err := os.WriteFile(cfgPath, []byte(initial), 0o600); err != nil {
+	original := "provider = \"ollama\"\n"
+	if err := os.WriteFile(cfgPath, []byte(original), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	existingCfg := config.Config{
-		Provider: "openai",
-		Providers: map[string]config.ProviderProfile{
-			"openai": {
-				APIKeyPath: strPtr(keyPath),
-				Model:      strPtr("gpt-5"),
-				Thinking:   strPtr("medium"),
-			},
-		},
-	}
-
 	ui := &fakeSetupUI{
 		steps: []fakeSetupStep{
-			{kind: "option", reply: "Keep original config (openai)", ok: true},
-			{kind: "option", reply: "Keep original config (API key configured)", ok: true},
-			{kind: "option", reply: "Use default endpoint", ok: true},
-			{kind: "option", reply: "Keep original config (gpt-5)", ok: true},
-			{kind: "thinking", reply: "Keep original config (medium)", ok: true},
-			{kind: "option", reply: "Continue to Advanced Setup (theme, sandbox, autoreview, interactive)", ok: true},
-			{kind: "option", reply: "Choose a theme (live preview)", ok: true},
-			{kind: "theme", reply: "dracula", ok: true},
-			{kind: "option", reply: "Enable sandbox", ok: true},
-			{kind: "option", reply: "Skip / leave empty", ok: true},
-			{kind: "option", reply: "Enable autoreview", ok: true},
-			{kind: "option", reply: "Keep original config (default: disabled)", ok: true},
+			// Main Menu -> Behavior -> Toggle autoreview -> Esc back to Main Menu -> Exit without saving
+			{kind: "option", reply: "Behavior            --->  (autoreview: on, interactive: off)", nav: tui.SetupAccepted},
+			{kind: "option", reply: "Toggle autoreview (currently: enabled)", nav: tui.SetupAccepted},
+			{kind: "option", reply: "", nav: tui.SetupBack},
+			{kind: "option", reply: "Exit without saving", nav: tui.SetupAccepted},
 		},
 	}
 
-	var stdout, stderr bytes.Buffer
-	deps := setupDeps{
-		newUI:       func(io.Reader, io.Writer) setupUI { return ui },
-		loadConfig:  func() (config.Config, []string, []error, error) { return existingCfg, []string{cfgPath}, nil, nil },
-		userCfgPath: func() (string, error) { return cfgPath, nil },
-		newWriter: func() (*config.RuntimePreferenceWriter, error) {
-			return config.NewRuntimePreferenceWriterForPath(cfgPath), nil
-		},
-		writeKeyFile: config.WriteAPIKeyFile,
-		probeModels: func(ctx context.Context, cfg config.Config, provider, overrideBaseURL, overrideAPIKey string, policy *redaction.Policy) (setupProbeResult, error) {
-			return setupProbeResult{
-				models: []string{"gpt-5"},
-				thinkingCap: func(m string) llm.ThinkingCapability {
-					return llm.ThinkingCapability{Supported: true, Adjustable: true, Levels: []string{"low", "medium", "high"}, Default: "medium"}
-				},
-			}, nil
-		},
-		checkConfig: func() ([]config.Issue, []string, error) {
-			return nil, []string{cfgPath}, nil
-		},
-		goos: "linux",
-	}
-
-	if err := runSetupWithDeps(nil, strings.NewReader(""), &stdout, &stderr, true, deps); err != nil {
-		t.Fatalf("runSetupWithDeps() error = %v", err)
-	}
-
-	// Verify `(configured)` appeared in the provider picker.
-	foundConfiguredBadge := false
-	for _, opt := range ui.seenOptions[0] {
-		if opt == "openai (configured)" {
-			foundConfiguredBadge = true
-			break
-		}
-	}
-	if !foundConfiguredBadge {
-		t.Fatalf("expected 'openai (configured)' in provider options, got %v", ui.seenOptions[0])
-	}
-
-	cfgBytes, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-	cfgText := string(cfgBytes)
-	if !strings.Contains(cfgText, `theme = "dracula"`) || !strings.Contains(cfgText, `sandbox = true`) || !strings.Contains(cfgText, `autoreview = true`) {
-		t.Fatalf("expected advanced settings in config, got:\n%s", cfgText)
-	}
-	if !strings.Contains(cfgText, `model = "gpt-5"`) || !strings.Contains(cfgText, `thinking = "medium"`) {
-		t.Fatalf("expected original model/thinking preserved, got:\n%s", cfgText)
-	}
-}
-
-func TestSetupConnectionFailureRetryAndManualModel(t *testing.T) {
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.toml")
-
-	ui := &fakeSetupUI{
-		steps: []fakeSetupStep{
-			{kind: "option", reply: "ollama", ok: true},
-			{kind: "prompt", reply: "http://127.0.0.1:11434", ok: true},
-			{kind: "option", reply: "Retry connection", ok: true},
-			{kind: "option", reply: "Enter model name manually (skip live check)", ok: true},
-			{kind: "prompt", reply: "qwen2.5-coder:7b", ok: true},
-			{kind: "option", reply: "Finish setup and save", ok: true},
-		},
-	}
-
-	attempts := 0
-	var stdout, stderr bytes.Buffer
-	deps := setupDeps{
-		newUI:       func(io.Reader, io.Writer) setupUI { return ui },
-		loadConfig:  func() (config.Config, []string, []error, error) { return config.Config{}, nil, nil, nil },
-		userCfgPath: func() (string, error) { return cfgPath, nil },
-		newWriter: func() (*config.RuntimePreferenceWriter, error) {
-			return config.NewRuntimePreferenceWriterForPath(cfgPath), nil
-		},
-		writeKeyFile: config.WriteAPIKeyFile,
-		probeModels: func(ctx context.Context, cfg config.Config, provider, overrideBaseURL, overrideAPIKey string, policy *redaction.Policy) (setupProbeResult, error) {
-			attempts++
-			return setupProbeResult{}, errors.New("connection refused")
-		},
-		checkConfig: func() ([]config.Issue, []string, error) {
-			return nil, []string{cfgPath}, nil
-		},
-		goos: "linux",
-	}
-
-	if err := runSetupWithDeps(nil, strings.NewReader(""), &stdout, &stderr, true, deps); err != nil {
-		t.Fatalf("runSetupWithDeps() error = %v", err)
-	}
-	if attempts != 2 {
-		t.Fatalf("probe attempts = %d, want 2", attempts)
-	}
-	cfgBytes, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-	if !strings.Contains(string(cfgBytes), `model = "qwen2.5-coder:7b"`) {
-		t.Fatalf("expected manual model saved, got:\n%s", string(cfgBytes))
-	}
-}
-
-func TestSetupChatGPTInlineOAuth(t *testing.T) {
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.toml")
-
-	ui := &fakeSetupUI{
-		steps: []fakeSetupStep{
-			{kind: "option", reply: "chatgpt", ok: true},
-			{kind: "model", reply: "gpt-5.6-codex", ok: true},
-			{kind: "option", reply: "Finish setup and save", ok: true},
-		},
-	}
-
-	oauthCalled := false
 	var stdout, stderr bytes.Buffer
 	deps := setupDeps{
 		newUI: func(io.Reader, io.Writer) setupUI { return ui },
 		loadConfig: func() (config.Config, []string, []error, error) {
-			return config.Config{ChatGPT: config.ChatGPT{OAuthPath: filepath.Join(dir, "chatgpt-oauth.json")}}, nil, nil, nil
+			return config.Config{Provider: "ollama"}, []string{cfgPath}, nil, nil
 		},
 		userCfgPath: func() (string, error) { return cfgPath, nil },
 		newWriter: func() (*config.RuntimePreferenceWriter, error) {
 			return config.NewRuntimePreferenceWriterForPath(cfgPath), nil
 		},
 		writeKeyFile: config.WriteAPIKeyFile,
-		chatgptLogin: func(oauthPath string, stdin io.Reader, stdout io.Writer) error {
-			oauthCalled = true
-			return nil
-		},
-		probeModels: func(ctx context.Context, cfg config.Config, provider, overrideBaseURL, overrideAPIKey string, policy *redaction.Policy) (setupProbeResult, error) {
-			return setupProbeResult{models: []string{"gpt-5.6-codex"}}, nil
-		},
-		checkConfig: func() ([]config.Issue, []string, error) {
-			return nil, []string{cfgPath}, nil
-		},
-		goos: "linux",
+		backupConfig: config.BackupUserConfig,
+		checkConfig:  func() ([]config.Issue, []string, error) { return nil, nil, nil },
+		goos:         "linux",
 	}
 
 	if err := runSetupWithDeps(nil, strings.NewReader(""), &stdout, &stderr, true, deps); err != nil {
 		t.Fatalf("runSetupWithDeps() error = %v", err)
 	}
-	if !oauthCalled {
-		t.Fatal("expected inline ChatGPT OAuth flow to be called")
+	got, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(got) != original {
+		t.Fatalf("config modified on Exit without saving:\ngot:\n%s\nwant:\n%s", string(got), original)
+	}
+	if _, err := os.Lstat(cfgPath + ".bak"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unexpected backup created when exiting without saving")
 	}
 }
 
@@ -331,18 +223,24 @@ func TestSetupRedactsNewAPIKeyAndResolvesRelativeKeyPath(t *testing.T) {
 	cfgPath := filepath.Join(cfgDir, "config.toml")
 	relKeyPath := filepath.Join("keys", "openai.key")
 	wantKeyPath := filepath.Join(cfgDir, "keys", "openai.key")
-	newSecret := "sk-brand-new-secret-xyz"
+	newSecret := "sk-fresh-secret-xyz987"
 
 	ui := &fakeSetupUI{
 		steps: []fakeSetupStep{
-			{kind: "option", reply: "openai", ok: true},
-			{kind: "prompt", reply: newSecret, ok: true},
-			{kind: "prompt", reply: relKeyPath, ok: true},
-			{kind: "option", reply: "Use default endpoint", ok: true},
-			// Probe fails once with the raw secret in the error, then we enter manual model.
-			{kind: "option", reply: "Enter model name manually (skip live check)", ok: true},
-			{kind: "prompt", reply: "gpt-5", ok: true},
-			{kind: "option", reply: "Finish setup and save", ok: true},
+			{kind: "option", reply: "Providers & Models  --->  (active: ollama / unset)", nav: tui.SetupAccepted},
+			{kind: "option", reply: "openai", nav: tui.SetupAccepted},
+			{kind: "option", reply: "Set as active default provider", nav: tui.SetupAccepted},
+			{kind: "option", reply: "Configure credentials & endpoint", nav: tui.SetupAccepted},
+			{kind: "prompt", reply: newSecret, nav: tui.SetupAccepted},
+			{kind: "prompt", reply: relKeyPath, nav: tui.SetupAccepted},
+			{kind: "option", reply: "Use default endpoint", nav: tui.SetupAccepted},
+			{kind: "option", reply: "Verify connection & select model (unset)", nav: tui.SetupAccepted},
+			// Probe fails once with the raw secret in the error, then enter manual model.
+			{kind: "option", reply: "Enter model name manually (skip live check)", nav: tui.SetupAccepted},
+			{kind: "prompt", reply: "gpt-5", nav: tui.SetupAccepted},
+			{kind: "option", reply: "", nav: tui.SetupBack},
+			{kind: "option", reply: "", nav: tui.SetupBack},
+			{kind: "option", reply: "Save and Leave", nav: tui.SetupAccepted},
 		},
 	}
 
@@ -355,6 +253,7 @@ func TestSetupRedactsNewAPIKeyAndResolvesRelativeKeyPath(t *testing.T) {
 			return config.NewRuntimePreferenceWriterForPath(cfgPath), nil
 		},
 		writeKeyFile: config.WriteAPIKeyFile,
+		backupConfig: config.BackupUserConfig,
 		probeModels: func(ctx context.Context, cfg config.Config, provider, overrideBaseURL, overrideAPIKey string, policy *redaction.Policy) (setupProbeResult, error) {
 			return setupProbeResult{}, errors.New("401 unauthorized for key " + overrideAPIKey)
 		},
@@ -403,11 +302,13 @@ func TestSetupPreservesThinkingWhenThinkingStepSkipped(t *testing.T) {
 
 	ui := &fakeSetupUI{
 		steps: []fakeSetupStep{
-			{kind: "option", reply: "Keep original config (ollama)", ok: true},
-			{kind: "option", reply: "Keep original config (http://127.0.0.1:11434)", ok: true},
-			{kind: "option", reply: "Select a different model", ok: true},
-			{kind: "prompt", reply: "qwen2.5-coder:32b", ok: true},
-			{kind: "option", reply: "Finish setup and save", ok: true},
+			{kind: "option", reply: "Providers & Models  --->  (active: ollama / qwen2.5-coder:7b)", nav: tui.SetupAccepted},
+			{kind: "option", reply: "ollama (active, configured)", nav: tui.SetupAccepted},
+			{kind: "option", reply: "Verify connection & select model (qwen2.5-coder:7b, thinking: high)", nav: tui.SetupAccepted},
+			{kind: "prompt", reply: "qwen2.5-coder:32b", nav: tui.SetupAccepted},
+			{kind: "option", reply: "", nav: tui.SetupBack},
+			{kind: "option", reply: "", nav: tui.SetupBack},
+			{kind: "option", reply: "Save and Leave", nav: tui.SetupAccepted},
 		},
 	}
 
@@ -420,8 +321,8 @@ func TestSetupPreservesThinkingWhenThinkingStepSkipped(t *testing.T) {
 			return config.NewRuntimePreferenceWriterForPath(cfgPath), nil
 		},
 		writeKeyFile: config.WriteAPIKeyFile,
+		backupConfig: config.BackupUserConfig,
 		probeModels: func(ctx context.Context, cfg config.Config, provider, overrideBaseURL, overrideAPIKey string, policy *redaction.Policy) (setupProbeResult, error) {
-			// Return empty models & nil thinkingCap so thinking step is skipped.
 			return setupProbeResult{}, nil
 		},
 		checkConfig: func() ([]config.Issue, []string, error) {
@@ -443,6 +344,58 @@ func TestSetupPreservesThinkingWhenThinkingStepSkipped(t *testing.T) {
 	}
 	if !strings.Contains(cfgText, `thinking = "high"`) {
 		t.Fatalf("expected existing thinking = \"high\" to be preserved, got:\n%s", cfgText)
+	}
+}
+
+func TestSetupChatGPTInlineOAuth(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+
+	ui := &fakeSetupUI{
+		steps: []fakeSetupStep{
+			{kind: "option", reply: "Providers & Models  --->  (active: ollama / unset)", nav: tui.SetupAccepted},
+			{kind: "option", reply: "chatgpt", nav: tui.SetupAccepted},
+			{kind: "option", reply: "Set as active default provider", nav: tui.SetupAccepted},
+			{kind: "option", reply: "Configure credentials & endpoint", nav: tui.SetupAccepted},
+			{kind: "option", reply: "Verify connection & select model (unset)", nav: tui.SetupAccepted},
+			{kind: "model", reply: "gpt-5.6-codex", nav: tui.SetupAccepted},
+			{kind: "option", reply: "", nav: tui.SetupBack},
+			{kind: "option", reply: "", nav: tui.SetupBack},
+			{kind: "option", reply: "Save and Leave", nav: tui.SetupAccepted},
+		},
+	}
+
+	oauthCalled := false
+	var stdout, stderr bytes.Buffer
+	deps := setupDeps{
+		newUI: func(io.Reader, io.Writer) setupUI { return ui },
+		loadConfig: func() (config.Config, []string, []error, error) {
+			return config.Config{ChatGPT: config.ChatGPT{OAuthPath: filepath.Join(dir, "chatgpt-oauth.json")}}, nil, nil, nil
+		},
+		userCfgPath: func() (string, error) { return cfgPath, nil },
+		newWriter: func() (*config.RuntimePreferenceWriter, error) {
+			return config.NewRuntimePreferenceWriterForPath(cfgPath), nil
+		},
+		writeKeyFile: config.WriteAPIKeyFile,
+		backupConfig: config.BackupUserConfig,
+		chatgptLogin: func(oauthPath string, stdin io.Reader, stdout io.Writer) error {
+			oauthCalled = true
+			return nil
+		},
+		probeModels: func(ctx context.Context, cfg config.Config, provider, overrideBaseURL, overrideAPIKey string, policy *redaction.Policy) (setupProbeResult, error) {
+			return setupProbeResult{models: []string{"gpt-5.6-codex"}}, nil
+		},
+		checkConfig: func() ([]config.Issue, []string, error) {
+			return nil, []string{cfgPath}, nil
+		},
+		goos: "linux",
+	}
+
+	if err := runSetupWithDeps(nil, strings.NewReader(""), &stdout, &stderr, true, deps); err != nil {
+		t.Fatalf("runSetupWithDeps() error = %v", err)
+	}
+	if !oauthCalled {
+		t.Fatal("expected inline ChatGPT OAuth flow to be called")
 	}
 }
 

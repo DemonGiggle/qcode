@@ -221,3 +221,44 @@ func (w *RuntimePreferenceWriter) PersistSandboxCommandPaths(paths []string) err
 	literal := "[" + strings.Join(encoded, ", ") + "]"
 	return w.persist(map[string]*string{"sandbox_command_paths": &literal})
 }
+
+// BackupUserConfig copies an existing regular config file at path to
+// "<path>.bak" atomically with 0600 permissions. If path does not exist, it
+// returns ("", nil). Symlinks and non-regular files are rejected.
+func BackupUserConfig(path string) (string, error) {
+	clean := filepath.Clean(strings.TrimSpace(path))
+	if clean == "" || clean == "." {
+		return "", errors.New("config path must not be empty")
+	}
+	info, err := os.Lstat(clean)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("stat config %s: %w", clean, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("config file %q must not be a symlink", clean)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("config file %q must be a regular file", clean)
+	}
+	data, err := os.ReadFile(clean)
+	if err != nil {
+		return "", fmt.Errorf("read config %s: %w", clean, err)
+	}
+	backupPath := clean + ".bak"
+	if binfo, berr := os.Lstat(backupPath); berr == nil {
+		if binfo.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("backup file %q must not be a symlink", backupPath)
+		}
+	}
+	mode := info.Mode().Perm()
+	if mode == 0 {
+		mode = 0o600
+	}
+	if err := writeRuntimeConfigAtomically(backupPath, data, mode); err != nil {
+		return "", fmt.Errorf("write backup %s: %w", backupPath, err)
+	}
+	return backupPath, nil
+}
