@@ -126,7 +126,8 @@ change and needs its own reviewed route/model evidence.
   `input_tokens` is the inclusive total. Cache detail, when reported, is a
   subset breakdown (`prompt_tokens_details.cached_tokens`, and on Responses
   `cache_write_tokens` / `cache_write_tokens_details`). Ordinary input equals
-  `input_tokens - cached_tokens` (minus any writes when reported).
+  `input_tokens - cached_tokens` (minus any writes when reported); qcode does
+  not derive `UncachedInputTokens` by subtraction on this route.
 - **Streaming event locations (verified gateway):** text deltas in
   `choices[].delta.content`; reasoning in `delta.reasoning_content` /
   `delta.reasoning`; structured reasoning replay in
@@ -759,10 +760,11 @@ conversation history.
 Normal Gemini turns (#103) and OpenAI Chat Completions turns (#105) keep the
 same durable prefix byte-stable with the same ephemeral suffix, but sent once in
 a trailing user message instead of developer: developer-role support on the
-Gemini OpenAI-compat endpoint and custom OpenAI-compatible endpoints (which
-share `Kind == "openai"`) is undocumented or varies, while user is universally
-accepted and keeps untrusted wrappers as data without elevating them. Other
-providers retain their existing message layout.
+Gemini OpenAI-compat endpoint and custom OpenAI-compatible endpoints configured
+with the `openai` provider (`Kind == "openai"`) is undocumented or varies, while
+user is universally accepted and keeps untrusted wrappers as data without
+elevating them. Other providers (`ollama`, `opencode-go`, `anthropic`) retain
+their existing message layout.
 
 This revises the first-release restriction on moving request-only instructions:
 ChatGPT already sends system content with developer authority via top-level

@@ -416,6 +416,19 @@ func TestGeminiChangingContextPreservesConversationPrefix(t *testing.T) {
 // endpoints, keeping untrusted wrappers as data). Wire prefix stays stable for
 // implicit-cache match; PrefixHash still invalidates on dynamic change.
 func TestOpenAIChangingContextPreservesConversationPrefix(t *testing.T) {
+	// Named provider instances with Kind() == "openai" also use the Kind branch.
+	named := newCacheTestAgent(&captureAgentProvider{name: "my-openai", kind: "openai"})
+	named.messages = append(named.messages, llm.Message{Role: "user", Content: "hello"})
+	namedBase := named.messages[0].Content
+	named.SetRequestContext(func() string { return "named status" })
+	namedPrep := named.prepareNormalRequest(context.Background(), "")
+	if len(namedPrep.Request.Messages) != len(named.messages)+1 || namedPrep.Request.Messages[0].Content != namedBase {
+		t.Fatalf("named openai instance did not preserve prefix: %+v", namedPrep.Request.Messages)
+	}
+	if tail := namedPrep.Request.Messages[len(named.messages)]; tail.Role != "user" || !strings.Contains(tail.Content, trust.Wrap("request_context", "named status")) {
+		t.Fatalf("named openai instance tail = %+v", tail)
+	}
+
 	p := &captureAgentProvider{name: "openai"}
 	a := newCacheTestAgent(p)
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: "hello"}, llm.Message{Role: "assistant", Content: "working"})

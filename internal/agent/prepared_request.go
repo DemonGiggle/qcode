@@ -278,10 +278,10 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 		// Keep request-only context after history. ChatGPT lifts the stable
 		// system message into instructions; a developer message preserves
 		// instruction authority and the existing trust wrappers on context.
-		// Gemini keeps the system role on the wire, so the same durable
+		// Gemini (#103) and OpenAI Chat Completions (#105) keep the system role on the wire, so the same durable
 		// prefix is kept byte-stable by moving the ephemeral suffix to a
-		// trailing message. Developer-role support on Gemini OpenAI-compat
-		// is undocumented, so Gemini uses a trailing user message: it is
+		// trailing message. Developer-role support on Gemini OpenAI-compat and custom OpenAI-compatible endpoints (Kind "openai")
+		// is undocumented or varies, so both use a trailing user message: it is
 		// universally accepted and keeps untrusted wrappers as data without
 		// elevating them. Either way the first N bytes (durable system +
 		// history) stay identical across no-op turns for implicit-cache

@@ -14,10 +14,17 @@ import (
 // captureAgentProvider records every request for purpose assertions.
 type captureAgentProvider struct {
 	name     string
+	kind     string
 	requests []llm.Request
 }
 
 func (p *captureAgentProvider) Name() string { return p.name }
+func (p *captureAgentProvider) Kind() string {
+	if p.kind != "" {
+		return p.kind
+	}
+	return p.name
+}
 func (p *captureAgentProvider) Complete(_ context.Context, r llm.Request, _ llm.StreamCallback) (llm.Response, error) {
 	p.requests = append(p.requests, r)
 	return llm.Response{Message: llm.Message{Role: "assistant", Content: "ok"}, Usage: &llm.Usage{InputTokens: llm.IntPtr(10), OutputTokens: llm.IntPtr(2)}}, nil
