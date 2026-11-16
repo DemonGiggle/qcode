@@ -232,9 +232,17 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 		tools = append(tools, openAITool{Type: "function", Function: Tool{Name: tool.Name, Description: tool.Description, Parameters: parameters}})
 	}
 	body := make(map[string]any, 8)
-	if p.name != "gemini" {
-		body["stream_options"] = map[string]any{"include_usage": true}
-	}
+	// Streaming usage telemetry (#103): always request include_usage,
+	// including Gemini. Gemini OpenAI-compat now supports stream_options
+	// (see https://discuss.ai.google.dev/t/gemini-openai-compatibility-does-it-support-the-stream-options-parameter/92785
+	// and https://ai.google.dev/gemini-api/docs/openai#cached-content);
+	// omitting it yields usage=None / Missing++ and hides /usage. The shared
+	// parser already maps prompt_tokens_details.cached_tokens when present;
+	// when the compat route omits cache details the session correctly shows
+	// unavailable, never 0. Native Gemini UsageMetadata.cached_content_token_count
+	// (see google-antigravity/antigravity-sdk-python types.UsageMetadata) remains
+	// the future source for true implicit-cache counts, not this shim.
+	body["stream_options"] = map[string]any{"include_usage": true}
 	body["model"], body["messages"], body["stream"] = input.Model, messages, true
 	// Gemini uses fixed sampling defaults (temperature 1.0, topP 0.95, topK 64);
 	// custom values are ignored and strict validation can reject them, so omit

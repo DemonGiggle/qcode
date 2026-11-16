@@ -150,8 +150,12 @@ func TestGeminiThinkingValidationAndEffortRequest(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := body["stream_options"]; ok {
-			t.Error("Gemini request must not send unsupported OpenAI stream_options")
+		// #103: Gemini OpenAI-compat supports stream_options.include_usage
+		// (forum + docs #cached-content). It must be sent so streaming usage
+		// reaches parseOpenAIStream and /usage instead of Missing++.
+		opts, ok := body["stream_options"].(map[string]any)
+		if !ok || opts["include_usage"] != true {
+			t.Errorf("Gemini request must send stream_options.include_usage:true, got %v", body["stream_options"])
 		}
 		return response(http.StatusOK, "data: [DONE]\n\n"), nil
 	})})
@@ -350,3 +354,50 @@ func response(status int, body string) *http.Response {
 }
 
 var _ = json.RawMessage(nil)
+
+func TestGeminiUsageIncludesStreamOptionsAndCachedTokens(t *testing.T) {
+	var body map[string]any
+	stream := "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"prompt_tokens\":1200,\"completion_tokens\":340,\"prompt_tokens_details\":{\"cached_tokens\":800},\"completion_tokens_details\":{\"reasoning_tokens\":20}}}\n\n" + "data: [DONE]\n\n"
+	p, err := newGemini(Config{HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		return response(http.StatusOK, stream), nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Complete(context.Background(), Request{Model: "gemini-3-flash-preview", Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, ok := body["stream_options"].(map[string]any)
+	if !ok || opts["include_usage"] != true {
+		t.Fatalf("stream_options.include_usage missing: %v", body["stream_options"])
+	}
+	if got.Usage == nil {
+		t.Fatal("usage is nil, want prompt/completion/cache/reasoning")
+	}
+	if v, ok := got.Usage.KnownInput(); !ok || v != 1200 {
+		t.Fatalf("input = %v, want 1200", got.Usage.InputTokens)
+	}
+	if v, ok := got.Usage.KnownOutput(); !ok || v != 340 {
+		t.Fatalf("output = %v, want 340", got.Usage.OutputTokens)
+	}
+	if v, ok := got.Usage.KnownCacheRead(); !ok || v != 800 {
+		t.Fatalf("cache_read = %v, want 800", got.Usage.CacheReadTokens)
+	}
+	if v, ok := got.Usage.KnownReasoning(); !ok || v != 20 {
+		t.Fatalf("reasoning = %v, want 20", got.Usage.ReasoningTokens)
+	}
+	// Session aggregation must surface the paired ratio for /usage.
+	s := SessionUsage{}
+	s.Add(NormalizeUsage(got.Usage))
+	// Add needs valid normalized usage; check coverage counters.
+	if s.InputReported != 1 || s.CacheReadReported != 1 {
+		t.Fatalf("coverage = %+v, want input/cache each reported once", s)
+	}
+	if s.CacheRatioRequests != 1 || s.CacheRatioInputTokens != 1200 || s.CacheRatioReadTokens != 800 {
+		t.Fatalf("ratio sums = %+v, want 800/1200 over 1 request", s)
+	}
+}
