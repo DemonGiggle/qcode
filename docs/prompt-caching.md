@@ -119,15 +119,19 @@ change and needs its own reviewed route/model evidence.
   true}` is always sent; usage arrives as a top-level `usage` object on any
   SSE `data:` line and is decoded into `llm.Usage{InputTokens,
   OutputTokens}` (JSON tags `prompt_tokens`, `completion_tokens`)
-  (`internal/llm/openai.go`, `parseOpenAIStream`). The adapter reads no
-  cache-breakdown subfields today.
+  (`internal/llm/openai.go`, `parseOpenAIStream`). The adapter also maps
+  `prompt_tokens_details.cached_tokens` to `CacheReadTokens` and
+  `completion_tokens_details.reasoning_tokens` to `Reasoning` by presence
+  (nil means unreported, explicit zero means zero); no write field is mapped
+  on this Chat route.
 - **Inclusive versus separate input semantics (documented upstream):**
   `input_tokens` is the inclusive total. Cache detail, when reported, is a
   subset breakdown (`input_tokens_details.cached_tokens`,
   `cache_write_tokens`, and per-lifetime
   `cache_write_tokens_details.ttl_30m_tokens / ttl_12h_tokens` on GPT-5.6 and
   later). Ordinary input equals `input_tokens - cached_tokens -
-  cache_write_tokens`. qcode does not parse these subfields at baseline.
+  cache_write_tokens`. qcode parses the cached-read and reasoning subsets on
+  this route; writes remain unparsed.
 - **Streaming event locations (verified gateway):** text deltas in
   `choices[].delta.content`; reasoning in `delta.reasoning_content` /
   `delta.reasoning`; structured reasoning replay in
@@ -137,14 +141,18 @@ change and needs its own reviewed route/model evidence.
   `usage`, `Response.Usage` stays nil. The agent then increments
   `SessionUsage.Missing` instead of adding tokens (`internal/agent/usage.go`)
   and the status bar shows `unknown` / `?` (`docs/token-usage.md`).
-- **Cache read/write reporting (verified gateway):** none parsed at
-  baseline. Reads and writes are therefore invisible to accounting on this
-  route until a later issue adds the detail fields.
+- **Cache read/write reporting (verified gateway):** reads half-parsed.
+  `prompt_tokens_details.cached_tokens` is visible to accounting via
+  `/usage` (`Cached input share (reported subset)` with coverage); writes
+  remain unavailable on this Chat route (never `0`), unlike the Responses
+  route which already parses writes. Missing usage is still nil `Usage`
+  counted as missing.
 - **Available controls (verified gateway):** `temperature` (sent only when
   non-nil, and for `openai` only when the model's thinking capability is
   unsupported); `reasoning_effort` thinking level for exact catalog models;
-  tool definitions; tool-call/reasoning replay fields. No cache control is
-  sent at baseline.
+  tool definitions; tool-call/reasoning replay fields. `prompt_cache_key` is
+  sent only on the official endpoint when the session key is non-empty
+  (#81 frozen); no breakpoint/retention control is sent on this route.
 - **Billing limitations:** per-token billing with discounted cached input is
   documented upstream and varies by model. qcode token counts are not costs:
   there is no pricing table in the client, and counts must never be
@@ -747,7 +755,7 @@ reuse and guarantees no hit-rate improvement. Existing automatic provider
 caching remains provider-owned. Key material never appears in trace spans,
 session usage, or UI; persistence stores only the base identity.
 
-## ChatGPT and Gemini request context refinement
+## ChatGPT, Gemini, and OpenAI request context refinement
 
 Normal ChatGPT turns keep the durable system instructions and conversation
 history unchanged at the start of the request. Request-only additions (working
@@ -760,7 +768,15 @@ Normal Gemini turns (#103) keep the same durable prefix byte-stable with the
 same ephemeral suffix, but sent once in a trailing user message instead of
 developer: developer-role support on the Gemini OpenAI-compat endpoint is
 undocumented, while user is universally accepted and keeps untrusted wrappers
-as data without elevating them. Other providers retain their existing message
+as data without elevating them.
+
+Normal OpenAI turns (#105) keep the same durable prefix byte-stable with the
+same ephemeral suffix, sent once in a trailing developer message like ChatGPT:
+the Chat Completions developer role is documented for o1 and newer and
+preserves system-level authority for cwd/notice/recovery, while trust wrappers
+still isolate `request_context`/`work_history`. Custom `base_url` hosts and
+`opencode-go` sharing this adapter stay keyless per #81; this prefix change
+does not alter key policy. Other providers retain their existing message
 layout.
 
 This revises the first-release restriction on moving request-only instructions:
@@ -800,8 +816,9 @@ variants/snapshots), ChatGPT also:
 
 Older and unknown model families keep their original input/instructions format
 and receive only the key. Custom endpoints and legacy backend-api routes receive
-none of these changes. OpenAI, OpenCode Go, Anthropic and Ollama adapters are
-unchanged. Retention remains the server default, `store:false` and `stream:true`
+none of these changes. OpenAI keeps its existing `prompt_cache_key` behavior
+plus the #105 trailing-developer prefix stabilization (no breakpoint added);
+OpenCode Go, Anthropic and Ollama adapters are unchanged. Retention remains the server default, `store:false` and `stream:true`
 remain required. A 400 cache-field rejection (`prompt_cache_* is not
 supported on this model`, e.g. `prompt_cache_options` on `gpt-6.1-terra` or
 `prompt_cache_breakpoint` on Codex-backend models) is retried once with the

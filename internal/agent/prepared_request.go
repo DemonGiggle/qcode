@@ -206,8 +206,11 @@ func (a *Agent) resolveDynamicOnce() string {
 // invalidate the durable conversation prefix. For Gemini (#103) the same
 // suffix is sent as a trailing user message: developer-role support on the
 // Gemini OpenAI-compat endpoint is undocumented, while user is universally
-// accepted and keeps untrusted wrappers as data. Trust wrappers are preserved
-// in both cases. Tool schemas are captured
+// accepted and keeps untrusted wrappers as data. For OpenAI (#105) the same
+// suffix is sent as a trailing developer message like ChatGPT: the Chat
+// Completions developer role is documented for o1 and newer models and
+// preserves instruction authority over the original system placement, while
+// trust wrappers on the suffix are preserved. Tool schemas are captured
 // once and never reordered for speculative caching gain.
 func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction string) preparedRequest {
 	extra := a.resolveLearningOnce(ctx)
@@ -273,7 +276,7 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 		messages[0].Content += "\n\n" + recoveryInstruction
 		recovery = recoveryInstruction
 	}
-	if a.provider != nil && (llm.Kind(a.provider) == "chatgpt" || llm.Kind(a.provider) == "gemini") && len(messages) > 0 && messages[0].Role == "system" {
+	if a.provider != nil && (llm.Kind(a.provider) == "chatgpt" || llm.Kind(a.provider) == "gemini" || llm.Kind(a.provider) == "openai") && len(messages) > 0 && messages[0].Role == "system" {
 		// Keep request-only context after history. ChatGPT lifts the stable
 		// system message into instructions; a developer message preserves
 		// instruction authority and the existing trust wrappers on context.
@@ -282,7 +285,11 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 		// trailing message. Developer-role support on Gemini OpenAI-compat
 		// is undocumented, so Gemini uses a trailing user message: it is
 		// universally accepted and keeps untrusted wrappers as data without
-		// elevating them. Either way the first N bytes (durable system +
+		// elevating them. OpenAI (#105) follows ChatGPT with a trailing
+		// developer message: Chat Completions documents developer for o1 and
+		// newer, preserving system-level authority for cwd/notice/recovery
+		// while trust wrappers still isolate request_context/work_history.
+		// Either way the first N bytes (durable system +
 		// history) stay identical across no-op turns for implicit-cache
 		// prefix match; PrefixHash still changes on dynamic-only edits so
 		// calibration invalidates correctly.
