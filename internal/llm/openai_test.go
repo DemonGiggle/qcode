@@ -217,3 +217,49 @@ func TestOpenAIStreamSparseIndexesAreNotDropped(t *testing.T) {
 		t.Fatalf("tool calls = %#v, want 2 sparse calls preserved", resp.Message.ToolCalls)
 	}
 }
+
+func TestOpenAIWireEncodePreservesMessageOrder(t *testing.T) {
+	var sentMessages []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	client := doerFunc(func(r *http.Request) (*http.Response, error) {
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		sentMessages = body.Messages
+		return &http.Response{
+			StatusCode: 200,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("data: [DONE]\n\n")),
+		}, nil
+	})
+	provider, err := newOpenAI(Config{BaseURL: "http://provider.test/v1", APIKey: "secret", HTTP: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := []Message{
+		{Role: "system", Content: "durable system"},
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "working"},
+		{Role: "user", Content: "ephemeral context"},
+	}
+	if _, err := provider.Complete(context.Background(), Request{Model: "gpt-5", Messages: input}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(sentMessages) != len(input) {
+		t.Fatalf("sent %d messages, want %d", len(sentMessages), len(input))
+	}
+	for i, want := range input {
+		if sentMessages[i].Role != want.Role || sentMessages[i].Content != want.Content {
+			t.Fatalf("message[%d] = %+v, want %+v", i, sentMessages[i], want)
+		}
+	}
+}
