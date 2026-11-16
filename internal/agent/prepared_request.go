@@ -203,12 +203,13 @@ func (a *Agent) resolveDynamicOnce() string {
 // cwd, restored-history reference, learning, dynamic context, work history,
 // question-budget notice, recovery instruction. For ChatGPT this suffix is
 // instead sent as a trailing developer message so changing context does not
-// invalidate the durable conversation prefix. For Gemini (#103) the same
-// suffix is sent as a trailing user message: developer-role support on the
-// Gemini OpenAI-compat endpoint is undocumented, while user is universally
-// accepted and keeps untrusted wrappers as data. Trust wrappers are preserved
-// in both cases. Tool schemas are captured
-// once and never reordered for speculative caching gain.
+// invalidate the durable conversation prefix. For Gemini (#103) and OpenAI
+// Chat Completions (#105) the same suffix is sent as a trailing user message:
+// developer-role support on Gemini OpenAI-compat and custom OpenAI-compatible
+// endpoints is undocumented or varies by model/proxy, while user is
+// universally accepted and keeps untrusted wrappers as data. Trust wrappers
+// are preserved in all cases. Tool schemas are captured once and never
+// reordered for speculative caching gain.
 func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction string) preparedRequest {
 	extra := a.resolveLearningOnce(ctx)
 	dynamic := a.resolveDynamicOnce()
@@ -273,14 +274,14 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 		messages[0].Content += "\n\n" + recoveryInstruction
 		recovery = recoveryInstruction
 	}
-	if a.provider != nil && (llm.Kind(a.provider) == "chatgpt" || llm.Kind(a.provider) == "gemini") && len(messages) > 0 && messages[0].Role == "system" {
+	if a.provider != nil && (llm.Kind(a.provider) == "chatgpt" || llm.Kind(a.provider) == "gemini" || llm.Kind(a.provider) == "openai") && len(messages) > 0 && messages[0].Role == "system" {
 		// Keep request-only context after history. ChatGPT lifts the stable
 		// system message into instructions; a developer message preserves
 		// instruction authority and the existing trust wrappers on context.
-		// Gemini keeps the system role on the wire, so the same durable
+		// Gemini (#103) and OpenAI Chat Completions (#105) keep the system role on the wire, so the same durable
 		// prefix is kept byte-stable by moving the ephemeral suffix to a
-		// trailing message. Developer-role support on Gemini OpenAI-compat
-		// is undocumented, so Gemini uses a trailing user message: it is
+		// trailing message. Developer-role support on Gemini OpenAI-compat and custom OpenAI-compatible endpoints (Kind "openai")
+		// is undocumented or varies, so both use a trailing user message: it is
 		// universally accepted and keeps untrusted wrappers as data without
 		// elevating them. Either way the first N bytes (durable system +
 		// history) stay identical across no-op turns for implicit-cache
@@ -292,7 +293,7 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 		messages[0].Content = base
 		if strings.TrimSpace(suffix) != "" {
 			role := "developer"
-			if kind == "gemini" {
+			if kind == "gemini" || kind == "openai" {
 				role = "user"
 			}
 			messages = append(messages, llm.Message{Role: role, Content: suffix})

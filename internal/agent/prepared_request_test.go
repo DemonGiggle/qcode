@@ -408,3 +408,60 @@ func TestGeminiChangingContextPreservesConversationPrefix(t *testing.T) {
 		t.Fatalf("durable system mutated: %q vs %q", first.Request.Messages[0].Content, before[0].Content)
 	}
 }
+
+// TestOpenAIChangingContextPreservesConversationPrefix mirrors the Gemini
+// prefix test for issue #105: OpenAI Chat Completions keeps durable
+// messages[0] byte-stable and moves the ephemeral suffix to a trailing user
+// message (universally accepted across official and custom OpenAI-compatible
+// endpoints, keeping untrusted wrappers as data). Wire prefix stays stable for
+// implicit-cache match; PrefixHash still invalidates on dynamic change.
+func TestOpenAIChangingContextPreservesConversationPrefix(t *testing.T) {
+	// Named provider instances with Kind() == "openai" also use the Kind branch.
+	named := newCacheTestAgent(&captureAgentProvider{name: "my-openai", kind: "openai"})
+	named.messages = append(named.messages, llm.Message{Role: "user", Content: "hello"})
+	namedBase := named.messages[0].Content
+	named.SetRequestContext(func() string { return "named status" })
+	namedPrep := named.prepareNormalRequest(context.Background(), "")
+	if len(namedPrep.Request.Messages) != len(named.messages)+1 || namedPrep.Request.Messages[0].Content != namedBase {
+		t.Fatalf("named openai instance did not preserve prefix: %+v", namedPrep.Request.Messages)
+	}
+	if tail := namedPrep.Request.Messages[len(named.messages)]; tail.Role != "user" || !strings.Contains(tail.Content, trust.Wrap("request_context", "named status")) {
+		t.Fatalf("named openai instance tail = %+v", tail)
+	}
+
+	p := &captureAgentProvider{name: "openai"}
+	a := newCacheTestAgent(p)
+	a.messages = append(a.messages, llm.Message{Role: "user", Content: "hello"}, llm.Message{Role: "assistant", Content: "working"})
+	before := append([]llm.Message(nil), a.messages...)
+	dynamic := "first status"
+	a.SetRequestContext(func() string { return dynamic })
+	first := a.prepareNormalRequest(context.Background(), "retry once")
+	dynamic = "second status"
+	second := a.prepareNormalRequest(context.Background(), "")
+	for i, prep := range []preparedRequest{first, second} {
+		msgs := prep.Request.Messages
+		if len(msgs) != len(before)+1 || !stablePrefixEqual(msgs[:len(before)], before) {
+			t.Fatalf("conversation prefix changed: %+v", msgs)
+		}
+		tail := msgs[len(before)]
+		if tail.Role != "user" || !strings.Contains(tail.Content, trust.Wrap("request_context", []string{"first status", "second status"}[i])) {
+			t.Fatalf("missing wrapped user context: %+v", tail)
+		}
+		if prep.Estimate != estimateTokens(msgs)+estimateTokens(prep.Request.Tools) {
+			t.Fatal("estimate excludes tail")
+		}
+	}
+	if first.PrefixHash == second.PrefixHash {
+		t.Fatal("changing tail must invalidate calibration")
+	}
+	if !strings.Contains(first.Request.Messages[len(before)].Content, "retry once") || strings.Contains(second.Request.Messages[len(before)].Content, "retry once") {
+		t.Fatal("recovery must be request-only")
+	}
+	if !stablePrefixEqual(a.messages, before) {
+		t.Fatal("durable history mutated")
+	}
+	// Durable system base stays byte-identical across turns.
+	if first.Request.Messages[0].Content != before[0].Content || second.Request.Messages[0].Content != before[0].Content {
+		t.Fatalf("durable system mutated: %q vs %q", first.Request.Messages[0].Content, before[0].Content)
+	}
+}

@@ -117,17 +117,17 @@ change and needs its own reviewed route/model evidence.
   neither header.
 - **Usage fields (verified gateway):** `stream_options: {include_usage:
   true}` is always sent; usage arrives as a top-level `usage` object on any
-  SSE `data:` line and is decoded into `llm.Usage{InputTokens,
-  OutputTokens}` (JSON tags `prompt_tokens`, `completion_tokens`)
-  (`internal/llm/openai.go`, `parseOpenAIStream`). The adapter reads no
-  cache-breakdown subfields today.
+  SSE `data:` line and is decoded into `llm.Usage` (`prompt_tokens`,
+  `completion_tokens`, `prompt_tokens_details.cached_tokens` -> `CacheReadTokens`,
+  and `completion_tokens_details.reasoning_tokens` -> `ReasoningTokens`, merged
+  by presence) (`internal/llm/openai.go`, `openAIUsageWire.mergeInto` /
+  `parseOpenAIStream`). No write-token field is mapped on this Chat route.
 - **Inclusive versus separate input semantics (documented upstream):**
   `input_tokens` is the inclusive total. Cache detail, when reported, is a
-  subset breakdown (`input_tokens_details.cached_tokens`,
-  `cache_write_tokens`, and per-lifetime
-  `cache_write_tokens_details.ttl_30m_tokens / ttl_12h_tokens` on GPT-5.6 and
-  later). Ordinary input equals `input_tokens - cached_tokens -
-  cache_write_tokens`. qcode does not parse these subfields at baseline.
+  subset breakdown (`prompt_tokens_details.cached_tokens`, and on Responses
+  `cache_write_tokens` / `cache_write_tokens_details`). Ordinary input equals
+  `input_tokens - cached_tokens` (minus any writes when reported); qcode does
+  not derive `UncachedInputTokens` by subtraction on this route.
 - **Streaming event locations (verified gateway):** text deltas in
   `choices[].delta.content`; reasoning in `delta.reasoning_content` /
   `delta.reasoning`; structured reasoning replay in
@@ -137,9 +137,10 @@ change and needs its own reviewed route/model evidence.
   `usage`, `Response.Usage` stays nil. The agent then increments
   `SessionUsage.Missing` instead of adding tokens (`internal/agent/usage.go`)
   and the status bar shows `unknown` / `?` (`docs/token-usage.md`).
-- **Cache read/write reporting (verified gateway):** none parsed at
-  baseline. Reads and writes are therefore invisible to accounting on this
-  route until a later issue adds the detail fields.
+- **Cache read/write reporting (verified gateway):** read half-parsed.
+  `prompt_tokens_details.cached_tokens` is mapped to `CacheReadTokens` by
+  presence (nil = unreported, explicit 0 = zero); `cache_write_tokens` is not
+  mapped on Chat Completions and surfaces as unavailable rather than 0.
 - **Available controls (verified gateway):** `temperature` (sent only when
   non-nil, and for `openai` only when the model's thinking capability is
   unsupported); `reasoning_effort` thinking level for exact catalog models;
@@ -747,7 +748,7 @@ reuse and guarantees no hit-rate improvement. Existing automatic provider
 caching remains provider-owned. Key material never appears in trace spans,
 session usage, or UI; persistence stores only the base identity.
 
-## ChatGPT and Gemini request context refinement
+## ChatGPT, Gemini, and OpenAI Chat Completions request context refinement
 
 Normal ChatGPT turns keep the durable system instructions and conversation
 history unchanged at the start of the request. Request-only additions (working
@@ -756,12 +757,14 @@ question budget and recovery notices) are sent once in a trailing developer
 message. Trust wrappers are preserved, and this message is never persisted to
 conversation history.
 
-Normal Gemini turns (#103) keep the same durable prefix byte-stable with the
-same ephemeral suffix, but sent once in a trailing user message instead of
-developer: developer-role support on the Gemini OpenAI-compat endpoint is
-undocumented, while user is universally accepted and keeps untrusted wrappers
-as data without elevating them. Other providers retain their existing message
-layout.
+Normal Gemini turns (#103) and OpenAI Chat Completions turns (#105) keep the
+same durable prefix byte-stable with the same ephemeral suffix, but sent once in
+a trailing user message instead of developer: developer-role support on the
+Gemini OpenAI-compat endpoint and custom OpenAI-compatible endpoints configured
+with the `openai` provider (`Kind == "openai"`) is undocumented or varies, while
+user is universally accepted and keeps untrusted wrappers as data without
+elevating them. Other providers (`ollama`, `opencode-go`, `anthropic`) retain
+their existing message layout.
 
 This revises the first-release restriction on moving request-only instructions:
 ChatGPT already sends system content with developer authority via top-level
