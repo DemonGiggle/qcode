@@ -79,6 +79,9 @@ func (p *openAIProvider) Name() string {
 func (p *openAIProvider) Kind() string { return p.name }
 
 func (p *openAIProvider) Models(ctx context.Context) ([]string, error) {
+	if p.name == "gemini" && geminiUseNative(p) {
+		return p.geminiNativeModels(ctx)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/models", nil)
 	if err != nil {
 		return nil, err
@@ -185,6 +188,9 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 		if err := p.geminiValidateThinking(input.Model, input.Thinking); err != nil {
 			return Response{}, err
 		}
+		if geminiUseNative(p) {
+			return p.completeGeminiNative(ctx, input, onText)
+		}
 	}
 	if p.name == "opencode-go" && openCodeGoModelRoutes[input.Model] == openCodeGoResponsesRoute {
 		return p.completeResponses(ctx, input, onText)
@@ -232,9 +238,13 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 		tools = append(tools, openAITool{Type: "function", Function: Tool{Name: tool.Name, Description: tool.Description, Parameters: parameters}})
 	}
 	body := make(map[string]any, 8)
-	if p.name != "gemini" {
-		body["stream_options"] = map[string]any{"include_usage": true}
-	}
+	// Streaming usage telemetry (#103): always request include_usage on this
+	// OpenAI-compat route (including the Gemini proxy path, which still
+	// speaks Chat Completions). Official Gemini endpoints use the native
+	// GenerateContent route instead (see gemini_native.go) and surface
+	// usageMetadata.cached_content_token_count there; this shim only maps
+	// prompt_tokens_details.cached_tokens when the compat gateway returns it.
+	body["stream_options"] = map[string]any{"include_usage": true}
 	body["model"], body["messages"], body["stream"] = input.Model, messages, true
 	// Gemini uses fixed sampling defaults (temperature 1.0, topP 0.95, topK 64);
 	// custom values are ignored and strict validation can reject them, so omit

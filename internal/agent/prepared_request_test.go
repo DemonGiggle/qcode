@@ -365,3 +365,46 @@ func TestChatGPTChangingContextPreservesConversationPrefix(t *testing.T) {
 		t.Fatal("durable history mutated")
 	}
 }
+
+// TestGeminiChangingContextPreservesConversationPrefix mirrors the ChatGPT
+// prefix test for issue #103: Gemini keeps durable messages[0] byte-stable
+// and moves the ephemeral suffix to a trailing user message (developer role
+// is undocumented on Gemini OpenAI-compat). Wire prefix stays stable for
+// implicit-cache match; PrefixHash still invalidates on dynamic change.
+func TestGeminiChangingContextPreservesConversationPrefix(t *testing.T) {
+	p := &captureAgentProvider{name: "gemini"}
+	a := newCacheTestAgent(p)
+	a.messages = append(a.messages, llm.Message{Role: "user", Content: "hello"}, llm.Message{Role: "assistant", Content: "working"})
+	before := append([]llm.Message(nil), a.messages...)
+	dynamic := "first status"
+	a.SetRequestContext(func() string { return dynamic })
+	first := a.prepareNormalRequest(context.Background(), "retry once")
+	dynamic = "second status"
+	second := a.prepareNormalRequest(context.Background(), "")
+	for i, prep := range []preparedRequest{first, second} {
+		msgs := prep.Request.Messages
+		if len(msgs) != len(before)+1 || !stablePrefixEqual(msgs[:len(before)], before) {
+			t.Fatalf("conversation prefix changed: %+v", msgs)
+		}
+		tail := msgs[len(before)]
+		if tail.Role != "user" || !strings.Contains(tail.Content, trust.Wrap("request_context", []string{"first status", "second status"}[i])) {
+			t.Fatalf("missing wrapped user context: %+v", tail)
+		}
+		if prep.Estimate != estimateTokens(msgs)+estimateTokens(prep.Request.Tools) {
+			t.Fatal("estimate excludes tail")
+		}
+	}
+	if first.PrefixHash == second.PrefixHash {
+		t.Fatal("changing tail must invalidate calibration")
+	}
+	if !strings.Contains(first.Request.Messages[len(before)].Content, "retry once") || strings.Contains(second.Request.Messages[len(before)].Content, "retry once") {
+		t.Fatal("recovery must be request-only")
+	}
+	if !stablePrefixEqual(a.messages, before) {
+		t.Fatal("durable history mutated")
+	}
+	// Durable system base stays byte-identical across turns.
+	if first.Request.Messages[0].Content != before[0].Content || second.Request.Messages[0].Content != before[0].Content {
+		t.Fatalf("durable system mutated: %q vs %q", first.Request.Messages[0].Content, before[0].Content)
+	}
+}

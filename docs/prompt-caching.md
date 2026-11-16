@@ -315,6 +315,57 @@ covers any `base_url`). Differences:
 - **Billing limitations:** local inference has no billing. Counts are
   informational.
 
+### 3.7 Gemini Developer API via native GenerateContent (`:streamGenerateContent`)
+
+- **Endpoint / override handling (verified gateway,
+  `internal/llm/gemini_native.go`, `internal/llm/gemini.go`):** `POST
+  {root}/models/{model}:streamGenerateContent?alt=sse` with `root`
+  defaulting to `https://generativelanguage.googleapis.com/v1beta`
+  (the `.../v1beta/openai` compat default is normalized to this root).
+  Auth is `x-goog-api-key`, not `Authorization: Bearer`. Custom `base_url`
+  proxies keep the OpenAI-compat `POST {base}/chat/completions` shim
+  (`internal/llm/openai.go`); only official roots use native. The SDK
+  reference (`google-antigravity/antigravity-sdk-python`) connects natively
+  via `GeminiAPIEndpoint(api_key)` / `GEMINI_API_KEY` and surfaces
+  `UsageMetadata{cached_content_token_count, thoughts_token_count,
+  service_tier}`; qcode now uses that native shape directly (#104).
+- **Usage fields (verified gateway):** every SSE `data:` chunk may carry
+  `usageMetadata{promptTokenCount, candidatesTokenCount, thoughtsTokenCount,
+  cachedContentTokenCount, totalTokenCount}` (cumulative, last wins).
+  Decoded via `geminiNativeUsageWire.mergeInto` into `llm.Usage`:
+  input = `promptTokenCount` (inclusive, includes cached per
+  `https://googleapis.github.io/js-genai/release_docs/interfaces/types.UsageMetadata.html`);
+  output = `candidatesTokenCount` + `thoughtsTokenCount` (reasoning is a
+  subset, never added); cache-read = `cachedContentTokenCount`;
+  reasoning = `thoughtsTokenCount`. `totalTokenCount` is informational.
+  The compat proxy path still uses `stream_options.include_usage` and maps
+  `prompt_tokens_details.cached_tokens` when present.
+- **Cache read/write reporting (verified gateway):**
+  native `cachedContentTokenCount` feeds `CacheReadReported` and the
+  `/usage` `Cached input share (reported subset)` ratio. When the route
+  omits cache details, `/usage` correctly shows `unavailable`, never `0`.
+  No write field exists on this route; writes are never inferred.
+- **Available controls (verified gateway):** `generationConfig.thinkingConfig`
+  with `thinkingLevel` (3/4-series, e.g. `HIGH`, `XHIGH` for Hydrogen) or
+  `thinkingBudget` (2.5-series, `none` → 0, best-effort budgets otherwise);
+  tool definitions as `tools[{functionDeclarations}]` with
+  `additionalProperties` stripped (Gemini rejects it with 400); tool-call
+  `thoughtSignature` replayed verbatim in the next `contents` (required for
+  Gemini 3 reasoning chains). `temperature` is never sent (fixed sampling
+  defaults). No `prompt_cache_key` is sent (frozen #81, OpenAI-official-only).
+- **Prefix stability (verified gateway, #103):** durable `messages[0]`
+  becomes native `system_instruction` byte-stable; per-request cwd /
+  learning / dynamic / work history / notice / recovery moves to a trailing
+  `user` part (ChatGPT uses `developer`; Gemini uses `user` because
+  developer-role support is undocumented on compat and unnecessary natively).
+  Trust wrappers are preserved. `PrefixHash` still changes on dynamic-only
+  edits so calibration invalidates, while the wire prefix
+  (`system_instruction` + append-only `contents`) stays stable for
+  implicit-cache match.
+- **Billing limitations:** implicit caching only. Gemini 3/3.1/3.5 need
+  4096 minimum prefix, 2.5 needs 2048 (see Gemini Cache Billing); short
+  prompts never hit. Counts are informational, never bills.
+
 ### Unsupported versus unknown
 
 | Behavior | Unsupported (will not implement) | Unknown (needs evidence before use) |
@@ -696,14 +747,21 @@ reuse and guarantees no hit-rate improvement. Existing automatic provider
 caching remains provider-owned. Key material never appears in trace spans,
 session usage, or UI; persistence stores only the base identity.
 
-## ChatGPT request context refinement
+## ChatGPT and Gemini request context refinement
 
 Normal ChatGPT turns keep the durable system instructions and conversation
 history unchanged at the start of the request. Request-only additions (working
 directory, restored-history references, learning, dynamic context, work history,
 question budget and recovery notices) are sent once in a trailing developer
 message. Trust wrappers are preserved, and this message is never persisted to
-conversation history. Other providers retain their existing message layout.
+conversation history.
+
+Normal Gemini turns (#103) keep the same durable prefix byte-stable with the
+same ephemeral suffix, but sent once in a trailing user message instead of
+developer: developer-role support on the Gemini OpenAI-compat endpoint is
+undocumented, while user is universally accepted and keeps untrusted wrappers
+as data without elevating them. Other providers retain their existing message
+layout.
 
 This revises the first-release restriction on moving request-only instructions:
 ChatGPT already sends system content with developer authority via top-level

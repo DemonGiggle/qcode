@@ -12,10 +12,10 @@ import (
 )
 
 func TestGeminiProviderDefaultsModelsAndThinking(t *testing.T) {
-	var seenURL, auth string
+	var seenURL, auth, googKey string
 	p, err := newGemini(Config{APIKey: "key", HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
-		seenURL, auth = r.URL.String(), r.Header.Get("Authorization")
-		return response(http.StatusOK, `{"data":[{"id":"gemini-3-flash-preview"},{"id":"gemini-embedding-001"},{"id":"gemini-embedding-2"},{"id":"embedding-001"},{"id":"text-embedding-004"},{"id":"models/gemini-embedding-2"},{"id":"gemini-experimental-unknown"}]}`), nil
+		seenURL, auth, googKey = r.URL.String(), r.Header.Get("Authorization"), r.Header.Get("x-goog-api-key")
+		return response(http.StatusOK, `{"models":[{"name":"models/gemini-3-flash-preview"},{"name":"models/gemini-embedding-001"},{"name":"models/gemini-embedding-2"},{"name":"models/embedding-001"},{"name":"models/text-embedding-004"},{"name":"models/gemini-embedding-2"},{"name":"models/gemini-experimental-unknown"}]}`), nil
 	})})
 	if err != nil {
 		t.Fatal(err)
@@ -30,8 +30,8 @@ func TestGeminiProviderDefaultsModelsAndThinking(t *testing.T) {
 	if !reflect.DeepEqual(models, []string{"gemini-3-flash-preview", "gemini-experimental-unknown"}) {
 		t.Fatalf("Gemini chat picker models = %v", models)
 	}
-	if seenURL != geminiBaseURL+"/models" || auth != "Bearer key" {
-		t.Fatalf("request = %s auth=%q", seenURL, auth)
+	if seenURL != geminiNativeBaseURL+"/models?pageSize=100" || googKey == "" || auth != "" {
+		t.Fatalf("request = %s auth=%q goog=%q", seenURL, auth, googKey)
 	}
 	thinking := p.(ThinkingProvider)
 	// Models with "models/" prefix resolve thinking and context properly.
@@ -117,8 +117,10 @@ func TestGeminiMetadataConstrainsThinkingChoices(t *testing.T) {
 	if _, err := p.Complete(context.Background(), Request{Model: "gemini-2.5-pro", Thinking: "high"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if body["reasoning_effort"] != "high" {
-		t.Fatalf("single-choice reasoning_effort = %#v; body=%v", body["reasoning_effort"], body)
+	genCfg, _ := body["generationConfig"].(map[string]any)
+	thinkCfg, _ := genCfg["thinkingConfig"].(map[string]any)
+	if thinkCfg["thinkingBudget"] != float64(8192) {
+		t.Fatalf("single-choice native thinkingBudget = %#v; body=%v", thinkCfg["thinkingBudget"], body)
 	}
 }
 
@@ -145,13 +147,18 @@ func TestGeminiThinkingFallsBackToDocumentedCatalogWhenMetadataUnavailable(t *te
 func TestGeminiThinkingValidationAndEffortRequest(t *testing.T) {
 	calls := 0
 	var body map[string]any
+	var seenURL string
 	p, err := newGemini(Config{HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
 		calls++
+		seenURL = r.URL.String()
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
+		if !strings.Contains(seenURL, ":streamGenerateContent") {
+			t.Errorf("Gemini native request must target streamGenerateContent, got %s", seenURL)
+		}
 		if _, ok := body["stream_options"]; ok {
-			t.Error("Gemini request must not send unsupported OpenAI stream_options")
+			t.Errorf("native request must not send stream_options, got %v", body["stream_options"])
 		}
 		return response(http.StatusOK, "data: [DONE]\n\n"), nil
 	})})
@@ -167,14 +174,16 @@ func TestGeminiThinkingValidationAndEffortRequest(t *testing.T) {
 	if _, err := p.Complete(context.Background(), Request{Model: "gemini-3-pro-preview"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := body["reasoning_effort"]; ok {
-		t.Fatalf("default request unexpectedly set effort: %v", body)
+	if _, ok := body["generationConfig"]; ok {
+		t.Fatalf("default request unexpectedly set generationConfig: %v", body)
 	}
 	if _, err := p.Complete(context.Background(), Request{Model: "gemini-3-pro-preview", Thinking: "high"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if body["reasoning_effort"] != "high" {
-		t.Fatalf("reasoning_effort = %#v", body["reasoning_effort"])
+	genCfg, _ := body["generationConfig"].(map[string]any)
+	thinkCfg, _ := genCfg["thinkingConfig"].(map[string]any)
+	if thinkCfg["thinkingLevel"] != "HIGH" {
+		t.Fatalf("thinkingLevel = %#v, want HIGH; body=%v", thinkCfg["thinkingLevel"], body)
 	}
 }
 
@@ -208,15 +217,22 @@ func TestGemini4HydrogenRejectsMinimal(t *testing.T) {
 func TestGeminiThoughtSignatureStreamAndReplay(t *testing.T) {
 	var requests int
 	var replay map[string]any
-	stream := `data: {"choices":[{"delta":{"content":"checking"}}]}` + "\n" +
-		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{\"q\":\"one\"}"}},{"index":1,"id":"call-2","type":"function","function":{"name":"inspect","arguments":"{\"q\":\"two\"}"}}]}}]}` + "\n" +
-		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"extra_content":{"google":{"thought_signature":"sig-one"}}}]}}]}` + "\n" +
-		`data: {"choices":[{"delta":{"tool_calls":[{"index":1,"extra_content":{"google":{"thought_signature":"sig-two"}}}]}}]}` + "\n" +
-		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"extra_content":{"google":{}}}]}}]}` + "\n" +
-		"data: [DONE]\n\n"
+	stream := `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"checking"}]},"finishReason":""}]}` + "\n" +
+		`data: {"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"lookup","args":{"q":"one"}},"thoughtSignature":"sig-one"}]}},{"content":{"role":"model","parts":[{"functionCall":{"name":"inspect","args":{"q":"two"}},"thoughtSignature":"sig-two"}]}}]}` + "\n" +
+		`data: {"candidates":[{"content":{"role":"model","parts":[{"thoughtSignature":"only-sig"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":20,"thoughtsTokenCount":5,"cachedContentTokenCount":10,"totalTokenCount":125}}` + "\n"
 	p, err := newGemini(Config{HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
 		requests++
 		if requests == 1 {
+			if got := r.URL.String(); !strings.Contains(got, ":streamGenerateContent") {
+				t.Errorf("native URL = %s, want streamGenerateContent", got)
+			}
+			if got := r.Header.Get("x-goog-api-key"); got != "" {
+				// No key in this fixture; header must simply not be Bearer.
+				_ = got
+			}
+			if auth := r.Header.Get("Authorization"); auth != "" {
+				t.Errorf("native request must not use Authorization Bearer, got %q", auth)
+			}
 			return response(http.StatusOK, stream), nil
 		}
 		if err := json.NewDecoder(r.Body).Decode(&replay); err != nil {
@@ -241,6 +257,18 @@ func TestGeminiThoughtSignatureStreamAndReplay(t *testing.T) {
 	if !reflect.DeepEqual(got.Message.ToolCalls, wantCalls) {
 		t.Fatalf("parsed tool calls = %#v, want %#v", got.Message.ToolCalls, wantCalls)
 	}
+	if v, ok := got.Usage.KnownInput(); !ok || v != 100 {
+		t.Fatalf("native input = %v, want 100", got.Usage)
+	}
+	if v, ok := got.Usage.KnownOutput(); !ok || v != 25 {
+		t.Fatalf("native output = candidates+thoughts = 25, got %v", got.Usage)
+	}
+	if v, ok := got.Usage.KnownCacheRead(); !ok || v != 10 {
+		t.Fatalf("native cache_read = %v, want 10", got.Usage)
+	}
+	if v, ok := got.Usage.KnownReasoning(); !ok || v != 5 {
+		t.Fatalf("native reasoning = %v, want 5", got.Usage)
+	}
 	toolResults := []Message{
 		{Role: "tool", ToolCallID: "call-1", Name: "lookup", Content: "result-one"},
 		{Role: "tool", ToolCallID: "call-2", Name: "inspect", Content: "result-two"},
@@ -249,32 +277,45 @@ func TestGeminiThoughtSignatureStreamAndReplay(t *testing.T) {
 	if _, err := p.Complete(context.Background(), Request{Model: "gemini-3-pro-preview", Messages: conversation}, nil); err != nil {
 		t.Fatal(err)
 	}
-	items, ok := replay["messages"].([]any)
-	if !ok || len(items) != 3 {
-		t.Fatalf("replayed messages = %#v, want assistant plus two tool results", replay["messages"])
+	contents, ok := replay["contents"].([]any)
+	if !ok || len(contents) != 2 {
+		t.Fatalf("replayed contents = %#v, want model + user", replay["contents"])
 	}
-	assistant := items[0].(map[string]any)
-	calls := assistant["tool_calls"].([]any)
-	if len(calls) != 2 {
-		t.Fatalf("replayed calls = %#v", calls)
+	modelContent := contents[0].(map[string]any)
+	if modelContent["role"] != "model" {
+		t.Fatalf("first content role = %v, want model", modelContent["role"])
+	}
+	parts := modelContent["parts"].([]any)
+	if len(parts) != 2 {
+		t.Fatalf("replayed parts = %#v, want 2 functionCalls", parts)
 	}
 	for index, want := range []string{"sig-one", "sig-two"} {
-		wireCall := calls[index].(map[string]any)
-		extra := wireCall["extra_content"].(map[string]any)
-		google := extra["google"].(map[string]any)
-		if google["thought_signature"] != want {
-			t.Errorf("call %d signature = %v, want %q", index, google["thought_signature"], want)
+		part := parts[index].(map[string]any)
+		if part["thoughtSignature"] != want {
+			t.Errorf("call %d signature = %v, want %q", index, part["thoughtSignature"], want)
 		}
-		toolCallID := wireCall["id"]
-		if toolCallID != wantCalls[index].ID {
-			t.Errorf("call %d id = %v", index, toolCallID)
-		}
+		fc := part["functionCall"].(map[string]any)
+		if fc["name"] != wantCalls[index].Name {
+			t.Errorf("call %d name = %v", index, fc["name"])
+			}
+	}
+	userContent := contents[1].(map[string]any)
+	if userContent["role"] != "user" {
+		t.Fatalf("second content role = %v, want user", userContent["role"])
+	}
+	resultParts := userContent["parts"].([]any)
+	if len(resultParts) != 2 {
+		t.Fatalf("tool result parts = %#v, want 2 functionResponses", resultParts)
 	}
 	for i, want := range toolResults {
-		wireTool := items[i+1].(map[string]any)
-		if wireTool["role"] != "tool" || wireTool["tool_call_id"] != want.ToolCallID || wireTool["name"] != want.Name || wireTool["content"] != want.Content {
-			t.Errorf("tool result %d = %#v, want %+v", i, wireTool, want)
+		fr := resultParts[i].(map[string]any)["functionResponse"].(map[string]any)
+		if fr["name"] != want.Name {
+			t.Errorf("tool result %d name = %v, want %v", i, fr["name"], want.Name)
 		}
+		resp := fr["response"].(map[string]any)
+		if resp["output"] != want.Content {
+			t.Errorf("tool result %d output = %#v, want %+v", i, resp["output"], want.Content)
+			}
 	}
 	if requests != 2 {
 		t.Fatalf("requests = %d", requests)
@@ -350,3 +391,84 @@ func response(status int, body string) *http.Response {
 }
 
 var _ = json.RawMessage(nil)
+
+func TestGeminiNativeUsageMapsCachedContentAndThoughts(t *testing.T) {
+	var body map[string]any
+	var seenURL string
+	stream := "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]}}],"usageMetadata":{"promptTokenCount":1200,"candidatesTokenCount":320,"thoughtsTokenCount":20,"cachedContentTokenCount":800,"totalTokenCount":2040}}`+"\n\n"
+	p, err := newGemini(Config{HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
+		seenURL = r.URL.String()
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		return response(http.StatusOK, stream), nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Complete(context.Background(), Request{Model: "gemini-3-flash-preview", Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(seenURL, ":streamGenerateContent") {
+		t.Fatalf("native URL = %s, want streamGenerateContent", seenURL)
+	}
+	if _, ok := body["stream_options"]; ok {
+		t.Fatalf("native request must not send stream_options, got %v", body["stream_options"])
+	}
+	if got.Usage == nil {
+		t.Fatal("usage is nil, want prompt/completion/cache/reasoning")
+	}
+	if v, ok := got.Usage.KnownInput(); !ok || v != 1200 {
+		t.Fatalf("input = %v, want 1200", got.Usage.InputTokens)
+	}
+	// Output includes reasoning per contract: candidates 320 + thoughts 20.
+	if v, ok := got.Usage.KnownOutput(); !ok || v != 340 {
+		t.Fatalf("output = %v, want 340 (320+20)", got.Usage.OutputTokens)
+	}
+	if v, ok := got.Usage.KnownCacheRead(); !ok || v != 800 {
+		t.Fatalf("cache_read = %v, want 800", got.Usage.CacheReadTokens)
+	}
+	if v, ok := got.Usage.KnownReasoning(); !ok || v != 20 {
+		t.Fatalf("reasoning = %v, want 20", got.Usage.ReasoningTokens)
+	}
+	// Session aggregation must surface the paired ratio for /usage.
+	s := SessionUsage{}
+	s.Add(NormalizeUsage(got.Usage))
+	if s.InputReported != 1 || s.CacheReadReported != 1 {
+		t.Fatalf("coverage = %+v, want input/cache each reported once", s)
+	}
+	if s.CacheRatioRequests != 1 || s.CacheRatioInputTokens != 1200 || s.CacheRatioReadTokens != 800 {
+		t.Fatalf("ratio sums = %+v, want 800/1200 over 1 request", s)
+	}
+}
+
+func TestGeminiCompatProxyKeepsOpenAIWire(t *testing.T) {
+	var body map[string]any
+	var seenURL string
+	stream := "data: "+`{"choices":[{"delta":{"content":"hi"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`+"\n\n" + "data: [DONE]\n\n"
+	p, err := newGemini(Config{BaseURL: "https://proxy.example/v1", HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
+		seenURL = r.URL.String()
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		return response(http.StatusOK, stream), nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.Complete(context.Background(), Request{Model: "gemini-3-flash-preview", Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seenURL != "https://proxy.example/v1/chat/completions" {
+		t.Fatalf("proxy URL = %s, want chat/completions", seenURL)
+	}
+	if _, ok := body["stream_options"]; !ok {
+		t.Fatalf("compat proxy must still send stream_options, got %v", body)
+	}
+	if got.Message.Content != "hi" {
+		t.Fatalf("content = %q", got.Message.Content)
+	}
+}
+

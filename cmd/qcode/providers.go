@@ -19,7 +19,7 @@ import (
 
 func isGeminiOfficialEndpoint(endpoint string) bool {
 	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
-	return endpoint == "" || endpoint == "https://generativelanguage.googleapis.com/v1beta/openai"
+	return endpoint == "" || endpoint == "https://generativelanguage.googleapis.com/v1beta/openai" || endpoint == "https://generativelanguage.googleapis.com/v1beta"
 }
 
 // providerBuilder owns the launch snapshot. Generic flags/environment overrides
