@@ -132,3 +132,13 @@ model = "qwen2.5-coder:7b"
 # base_url = "https://inference.example.com/v1"
 # api_key_path = "~/.config/qcode/work.key"
 # model = "work-coder"
+
+# MCP servers provide additional tools. Configuring a server trusts its tools
+# to run without per-call approval. MCP is disabled in sandbox and plan modes.
+# [mcp_servers.local_example]
+# command = "my-mcp-server"
+# args = ["--stdio"]
+# env = { EXAMPLE_OPTION = "value" }
+#
+# [mcp_servers.remote_example]
+# url = "https://example.com/mcp"

@@ -1,6 +1,6 @@
 # qcode
 
-[![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
 
@@ -37,7 +37,7 @@ qcode is a lightweight, keyboard-driven AI coding assistant that runs entirely i
 ### Installation
 
 ```sh
-# Build from source (requires Go 1.22+)
+# Build from source (requires Go 1.23+)
 make build
 ./bin/qcode
 ```

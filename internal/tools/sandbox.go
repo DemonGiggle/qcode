@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"qcode/internal/mcpclient"
 	"runtime"
 	"sort"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 
 // Options controls optional protections around model-triggered tools.
 type Options struct {
+	MCP                   *mcpclient.Manager
 	SearchBackend         string
 	Sandbox               bool
 	AllowNetwork          bool

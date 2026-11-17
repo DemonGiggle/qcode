@@ -477,3 +477,26 @@ with `--provider ollama-lab` or `/provider ollama-lab`. Existing configs need no
 migration. Main-tab saves, model/thinking memory, and sub-agent roster entries
 use instance names. Saving default thinking writes an explicit empty value so
 it does not accidentally inherit the parent's setting after restart.
+
+### MCP servers
+
+Configure trusted MCP tool servers with `[mcp_servers.NAME]`. Local servers use
+`command`, optional `args`, and optional `env`; remote servers use `url` for a
+Streamable HTTP endpoint. Each configuration layer replaces the named server
+entry. Local commands inherit the environment and run in the launch workspace.
+
+```toml
+[mcp_servers.local]
+command = "my-mcp-server"
+args = ["--stdio"]
+
+[mcp_servers.remote]
+url = "https://example.com/mcp"
+```
+
+Configured servers are trusted to perform side effects without per-call
+approval. MCP tools are unavailable in plan and skill-plan modes, and servers
+are not started when sandbox mode is enabled. Remote authentication, resources,
+and prompts are not supported. Server connection failures produce warnings and
+leave other tools available. Connections are shared by agents during a qcode
+run and closed at shutdown.

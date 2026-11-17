@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pelletier/go-toml/v2"
+	"qcode/internal/mcpclient"
 	"qcode/internal/redaction"
 	"qcode/internal/theme"
 )
@@ -346,7 +347,8 @@ func mergeAllowedAgentModels(dst *Agents, incoming Agents) {
 }
 
 type Config struct {
-	Providers              map[string]ProviderProfile `toml:"providers"`
+	MCPServers             map[string]mcpclient.ServerConfig `toml:"mcp_servers"`
+	Providers              map[string]ProviderProfile        `toml:"providers"`
 	connectionsLoaded      bool
 	legacyConnectionOwners map[string]string
 	globalBaseURL          string
@@ -694,6 +696,12 @@ func validateSkillSelection(path string, skills Skills) error {
 // selected. Repeatable
 // --sandbox-command-path flags override the merged configuration entirely.
 func merge(dst *Config, incoming Config) {
+	for name, server := range incoming.MCPServers {
+		if dst.MCPServers == nil {
+			dst.MCPServers = make(map[string]mcpclient.ServerConfig)
+		}
+		dst.MCPServers[name] = server
+	}
 	for name, profile := range incoming.Providers {
 		if dst.Providers == nil {
 			dst.Providers = make(map[string]ProviderProfile)

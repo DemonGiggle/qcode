@@ -21,6 +21,7 @@ import (
 	"qcode/internal/demo"
 	"qcode/internal/learning"
 	"qcode/internal/llm"
+	"qcode/internal/mcpclient"
 	"qcode/internal/memo"
 	"qcode/internal/prompt"
 	"qcode/internal/redaction"
@@ -313,7 +314,14 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	}
 	skillSelection := skills.NewLazySelection(root, allSkillPaths...)
 	skillSelection.SetSelection(skillNames(autoloadSkills), skillAlwaysNames(autoloadSkills))
-	registry, err := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, SandboxCommandPaths: sandboxCommandPaths, Skills: skillSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
+	var mcpManager *mcpclient.Manager
+	if sandboxActive && len(loadedConfig.MCPServers) > 0 {
+		fmt.Fprintln(diagnosticsOut, "WARNING: MCP servers are disabled in sandbox mode")
+	} else if !opts.demo && len(loadedConfig.MCPServers) > 0 {
+		mcpManager = mcpclient.New(loadedConfig.MCPServers, root, diagnosticsOut)
+		defer mcpManager.Close()
+	}
+	registry, err := tools.NewWithOptions(root, tools.Options{MCP: mcpManager, Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, SandboxCommandPaths: sandboxCommandPaths, Skills: skillSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
 	if err != nil {
 		return err
 	}
@@ -453,7 +461,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			currentEndpoint := opts.baseURL
 			if !isMain || saved != nil || selected != nil {
 				currentSelection = skills.NewLazySelection(root, allSkillPaths...)
-				createdRegistry, createErr := tools.NewWithOptions(root, tools.Options{Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, SandboxCommandPaths: sandboxCommandPaths, Skills: currentSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
+				createdRegistry, createErr := tools.NewWithOptions(root, tools.Options{MCP: mcpManager, Sandbox: sandboxActive, BubblewrapPath: sandboxPath, ProtectedPaths: protectedPaths, SandboxCommandPaths: sandboxCommandPaths, Skills: currentSelection, SearchBackend: opts.searchBackend, InsecureSkipTLSVerify: opts.dangerSkipTLSVerify})
 				if createErr != nil {
 					return nil, createErr
 				}

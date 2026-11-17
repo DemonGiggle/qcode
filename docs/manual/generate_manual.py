@@ -698,7 +698,7 @@ def build_pdf(images: dict[str, Path]):
     h1(pdf, "1. Getting started")
     h2(pdf, "Install and first run")
     body(pdf, "qcode is one program you run in your terminal. Build it once, then start it in any project folder.")
-    code(pdf, "# Build from source (needs Go 1.22+)\nmake build\n./bin/qcode")
+    code(pdf, "# Build from source (needs Go 1.23+)\nmake build\n./bin/qcode")
     body(pdf, "The remaining shell examples assume qcode is on your PATH. From this source checkout, use ./bin/qcode instead. make build creates the binary but does not install it.")
     body(pdf, "Pick the assistant you want to use. Common choices are a local model (Ollama), a hosted model (OpenAI, Gemini, or OpenCode Go), or a ChatGPT subscription.")
     code(

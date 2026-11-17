@@ -1,6 +1,6 @@
 # Building
 
-Go 1.22 or newer is required.
+Go 1.23 or newer is required.
 
 ```sh
 make build

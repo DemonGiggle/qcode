@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"qcode/internal/llm"
+	"qcode/internal/mcpclient"
 	"qcode/internal/prompt"
 )
 
@@ -35,6 +36,7 @@ type Handler func(context.Context, json.RawMessage) (string, error)
 type ExecutionResult = llm.ToolResult
 
 type Registry struct {
+	mcp                   *mcpclient.Manager
 	web                   *webTools
 	root                  string
 	cwd                   string // guarded by grantMu; root is the immutable launch workspace
@@ -68,6 +70,9 @@ func NewWithOptions(root string, options Options) (*Registry, error) {
 		abs = canonical
 	}
 	r := &Registry{root: abs, handlers: map[string]Handler{}, grants: []string{abs}, skills: options.Skills, insecureSkipTLSVerify: options.InsecureSkipTLSVerify}
+	if !options.Sandbox {
+		r.mcp = options.MCP
+	}
 	if options.Sandbox {
 		bwrap := options.BubblewrapPath
 		if bwrap == "" {
@@ -195,12 +200,18 @@ func (r *Registry) add(schema llm.Tool, handler Handler) {
 	r.handlers[schema.Name] = handler
 }
 
-func (r *Registry) Schemas() []llm.Tool { return append([]llm.Tool(nil), r.schemas...) }
+func (r *Registry) Schemas() []llm.Tool {
+	result := append([]llm.Tool(nil), r.schemas...)
+	if r.mcp != nil {
+		result = append(result, r.mcp.Schemas()...)
+	}
+	return result
+}
 
 // EnabledSchemas returns only the tool schemas that are not disabled.
 func (r *Registry) EnabledSchemas() []llm.Tool {
 	result := make([]llm.Tool, 0, len(r.schemas))
-	for _, tool := range r.schemas {
+	for _, tool := range r.Schemas() {
 		if !r.disabled[tool.Name] {
 			result = append(result, tool)
 		}
@@ -230,8 +241,9 @@ func (r *Registry) IsToolEnabled(name string) bool {
 
 // ToolNames returns the names of all registered tools in registration order.
 func (r *Registry) ToolNames() []string {
-	names := make([]string, len(r.schemas))
-	for i, tool := range r.schemas {
+	schemas := r.Schemas()
+	names := make([]string, len(schemas))
+	for i, tool := range schemas {
 		names[i] = tool.Name
 	}
 	return names
@@ -248,6 +260,11 @@ func (r *Registry) ExecuteDetailed(ctx context.Context, call llm.ToolCall) (Exec
 	}
 	if !r.IsToolEnabled(call.Name) {
 		return ExecutionResult{}, fmt.Errorf("tool %q is disabled; the user must enable it through /tool for this session", call.Name)
+	}
+	if r.mcp != nil {
+		if result, ok, err := r.mcp.Execute(ctx, call.Name, call.Arguments); ok {
+			return result, err
+		}
 	}
 	switch call.Name {
 	case "write":
