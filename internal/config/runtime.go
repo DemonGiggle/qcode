@@ -1306,7 +1306,7 @@ func runtimeConfigEntries(data []byte) (map[string]runtimeConfigEntry, int, erro
 				continue
 			}
 			name := string(key.Data)
-			if name != "provider" && name != "base_url" && name != "api_key" && name != "model" && name != "thinking" && name != "max_steps" && name != "interactive" && name != "autoreview" && name != "autoreview_provider" && name != "autoreview_model" && name != "statusline_hidden" && name != "theme" {
+			if name != "provider" && name != "base_url" && name != "api_key" && name != "model" && name != "thinking" && name != "max_steps" && name != "interactive" && name != "autoreview" && name != "autoreview_provider" && name != "autoreview_model" && name != "statusline_hidden" && name != "theme" && name != "sandbox" && name != "sandbox_command_paths" {
 				continue
 			}
 			// Array nodes do not carry a Raw range. Derive the value span
@@ -1334,7 +1334,7 @@ func runtimeConfigEntries(data []byte) (map[string]runtimeConfigEntry, int, erro
 
 func renderRuntimeKeys(changes map[string]*string, newline string) []byte {
 	var output bytes.Buffer
-	for _, key := range []string{"provider", "model", "thinking", "max_steps", "interactive", "autoreview", "autoreview_provider", "autoreview_model", "statusline_hidden", "theme"} {
+	for _, key := range []string{"provider", "model", "thinking", "max_steps", "interactive", "autoreview", "autoreview_provider", "autoreview_model", "statusline_hidden", "theme", "sandbox", "sandbox_command_paths"} {
 		value, ok := changes[key]
 		if !ok || value == nil {
 			continue
