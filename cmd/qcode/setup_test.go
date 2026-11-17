@@ -178,9 +178,9 @@ func TestSetupMenuconfigExitWithoutSavingLeavesConfigUntouched(t *testing.T) {
 
 	ui := &fakeSetupUI{
 		steps: []fakeSetupStep{
-			// Main Menu -> Behavior -> Toggle autoreview -> Esc back to Main Menu -> Exit without saving
-			{kind: "option", reply: "Behavior            --->  (autoreview: on, interactive: off)", nav: tui.SetupAccepted},
-			{kind: "option", reply: "Toggle autoreview (currently: enabled)", nav: tui.SetupAccepted},
+			// Main Menu -> Behavior -> Toggle interactive questions -> Esc back to Main Menu -> Exit without saving
+			{kind: "option", reply: "Behavior            --->  (interactive: off)", nav: tui.SetupAccepted},
+			{kind: "option", reply: "Toggle interactive questions (currently: disabled)", nav: tui.SetupAccepted},
 			{kind: "option", reply: "", nav: tui.SetupBack},
 			{kind: "option", reply: "Exit without saving", nav: tui.SetupAccepted},
 		},
@@ -204,6 +204,15 @@ func TestSetupMenuconfigExitWithoutSavingLeavesConfigUntouched(t *testing.T) {
 
 	if err := runSetupWithDeps(nil, strings.NewReader(""), &stdout, &stderr, true, deps); err != nil {
 		t.Fatalf("runSetupWithDeps() error = %v", err)
+	}
+	for i, noun := range ui.seenOptionNouns {
+		if noun == "behavior" {
+			for _, opt := range ui.seenOptions[i] {
+				if strings.Contains(strings.ToLower(opt), "autoreview") {
+					t.Fatalf("unexpected autoreview option in behavior menu: %v", ui.seenOptions[i])
+				}
+			}
+		}
 	}
 	got, err := os.ReadFile(cfgPath)
 	if err != nil {

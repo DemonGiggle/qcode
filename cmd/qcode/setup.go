@@ -196,7 +196,6 @@ type setupState struct {
 	sandboxCommandPaths []string
 	sandboxPathsChanged bool
 
-	autoreview  *bool
 	interactive *bool
 }
 
@@ -291,16 +290,6 @@ func (s *setupState) effectiveSandboxPaths() []string {
 	return s.initial.SandboxCommandPaths
 }
 
-func (s *setupState) effectiveAutoreview() bool {
-	if s.autoreview != nil {
-		return *s.autoreview
-	}
-	if s.initial.AutoReview != nil {
-		return *s.initial.AutoReview
-	}
-	return true
-}
-
 func (s *setupState) effectiveInteractive() bool {
 	if s.interactive != nil {
 		return *s.interactive
@@ -309,7 +298,7 @@ func (s *setupState) effectiveInteractive() bool {
 }
 
 func (s *setupState) hasChanges() bool {
-	if s.providerChanged || s.themeChanged || s.sandbox != nil || s.sandboxPathsChanged || s.autoreview != nil || s.interactive != nil {
+	if s.providerChanged || s.themeChanged || s.sandbox != nil || s.sandboxPathsChanged || s.interactive != nil {
 		return true
 	}
 	for _, d := range s.providers {
@@ -330,15 +319,11 @@ func runMainMenu(ui setupUI, state *setupState, stdin io.Reader, stdout, stderr 
 		providersItem := fmt.Sprintf("Providers & Models  --->  (active: %s / %s)", state.activeProvider, model)
 		themeItem := fmt.Sprintf("Appearance (Theme)  --->  (%s)", state.effectiveTheme())
 
-		arStr := "on"
-		if !state.effectiveAutoreview() {
-			arStr = "off"
-		}
 		intStr := "off"
 		if state.effectiveInteractive() {
 			intStr = "on"
 		}
-		behaviorItem := fmt.Sprintf("Behavior            --->  (autoreview: %s, interactive: %s)", arStr, intStr)
+		behaviorItem := fmt.Sprintf("Behavior            --->  (interactive: %s)", intStr)
 
 		options := []string{providersItem, themeItem}
 		var sandboxItem string
@@ -850,18 +835,13 @@ func runSandboxMenu(ui setupUI, state *setupState) (bool, error) {
 func runBehaviorMenu(ui setupUI, state *setupState) (bool, error) {
 	currentItem := ""
 	for {
-		arState := "enabled"
-		if !state.effectiveAutoreview() {
-			arState = "disabled"
-		}
 		intState := "disabled"
 		if state.effectiveInteractive() {
 			intState = "enabled"
 		}
-		arLabel := fmt.Sprintf("Toggle autoreview (currently: %s)", arState)
 		intLabel := fmt.Sprintf("Toggle interactive questions (currently: %s)", intState)
 
-		choice, nav, err := ui.SelectOptionNav("behavior", []string{arLabel, intLabel, backMenuItem}, nil, currentItem, false)
+		choice, nav, err := ui.SelectOptionNav("behavior", []string{intLabel, backMenuItem}, nil, currentItem, false)
 		if err != nil {
 			return false, err
 		}
@@ -873,11 +853,7 @@ func runBehaviorMenu(ui setupUI, state *setupState) (bool, error) {
 		}
 		currentItem = choice
 
-		switch choice {
-		case arLabel:
-			v := !state.effectiveAutoreview()
-			state.autoreview = &v
-		case intLabel:
+		if choice == intLabel {
 			v := !state.effectiveInteractive()
 			state.interactive = &v
 		}
@@ -941,11 +917,6 @@ func applySetupState(writer *config.RuntimePreferenceWriter, state *setupState, 
 			return err
 		}
 	}
-	if state.autoreview != nil {
-		if err := writer.PersistAutoreview(*state.autoreview); err != nil {
-			return err
-		}
-	}
 	if state.interactive != nil {
 		if err := writer.PersistInteractive(*state.interactive); err != nil {
 			return err
@@ -990,9 +961,6 @@ func printSetupSummary(out io.Writer, userPath string, state *setupState) {
 	}
 	if state.sandboxPathsChanged {
 		fmt.Fprintf(out, "  sandbox_command_paths: %d path(s)\n", len(state.sandboxCommandPaths))
-	}
-	if state.autoreview != nil {
-		fmt.Fprintf(out, "  autoreview: %v\n", *state.autoreview)
 	}
 	if state.interactive != nil {
 		fmt.Fprintf(out, "  interactive: %v\n", *state.interactive)
