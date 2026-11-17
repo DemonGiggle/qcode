@@ -10,12 +10,18 @@ import (
 // range as one block while retaining its original text for submission.
 type pastedRange struct{ start, end int }
 
-// Dual collapse rule: only long or tall pastes become [paste N].
-// Short pastes stay inline and editable; the placeholder itself is ~22 runes,
-// so collapsing anything shorter would hide useful context to save no space.
+// Dual collapse rule: only long or tall pastes become a preview tag.
+// Short pastes stay inline and editable; the tag itself is longer than a
+// short paste, so collapsing anything shorter would hide useful context to
+// save no space. A paste into an empty prompt stays inline so the content
+// is immediately visible.
 const (
 	pasteCollapseThreshold = 100
 	pasteCollapseMaxLines  = 3
+	// Preview window for a collapsed paste tag: the first and last few
+	// flattened characters stay visible around the hidden count.
+	pastePreviewHead = 20
+	pastePreviewTail = 20
 )
 
 func pasteLineCount(runes []rune) int {
@@ -42,8 +48,9 @@ func shouldCollapsePaste(runes []rune) bool {
 }
 
 // ShouldCollapsePaste reports whether pasted runes meet the dual collapse
-// rule (long or tall). The prompt restores long single-line drafts through
-// the same bracketed path so they stay collapsed after a session restore.
+// rule (long or tall). Callers keep pastes inline when the prompt is empty so
+// the content stays visible; non-empty drafts collapse through the bracketed
+// path (including session restores).
 func ShouldCollapsePaste(runes []rune) bool { return shouldCollapsePaste(runes) }
 
 func (t *Terminal) editableLength() int {
@@ -54,14 +61,56 @@ func (t *Terminal) editableLength() int {
 	return length
 }
 
-func pasteLabel(characters int) []rune {
-	return []rune(fmt.Sprintf("[paste %d characters]", characters))
+func pasteLabel(content []rune) []rune {
+	total := len(content)
+	flat := flattenPastePreview(content)
+	flatLen := len(flat)
+	headLen, tailLen := pastePreviewHead, pastePreviewTail
+	if flatLen <= pastePreviewHead+pastePreviewTail {
+		headLen = flatLen / 3
+		tailLen = flatLen / 3
+	}
+	if headLen > flatLen {
+		headLen = flatLen
+	}
+	if tailLen > flatLen-headLen {
+		tailLen = flatLen - headLen
+	}
+	var head, tail []rune
+	if headLen > 0 {
+		head = flat[:headLen]
+	}
+	if tailLen > 0 {
+		tail = flat[flatLen-tailLen:]
+	}
+	hidden := total - len(head) - len(tail)
+	if hidden < 0 {
+		hidden = 0
+	}
+	return []rune(fmt.Sprintf("[%s ... (hide %d characters) ... %s]", string(head), hidden, string(tail)))
+}
+
+// flattenPastePreview renders pasted runes as a single preview line: all
+// whitespace runs (newlines, tabs, repeated spaces) collapse to one space,
+// surrounding whitespace is trimmed, and remaining control characters become
+// "?" so the tag never breaks the composer layout.
+func flattenPastePreview(content []rune) []rune {
+	flat := []rune(strings.Join(strings.Fields(string(content)), " "))
+	for i, r := range flat {
+		if r < 32 || r == 0x7f {
+			flat[i] = '?'
+		}
+	}
+	return flat
 }
 
 func (t *Terminal) finishPaste() {
 	if len(t.pasteBuffer) > 0 {
 		start := t.pos
-		collapse := shouldCollapsePaste(t.pasteBuffer)
+		// An empty prompt keeps the paste inline so the content is
+		// immediately visible instead of hiding behind a tag.
+		empty := len(t.line) == 0
+		collapse := !empty && shouldCollapsePaste(t.pasteBuffer)
 		t.replaceRunes(start, start, t.pasteBuffer)
 		t.pos = start + len(t.pasteBuffer)
 		if collapse {
@@ -143,7 +192,7 @@ func (t *Terminal) displayLine() ([]rune, int) {
 			pos = len(display) + t.pos - start
 		}
 		display = append(display, t.line[start:block.start]...)
-		display = append(display, pasteLabel(block.end-block.start)...)
+		display = append(display, pasteLabel(t.line[block.start:block.end])...)
 		if t.pos > block.start && t.pos <= block.end {
 			pos = len(display)
 		}
@@ -154,14 +203,15 @@ func (t *Terminal) displayLine() ([]rune, int) {
 	}
 	display = append(display, t.line[start:]...)
 	if t.pasteActive && len(t.pasteBuffer) > 0 {
-		if !shouldCollapsePaste(t.pasteBuffer) {
+		emptyDraft := len(t.line) == 0 && len(t.pastes) == 0
+		if !shouldCollapsePaste(t.pasteBuffer) || emptyDraft {
 			tail := append([]rune(nil), display[pos:]...)
 			display = append(display[:pos], t.pasteBuffer...)
 			pos += len(t.pasteBuffer)
 			display = append(display, tail...)
 			return display, pos
 		}
-		label := pasteLabel(len(t.pasteBuffer))
+		label := pasteLabel(t.pasteBuffer)
 		tail := append([]rune(nil), display[pos:]...)
 		display = append(display[:pos], label...)
 		pos = len(display)

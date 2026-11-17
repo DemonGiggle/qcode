@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 )
 
 func bracketPaste(text string) string { return string(pasteStart) + text + string(pasteEnd) }
@@ -16,8 +15,10 @@ func TestPasteWaitsForEnterAndKeepsFullDraft(t *testing.T) {
 	t.Cleanup(func() { input.Close(); writer.Close() })
 	terminal := NewTerminal(readWriter{keyReader{input}, io.Discard}, "> ")
 	const payload = "first\r\nsecond\rthird\n\t你好🙂�\n"
-	const want = "first\nsecond\nthird\n\t你好🙂�\n"
-	label := fmt.Sprintf("[paste %d characters]", utf8.RuneCountInString(want))
+	const pasted = "first\nsecond\nthird\n\t你好🙂�\n"
+	const prefix = "prefix "
+	const want = prefix + pasted
+	label := prefix + string(pasteLabel([]rune(pasted)))
 	rendered := make(chan string, 1)
 	terminal.RenderInput = func(_, line string, pos int) {
 		display, cursor := terminal.DisplayInput(line, pos)
@@ -33,6 +34,9 @@ func TestPasteWaitsForEnterAndKeepsFullDraft(t *testing.T) {
 		t.Error("paste invoked autocomplete")
 		return line, pos, false
 	}
+	// Start from a non-empty draft so the long paste collapses; an empty
+	// prompt keeps pastes inline by design (see TestPasteIntoEmptyPromptStaysInline).
+	terminal.SetExpandedDraft(prefix)
 	result := make(chan struct {
 		line string
 		err  error
@@ -79,27 +83,32 @@ func TestPasteEditingKeepsBlocksWhole(t *testing.T) {
 	tall := "甲\n乙\n丙\n丁"
 	tall2 := "ab\ncd\nef\ngh"
 	tallControls := "a\t\x03\n\x15\n\x1b[A\nb"
+	label := func(s string) string { return string(pasteLabel([]rune(s))) }
+	largePaste := strings.Repeat("甲\n", 5000)
+	hugePaste := strings.Repeat("a", 4096)
+	hundredPaste := strings.Repeat("a", 100)
+	fourLinePaste := "a\nb\nc\nd"
 	for _, tc := range []struct{ name, input, want, preview string }{
-		{"prefix-and-suffix", "before " + bracketPaste(tall) + " after", "before " + tall + " after", "before [paste 7 characters] after"},
+		{"prefix-and-suffix", "before " + bracketPaste(tall) + " after", "before " + tall + " after", "before " + label(tall) + " after"},
 		{"backspace", "before " + bracketPaste(tall) + "\x7fafter", "before after", "before after"},
 		{"delete", "before " + bracketPaste(tall) + "after\x1b[D\x1b[D\x1b[D\x1b[D\x1b[D\x1b[D\x1b[3~", "before after", "before after"},
-		{"insert-before", bracketPaste(tall) + "\x1b[Dprefix ", "prefix " + tall, "prefix [paste 7 characters]"},
-		{"insert-after", bracketPaste(tall) + "\x1b[D\x1b[C suffix", tall + " suffix", "[paste 7 characters] suffix"},
-		{"multiple", bracketPaste(tall) + " " + bracketPaste(tall2), tall + " " + tall2, "[paste 7 characters] [paste 11 characters]"},
-		{"insert-paste-before", bracketPaste(tall) + "\x01" + bracketPaste(tall2), tall2 + tall, "[paste 11 characters][paste 7 characters]"},
+		{"insert-before", "before " + bracketPaste(tall) + "\x1b[Dprefix ", "before prefix " + tall, "before prefix " + label(tall)},
+		{"insert-after", "before " + bracketPaste(tall) + "\x1b[D\x1b[C suffix", "before " + tall + " suffix", "before " + label(tall) + " suffix"},
+		{"multiple", "before " + bracketPaste(tall) + " " + bracketPaste(tall2), "before " + tall + " " + tall2, "before " + label(tall) + " " + label(tall2)},
+		{"insert-paste-before", "before " + bracketPaste(tall) + "\x01" + bracketPaste(tall2), tall2 + "before " + tall, label(tall2) + "before " + label(tall)},
 		{"clear", bracketPaste(tall) + "\x15typed", "typed", "typed"},
 		{"delete-word", "prefix " + bracketPaste(tall) + "\x17suffix", "prefix suffix", "prefix suffix"},
 		{"kill-line", "prefix " + bracketPaste(tall) + " suffix\x01\x0btyped", "typed", "typed"},
-		{"literal-controls", bracketPaste(tallControls), tallControls, "[paste 11 characters]"},
+		{"literal-controls", "before " + bracketPaste(tallControls), "before " + tallControls, "before " + label(tallControls)},
 		{"empty", "before" + bracketPaste(""), "before", "before"},
-		{"large", bracketPaste(strings.Repeat("甲\n", 5000)) + "suffix", strings.Repeat("甲\n", 5000) + "suffix", "[paste 10000 characters]suffix"},
-		{"at-previous-limit", bracketPaste(strings.Repeat("a", 4096)) + "suffix", strings.Repeat("a", 4096) + "suffix", "[paste 4096 characters]suffix"},
+		{"large", "before " + bracketPaste(largePaste) + "suffix", "before " + largePaste + "suffix", "before " + label(largePaste) + "suffix"},
+		{"at-previous-limit", "before " + bracketPaste(hugePaste) + "suffix", "before " + hugePaste + "suffix", "before " + label(hugePaste) + "suffix"},
 		{"short-single-stays-inline", "before " + bracketPaste("hi") + " after", "before hi after", "before hi after"},
 		{"short-two-line-stays-inline", bracketPaste("alpha\nbeta"), "alpha\nbeta", "alpha\nbeta"},
 		{"three-lines-stay-inline", bracketPaste("a\nb\nc"), "a\nb\nc", "a\nb\nc"},
-		{"four-lines-collapse", bracketPaste("a\nb\nc\nd"), "a\nb\nc\nd", "[paste 7 characters]"},
+		{"four-lines-collapse", "before " + bracketPaste(fourLinePaste), "before " + fourLinePaste, "before " + label(fourLinePaste)},
 		{"ninety-nine-stays-inline", bracketPaste(strings.Repeat("a", 99)), strings.Repeat("a", 99), strings.Repeat("a", 99)},
-		{"one-hundred-collapses", bracketPaste(strings.Repeat("a", 100)), strings.Repeat("a", 100), "[paste 100 characters]"},
+		{"one-hundred-collapses", "before " + bracketPaste(hundredPaste), "before " + hundredPaste, "before " + label(hundredPaste)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			terminal := NewTerminal(readWriter{keyReader{strings.NewReader(tc.input + "\r")}, io.Discard}, "> ")
@@ -121,17 +130,64 @@ func TestPasteEditingKeepsBlocksWhole(t *testing.T) {
 }
 
 func TestHistoryNavigationKeepsUnsubmittedPasteCollapsed(t *testing.T) {
-	terminal := NewTerminal(readWriter{keyReader{strings.NewReader(bracketPaste("clipboard\nline2\nline3\nline4") + "\x1b[A\x1b[B\r")}, io.Discard}, "> ")
+	terminal := NewTerminal(readWriter{keyReader{strings.NewReader("note " + bracketPaste("clipboard\nline2\nline3\nline4") + "\x1b[A\x1b[B\r")}, io.Discard}, "> ")
 	terminal.history.Add("previous prompt")
 	var preview string
 	terminal.RenderInput = func(_, line string, pos int) {
-		if line == "clipboard\nline2\nline3\nline4" {
+		if line == "note clipboard\nline2\nline3\nline4" {
 			preview, _ = terminal.DisplayInput(line, pos)
 		}
 	}
 	line, err := terminal.ReadLine()
-	if err != nil || line != "clipboard\nline2\nline3\nline4" || preview != "[paste 27 characters]" {
-		t.Fatalf("history return: line=%q preview=%q error=%v", line, preview, err)
+	wantPreview := "note " + string(pasteLabel([]rune("clipboard\nline2\nline3\nline4")))
+	if err != nil || line != "note clipboard\nline2\nline3\nline4" || preview != wantPreview {
+		t.Fatalf("history return: line=%q preview=%q error=%v; want preview %q", line, preview, err, wantPreview)
+	}
+}
+
+func TestPasteIntoEmptyPromptStaysInline(t *testing.T) {
+	tall := "alpha\nbeta\ngamma\ndelta"
+	terminal := NewTerminal(readWriter{keyReader{strings.NewReader(bracketPaste(tall) + "\r")}, io.Discard}, "> ")
+	preview := ""
+	terminal.RenderInput = func(_, line string, pos int) {
+		if line == tall {
+			preview, _ = terminal.DisplayInput(line, pos)
+		}
+	}
+	line, err := terminal.ReadLine()
+	if err != nil || line != tall || preview != tall {
+		t.Fatalf("empty paste should stay inline: line=%q preview=%q error=%v", line, preview, err)
+	}
+}
+
+func TestPasteLabelShowsHeadAndTailPreview(t *testing.T) {
+	content := "the road is dark and full of terrors and wonders some days behind."
+	label := string(pasteLabel([]rune(content)))
+	if len(label) < 2 || label[0] != '[' || label[len(label)-1] != ']' {
+		t.Fatalf("label should be bracketed, got %q", label)
+	}
+	if !strings.Contains(label, "the road") {
+		t.Fatalf("label should show head preview, got %q", label)
+	}
+	if !strings.Contains(label, "days behind.") {
+		t.Fatalf("label should show tail preview, got %q", label)
+	}
+	if !strings.Contains(label, "(hide ") || !strings.Contains(label, " characters)") {
+		t.Fatalf("label should show hidden count, got %q", label)
+	}
+	if strings.Contains(label, "paste ") {
+		t.Fatalf("label should not use old [paste N] format, got %q", label)
+	}
+	flat := flattenPastePreview([]rune(content))
+	headLen, tailLen := pastePreviewHead, pastePreviewTail
+	if len(flat) <= pastePreviewHead+pastePreviewTail {
+		headLen = len(flat) / 3
+		tailLen = len(flat) / 3
+	}
+	hidden := len([]rune(content)) - headLen - tailLen
+	expectedSuffix := fmt.Sprintf("(hide %d characters)", hidden)
+	if !strings.Contains(label, expectedSuffix) {
+		t.Fatalf("label %q should contain %q", label, expectedSuffix)
 	}
 }
 
@@ -155,21 +211,21 @@ func TestInlinePasteExpandsOnlyAfterEnter(t *testing.T) {
 	for _, width := range []int{12, 80} {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
 			s := &screen{width: width}
-			terminal := NewTerminal(readWriter{strings.NewReader(bracketPaste("alpha\nbeta\ngamma\ndelta")), s}, "> ")
+			terminal := NewTerminal(readWriter{strings.NewReader("hi " + bracketPaste("alpha\nbeta\ngamma\ndelta")), s}, "> ")
 			terminal.SetSize(width, 40)
 			if _, err := terminal.ReadLine(); err != io.EOF {
 				t.Fatalf("paste submitted before Enter: %v", err)
 			}
 			expected := &screen{width: width}
-			expected.Write([]byte("> [paste 22 characters]"))
+			expected.Write([]byte("> hi " + string(pasteLabel([]rune("alpha\nbeta\ngamma\ndelta")))))
 			if got := s.contents(); got != expected.contents() {
 				t.Fatalf("draft screen=%q, want %q", got, expected.contents())
 			}
 			terminal.c = readWriter{strings.NewReader("\r"), s}
-			if line, err := terminal.ReadLine(); err != nil || line != "alpha\nbeta\ngamma\ndelta" {
+			if line, err := terminal.ReadLine(); err != nil || line != "hi alpha\nbeta\ngamma\ndelta" {
 				t.Fatalf("submission=%q, %v", line, err)
 			}
-			if got := s.contents(); got != "> alpha\nbeta\ngamma\ndelta" {
+			if got := s.contents(); got != "> hi alpha\nbeta\ngamma\ndelta" {
 				t.Fatalf("submitted screen=%q", got)
 			}
 		})

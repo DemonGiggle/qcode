@@ -749,7 +749,7 @@ def build_pdf(images: dict[str, Path]):
             "Todo panel: a live `Todo done/total` checklist sits above the steer/queue area while multi-step work is incomplete (`[ ]` todo, half-circle doing, `[x]` done). Alt+T expands it; Esc collapses; /todo show reviews it any time. On very short terminals the panel can shrink to its header row until more room is available.",
             "Prompt: `>` idle, `(Plan)>` planning, `(Skill plan)>` skill design, `(Steer)>` working. You can keep typing while work runs.",
             "Status bar: provider, MODEL, WS folder, CTX percent left, STEP n/max, and TOK input/output plus total when it fits. THINK shows the effective level, including the provider default when you omit it, MODE shows PLAN, SKILL PLAN, or INTERACTIVE, REMOTE while browser control runs, and AR first when /autoreview is on. Narrow windows shorten the workspace path first, then wrap to a second left-aligned row before dropping low-priority segments (tok first). Hide parts with /statusline.",
-            "Pastes: long pastes stay together as one `[paste N characters]` block (100+ characters or more than 3 lines; one trailing newline does not count as a line). Short pastes stay inline and editable. Pasting never submits: press Enter to submit the full draft. Type before or after a collapsed block; Left/Right moves across it as a whole, Backspace/Delete removes the whole block.",
+            "Pastes: long pastes into a non-empty draft stay together as one `[head ... (hide N characters) ... tail]` block (100+ characters or more than 3 lines; one trailing newline does not count as a line). A paste into an empty prompt stays inline. Short pastes stay inline and editable. Pasting never submits: press Enter to submit the full draft. Type before or after a collapsed block; Left/Right moves across it as a whole, Backspace/Delete removes the whole block.",
         ],
     )
     if pdf.will_page_break(85):
@@ -1235,7 +1235,7 @@ def build_pdf(images: dict[str, Path]):
             ("Text is redacted?", "Detected sensitive text is replaced locally by [REDACTED]. Saved redactions are permanent; review docs/privacy.md for scope."),
             ("Remote blocked?", "On Linux run once: sudo tailscale set --operator=$USER. Then retry /remote."),
             ("Approval prompt?", "Review the exact proposed call. Untrusted page, file, or shell text never authorizes it. Approve only the current run when you understand the action; one-shot runs deny such calls."),
-            ("Paste collapsed?", "Long pastes show [paste N characters]. Left/Right jumps the block; Backspace/Delete removes it whole. Short pastes stay inline. Pasting never submits."),
+            ("Paste collapsed?", "Long pastes into a non-empty draft show [head ... (hide N characters) ... tail] with head/tail preview. Pastes into an empty prompt stay inline. Left/Right jumps the block; Backspace/Delete removes it whole. Short pastes stay inline. Pasting never submits."),
             ("Model switch warns?", "A cross-backend model switch warns before applying. Same-backend switches apply silently. Unsupported thinking levels fail before any request."),
             ("Provider not set up?", "Run qcode --list-providers to see kinds, named instances, and setup hints; set GEMINI_API_KEY/GOOGLE_API_KEY for Gemini or OPENAI_API_KEY for OpenAI."),
             ("No review after main?", "/autoreview runs only for file-changing work on main with an empty queue; read-only answers and [skip review] opt out."),

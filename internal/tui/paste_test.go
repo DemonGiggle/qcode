@@ -20,14 +20,15 @@ func TestComposerPasteKeepsFullDraftAndCompactDisplay(t *testing.T) {
 			u.input.start()
 			u.terminal = lineedit.NewTerminal(readWriter{Reader: u.input, Writer: io.Discard}, inputPrompt)
 			const payload = "first line\nsecond line\nthird line\n你好🙂\n"
-			const label = "[paste 38 characters]"
+			const prefix = "note "
+			const want = prefix + payload
 			rendered := make(chan string, 1)
 			u.terminal.RenderInput = func(prompt, line string, pos int) {
 				u.renderInput(prompt, line, pos)
-				if line == payload {
+				if line == want {
 					u.screenMu.Lock()
 					state := frame()
-					if u.drafts["main"] != payload || u.inputPosition != utf8.RuneCountInString(payload) {
+					if u.drafts["main"] != want || u.inputPosition != utf8.RuneCountInString(want) {
 						state = "full draft was lost"
 					}
 					u.screenMu.Unlock()
@@ -46,13 +47,14 @@ func TestComposerPasteKeepsFullDraftAndCompactDisplay(t *testing.T) {
 				}{line, err}
 			}()
 			if restore {
+				u.terminal.SetExpandedDraft(prefix)
 				u.input.injectDraft(payload)
-			} else if _, err := io.WriteString(writer, bracketedPasteStart+payload+bracketedPasteEnd); err != nil {
+			} else if _, err := io.WriteString(writer, prefix+bracketedPasteStart+payload+bracketedPasteEnd); err != nil {
 				t.Fatal(err)
 			}
 			select {
 			case state := <-rendered:
-				if !strings.Contains(state, "(Steer)> "+label) || strings.Contains(state, "first line") {
+				if !strings.Contains(state, "(Steer)> "+prefix) || !strings.Contains(state, "(hide ") || !strings.Contains(state, "first line") || strings.Contains(state, "second line") {
 					t.Fatalf("paste frame=%q", state)
 				}
 			case got := <-result:
@@ -68,7 +70,7 @@ func TestComposerPasteKeepsFullDraftAndCompactDisplay(t *testing.T) {
 			}
 			select {
 			case got := <-result:
-				if got.err != nil || got.line != payload {
+				if got.err != nil || got.line != want {
 					t.Fatalf("submitted paste=%q, %v", got.line, got.err)
 				}
 			case <-time.After(time.Second):
@@ -112,7 +114,7 @@ func TestComposerShortPasteStaysInline(t *testing.T) {
 	}
 	select {
 	case state := <-rendered:
-		if !strings.Contains(state, "(Steer)> alpha") || !strings.Contains(state, "beta") || strings.Contains(state, "[paste") {
+		if !strings.Contains(state, "(Steer)> alpha") || !strings.Contains(state, "beta") || strings.Contains(state, "[paste") || strings.Contains(state, "(hide ") {
 			t.Fatalf("short paste should stay literal, frame=%q", state)
 		}
 	case got := <-result:
