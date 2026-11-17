@@ -500,3 +500,9 @@ are not started when sandbox mode is enabled. Remote authentication, resources,
 and prompts are not supported. Server connection failures produce warnings and
 leave other tools available. Connections are shared by agents during a qcode
 run and closed at shutdown.
+
+Use `qcode setup` → **MCP servers** to stage a local or remote server, then
+choose **Save and Leave** to write it to the user configuration. Local
+arguments and environment overrides are entered one at a time; environment
+values are stored in the configuration file. Existing server names are not
+replaced; edit the configuration file directly to change or remove one.

@@ -16,6 +16,7 @@ import (
 	"qcode/internal/chatgptoauth"
 	"qcode/internal/config"
 	"qcode/internal/llm"
+	"qcode/internal/mcpclient"
 	"qcode/internal/redaction"
 	"qcode/internal/tui"
 )
@@ -197,6 +198,7 @@ type setupState struct {
 	sandboxPathsChanged bool
 
 	interactive *bool
+	mcpServers  map[string]mcpclient.ServerConfig
 }
 
 func newSetupState(cfg config.Config, userPath string) *setupState {
@@ -209,6 +211,7 @@ func newSetupState(cfg config.Config, userPath string) *setupState {
 		userPath:       userPath,
 		activeProvider: active,
 		providers:      make(map[string]*providerDraft),
+		mcpServers:     make(map[string]mcpclient.ServerConfig),
 		theme:          strings.TrimSpace(cfg.Theme),
 	}
 }
@@ -241,9 +244,9 @@ func (s *setupState) effectiveConnection(provider string) (baseURL, apiKey strin
 		if d.baseURL != nil {
 			baseURL = *d.baseURL
 		}
-			if d.apiKey != "" {
-				apiKey = d.apiKey
-			}
+		if d.apiKey != "" {
+			apiKey = d.apiKey
+		}
 	}
 	return baseURL, apiKey
 }
@@ -298,7 +301,7 @@ func (s *setupState) effectiveInteractive() bool {
 }
 
 func (s *setupState) hasChanges() bool {
-	if s.providerChanged || s.themeChanged || s.sandbox != nil || s.sandboxPathsChanged || s.interactive != nil {
+	if s.providerChanged || s.themeChanged || s.sandbox != nil || s.sandboxPathsChanged || s.interactive != nil || len(s.mcpServers) > 0 {
 		return true
 	}
 	for _, d := range s.providers {
@@ -335,7 +338,7 @@ func runMainMenu(ui setupUI, state *setupState, stdin io.Reader, stdout, stderr 
 			sandboxItem = fmt.Sprintf("Sandbox (Linux)     --->  (%s)", sbStr)
 			options = append(options, sandboxItem)
 		}
-		options = append(options, behaviorItem, "Save and Leave", "Exit without saving")
+		options = append(options, behaviorItem, "MCP servers         --->", "Save and Leave", "Exit without saving")
 
 		choice, nav, err := ui.SelectOptionNav("main menu", options, nil, current, false)
 		if err != nil {
@@ -372,6 +375,11 @@ func runMainMenu(ui setupUI, state *setupState, stdin io.Reader, stdout, stderr 
 			}
 		case behaviorItem:
 			cancelled, err := runBehaviorMenu(ui, state)
+			if err != nil || cancelled {
+				return false, err
+			}
+		case "MCP servers         --->":
+			cancelled, err := runMCPMenu(ui, state, stdout)
 			if err != nil || cancelled {
 				return false, err
 			}
@@ -861,6 +869,11 @@ func runBehaviorMenu(ui setupUI, state *setupState) (bool, error) {
 }
 
 func applySetupState(writer *config.RuntimePreferenceWriter, state *setupState, deps setupDeps) error {
+	for name, server := range state.mcpServers {
+		if _, err := writer.AddMCPServer(name, server); err != nil {
+			return err
+		}
+	}
 	for provider, d := range state.providers {
 		if d.baseURL != nil || d.apiKeyPath != nil {
 			if err := writer.PersistProviderConnection(provider, d.baseURL, d.apiKeyPath); err != nil {
@@ -928,6 +941,9 @@ func applySetupState(writer *config.RuntimePreferenceWriter, state *setupState, 
 func printSetupSummary(out io.Writer, userPath string, state *setupState) {
 	fmt.Fprintln(out, "")
 	fmt.Fprintf(out, "Saved setup to %s:\n", userPath)
+	for name := range state.mcpServers {
+		fmt.Fprintf(out, "  MCP server: %s\n", name)
+	}
 	if state.providerChanged {
 		fmt.Fprintf(out, "  provider: %s\n", state.activeProvider)
 	}
