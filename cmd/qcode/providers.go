@@ -26,12 +26,13 @@ func isGeminiOfficialEndpoint(endpoint string) bool {
 // belong to the launch provider; a different backend must resolve its own profile.
 // Credentials are never part of an agent checkpoint or a creation request.
 type providerBuilder struct {
-	config         config.Config
-	launchProvider string
-	launch         llm.Config
-	policy         *redaction.Policy
-	warnings       io.Writer
-	loadMetadata   func(context.Context, string, string, llm.HTTPDoer) (*llm.ProviderModelMeta, error)
+	config          config.Config
+	launchProvider  string
+	launch          llm.Config
+	policy          *redaction.Policy
+	warnings        io.Writer
+	loadMetadata    func(context.Context, string, string, llm.HTTPDoer) (*llm.ProviderModelMeta, error)
+	refreshMetadata func(context.Context, string, string, llm.HTTPDoer) (*llm.ProviderModelMeta, error)
 }
 
 type preparedProvider struct {
@@ -154,6 +155,119 @@ func (b *providerBuilder) prepare(ctx context.Context, name string, endpoint *st
 	}
 	result.Provider, err = llm.New(kind, connection)
 	return result, err
+}
+
+// thinkingAllowed reports whether an explicit thinking level is selectable.
+// It mirrors Agent.SetThinking's validation: empty is always allowed (model
+// default), otherwise the capability must be adjustable and list the level.
+func thinkingAllowed(capability llm.ThinkingCapability, level string) bool {
+	level = strings.ToLower(strings.TrimSpace(level))
+	if level == "" {
+		return true
+	}
+	if !capability.Adjustable {
+		return false
+	}
+	for _, allowed := range capability.Levels {
+		if level == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureThinking automatically refreshes stale thinking metadata when an
+// explicitly requested level is rejected for the selected model. This covers
+// new models (for example gpt-6.2-sol) that the local cache or bundled
+// catalog does not know yet:
+//
+//   - chatgpt refreshes live account metadata via Models() discovery, which
+//     populates thinking levels for the current provider instance.
+//   - openai, opencode-go, and gemini refresh the Models.dev snapshot (the
+//     equivalent of --update-model-meta) and rebuild the provider once.
+//
+// It only triggers when the requested level is otherwise unsupported, it only
+// tries once, and it never fails startup on its own: if the refresh fails or
+// the level is still unsupported, the caller's SetThinking reports the
+// canonical "not supported" error.
+func (b *providerBuilder) ensureThinking(ctx context.Context, name string, endpoint *string, prepared *preparedProvider, model, thinking string) {
+	if prepared == nil || prepared.Provider == nil {
+		return
+	}
+	thinking = strings.ToLower(strings.TrimSpace(thinking))
+	if thinking == "" {
+		return
+	}
+	thinkingProvider, ok := prepared.Provider.(llm.ThinkingProvider)
+	if !ok {
+		return
+	}
+	if thinkingAllowed(thinkingProvider.ThinkingCapability(model), thinking) {
+		return
+	}
+	kind, err := resolveProviderKind(b.config, name)
+	if err != nil {
+		return
+	}
+	if kind == "chatgpt" {
+		lister, ok := prepared.Provider.(llm.ModelLister)
+		if !ok {
+			return
+		}
+		discoveryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_, discoveryErr := lister.Models(discoveryCtx)
+		cancel()
+		if discoveryErr != nil {
+			return
+		}
+		if !thinkingAllowed(thinkingProvider.ThinkingCapability(model), thinking) {
+			return
+		}
+		if b.warnings != nil {
+			fmt.Fprintf(b.warnings, "Refreshed %s thinking metadata for model %q.\n", name, model)
+		}
+		return
+	}
+	if kind != "openai" && kind != "opencode-go" && kind != "gemini" {
+		return
+	}
+	connection := b.connection(name, endpoint)
+	// Only official endpoints use Models.dev metadata; custom base URLs do
+	// not load it, so a refresh would be misleading.
+	if kind == "openai" && !llm.IsOfficialOpenAIEndpoint(connection.BaseURL) {
+		return
+	}
+	if kind == "opencode-go" && !llm.IsOfficialOpenCodeGoEndpoint(connection.BaseURL) {
+		return
+	}
+	if kind == "gemini" && !isGeminiOfficialEndpoint(connection.BaseURL) {
+		return
+	}
+	path, err := llm.ProviderModelMetaCachePath(kind)
+	if err != nil {
+		return
+	}
+	refresh := b.refreshMetadata
+	if refresh == nil {
+		refresh = llm.RefreshProviderModelMeta
+	}
+	refreshCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	_, refreshErr := refresh(refreshCtx, path, kind, connection.HTTP)
+	cancel()
+	if refreshErr != nil {
+		return
+	}
+	reprepared, reprepErr := b.prepare(ctx, name, endpoint)
+	if reprepErr != nil {
+		return
+	}
+	if tp, ok := reprepared.Provider.(llm.ThinkingProvider); !ok || !thinkingAllowed(tp.ThinkingCapability(model), thinking) {
+		return
+	}
+	*prepared = reprepared
+	if b.warnings != nil {
+		fmt.Fprintf(b.warnings, "Refreshed %s thinking metadata for model %q.\n", name, model)
+	}
 }
 
 // An override was requested even if its value was empty. Never replace an

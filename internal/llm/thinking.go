@@ -97,6 +97,10 @@ var openCodeGoThinkingCatalog = map[string]ThinkingCapability{
 		Supported: true, Adjustable: true, Levels: []string{"low", "medium", "high", "xhigh", "max", "ultra"},
 		RequestFormat: ThinkingRequestResponsesReasoning, ReplayFormat: ThinkingReplayReasoningDetails,
 	},
+	"gpt-6.2-sol": {
+		Supported: true, Adjustable: true, Levels: []string{"low", "medium", "high", "xhigh", "max", "ultra"},
+		RequestFormat: ThinkingRequestResponsesReasoning, ReplayFormat: ThinkingReplayReasoningDetails,
+	},
 	"gpt-5.6-luna": {
 		Supported: true, Adjustable: true, Levels: []string{"none", "low", "medium", "high", "xhigh", "max"}, Default: "medium",
 		RequestFormat: ThinkingRequestResponsesReasoning, ReplayFormat: ThinkingReplayReasoningDetails,

@@ -341,6 +341,11 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		if prepareErr != nil {
 			return prepareErr
 		}
+		// New models may be missing from the cached/bundled thinking metadata.
+		// Automatically refresh once (the equivalent of --update-model-meta for
+		// Models.dev providers, or live discovery for chatgpt) before deciding
+		// the requested level is unsupported.
+		providers.ensureThinking(context.Background(), opts.provider, nil, &prepared, opts.model, opts.thinking)
 		provider = prepared.Provider
 		if prepared.MissingThinkingMeta && opts.thinking != "" {
 			fmt.Fprintln(diagnosticsOut, "WARNING: ignoring configured thinking level because no choices are available")

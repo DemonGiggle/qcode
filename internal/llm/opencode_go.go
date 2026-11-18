@@ -21,6 +21,7 @@ const (
 // Source: OpenCode Go model table, checked 2026-09-12.
 var openCodeGoModelRoutes = map[string]string{
 	"gpt-6.1-sol":                openCodeGoResponsesRoute,
+	"gpt-6.2-sol":                openCodeGoResponsesRoute,
 	"gpt-5.6-luna":               openCodeGoResponsesRoute,
 	"grok-4.6":                   openCodeGoResponsesRoute,
 	"minimax-m2.5":               openCodeGoMessagesRoute,

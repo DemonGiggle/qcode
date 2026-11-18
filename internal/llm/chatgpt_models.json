@@ -187,6 +187,30 @@
       ]
     },
     {
+      "slug": "gpt-6.2-sol",
+      "default_reasoning_level": "low",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low"
+        },
+        {
+          "effort": "medium"
+        },
+        {
+          "effort": "high"
+        },
+        {
+          "effort": "xhigh"
+        },
+        {
+          "effort": "max"
+        },
+        {
+          "effort": "ultra"
+        }
+      ]
+    },
+    {
       "slug": "gpt-daybreak-blue-latest",
       "default_reasoning_level": "low",
       "supported_reasoning_levels": [
