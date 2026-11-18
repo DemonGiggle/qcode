@@ -111,7 +111,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		}
 		return err
 	}
-	// Reject the retired subcommand before positional arguments become a prompt.
+	// Guide users of the retired login subcommand to setup.
 	if len(arguments) > 0 && arguments[0] == "login" {
 		return errors.New("the login subcommand was removed; run `qcode setup` and configure ChatGPT credentials")
 	}
@@ -159,7 +159,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	flags.Lookup("api-key").DefValue = ""
 	flags.BoolVar(&opts.dangerSkipTLSVerify, "danger-skip-tls-verify", false, "skip TLS certificate verification (insecure)")
 	flags.Usage = func() {
-		fmt.Fprintf(diagnosticsOut, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\nUse 'qcode setup' to configure providers, including ChatGPT sign-in.\nUse 'qcode update' to install the latest release.\nUse 'qcode config check [--json]' to validate config files with fix suggestions.\n\nOptions:\n")
+		fmt.Fprintf(diagnosticsOut, "Usage: qcode [options]\n       qcode [options] prompt \"message\"\n       qcode [options] prompt < prompt.txt\n\nWithout a subcommand, qcode starts its terminal UI.\nFor a one-shot run, pass one quoted message or pipe input to the prompt subcommand.\nUse 'qcode setup' to configure providers, including ChatGPT sign-in.\nUse 'qcode update' to install the latest release.\nUse 'qcode config check [--json]' to validate config files with fix suggestions.\n\nOptions:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(arguments); err != nil {
@@ -167,6 +167,15 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			return nil
 		}
 		return err
+	}
+	args := flags.Args()
+	interactive := len(args) == 0
+	const promptUsage = "usage: qcode [options] prompt \"message\"  (or pipe input to qcode prompt)"
+	if !interactive && args[0] != "prompt" {
+		return errors.New("unexpected positional argument. Use `qcode prompt \"message\"` for one-shot mode")
+	}
+	if len(args) > 2 {
+		return errors.New(promptUsage)
 	}
 	if opts.contextWindow < 0 {
 		return fmt.Errorf("context-window must be non-negative")
@@ -183,6 +192,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			return err
 		}
 		return listConfiguredProviders(stdout, cfg, policy)
+	}
+	if interactive && !opts.updateModelMeta && (!term.IsTerminal(int(stdin.Fd())) || !term.IsTerminal(int(stdout.Fd()))) {
+		return errors.New("interactive mode requires a terminal. Use `qcode prompt` for one-shot mode")
 	}
 	if !opts.demo {
 		cfg, inspectedPaths, diagnostics, err := config.Load()
@@ -252,17 +264,36 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		return errors.New("agent-timeout must be a positive duration")
 	}
 
+	var promptText string
+	switch len(args) {
+	case 2:
+		promptText = strings.TrimSpace(args[1])
+		if promptText == "" {
+			return errors.New("prompt message must not be empty")
+		}
+	case 1:
+		stat, err := stdin.Stat()
+		if err != nil {
+			return err
+		}
+		if stat.Mode()&os.ModeCharDevice != 0 {
+			return errors.New(promptUsage)
+		}
+		data, err := io.ReadAll(stdin)
+		if err != nil {
+			return err
+		}
+		promptText = strings.TrimSpace(string(data))
+		if promptText == "" {
+			return errors.New("stdin contained no prompt")
+		}
+	}
+
 	root, err := filepath.Abs(opts.root)
 	if err != nil {
 		return err
 	}
-	promptText := strings.TrimSpace(strings.Join(flags.Args(), " "))
-	stdinPiped := false
-	if stat, statErr := stdin.Stat(); statErr == nil {
-		stdinPiped = stat.Mode()&os.ModeCharDevice == 0
-	}
-	interactive := promptText == "" && !stdinPiped
-	questionsAvailable := interactive && !opts.jsonEvents && term.IsTerminal(int(stdin.Fd())) && term.IsTerminal(int(stdout.Fd()))
+	questionsAvailable := interactive && !opts.jsonEvents
 	protectedPaths := append([]string(nil), configPaths...)
 	var sandboxCommandPaths []string
 	if opts.sandbox && !opts.demo {
@@ -398,17 +429,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		}
 	}
 	system := prompt.System
-	if promptText == "" && stdinPiped {
-		data, readErr := io.ReadAll(stdin)
-		if readErr != nil {
-			return readErr
-		}
-		promptText = strings.TrimSpace(string(data))
-		if promptText == "" {
-			return errors.New("stdin contained no prompt")
-		}
-	}
-	if promptText != "" {
+	if !interactive {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
 		return runOneShot(ctx, promptText, provider, opts.model, opts.thinking, toolset, stderr, stdout, opts.jsonEvents, opts.maxSteps, system, learningStore, opts.learningBudget, autoloadSkills, autoloadAlwaysBodies, policy)

@@ -769,7 +769,7 @@ func (u *UI) Run(ctx context.Context) error {
 	}
 	if !term.IsTerminal(int(u.in.Fd())) || !term.IsTerminal(int(u.out.Fd())) {
 		u.shutdownAgentManager()
-		return fmt.Errorf("interactive mode requires a terminal; pass a prompt argument for one-shot mode")
+		return fmt.Errorf("interactive mode requires a terminal. Use `qcode prompt` for one-shot mode")
 	}
 	if runner, ok := u.runner.(contextRunner); ok {
 		runner.RefreshContext(ctx)

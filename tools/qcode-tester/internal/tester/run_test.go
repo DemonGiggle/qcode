@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestRunScenarioPassesOnlyPromptToQcode(t *testing.T) {
+func TestRunScenarioPassesPromptSubcommandToQcode(t *testing.T) {
 	directory := t.TempDir()
 	binary := filepath.Join(directory, "qcode")
 	program := "#!/bin/sh\nprintf '%s\\n' \"$@\"\nprintf '%s' \"$PWD\" > cwd.txt\n"
@@ -34,8 +34,8 @@ func TestRunScenarioPassesOnlyPromptToQcode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(stdout); got != "make a project\n" {
-		t.Fatalf("qcode arguments = %q, want prompt only", got)
+	if got := string(stdout); got != "prompt\nmake a project\n" {
+		t.Fatalf("qcode arguments = %q, want subcommand and one message argument", got)
 	}
 	cwd, err := os.ReadFile(filepath.Join(result.Artifacts, "workspace", "cwd.txt"))
 	if err != nil {

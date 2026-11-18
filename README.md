@@ -52,6 +52,7 @@ make build
 # Or grab a release binary, then:
 qcode setup   # 2-minute wizard: provider, keys, model
 qcode         # start coding
+qcode prompt "explain this repository"  # one-shot
 ```
 
 No setup patience? Take the offline tour: `qcode --demo`. Full flags, env vars, and one-shot mode live in [Command line](docs/cli.md); provider walkthroughs in [Providers](docs/providers.md).

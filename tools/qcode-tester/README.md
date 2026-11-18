@@ -1,8 +1,8 @@
 # qcode-tester
 
 `qcode-tester` is a black-box evaluator for qcode. It does not import qcode
-packages. It launches a supplied qcode executable with only the scenario prompt
-and evaluates its exit status, stdout, and workspace artifacts.
+packages. It launches a supplied qcode executable with the `prompt` subcommand and one
+scenario message argument, then evaluates its exit status, stdout, and workspace artifacts.
 
 Run it from this directory after building qcode at the repository root:
 

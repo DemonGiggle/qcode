@@ -59,7 +59,7 @@ func runScenario(parent context.Context, options Options, scenario Scenario) Res
 	started := time.Now()
 	// Deliberately pass no qcode options. The target resolves its provider,
 	// credentials, model, and configuration through its ordinary lookup path.
-	command := exec.CommandContext(ctx, options.QcodeBinary, scenario.Prompt)
+	command := exec.CommandContext(ctx, options.QcodeBinary, "prompt", scenario.Prompt)
 	command.Dir = workspace
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
