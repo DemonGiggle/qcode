@@ -393,7 +393,7 @@ async function streamEvents(){
     try{
       const r=await apiFetch('api/v1/events',{signal,cache:'no-store'});
       if(!r.ok)throw new Error('Live updates unavailable');
-      if(!r.headers.get('Content-Type')?.startsWith('text/event-stream'))throw new Error('Invalid event stream');
+      if(!(r.headers.get('Content-Type')||'').startsWith('text/event-stream'))throw new Error('Invalid event stream');
       reader=r.body.getReader();
       const decoder=new TextDecoder();
       let pending='',event='',afterCR=false;
@@ -532,8 +532,8 @@ function renderInteractions(items){
 
   const item=items.find(item=>item.agent_id===active&&item.id===selectedInteraction)
     ||items.find(item=>item.agent_id===active);
-  const name=id=>agents().find(agent=>agent.id===id)?.name||id;
-  const displayedID=item?.id||'';
+  const name=id=>(agents().find(agent=>agent.id===id)||{}).name||id;
+  const displayedID=(item||{}).id||'';
   const key=JSON.stringify([displayedID,items.map(item=>[item.id,name(item.agent_id)])]);
   if(key!==attentionKey){
     attentionKey=key;
@@ -548,7 +548,7 @@ function renderInteractions(items){
       button.setAttribute('aria-pressed',String(pending.id===displayedID));
       button.onclick=()=>{
         selectAgent(pending.agent_id,pending.id);
-        interaction.querySelector('h2')?.focus();
+        const _h=interaction.querySelector('h2'); if(_h)_h.focus();
       };
       return button;
     }));
@@ -751,7 +751,7 @@ async function submitSettings(target,settings,composerLine){
     });
     if(!response.ok)throw new Error(await response.text());
     clearComposerLine(target,composerLine);
-    promptNotice='Settings updated for '+(agents().find(agent=>agent.id===target)?.name||target)+'.';
+    promptNotice='Settings updated for '+((agents().find(agent=>agent.id===target)||{}).name||target)+'.';
     schedule();
   }catch(e){
     promptNotice=String(e.message||e);
@@ -782,7 +782,7 @@ function chooseModel(data,kind,model,target,label){
 }
 async function openCatalogSelector(kind,line){
   const target=active, scoped=['model','tool','skill'].includes(kind);
-  const name=agents().find(agent=>agent.id===target)?.name||target;
+  const name=(agents().find(agent=>agent.id===target)||{}).name||target;
   const label=scoped?' for '+name:'';
   try{
     const data=await catalog(scoped?target:'');

@@ -17,7 +17,7 @@ func TestBrowserPreservesPendingQuestionAcrossSnapshots(t *testing.T) {
 		t.Fatal("browser interaction functions missing")
 	}
 	harness := `
-const assert=require('node:assert/strict');
+const assert=require('assert').strict;
 let focused, active='main', selectedInteraction='', attentionKey='', closed=false;
 function element(){
   return {children:[], value:'', style:{}, classList:{toggle(){}},
@@ -84,7 +84,7 @@ func TestBrowserSettingsSelectorKeepsDraftTypedDuringCatalogLoad(t *testing.T) {
 		t.Fatal("browser setting functions missing")
 	}
 	harness := `
-const assert=require('node:assert/strict');
+const assert=require('assert').strict;
 const element=()=>({children:[],dataset:{},value:'',focus(){},
   append(...nodes){this.children.push(...nodes)},replaceChildren(...nodes){this.children=nodes}});
 const command=element(),input=element(),status=element(),drafts={};
