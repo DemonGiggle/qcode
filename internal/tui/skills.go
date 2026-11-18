@@ -158,7 +158,7 @@ func resolveSkillSelection(catalog []prompt.SkillSummary, requested []string) (n
 	}
 	for _, raw := range requested {
 		name, always := parseSkillToken(raw)
-		if name == "" || name == "none" && len(requested) == 1 {
+		if name == "" || (name == "none" && len(requested) == 1) {
 			continue
 		}
 		if !byName[name] {

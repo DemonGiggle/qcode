@@ -181,7 +181,10 @@ func TestRemoteCanWinQuestionInteraction(t *testing.T) {
 	u.SetAgentManager(host)
 	result := make(chan []string, 1)
 	go func() {
-		answers, _ := u.AgentQuestioner("main")(context.Background(), []question.Question{{Text: "Database?", Options: []string{"SQLite", "Postgres"}}})
+		answers, _ := u.AgentQuestioner("main")(context.Background(), []question.Question{
+			{Text: "Database?", Options: []string{"SQLite", "Postgres"}},
+			{Text: "Why?"},
+		})
 		result <- answers
 	}()
 	deadline := time.After(time.Second)
@@ -199,13 +202,16 @@ func TestRemoteCanWinQuestionInteraction(t *testing.T) {
 			}
 		}
 	}
-	value, _ := json.Marshal([]string{"Postgres"})
+	if err := u.ResolveRemoteInteraction("alice@example.com", interaction.ID, []byte(`["Postgres","  "]`)); err == nil {
+		t.Fatal("blank remote answer was accepted")
+	}
+	value, _ := json.Marshal([]string{"Postgres", "  Existing schema  "})
 	if err := u.ResolveRemoteInteraction("alice@example.com", interaction.ID, value); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case answers := <-result:
-		if len(answers) != 1 || answers[0] != "Postgres" {
+		if len(answers) != 2 || answers[0] != "Postgres" || answers[1] != "Existing schema" {
 			t.Fatalf("answers = %v", answers)
 		}
 	case <-time.After(time.Second):
@@ -464,6 +470,9 @@ func TestRemoteAgentSettingsTargetBrowserTab(t *testing.T) {
 	if err := u.ConfigureRemoteAgent(ctx, worker.ID, RemoteAgentSettings{Tools: map[string]bool{"read": true, "unknown": true}}); err == nil || workerRunner.ToolEnabled("read") {
 		t.Fatal("invalid tool batch was partially applied")
 	}
+	if err := u.ConfigureRemoteAgent(ctx, worker.ID, RemoteAgentSettings{Tools: map[string]bool{}}); !errors.Is(err, ErrInvalidRemoteAgentSettings) {
+		t.Fatalf("empty tool patch error = %v", err)
+	}
 	if err := u.ConfigureRemoteAgent(ctx, worker.ID, RemoteAgentSettings{Skills: []string{}}); err != nil || len(workerRunner.SelectedSkills()) != 0 {
 		t.Fatalf("clearing skills = %v, %v", workerRunner.SelectedSkills(), err)
 	}
@@ -471,5 +480,82 @@ func TestRemoteAgentSettingsTargetBrowserTab(t *testing.T) {
 	provider.onModels = func() { _ = host.Close(worker.ID) }
 	if err := u.ConfigureRemoteAgent(ctx, worker.ID, RemoteAgentSettings{Model: "helper"}); err == nil {
 		t.Fatal("model change succeeded after target closed during discovery")
+	}
+}
+
+func TestRemoteCatalogReportsMissingRunner(t *testing.T) {
+	u, _ := layoutFixture(t)
+	if _, err := u.RemoteAgentCatalog(context.Background(), "main"); !errors.Is(err, session.ErrUnknownAgent) {
+		t.Fatalf("missing runner error = %v", err)
+	}
+	if got := u.remoteAgentStatusBar("main", "provider", "model", "/workspace"); got != "Agent unavailable" {
+		t.Fatalf("status for a missing runner = %q", got)
+	}
+}
+
+type remoteContextLookupProvider struct {
+	providerUIBackend
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *remoteContextLookupProvider) ContextWindow(ctx context.Context, _ string) (int, error) {
+	close(p.started)
+	select {
+	case <-p.release:
+		return 32000, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+func TestRemoteModelDiscoversContextOutsideCommitLocks(t *testing.T) {
+	ctx := context.Background()
+	u, host, _ := newProviderUI(t, "")
+	u.persistence = &sessionPersistence{requests: make(chan struct{}, 1)}
+	provider := &remoteContextLookupProvider{
+		providerUIBackend: providerUIBackend{name: "worker", models: []string{"worker", "replacement"}},
+		started:           make(chan struct{}),
+		release:           make(chan struct{}),
+	}
+	host.SetFactory(func(id, _ string, model string, main bool) (*agent.Agent, error) {
+		display, response := u.AddAgentView(id, provider.Name(), model)
+		return agent.New(provider, model, host.WrapToolset(id, &closeUITools{}, main), trace.New(display, false), response, 3), nil
+	})
+	worker, err := host.Create("worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- u.ConfigureRemoteAgent(ctx, worker.ID, RemoteAgentSettings{Model: "replacement"}) }()
+	select {
+	case <-provider.started:
+	case <-time.After(time.Second):
+		t.Fatal("provider context discovery did not start")
+	}
+	persistenceUnlocked := u.persistence.mu.TryLock()
+	if persistenceUnlocked {
+		u.persistence.mu.Unlock()
+	}
+	summary := make(chan error, 1)
+	go func() {
+		_, err := host.Summary(worker.ID)
+		summary <- err
+	}()
+	var lookupErr error
+	select {
+	case lookupErr = <-summary:
+	case <-time.After(time.Second):
+		lookupErr = errors.New("provider discovery blocked access to the agent manager")
+	}
+	close(provider.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !persistenceUnlocked || lookupErr != nil {
+		t.Fatalf("provider discovery held commit locks: persistence unlocked=%t, summary error=%v", persistenceUnlocked, lookupErr)
+	}
+	if state := providerState(t, host, worker.ID); state.Model != "replacement" || state.ContextWindow != 32000 {
+		t.Fatalf("model=%s, context window=%d", state.Model, state.ContextWindow)
 	}
 }

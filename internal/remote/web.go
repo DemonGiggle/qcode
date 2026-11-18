@@ -621,7 +621,15 @@ function interactionForm(item,agent){
     button.type='submit';
     button.textContent='Submit answers';
     choices.append(button);
-    panel.onsubmit=e=>{e.preventDefault();submit(answers.map(answer=>answer()))};
+    panel.onsubmit=e=>{
+      e.preventDefault();
+      const values=answers.map(answer=>answer());
+      if(values.some(value=>!value.trim())){
+        error.textContent='Answer every question before submitting.';
+        return;
+      }
+      submit(values);
+    };
   }else if(item.kind==='directory_approval'){
     title.textContent=agent+' requests directory access: '+(payload.requested||'');
     choice('Grant '+(payload.proposed||'requested path'),{selected:'',approved:true});
@@ -688,7 +696,11 @@ function questionField(panel,question,id){
       if(!custom.hidden)custom.focus();
     };
   }
-  return ()=>select.value==='custom'?custom.value:options[Number(select.value)];
+  return ()=>{
+    if(select.value==='')return '';
+    if(select.value==='custom')return custom.hidden?'':custom.value;
+    return options[Number(select.value)]||'';
+  };
 }
 async function downloadExport(line){
   const argument=line.replace(/^\/export(?:\s+|$)/,'').trim();
@@ -708,20 +720,37 @@ async function downloadExport(line){
   }catch(e){status.textContent=String(e)}
 }
 async function postLine(line){const r=await apiFetch('api/v1/actions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({line})});if(!r.ok)throw new Error(await r.text())}
-async function submitLine(line){send.disabled=true;try{await postLine(line);input.value='';schedule()}catch(e){status.innerHTML='<span class="notice">'+escapeHTML(String(e))+'</span>'}finally{send.disabled=closed;if(!closed)input.focus()}}
-async function submitSettings(target,settings){
+function clearComposerLine(target,line){
+  if(active!==target||line===undefined||input.value.trim()!==line)return;
+  input.value='';
+  drafts[target]='';
+}
+async function submitLine(line,composerLine){
+  const target=active;
+  send.disabled=true;
+  try{
+    await postLine(line);
+    clearComposerLine(target,composerLine);
+    schedule();
+  }catch(e){
+    status.innerHTML='<span class="notice">'+escapeHTML(String(e))+'</span>';
+  }finally{
+    send.disabled=closed;
+    if(!closed&&active===target)input.focus();
+  }
+}
+async function submitSettings(target,settings,composerLine){
   if(!target){
     promptNotice='Select an agent first.';
     status.textContent=promptNotice;
     return;
   }
-  const draft=input.value;
   try{
     const response=await apiFetch('api/v1/agents/'+encodeURIComponent(target)+'/settings',{
       method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(settings)
     });
     if(!response.ok)throw new Error(await response.text());
-    if(active===target&&input.value===draft)input.value='';
+    clearComposerLine(target,composerLine);
     promptNotice='Settings updated for '+(agents().find(agent=>agent.id===target)?.name||target)+'.';
     schedule();
   }catch(e){
@@ -730,13 +759,13 @@ async function submitSettings(target,settings){
   }
 }
 function closeCommand(){delete command.dataset.agent;command.replaceChildren();command.className='command-panel';command.onkeydown=null;input.focus()}
-function openCommand(title,help,placeholder,onSubmit,submitLabel='Apply'){input.value='';command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent=title;const hint=document.createElement('div');hint.className='command-help';hint.textContent=help;const field=document.createElement('input');field.placeholder=placeholder;field.autocomplete='off';const actions=document.createElement('div');actions.className='command-actions';const apply=document.createElement('button');apply.textContent=submitLabel;const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';const commit=()=>{const value=field.value.trim();if(!value)return;closeCommand();onSubmit(value)};apply.onclick=commit;cancel.onclick=closeCommand;field.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}if(e.key==='Enter'){e.preventDefault();commit()}};actions.append(apply,cancel);command.append(heading,hint,field,actions);field.focus()}
-function openCloseAgent(name){command.dataset.agent=name;input.value='';command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent='Close agent '+name+'?';const hint=document.createElement('div');hint.className='command-help';hint.textContent='This matches the TUI confirmation step.';const actions=document.createElement('div');actions.className='command-actions';const close=document.createElement('button');close.textContent='Close agent';close.onclick=()=>{closeCommand();submitLine('/agent close '+name+' --yes')};const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';cancel.onclick=closeCommand;actions.append(close,cancel);command.append(heading,hint,actions);command.tabIndex=0;command.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}};close.focus()}
+function openCommand(title,help,placeholder,onSubmit,submitLabel='Apply'){command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent=title;const hint=document.createElement('div');hint.className='command-help';hint.textContent=help;const field=document.createElement('input');field.placeholder=placeholder;field.autocomplete='off';const actions=document.createElement('div');actions.className='command-actions';const apply=document.createElement('button');apply.textContent=submitLabel;const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';const commit=()=>{const value=field.value.trim();if(!value)return;closeCommand();onSubmit(value)};apply.onclick=commit;cancel.onclick=closeCommand;field.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}if(e.key==='Enter'){e.preventDefault();commit()}};actions.append(apply,cancel);command.append(heading,hint,field,actions);field.focus()}
+function openCloseAgent(name){command.dataset.agent=name;command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent='Close agent '+name+'?';const hint=document.createElement('div');hint.className='command-help';hint.textContent='This matches the TUI confirmation step.';const actions=document.createElement('div');actions.className='command-actions';const close=document.createElement('button');close.textContent='Close agent';close.onclick=()=>{closeCommand();submitLine('/agent close '+name+' --yes')};const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';cancel.onclick=closeCommand;actions.append(close,cancel);command.append(heading,hint,actions);command.tabIndex=0;command.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}};close.focus()}
 async function catalog(target=''){const r=await apiFetch('api/v1/catalog'+(target?'?agent_id='+encodeURIComponent(target):''),{cache:'no-store'});if(!r.ok)throw new Error(await r.text());return r.json()}
 function agents(){return snapshot&&snapshot.runtime&&snapshot.runtime.agents||snapshot&&snapshot.presentation&&snapshot.presentation.agents||[]}
 function activeModel(){const item=agents().find(x=>x.id===active)||agents().find(x=>x.id===(snapshot&&snapshot.presentation&&snapshot.presentation.active));return item&&item.model||''}
 function selectorItem(label,value,current=false){return{label:String(label||value),value:String(value),current:!!current}}
-function openList(title,help,items,selected,multi,apply){command.dataset.agent=active;input.value='';command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent=title;const hint=document.createElement('div');hint.className='command-help';hint.textContent=help;const filter=document.createElement('input');filter.placeholder='Type to filter';filter.autocomplete='off';const list=document.createElement('div');list.className='selector-list';const chosen=new Set(selected||[]);const draw=()=>{list.replaceChildren();const query=filter.value.trim().toLowerCase();const matches=items.filter(item=>item.label.toLowerCase().includes(query));if(!matches.length){const empty=document.createElement('div');empty.className='selector-empty';empty.textContent=query?'No matching entries.':'No entries available.';list.append(empty);return}for(const item of matches){const button=document.createElement('button');button.type='button';button.className='cancel';const label=document.createElement('span');label.textContent=(chosen.has(item.value)?(multi?'[x] ':'> '):(multi?'[ ] ':'  '))+item.label;button.append(label);if(item.current){const badge=document.createElement('span');badge.className='selector-current';badge.textContent='Current';button.append(badge)}button.onclick=()=>{if(multi){if(chosen.has(item.value))chosen.delete(item.value);else chosen.add(item.value)}else{chosen.clear();chosen.add(item.value)}draw()};list.append(button)}};const actions=document.createElement('div');actions.className='command-actions';const ok=document.createElement('button');ok.textContent='Apply';const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';const commit=()=>{const values=[...chosen];closeCommand();apply(values)};ok.onclick=commit;cancel.onclick=closeCommand;filter.oninput=draw;filter.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}if(e.key==='Enter'){e.preventDefault();commit()}};actions.append(ok,cancel);command.append(heading,hint,filter,list,actions);draw();filter.focus()}
+function openList(title,help,items,selected,multi,apply){command.dataset.agent=active;command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent=title;const hint=document.createElement('div');hint.className='command-help';hint.textContent=help;const filter=document.createElement('input');filter.placeholder='Type to filter';filter.autocomplete='off';const list=document.createElement('div');list.className='selector-list';const chosen=new Set(selected||[]);const draw=()=>{list.replaceChildren();const query=filter.value.trim().toLowerCase();const matches=items.filter(item=>item.label.toLowerCase().includes(query));if(!matches.length){const empty=document.createElement('div');empty.className='selector-empty';empty.textContent=query?'No matching entries.':'No entries available.';list.append(empty);return}for(const item of matches){const button=document.createElement('button');button.type='button';button.className='cancel';const label=document.createElement('span');label.textContent=(chosen.has(item.value)?(multi?'[x] ':'> '):(multi?'[ ] ':'  '))+item.label;button.append(label);if(item.current){const badge=document.createElement('span');badge.className='selector-current';badge.textContent='Current';button.append(badge)}button.onclick=()=>{if(multi){if(chosen.has(item.value))chosen.delete(item.value);else chosen.add(item.value)}else{chosen.clear();chosen.add(item.value)}draw()};list.append(button)}};const actions=document.createElement('div');actions.className='command-actions';const ok=document.createElement('button');ok.textContent='Apply';const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';const commit=()=>{const values=[...chosen];closeCommand();apply(values)};ok.onclick=commit;cancel.onclick=closeCommand;filter.oninput=draw;filter.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}if(e.key==='Enter'){e.preventDefault();commit()}};actions.append(ok,cancel);command.append(heading,hint,filter,list,actions);draw();filter.focus()}
 function chooseModel(data,kind,model,target,label){
   const thinking=data.thinking&&data.thinking[model];
   const apply=level=>{
@@ -751,13 +780,14 @@ function chooseModel(data,kind,model,target,label){
   const current=thinking.current?[thinking.current]:[];
   openList('Select thinking level'+label,'Choose a thinking level. Cancel leaves the model unchanged.',levels,current,false,v=>{if(v[0])apply(v[0])});
 }
-async function openCatalogSelector(kind){
+async function openCatalogSelector(kind,line){
   const target=active, scoped=['model','tool','skill'].includes(kind);
   const name=agents().find(agent=>agent.id===target)?.name||target;
   const label=scoped?' for '+name:'';
   try{
     const data=await catalog(scoped?target:'');
-    if(scoped&&target!==active)return;
+    if(target!==active)return;
+    clearComposerLine(target,line);
     if(kind==='model'||kind==='agent-model'){
       const items=(data.models||[]).map(x=>selectorItem(x,x));
       const title=kind==='agent-model'?'New agent':'Select model'+label;
@@ -800,15 +830,15 @@ async function openCatalogSelector(kind){
 function handleSettingsLine(line){
   const [command,...args]=line.split(/\s+/);
   if(command==='/model'&&args.length>=1&&args.length<=2){
-    submitSettings(active,{model:args[0],thinking:args[1]||''});
+    submitSettings(active,{model:args[0],thinking:args[1]||''},line);
     return true;
   }
   if(command==='/tool'&&args.length===2&&['on','off'].includes(args[1])){
-    submitSettings(active,{tools:{[args[0]]:args[1]==='on'}});
+    submitSettings(active,{tools:{[args[0]]:args[1]==='on'}},line);
     return true;
   }
   if(command==='/skill'&&args.length){
-    submitSettings(active,{skills:args.join(' ').split(',')});
+    submitSettings(active,{skills:args.join(' ').split(',')},line);
     return true;
   }
   if(['/model','/tool','/skill'].includes(command)){
@@ -818,11 +848,11 @@ function handleSettingsLine(line){
   }
   return false;
 }
-function handleCommand(line){if(line==='/model'){openCatalogSelector('model');return true}if(line==='/tool'){openCatalogSelector('tool');return true}if(line==='/skill'){openCatalogSelector('skill');return true}if(line==='/resume'){openCatalogSelector('resume');return true}if(line==='/agent'||line==='/agent new'){openCatalogSelector('agent-model');return true}if(line==='/agent list'||line==='/agent switch'){openCatalogSelector('agent');return true}const switching=line.match(/^\/agent switch\s+(\S+)$/);if(switching){const id=switching[1];if(!agents().some(x=>x.id===id)){status.innerHTML='<span class="notice">Unknown agent: '+escapeHTML(id)+'</span>';return true}active=id;render();submitLine('/agent switch '+id);return true}const closing=line.match(/^\/agent close\s+(\S+)$/);if(closing){openCloseAgent(closing[1]);return true}return false}
+function handleCommand(line){if(line==='/model'){openCatalogSelector('model',line);return true}if(line==='/tool'){openCatalogSelector('tool',line);return true}if(line==='/skill'){openCatalogSelector('skill',line);return true}if(line==='/resume'){openCatalogSelector('resume',line);return true}if(line==='/agent'||line==='/agent new'){openCatalogSelector('agent-model',line);return true}if(line==='/agent list'||line==='/agent switch'){openCatalogSelector('agent',line);return true}const switching=line.match(/^\/agent switch\s+(\S+)$/);if(switching){const id=switching[1];if(!agents().some(x=>x.id===id)){status.innerHTML='<span class="notice">Unknown agent: '+escapeHTML(id)+'</span>';return true}clearComposerLine(active,line);selectAgent(id);submitLine('/agent switch '+id);return true}const closing=line.match(/^\/agent close\s+(\S+)$/);if(closing){clearComposerLine(active,line);openCloseAgent(closing[1]);return true}return false}
 async function promptAPI(path,options){const r=await apiFetch(path,options);if(!r.ok)throw new Error(await r.text());return r}
 async function submitPrompt(intent){const target=active,line=input.value.trim(),summary=agents().find(x=>x.id===target);if(!line)return;send.disabled=true;try{await promptAPI('api/v1/prompts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent_id:target,observed_task_id:summary&&summary.active_task_id||'',prompt:line,intent})});promptNotice='';if(active===target){if(input.value.trim()===line)input.value='';drafts[target]=input.value}else if((drafts[target]||'').trim()===line)drafts[target]='';schedule()}catch(e){promptNotice=String(e);status.textContent=promptNotice;schedule()}finally{send.disabled=closed}}
  document.getElementById('queue-submit').onclick=()=>submitPrompt('queue');
- form.onsubmit=e=>{e.preventDefault();const line=input.value.trim();if(!line)return;if(line==='/exit'||line==='/quit'){closed=true;events.close();status.textContent='Disconnected';send.disabled=true;input.disabled=true;waitingRunning=false;drawWaiting();renderInteractions([]);return}if(line==='/clear'){const v=(snapshot.presentation.views||[]).find(v=>v.id===active);cleared[active]=v?v.lines.length:0;input.value='';render();return}if(/^\/export(?:\s|$)/.test(line)){downloadExport(line);return}if(handleCommand(line)||handleSettingsLine(line))return;if(line.startsWith('/'))submitLine(line);else submitPrompt('automatic')};
+ form.onsubmit=e=>{e.preventDefault();const line=input.value.trim();if(!line)return;if(line==='/exit'||line==='/quit'){closed=true;events.close();status.textContent='Disconnected';send.disabled=true;input.disabled=true;waitingRunning=false;drawWaiting();renderInteractions([]);return}if(line==='/clear'){const v=(snapshot.presentation.views||[]).find(v=>v.id===active);cleared[active]=v?v.lines.length:0;input.value='';render();return}if(/^\/export(?:\s|$)/.test(line)){downloadExport(line);return}if(handleCommand(line)||handleSettingsLine(line))return;if(line.startsWith('/'))submitLine(line,line);else submitPrompt('automatic')};
 login();
 // Pasting a fresh login link into an already-open tab only changes its fragment.
 // Reload that document so the normal login bootstrap exchanges the new token.

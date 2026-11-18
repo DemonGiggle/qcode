@@ -2,12 +2,18 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
 	"qcode/internal/prompt"
 	"qcode/internal/session"
 	"qcode/internal/transcript"
+)
+
+var (
+	ErrInvalidRemoteAgentSettings = errors.New("invalid agent settings")
+	ErrRemoteSessionChanged       = errors.New("the live session changed")
 )
 
 type RemoteAgentSettings struct {
@@ -38,7 +44,7 @@ func (u *UI) ConfigureRemoteAgent(ctx context.Context, id string, settings Remot
 
 	configurer, ok := manager.(idleAgentConfigurer)
 	if !ok || view == nil {
-		return fmt.Errorf("agent %q is unavailable", id)
+		return fmt.Errorf("%w %q", session.ErrUnknownAgent, id)
 	}
 	revision, err := configurer.ConfigurationRevision(id)
 	if err != nil {
@@ -49,18 +55,18 @@ func (u *UI) ConfigureRemoteAgent(ctx context.Context, id string, settings Remot
 		return err
 	}
 	if summary.Status == session.StatusRunning || summary.Status == session.StatusWaitingForApproval {
-		return fmt.Errorf("agent %q is not idle", id)
+		return fmt.Errorf("%w: %q", session.ErrAgentBusy, id)
 	}
-	runner, ok := manager.Runner(id)
-	if !ok {
-		return fmt.Errorf("agent %q is unavailable", id)
+	runner, err := remoteAgentRunner(manager, id)
+	if err != nil {
+		return err
 	}
 
 	switch {
 	case settings.Model != "" && settings.Tools == nil && settings.Skills == nil:
 		model, ok := runner.(modelRunner)
 		if !ok {
-			return fmt.Errorf("model selection is unavailable")
+			return fmt.Errorf("%w: model selection is unavailable", ErrInvalidRemoteAgentSettings)
 		}
 		thinking, _ := runner.(thinkingRunner)
 		models, err := model.ListModels(ctx)
@@ -68,10 +74,22 @@ func (u *UI) ConfigureRemoteAgent(ctx context.Context, id string, settings Remot
 			return err
 		}
 		if !slices.Contains(models, settings.Model) {
-			return fmt.Errorf("unknown model %q", settings.Model)
+			return fmt.Errorf("%w: unknown model %q", ErrInvalidRemoteAgentSettings, settings.Model)
 		}
-		if settings.Thinking != "" && (thinking == nil || !slices.Contains(thinking.ThinkingCapabilityFor(settings.Model).Levels, settings.Thinking)) {
-			return fmt.Errorf("unsupported thinking level %q", settings.Thinking)
+		if settings.Thinking != "" {
+			if thinking == nil {
+				return fmt.Errorf("%w: thinking configuration is unavailable", ErrInvalidRemoteAgentSettings)
+			}
+			capability := thinking.ThinkingCapabilityFor(settings.Model)
+			if !capability.Adjustable || !slices.Contains(capability.Levels, settings.Thinking) {
+				return fmt.Errorf("%w: unsupported thinking level %q", ErrInvalidRemoteAgentSettings, settings.Thinking)
+			}
+		}
+		var refreshContext func()
+		if tracker, ok := runner.(interface {
+			PrepareContextRefresh(context.Context, string) func()
+		}); ok {
+			refreshContext = tracker.PrepareContextRefresh(ctx, settings.Model)
 		}
 		u.modelChangeMu.Lock()
 		defer u.modelChangeMu.Unlock()
@@ -88,8 +106,8 @@ func (u *UI) ConfigureRemoteAgent(ctx context.Context, id string, settings Remot
 					return err
 				}
 			}
-			if tracker, ok := runner.(contextRunner); ok {
-				tracker.RefreshContext(ctx)
+			if refreshContext != nil {
+				refreshContext()
 			}
 			return nil
 		}, func() error {
@@ -112,13 +130,13 @@ func (u *UI) ConfigureRemoteAgent(ctx context.Context, id string, settings Remot
 	case settings.Model == "" && settings.Thinking == "" && len(settings.Tools) > 0 && settings.Skills == nil:
 		tools, ok := runner.(toolRunner)
 		if !ok {
-			return fmt.Errorf("tool selection is unavailable")
+			return fmt.Errorf("%w: tool selection is unavailable", ErrInvalidRemoteAgentSettings)
 		}
 		return u.applyRemoteSettings(ctx, manager, view, configurer, revision, func() error {
 			names := tools.ToolNames()
 			for name := range settings.Tools {
 				if !slices.Contains(names, name) {
-					return fmt.Errorf("unknown tool %q", name)
+					return fmt.Errorf("%w: unknown tool %q", ErrInvalidRemoteAgentSettings, name)
 				}
 			}
 			for name, enabled := range settings.Tools {
@@ -132,7 +150,7 @@ func (u *UI) ConfigureRemoteAgent(ctx context.Context, id string, settings Remot
 	case settings.Model == "" && settings.Thinking == "" && settings.Tools == nil && settings.Skills != nil:
 		skills, ok := runner.(skillRunner)
 		if !ok {
-			return fmt.Errorf("skill selection is unavailable")
+			return fmt.Errorf("%w: skill selection is unavailable", ErrInvalidRemoteAgentSettings)
 		}
 		if loader != nil {
 			catalog, err = loader()
@@ -142,7 +160,7 @@ func (u *UI) ConfigureRemoteAgent(ctx context.Context, id string, settings Remot
 		}
 		names, always, summaries, err := resolveSkillSelection(catalog, settings.Skills)
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: %v", ErrInvalidRemoteAgentSettings, err)
 		}
 		var bodies map[string]string
 		if len(always) > 0 {
@@ -168,34 +186,44 @@ func (u *UI) ConfigureRemoteAgent(ctx context.Context, id string, settings Remot
 		})
 	}
 
-	return fmt.Errorf("provide one model, tool, or skill setting")
+	return fmt.Errorf("%w: provide one model, nonempty tool patch, or skill list", ErrInvalidRemoteAgentSettings)
 }
 
 func (u *UI) applyRemoteSettings(ctx context.Context, manager agentController, view *agentView, configurer idleAgentConfigurer, revision uint64, apply, persist func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	applied := false
+	defer func() {
+		if applied {
+			u.requestSessionSave()
+			u.drawStatusBar()
+			u.signalPresentation()
+		}
+	}()
 	// Keep a resumed session from replacing the target during the change.
+	// Provider discovery is already done, and the deferred redraw runs after unlock.
 	if p := u.persistence; p != nil {
 		p.mu.Lock()
 		defer p.mu.Unlock()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	u.screenMu.Lock()
 	current := u.manager == manager && u.views[view.id] == view
 	u.screenMu.Unlock()
 	if !current {
-		return fmt.Errorf("the live session changed")
+		return ErrRemoteSessionChanged
 	}
 	if err := configurer.ConfigureIdle(view.id, revision, apply); err != nil {
 		return err
 	}
+	applied = true
 	var err error
 	if persist != nil {
 		err = persist()
 	}
-	u.requestSessionSave()
-	u.drawStatusBar()
-	u.signalPresentation()
 	if err != nil {
 		return fmt.Errorf("settings applied, but could not save preferences: %w", err)
 	}

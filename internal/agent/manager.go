@@ -31,8 +31,8 @@ const (
 
 var (
 	ErrManagerClosed   = errors.New("agent manager is shutting down")
-	ErrUnknownAgent    = errors.New("unknown agent")
-	ErrClosedAgent     = errors.New("closed agent")
+	ErrUnknownAgent    = session.ErrUnknownAgent
+	ErrClosedAgent     = session.ErrClosedAgent
 	ErrPromptQueueFull = errors.New("prompt queue is full")
 	ErrRequestNotFound = errors.New("prompt request not found")
 	ErrRequestPending  = errors.New("prompt request is pending")
@@ -379,7 +379,7 @@ func (m *AgentManager) Summary(id string) (AgentSummary, error) {
 	defer m.mu.RUnlock()
 	s, ok := m.sessions[id]
 	if !ok {
-		return AgentSummary{}, fmt.Errorf("unknown agent %q", id)
+		return AgentSummary{}, fmt.Errorf("%w %q", ErrUnknownAgent, id)
 	}
 	return cloneSummary(s.summary), nil
 }
@@ -466,7 +466,7 @@ func (m *AgentManager) ConfigureIdle(id string, revision uint64, update func() e
 			return ErrManagerClosed
 		}
 		if s.active != nil || len(s.queue) != 0 || s.summary.Status == StatusRunning || s.summary.Status == StatusWaitingForApproval {
-			return fmt.Errorf("agent %q is not idle", id)
+			return fmt.Errorf("%w: %q", session.ErrAgentBusy, id)
 		}
 		if s.runner.configurationRevision.Load() != revision {
 			return ErrStaleConfiguration

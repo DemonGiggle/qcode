@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -730,6 +731,7 @@ type agentSettingsTestPresentation struct {
 	testPresentation
 	catalogID, settingsID string
 	settings              tui.RemoteAgentSettings
+	settingsErr           error
 }
 
 func (p *agentSettingsTestPresentation) RemoteAgentCatalog(_ context.Context, id string) (tui.RemoteCatalog, error) {
@@ -739,7 +741,7 @@ func (p *agentSettingsTestPresentation) RemoteAgentCatalog(_ context.Context, id
 
 func (p *agentSettingsTestPresentation) ConfigureRemoteAgent(_ context.Context, id string, settings tui.RemoteAgentSettings) error {
 	p.settingsID, p.settings = id, settings
-	return nil
+	return p.settingsErr
 }
 
 func TestAgentSettingsRoutesRetainTarget(t *testing.T) {
@@ -758,5 +760,34 @@ func TestAgentSettingsRoutesRetainTarget(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent || presentation.settingsID != "agent-2" || presentation.settings.Skills == nil {
 		t.Fatalf("settings = %d %s, target %q, payload %+v", response.Code, response.Body.String(), presentation.settingsID, presentation.settings)
+	}
+}
+
+func TestAgentSettingsRoutesClassifyErrors(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		want int
+	}{
+		{session.ErrUnknownAgent, http.StatusNotFound},
+		{session.ErrClosedAgent, http.StatusNotFound},
+		{session.ErrAgentBusy, http.StatusConflict},
+		{agent.ErrStaleConfiguration, http.StatusConflict},
+		{tui.ErrRemoteSessionChanged, http.StatusConflict},
+		{tui.ErrInvalidRemoteAgentSettings, http.StatusBadRequest},
+		{agent.ErrManagerClosed, http.StatusServiceUnavailable},
+		{context.DeadlineExceeded, http.StatusGatewayTimeout},
+		{errors.New("model discovery unavailable"), http.StatusInternalServerError},
+	} {
+		t.Run(test.err.Error(), func(t *testing.T) {
+			presentation := &agentSettingsTestPresentation{settingsErr: fmt.Errorf("update failed: %w", test.err)}
+			handler := authorizedTestManager(presentation).routes()
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-2/settings", strings.NewReader(`{"model":"worker"}`))
+			authorizeTestRequest(request)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.want, response.Body.String())
+			}
+		})
 	}
 }

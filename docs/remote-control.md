@@ -171,7 +171,9 @@ session path so relative API requests still reach that session after Tailscale
 Serve strips the path prefix. URLs with a trailing slash also work.
 
 Browser model, tool, and skill settings apply to the selected browser agent.
-The terminal keeps its current selection and draft. Other browser slash commands
+The terminal keeps its current selection and draft. In the settings API,
+`tools` is a nonempty map of the tool toggles to change. `skills` replaces
+the full selection, so an empty skill list clears it. Other browser slash commands
 use the normal TUI command loop and share its session state and handlers.
 Remote `/exit`, `/quit`, and `/remote` mutations are rejected; browser
 `/exit` only closes that browser view.

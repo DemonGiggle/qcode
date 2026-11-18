@@ -277,16 +277,38 @@ func (a *Agent) SetContextWindow(tokens int) {
 // allocation after a model is loaded, so retry after completions as well.
 func (a *Agent) RefreshContext(ctx context.Context) {
 	if a.contextOverride == 0 {
-		if p, ok := a.provider.(llm.ContextWindowProvider); ok {
-			lookup, cancel := context.WithTimeout(ctx, 2*time.Second)
-			limit, err := p.ContextWindow(lookup, a.model)
-			cancel()
-			if err == nil {
-				a.contextWindow = max(0, limit)
-			}
+		if limit, ok := discoverContextWindow(ctx, a.provider, a.model); ok {
+			a.contextWindow = limit
 		}
 	}
 	a.publishContext()
+}
+
+// PrepareContextRefresh discovers the model's context window without touching
+// live state. Invoke the returned update, if any, in the same synchronized
+// settings change as SetModel after checking the current configuration revision.
+func (a *Agent) PrepareContextRefresh(ctx context.Context, model string) func() {
+	limit, ok := discoverContextWindow(ctx, a.backendSnapshot.Load().provider, model)
+	if !ok {
+		return nil
+	}
+	return func() {
+		if a.model == model && a.contextOverride == 0 {
+			a.contextWindow = limit
+			a.publishContext()
+		}
+	}
+}
+
+func discoverContextWindow(ctx context.Context, provider llm.Provider, model string) (int, bool) {
+	tracker, ok := provider.(llm.ContextWindowProvider)
+	if !ok {
+		return 0, false
+	}
+	lookup, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	limit, err := tracker.ContextWindow(lookup, model)
+	return max(0, limit), err == nil
 }
 
 func (a *Agent) publishContext() {

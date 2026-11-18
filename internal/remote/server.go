@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"qcode/internal/agent"
 	"qcode/internal/redaction"
 	"qcode/internal/session"
 	"qcode/internal/tui"
@@ -619,10 +620,27 @@ func (m *Manager) agentSettings(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if err := ui.ConfigureRemoteAgent(ctx, r.PathValue("id"), settings); err != nil {
-		http.Error(w, m.redact(err.Error()), http.StatusConflict)
+		http.Error(w, m.redact(err.Error()), statusForAgentSettings(err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func statusForAgentSettings(err error) int {
+	switch {
+	case errors.Is(err, session.ErrUnknownAgent), errors.Is(err, session.ErrClosedAgent):
+		return http.StatusNotFound
+	case errors.Is(err, session.ErrAgentBusy), errors.Is(err, agent.ErrStaleConfiguration), errors.Is(err, tui.ErrRemoteSessionChanged):
+		return http.StatusConflict
+	case errors.Is(err, tui.ErrInvalidRemoteAgentSettings):
+		return http.StatusBadRequest
+	case errors.Is(err, agent.ErrManagerClosed):
+		return http.StatusServiceUnavailable
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 func (m *Manager) export(w http.ResponseWriter, r *http.Request) {
