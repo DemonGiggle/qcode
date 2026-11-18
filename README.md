@@ -18,6 +18,7 @@ qcode is a lightweight, keyboard-driven AI coding assistant that runs entirely i
 - ⌨️ **Steering and queues**: Enter updates busy work; Tab queues a separate task
 - 🤖 **Multi-agent support** with up to 20 tabs including main
 - 🔧 **Rich toolset** including read, write, edit, list, search, shell, directory switching, and web tools
+- 🔌 **MCP servers** for extra tools via local stdio commands or remote Streamable HTTP endpoints (`qcode setup` → `MCP servers`, `[mcp_servers.<name>]` in config; trusted without per-call approval, disabled in sandbox/plan modes)
 - 🧭 **Plan mode** for read-only workspace investigation and explicit implementation handoff
 - ✅ **Execution checklist** with a live Todo panel (`Alt+T`) and `/todo show` review
 - 💬 **Interactive questions** to clarify ambiguous tasks before broad searches (inline, per-agent toggle)
@@ -201,9 +202,12 @@ thinking = "high"
   `GEMINI_API_KEY`/`GOOGLE_API_KEY`) over inline `api_key`. Root `base_url` /
   `api_key` / `model` / `thinking` are deprecated.
 - Validate without starting a session with `qcode config check`.
+- Extra tools via [MCP servers](docs/configuration.md#mcp-servers):
+  `[mcp_servers.local]` (`command` + `args`/`env`) or
+  `[mcp_servers.remote]` (`url`); prefer `qcode setup` → `MCP servers`.
 
 See [Configuration](docs/configuration.md) for lookup locations, precedence,
-named provider instances, and the full option list.
+named provider instances, MCP servers, and the full option list.
 
 ## 🤝 Contributing
 
