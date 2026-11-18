@@ -72,14 +72,14 @@ func (b *providerBuilder) availability(name string) (bool, string) {
 	connection := b.connection(name, nil)
 	if kind == "chatgpt" {
 		if connection.APIKey != "" {
-			return false, fmt.Sprintf("provider %s (chatgpt) uses ChatGPT OAuth (qcode login chatgpt); clear api-key", name)
+			return false, fmt.Sprintf("provider %s (chatgpt) uses ChatGPT OAuth configured in qcode setup; clear api-key", name)
 		}
 		if tokens, err := chatgptoauth.Load(connection.ChatGPTOAuthPath); err != nil {
-			return false, "run `qcode login chatgpt` to connect a ChatGPT subscription"
+			return false, "run `qcode setup` and configure ChatGPT credentials"
 		} else if tokens.RefreshToken == "" && tokens.NeedsRefresh(time.Now()) {
-			return false, "chatgpt token expired and no refresh token; run `qcode login chatgpt` again"
+			return false, "chatgpt token expired and no refresh token; re-authenticate with ChatGPT in `qcode setup`"
 		} else if tokens.AccessToken == "" {
-			return false, "run `qcode login chatgpt` to connect a ChatGPT subscription"
+			return false, "run `qcode setup` and configure ChatGPT credentials"
 		}
 		return true, ""
 	}
@@ -106,7 +106,7 @@ func (b *providerBuilder) prepare(ctx context.Context, name string, endpoint *st
 	result.Endpoint = connection.BaseURL
 	if kind == "chatgpt" {
 		if connection.APIKey != "" {
-			return result, fmt.Errorf("provider %s (chatgpt) uses ChatGPT OAuth (qcode login chatgpt); clear api-key", name)
+			return result, fmt.Errorf("provider %s (chatgpt) uses ChatGPT OAuth configured in qcode setup; clear api-key", name)
 		}
 		client := connection.HTTP
 		if client == nil {

@@ -81,6 +81,17 @@ func main() {
 	}
 }
 
+// writeConfigDiagnostics reports skipped files; a fatal diagnostic is returned
+// to the caller and printed separately by the CLI entry point.
+func writeConfigDiagnostics(out io.Writer, diagnostics []error, fatal error) {
+	for _, diagnostic := range diagnostics {
+		if fatal != nil && errors.Is(diagnostic, fatal) {
+			continue
+		}
+		fmt.Fprintln(out, "WARNING:", diagnostic, "Skipping file.")
+	}
+}
+
 func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr error) {
 	policy, _ := redaction.New(redaction.Config{}, redaction.EnvironmentValues())
 	diagnosticsOut := &redaction.DiagnosticWriter{Policy: policy, Sink: redaction.Terminal, Out: stderr}
@@ -100,9 +111,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		}
 		return err
 	}
+	// Reject the retired subcommand before positional arguments become a prompt.
 	if len(arguments) > 0 && arguments[0] == "login" {
-		isTerminal := term.IsTerminal(int(stdin.Fd())) && term.IsTerminal(int(stdout.Fd()))
-		return runLogin(arguments[1:], stdin, stdout, diagnosticsOut, isTerminal)
+		return errors.New("the login subcommand was removed; run `qcode setup` and configure ChatGPT credentials")
 	}
 	if len(arguments) > 0 && arguments[0] == "config" {
 		return runConfig(arguments[1:], stdout, diagnosticsOut)
@@ -148,7 +159,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	flags.Lookup("api-key").DefValue = ""
 	flags.BoolVar(&opts.dangerSkipTLSVerify, "danger-skip-tls-verify", false, "skip TLS certificate verification (insecure)")
 	flags.Usage = func() {
-		fmt.Fprintf(diagnosticsOut, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\nUse 'qcode setup' to run the interactive configuration wizard.\nUse 'qcode update' to install the latest release.\nUse 'qcode login chatgpt' to connect a ChatGPT subscription via OAuth.\nUse 'qcode config check [--json]' to validate config files with fix suggestions.\n\nOptions:\n")
+		fmt.Fprintf(diagnosticsOut, "Usage: qcode [options] [prompt]\n\nWith no prompt, qcode starts its terminal UI.\nUse 'qcode setup' to configure providers, including ChatGPT sign-in.\nUse 'qcode update' to install the latest release.\nUse 'qcode config check [--json]' to validate config files with fix suggestions.\n\nOptions:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(arguments); err != nil {

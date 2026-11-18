@@ -485,10 +485,10 @@ func annotateChatGPTAuthError(err error) error {
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "rejected_by_access_enforcement") || strings.Contains(msg, "no_matching_rule") {
-		return fmt.Errorf("%w; ChatGPT plan request rejected (no_matching_rule): use the default SIWC endpoint https://api.openai.com/v1 (remove any chatgpt base_url override pointing at chatgpt.com/backend-api) and run `qcode login chatgpt` again", err)
+		return fmt.Errorf("%w; ChatGPT plan request rejected (no_matching_rule): use the default SIWC endpoint https://api.openai.com/v1 (remove any chatgpt base_url override pointing at chatgpt.com/backend-api) and re-authenticate with ChatGPT in `qcode setup`", err)
 	}
 	if isChatGPTUnauthorized(err) {
-		return fmt.Errorf("%w; run `qcode login chatgpt` again and confirm ChatGPT plan access", err)
+		return fmt.Errorf("%w; re-authenticate with ChatGPT in `qcode setup` and confirm ChatGPT plan access", err)
 	}
 	return err
 }

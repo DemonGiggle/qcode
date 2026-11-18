@@ -239,7 +239,7 @@ func TestProviderBuilderCredentialErrorsAndOAuthRedaction(t *testing.T) {
 		}
 	}
 	builder.config.ChatGPT.OAuthPath = filepath.Join(t.TempDir(), "missing.json")
-	if _, err := builder.prepare(context.Background(), "chatgpt", nil); err == nil || !strings.Contains(err.Error(), "qcode login chatgpt") {
+	if _, err := builder.prepare(context.Background(), "chatgpt", nil); err == nil || !strings.Contains(err.Error(), "qcode setup") {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "oauth.json")
@@ -438,7 +438,7 @@ func TestProviderAvailabilityMirrorsCredentials(t *testing.T) {
 		t.Fatalf("opencode-go availability = %v, %q", ok, hint)
 	}
 	builder.config.ChatGPT.OAuthPath = filepath.Join(t.TempDir(), "missing.json")
-	if ok, hint := builder.availability("chatgpt"); ok || !strings.Contains(hint, "qcode login chatgpt") {
+	if ok, hint := builder.availability("chatgpt"); ok || !strings.Contains(hint, "qcode setup") {
 		t.Fatalf("chatgpt availability = %v, %q", ok, hint)
 	}
 	// Custom endpoints stay selectable without a key.

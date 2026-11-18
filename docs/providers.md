@@ -26,7 +26,7 @@ Bare `/provider` lists the same registry as `qcode --list-providers`, highlighti
 this tab's current provider. Up/Down and Enter choose; Esc goes back or leaves the
 picker, and Ctrl+C cancels the command. Providers without credentials show
 ` (Need Setup First)`, are dimmed, and cannot be chosen with the keyboard:
-configure the key or run `qcode login chatgpt` first. Direct names are validated
+configure the credentials in `qcode setup` first. Direct names are validated
 against that registry. `/help provider` shows usage and examples.
 
 Only the active tab changes. Finish or cancel its work first; running, queued,
@@ -52,7 +52,7 @@ capacity override. Because reasoning/tool history can be backend-specific, qcode
 warns that the next request may fail; run `/new` if a fresh conversation is needed.
 
 Configure separate endpoints/keys with [connection profiles](configuration.md#provider-connection-profiles).
-Official OpenAI, Gemini, and OpenCode Go endpoints require API credentials; custom endpoints can remain unauthenticated. For ChatGPT, run `qcode login chatgpt` beforehand.
+Official OpenAI, Gemini, and OpenCode Go endpoints require API credentials; custom endpoints can remain unauthenticated. For ChatGPT, sign in through `qcode setup`.
 Missing credentials produce setup guidance rather than changing the live tab.
 On main, provider/model/thinking save to the user config. Worker selections are
 session-local. New tabs inherit their creator's provider, and `/resume` restores
@@ -255,15 +255,16 @@ summaries streamed by these models in its thinking view. These routes omit
 
 ## ChatGPT subscription
 
+Run `qcode setup` and open
+**Providers & Models → chatgpt → Configure credentials & endpoint** to sign in.
+
 ```sh
-qcode login chatgpt
 qcode --provider chatgpt --model gpt-5.6-codex "explain this repository"
 ```
 
 The `chatgpt` provider talks to the Sign in with ChatGPT Responses endpoint
-(`https://api.openai.com/v1`) with the OAuth file written by
-`qcode login chatgpt` — no API key. The login follows the open-source Sign in
-with ChatGPT flow: first registration uses `client_id=dynamic_agent_client`
+(`https://api.openai.com/v1`) with the OAuth file written during sign-in.
+The login follows the open-source Sign in with ChatGPT flow: first registration uses `client_id=dynamic_agent_client`
 with `agent_name_hint=qcode` and a stable `ext_agent_host_id`, then reuses the
 issued client; open the printed URL, approve, and the `127.0.0.1/auth/callback`
 loopback completes (paste back only for remote browsers).
@@ -276,9 +277,10 @@ except for supported cache-breakpoint models on the official endpoint, where
 they are sent as a leading developer message; see [prompt caching](prompt-caching.md#chatgpt-siwc-cache-boundaries-current-policy). A `401 rejected_by_access_enforcement /
 no_matching_rule` means the request went to the private
 `chatgpt.com/backend-api` route: remove any chatgpt `base_url` override so the
-default `https://api.openai.com/v1` is used, then run `qcode login chatgpt`
-again. Thinking levels come from each model's `supported_reasoning_levels` in
-the account catalog, with a bundled Codex catalog as a fallback. For example,
+default `https://api.openai.com/v1` is used. Then re-authenticate with ChatGPT
+in `qcode setup`. Thinking levels come from each model's
+`supported_reasoning_levels` in the account catalog, with a bundled Codex
+catalog as a fallback. For example,
 Luna offers `low`, `medium`, `high`, `xhigh`, and `max` (default `medium`),
 while Sol/Terra variants also offer `ultra` and may default to `low`.
 Unknown models without metadata remain usable but have no thinking selector.

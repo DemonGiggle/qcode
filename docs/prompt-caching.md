@@ -176,7 +176,7 @@ covers any `base_url`). Differences:
 - **Endpoint / override handling (verified gateway,
   `internal/llm/chatgpt.go`):** default `https://api.openai.com/v1`, `POST
   {base}/responses`, Bearer auth with the OAuth access token from
-  `qcode login chatgpt`. A `base_url` containing `chatgpt.com/backend-api`
+  ChatGPT sign-in in `qcode setup`. A `base_url` containing `chatgpt.com/backend-api`
   selects the legacy Codex route: `?client_version=` on `/models` and the
   `ChatGPT-Account-Id` header. The legacy route rejects third-party OAuth
   clients (`rejected_by_access_enforcement / no_matching_rule`); the

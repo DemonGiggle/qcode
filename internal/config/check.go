@@ -458,15 +458,15 @@ func keyAndFixForValidateError(msg string) (string, string) {
 	case strings.Contains(msg, "invalid provider instance"):
 		return "providers.<name>", "Use 1-64 lowercase letters, digits, hyphens or underscores; custom is reserved."
 	case strings.Contains(msg, "unsupported (use OAuth)") && !strings.Contains(msg, "providers.chatgpt."):
-		return "providers.<name>", "Remove api_key and api_key_path from ChatGPT instances; use qcode login chatgpt and [chatgpt] oauth_path."
+		return "providers.<name>", "Remove api_key and api_key_path from ChatGPT instances; configure ChatGPT credentials in qcode setup and optionally set [chatgpt] oauth_path."
 	case strings.Contains(msg, "unknown provider profile"):
 		return "providers.<name>", "Rename to one of ollama, openai, opencode-go, chatgpt, gemini, or remove the table."
 	case strings.Contains(msg, "providers.chatgpt.api_key_path"):
-		return "providers.chatgpt.api_key_path", "Remove api_key_path; ChatGPT uses OAuth. Run `qcode login chatgpt` and optionally set [chatgpt] oauth_path."
+		return "providers.chatgpt.api_key_path", "Remove api_key_path; ChatGPT uses OAuth. Configure ChatGPT credentials in `qcode setup` and optionally set [chatgpt] oauth_path."
 	case strings.Contains(msg, "providers.chatgpt.api_key"):
-		return "providers.chatgpt.api_key", "Remove api_key; ChatGPT uses OAuth. Run `qcode login chatgpt`."
+		return "providers.chatgpt.api_key", "Remove api_key; ChatGPT uses OAuth. Configure ChatGPT credentials in `qcode setup`."
 	case strings.Contains(msg, "chatgpt api_key"):
-		return "api_key", "Remove root api_key with provider = \"chatgpt\"; run `qcode login chatgpt` instead."
+		return "api_key", "Remove root api_key with provider = \"chatgpt\"; configure ChatGPT credentials in `qcode setup`."
 	case strings.Contains(msg, "both api_key and api_key_path"):
 		return "providers.<name>.api_key_path", "Keep one source: prefer api_key_path = \"~/.config/qcode/<name>.key\" (0600) or env, and remove the inline api_key."
 	case strings.Contains(msg, ".api_key_path contains invalid UTF-8"):
