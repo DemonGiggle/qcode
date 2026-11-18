@@ -34,6 +34,11 @@ type presentation interface {
 	GenerateExport(string) (tui.ExportDocument, error)
 }
 
+type agentSettingsPresentation interface {
+	RemoteAgentCatalog(context.Context, string) (tui.RemoteCatalog, error)
+	ConfigureRemoteAgent(context.Context, string, tui.RemoteAgentSettings) error
+}
+
 type remoteConnectionLogger interface {
 	RemoteConnection(string, bool)
 }
@@ -496,6 +501,7 @@ func (m *Manager) routesWithAuth(auth *authStore, prefix ...string) http.Handler
 	api.HandleFunc("GET /api/v1/export", m.export)
 	api.HandleFunc("GET /api/v1/events", m.events)
 	api.HandleFunc("POST /api/v1/agents/{id}/cancel", m.cancelActive)
+	api.HandleFunc("POST /api/v1/agents/{id}/settings", m.agentSettings)
 	api.HandleFunc("POST /api/v1/prompts", m.prompt)
 	api.HandleFunc("POST /api/v1/prompts/{id}/cancel", m.cancelPrompt)
 	api.HandleFunc("POST /api/v1/actions", m.action)
@@ -579,7 +585,44 @@ func (m *Manager) snapshot(w http.ResponseWriter, r *http.Request) {
 func (m *Manager) catalog(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	writeJSON(w, http.StatusOK, m.ui.RemoteCatalog(ctx))
+	id := r.URL.Query().Get("agent_id")
+	if id == "" {
+		writeJSON(w, http.StatusOK, m.ui.RemoteCatalog(ctx))
+		return
+	}
+	ui, ok := m.ui.(agentSettingsPresentation)
+	if !ok {
+		http.Error(w, "agent catalogs are unavailable", http.StatusNotImplemented)
+		return
+	}
+	catalog, err := ui.RemoteAgentCatalog(ctx, id)
+	if err != nil {
+		http.Error(w, m.redact(err.Error()), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, catalog)
+}
+
+func (m *Manager) agentSettings(w http.ResponseWriter, r *http.Request) {
+	ui, ok := m.ui.(agentSettingsPresentation)
+	if !ok {
+		http.Error(w, "agent settings are unavailable", http.StatusNotImplemented)
+		return
+	}
+	var settings tui.RemoteAgentSettings
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&settings); err != nil {
+		http.Error(w, "invalid agent settings", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if err := ui.ConfigureRemoteAgent(ctx, r.PathValue("id"), settings); err != nil {
+		http.Error(w, m.redact(err.Error()), http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (m *Manager) export(w http.ResponseWriter, r *http.Request) {

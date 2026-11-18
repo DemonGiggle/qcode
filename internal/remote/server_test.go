@@ -284,7 +284,7 @@ func TestRemotePageHasCatalogBackedSelectorControls(t *testing.T) {
 		"Switch agent",
 		"Type to filter",
 		"No matching entries.",
-		"submitLines",
+		"submitSettings",
 		"e.key==='Escape'",
 		"viewport-fit=cover",
 		"100dvh",
@@ -723,5 +723,40 @@ func TestExportEndpointRendersFullHistoryWithoutWritingFiles(t *testing.T) {
 	files, err := os.ReadDir(root)
 	if err != nil || len(files) != 0 {
 		t.Fatalf("download wrote host files: %v %v", files, err)
+	}
+}
+
+type agentSettingsTestPresentation struct {
+	testPresentation
+	catalogID, settingsID string
+	settings              tui.RemoteAgentSettings
+}
+
+func (p *agentSettingsTestPresentation) RemoteAgentCatalog(_ context.Context, id string) (tui.RemoteCatalog, error) {
+	p.catalogID = id
+	return tui.RemoteCatalog{Models: []string{"worker-model"}}, nil
+}
+
+func (p *agentSettingsTestPresentation) ConfigureRemoteAgent(_ context.Context, id string, settings tui.RemoteAgentSettings) error {
+	p.settingsID, p.settings = id, settings
+	return nil
+}
+
+func TestAgentSettingsRoutesRetainTarget(t *testing.T) {
+	presentation := &agentSettingsTestPresentation{}
+	handler := authorizedTestManager(presentation).routes()
+	catalog := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?agent_id=agent-2", nil)
+	authorizeTestRequest(catalog)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, catalog)
+	if response.Code != http.StatusOK || presentation.catalogID != "agent-2" || !strings.Contains(response.Body.String(), "worker-model") {
+		t.Fatalf("catalog = %d %s, target %q", response.Code, response.Body.String(), presentation.catalogID)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-2/settings", strings.NewReader(`{"skills":[]}`))
+	authorizeTestRequest(request)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || presentation.settingsID != "agent-2" || presentation.settings.Skills == nil {
+		t.Fatalf("settings = %d %s, target %q, payload %+v", response.Code, response.Body.String(), presentation.settingsID, presentation.settings)
 	}
 }

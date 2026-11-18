@@ -33,7 +33,7 @@ let snapshot,active='agent-1',historyAtBeginning=false,promptNotice='',waitingSu
 const drafts={'main':'main draft','agent-1':'worker draft'},cleared={'agent-1':5},queueExpanded={'agent-1':true},queueScroll={'agent-1':10},spinnerFrames=['x'];
 const ansiHTML=x=>x,escapeHTML=x=>x,waitingDetails=()=>'',renderLatestPrompt=()=>{},renderQueue=()=>{};
 let shownInteraction;
-function renderInteraction(value){shownInteraction=value}
+function renderInteractions(items){shownInteraction=items[0]}
 ` + strings.Join(functions, "\n") + `
 const main={id:'main',name:'main',lines:['main transcript']},worker={id:'agent-1',name:'worker',status:'closing',lines:['worker transcript']};
 snapshot={runtime:{agents:[{id:'main'},{id:'agent-1',status:'closing',active_task_id:'request-1'}],interactions:[]},presentation:{active:'agent-1',views:[main,worker]}};

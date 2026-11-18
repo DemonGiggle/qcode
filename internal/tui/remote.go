@@ -303,6 +303,11 @@ func (u *UI) RemotePresentation() RemotePresentation {
 }
 
 func (u *UI) RemoteCatalog(ctx context.Context) RemoteCatalog {
+	catalog, _ := u.RemoteAgentCatalog(ctx, "")
+	return catalog
+}
+
+func (u *UI) RemoteAgentCatalog(ctx context.Context, id string) (RemoteCatalog, error) {
 	result := RemoteCatalog{
 		Models:   make([]string, 0),
 		Thinking: make(map[string]RemoteThinkingState),
@@ -315,7 +320,17 @@ func (u *UI) RemoteCatalog(ctx context.Context) RemoteCatalog {
 	catalogLoader := u.skillCatalogLoader
 	skillSummaries := append([]prompt.SkillSummary(nil), u.skills...)
 	currentModel := u.model
+	manager := u.manager
 	u.screenMu.Unlock()
+	if id != "" {
+		summary, err := remoteAgentSummary(manager, id)
+		if err != nil {
+			return result, err
+		}
+		value, _ := manager.Runner(id)
+		runner, _ = value.(Runner)
+		currentModel = summary.Model
+	}
 	if catalogLoader != nil {
 		if loaded, err := catalogLoader(); err == nil {
 			skillSummaries = loaded
@@ -362,7 +377,18 @@ func (u *UI) RemoteCatalog(ctx context.Context) RemoteCatalog {
 		}
 	}
 	result.Sessions = u.remoteSessions()
-	return redaction.Copy(u.redaction, redaction.Remote, result)
+	return redaction.Copy(u.redaction, redaction.Remote, result), nil
+}
+
+func remoteAgentSummary(manager agentController, id string) (session.Summary, error) {
+	if manager == nil {
+		return session.Summary{}, fmt.Errorf("agent tabs are unavailable")
+	}
+	summary, err := manager.Summary(id)
+	if err == nil && summary.Status == session.StatusClosing {
+		err = fmt.Errorf("agent %q is closing", id)
+	}
+	return summary, err
 }
 
 func (u *UI) remoteSessions() []RemoteSessionState {

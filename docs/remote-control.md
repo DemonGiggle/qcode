@@ -117,8 +117,10 @@ running, a dim line such as `Waiting (⠋) · 12s · Waiting for model response 
 shows the current model operation, its elapsed time, and
 the same animated spinner frames above the status bar. The spinner and model
 details clear during tool execution; the Cancel button and queued prompt count
-remain available while tool activity appears in the transcript. Pending approvals or
-questions show `Waiting for input`. A Cancel button replaces the TUI's
+remain available while tool activity appears in the transcript. The **Needs input**
+buttons identify the agents with pending approvals or questions and jump directly
+to their requests. Answers in progress stay in the form while updates arrive or
+while you check another tab. A Cancel button replaces the TUI's
 `Ctrl+C` hint so a queued or running prompt can be stopped without the keyboard.
 
 In the authenticated modes, each `/remote` invocation issues a new single-use
@@ -168,10 +170,11 @@ and opens directly without a redirect. The web page sets its base URL to the
 session path so relative API requests still reach that session after Tailscale
 Serve strips the path prefix. URLs with a trailing slash also work.
 
-Browser commands are injected as complete lines into the normal TUI command
-loop, so they use the same agent manager, queues, session state, and command
-handlers as local input. Remote `/exit`, `/quit`, and `/remote` mutations are
-rejected; browser `/exit` only closes that browser view.
+Browser model, tool, and skill settings apply to the selected browser agent.
+The terminal keeps its current selection and draft. Other browser slash commands
+use the normal TUI command loop and share its session state and handlers.
+Remote `/exit`, `/quit`, and `/remote` mutations are rejected; browser
+`/exit` only closes that browser view.
 
 The browser also provides catalog-backed selectors for `/model`, `/tool`,
 `/skill`, `/resume`, `/agent`, `/agent new`, `/agent list`, and `/agent switch`.

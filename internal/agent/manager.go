@@ -458,6 +458,28 @@ func (m *AgentManager) Configure(id string, update func() error) error {
 	return update()
 }
 
+// ConfigureIdle applies settings to an explicit agent after catalog lookups.
+func (m *AgentManager) ConfigureIdle(id string, revision uint64, update func() error) error {
+	return m.Configure(id, func() error {
+		s := m.sessions[id]
+		if m.shutdown {
+			return ErrManagerClosed
+		}
+		if s.active != nil || len(s.queue) != 0 || s.summary.Status == StatusRunning || s.summary.Status == StatusWaitingForApproval {
+			return fmt.Errorf("agent %q is not idle", id)
+		}
+		if s.runner.configurationRevision.Load() != revision {
+			return ErrStaleConfiguration
+		}
+		if err := update(); err != nil {
+			return err
+		}
+		s.summary.Model = s.runner.backendSnapshot.Load().model
+		s.runner.configurationRevision.Add(1)
+		return nil
+	})
+}
+
 func (m *AgentManager) Start(id, task string) error {
 	_, err := m.Submit(id, task)
 	return err
