@@ -4,150 +4,57 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
 
-> A fast, terminal-first coding agent inspired by Pi
+> Your terminal's second brain — fast, private, and everywhere you are.
 
-qcode is a lightweight, keyboard-driven AI coding assistant that runs entirely in your terminal. One native executable, streaming LLM output, and a compact provider/tool interface.
+qcode is a keyboard-first AI coding assistant that lives in your terminal. One static binary, zero runtime to install, streaming answers, and your choice of model — from a local Ollama to hosted APIs to your ChatGPT subscription.
 
 ## 🎬 Demo
 
 ![qcode demo: an offline tour of pinned prompts, todo checklist, steering, queues, diffs, themes, and model search](docs/assets/demo.gif)
 
-## ✨ Features
+## ✨ Why qcode?
 
-- 🖥️ **Full-viewport TUI** with pinned latest prompts, editable input, per-agent history, and ANSI-colored Markdown
-- ⌨️ **Steering and queues**: Enter updates busy work; Tab queues a separate task
-- 🤖 **Multi-agent support** with up to 20 tabs including main
-- 🔧 **Rich toolset** including read, write, edit, list, search, shell, directory switching, and web tools
-- 🔌 **MCP servers** for extra tools via local stdio commands or remote Streamable HTTP endpoints (`qcode setup` → `MCP servers`, `[mcp_servers.<name>]` in config; trusted without per-call approval, disabled in sandbox/plan modes)
-- 🧭 **Plan mode** for read-only workspace investigation and explicit implementation handoff
-- ✅ **Execution checklist** with a live Todo panel (`Alt+T`) and `/todo show` review
-- 💬 **Interactive questions** to clarify ambiguous tasks before broad searches (inline, per-agent toggle)
-- 🧠 **Global learning** that persists preferences across sessions
-- 🎯 **Skills system** with lazy loading and always-load, per-tab selection, and [official release skills](docs/skills/)
-- 🔌 **Providers** for Ollama, OpenAI-compatible, Gemini, OpenCode Go, and ChatGPT subscriptions (`qcode login chatgpt`, `/provider` switching without restart, named `[providers.<instance>]` endpoints with `type`)
-- ✅ **Automatic code review** with `/autoreview` (reusable `review` tab, `AR` status badge, file-change-gated review-fix loop; `[skip review]` opts out)
-- 🔒 **Sandbox mode** for isolated tool execution on Linux
-- 🛡️ **Local redaction** for detected credentials and payment-card data in output, saved sessions, and exports
-- 📊 **Context tracking** with real-time token usage display
-- 🎨 **Terminal themes** with Default (Auto), 29 dark/light palettes, and live previews
-- 💾 **Saved sessions** with transcript previews, rename, pin, and confirmed deletion
-- 🌐 **Browser control** for the same live agents, steering, queues, and approvals
+### 🪶 Small footprint, stays out of the way
+One static binary (~13 MB, `CGO_ENABLED=0`, stdlib networking only). No Electron, no daemon, no Python env to babysit. It starts instantly, streams as it thinks, and keeps your scrollback intact. Details: [Building](docs/build.md).
+
+### 📱 Your terminal, from your phone
+Run `/remote` and steer the *same* live agents from a browser — queues, approvals, todo progress included. Pick **Pure Web** on a trusted LAN, **Tailscale** for your tailnet over HTTPS, or open QR login links that expire in minutes. Walk away from your desk without abandoning the run. Details: [Browser control](docs/remote-control.md).
+
+### 💻 One binary, every machine
+Ships for Linux, macOS, Windows (`amd64`/`arm64`) plus FreeBSD (`amd64`) — ARM builds happily run on Pi-class boards and small servers. Self-updates with `qcode update`. Details: [Building](docs/build.md).
+
+### 🔌 Bring any model, switch mid-thought
+Ollama for local, OpenAI-compatible endpoints, native Gemini, OpenCode Go (Claude, GPT, Grok, Qwen and more), or ChatGPT via OAuth — plus named instances like `[providers.ollama-lab]` for that second server. Swap with `/provider` without restarting; each tab keeps its own model. Details: [Providers](docs/providers.md).
+
+### 🔒 Let it run shell — without letting it roam
+Opt-in Linux sandbox (bubblewrap): fresh namespace per command, no network by default, hidden home, read-only root, approved directories only. Keys and configs stay outside the sandbox. Details: [Trust Model](docs/trust-model.md).
+
+### ✅ Ships with a second pair of eyes
+`/autoreview` watches `main` and only speaks up when files actually changed — then reviews, fixes, and re-checks in a dedicated `review` tab (`AR` badge). Read-only answers never trigger it; `[skip review]` opts out. Details: [Interface](docs/interface.md).
+
+### And the rest just fades into the background
+- **Up to 20 tabs** — one `main`, many helpers, zero context-switching pain.
+- **Steer with Enter, queue with Tab** — interrupt gracefully, line up what's next.
+- **Plan mode** — look before it leaps; read-only recon, then explicit `act`.
+- **Todo panel (`Alt+T`)** — quiet checklist that proves progress happened.
+- **It asks before it guesses** — up to 3 sharp questions instead of broad searches.
+- **It remembers** — global learning, skills, and MCP servers travel with you.
+- **It redacts** — keys and card numbers never make it to disk or screen.
+- **It counts** — live context/token meter, themes that match your terminal, sessions you can resume, rename, and pin.
 
 ## 🚀 Quick Start
-
-### Installation
 
 ```sh
 # Build from source (requires Go 1.23+)
 make build
 ./bin/qcode
+
+# Or grab a release binary, then:
+qcode setup   # 2-minute wizard: provider, keys, model
+qcode         # start coding
 ```
 
-The examples below assume `qcode` is on your `PATH`. From a source checkout,
-use `./bin/qcode` instead. Installed release binaries can self-update (see
-`qcode update` below); source builds update with `git pull` + rebuild.
-
-### First-time setup (recommended)
-
-Run the interactive wizard once instead of hand-editing `config.toml`:
-
-```sh
-qcode setup
-qcode config check
-qcode --list-providers
-```
-
-`qcode setup` is a menuconfig-style wizard that writes your user config
-(e.g. `~/.local/etc/qcode/config.toml` on Linux). It picks the active
-provider, saves API keys to `0600` key files, verifies the connection and
-lets you select a model (plus thinking level when supported), and configures
-theme, sandbox, interactive questions, and MCP servers. Saving backs up the
-existing config to `config.toml.bak` and re-validates with `qcode config check`.
-Requires an interactive terminal.
-
-What it looks like:
-
-```text
-qcode setup (menuconfig)
-User config: ~/.local/etc/qcode/config.toml
-Navigate with Up/Down, Enter to open/select, Esc to go back.
-
-  Providers & Models  --->  (active: ollama / qwen2.5-coder:7b)
-  Appearance (Theme)  --->  (default)
-  Sandbox (Linux)     --->  (disabled)
-  Behavior            --->  (interactive: off)
-  MCP servers         --->
-  Save and Leave
-  Exit without saving
-```
-
-Pick `Providers & Models`, then a provider (`ollama`, `openai`,
-`opencode-go`, `gemini`, `chatgpt` — marked `(active)` / `(configured)`):
-
-```text
-  Set as active default provider
-  Configure credentials & endpoint
-  Verify connection & select model (gpt-5, thinking: high)
-  < Back
-```
-
-- `openai` / `gemini` / `opencode-go`: enter an API key (stored in a
-  `0600` key file such as `~/.config/qcode/openai.key`, never inline),
-  optionally set a custom `base_url`, then `Verify connection & select model`
-  to fetch the live model list (`Verifying openai connection and fetching
-  models...`).
-- `ollama`: just set the base URL (default `http://127.0.0.1:11434`).
-- `chatgpt`: runs `qcode login chatgpt` OAuth flow (Sign in with ChatGPT in
-  the browser, loopback to `http://127.0.0.1:1455/auth/callback`) instead of
-  an API key.
-
-Saving prints a summary, for example:
-
-```text
-Saved setup to ~/.local/etc/qcode/config.toml:
-  provider: openai
-  providers.openai.api_key_path: ~/.config/qcode/openai.key (0600)
-  providers.openai.model: gpt-5
-  providers.openai.thinking: high
-```
-
-### Usage
-
-If you ran `qcode setup`, just start qcode — flags and environment variables
-override the saved defaults:
-
-```sh
-# After `qcode setup`, just run:
-qcode
-
-# Ad-hoc overrides (flags > env > config file > built-ins)
-ollama pull qwen2.5-coder:7b
-qcode --model qwen2.5-coder:7b
-
-export OPENAI_API_KEY=...  # or GEMINI_API_KEY, QCODE_API_KEY
-qcode --provider openai --model gpt-5
-
-# ChatGPT subscription (OAuth, no API key)
-qcode login chatgpt
-qcode --provider chatgpt --model gpt-5.6-codex
-
-# Interactive tour without configuration
-qcode --demo
-
-# One-shot text demo
-qcode --demo "show me how qcode works"
-
-# Update an installed qcode binary
-qcode update
-
-# Update using a different architecture, or include pre-releases
-qcode update --arch arm64
-qcode update --pre
-```
-
-Switch providers without restarting from inside the TUI with `/provider`;
-run `qcode config check` to validate config files and
-`qcode --list-providers` to see setup status.
+No setup patience? Take the offline tour: `qcode --demo`. Full flags, env vars, and one-shot mode live in [Command line](docs/cli.md); provider walkthroughs in [Providers](docs/providers.md).
 
 ## 📖 Documentation
 
@@ -174,40 +81,7 @@ run `qcode config check` to validate config files and
 
 ## 🔧 Configuration
 
-qcode merges every `config.toml` file it finds, with higher-priority
-locations overriding only the settings they provide. Copy
-[`config.toml.example`](config.toml.example) to one of the supported locations
-and adapt it as needed. All fields are optional:
-
-```toml
-provider = "ollama"
-max_steps = 32
-theme = "catppuccin-mocha"
-sandbox = false
-
-[providers.ollama]
-base_url = "http://127.0.0.1:11434"
-model = "qwen2.5-coder:7b"
-
-[providers.openai]
-api_key_path = "~/.config/qcode/openai.key"
-model = "gpt-5"
-thinking = "high"
-```
-
-- Root `provider` selects the startup default; each endpoint, credential,
-  model, and thinking level lives under its own `[providers.<name>]` table.
-- Prefer `api_key_path` (a `0600`/`0400` file holding only the key) or
-  environment variables (`QCODE_API_KEY`, `OPENAI_API_KEY`,
-  `GEMINI_API_KEY`/`GOOGLE_API_KEY`) over inline `api_key`. Root `base_url` /
-  `api_key` / `model` / `thinking` are deprecated.
-- Validate without starting a session with `qcode config check`.
-- Extra tools via [MCP servers](docs/configuration.md#mcp-servers):
-  `[mcp_servers.local]` (`command` + `args`/`env`) or
-  `[mcp_servers.remote]` (`url`); prefer `qcode setup` → `MCP servers`.
-
-See [Configuration](docs/configuration.md) for lookup locations, precedence,
-named provider instances, MCP servers, and the full option list.
+Prefer `qcode setup` over hand-editing files. When you do edit, see [Configuration](docs/configuration.md) for locations, precedence, named instances, MCP servers, and every knob — with [`config.toml.example`](config.toml.example) as the template and `qcode config check` as the validator.
 
 ## 🤝 Contributing
 
