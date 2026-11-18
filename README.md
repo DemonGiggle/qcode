@@ -20,8 +20,8 @@ One static binary (~13 MB, `CGO_ENABLED=0`, stdlib networking only). No Electron
 ### 📱 Your terminal, from your phone
 Run `/remote` and steer the *same* live agents from a browser — queues, approvals, todo progress included. Pick **Pure Web** on a trusted LAN, **Tailscale** for your tailnet over HTTPS, or open QR login links that expire in minutes. Walk away from your desk without abandoning the run. Details: [Browser control](docs/remote-control.md).
 
-### 💻 One binary, every machine
-Ships for Linux, macOS, Windows (`amd64`/`arm64`) plus FreeBSD (`amd64`) — ARM builds happily run on Pi-class boards and small servers. Self-updates with `qcode update`. Details: [Building](docs/build.md).
+### 💻 Native builds for every machine
+Separate static binaries per platform — Linux, macOS, Windows (`amd64`/`arm64`) plus FreeBSD (`amd64`). ARM builds happily run on Pi-class boards and small servers. Self-updates with `qcode update`. Details: [Building](docs/build.md).
 
 ### 🔌 Bring any model, switch mid-thought
 Ollama for local, OpenAI-compatible endpoints, native Gemini, OpenCode Go (Claude, GPT, Grok, Qwen and more), or ChatGPT via OAuth — plus named instances like `[providers.ollama-lab]` for that second server. Swap with `/provider` without restarting; each tab keeps its own model. Details: [Providers](docs/providers.md).
