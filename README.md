@@ -16,7 +16,7 @@ qcode is a lightweight, keyboard-driven AI coding assistant that runs entirely i
 
 - 🖥️ **Full-viewport TUI** with pinned latest prompts, editable input, per-agent history, and ANSI-colored Markdown
 - ⌨️ **Steering and queues**: Enter updates busy work; Tab queues a separate task
-- 🤖 **Multi-agent support** with up to 20 concurrent agent tabs
+- 🤖 **Multi-agent support** with up to 20 tabs including main
 - 🔧 **Rich toolset** including read, write, edit, list, search, shell, directory switching, and web tools
 - 🧭 **Plan mode** for read-only workspace investigation and explicit implementation handoff
 - ✅ **Execution checklist** with a live Todo panel (`Alt+T`) and `/todo show` review
@@ -43,18 +43,92 @@ make build
 ```
 
 The examples below assume `qcode` is on your `PATH`. From a source checkout,
-use `./bin/qcode` instead.
+use `./bin/qcode` instead. Installed release binaries can self-update (see
+`qcode update` below); source builds update with `git pull` + rebuild.
+
+### First-time setup (recommended)
+
+Run the interactive wizard once instead of hand-editing `config.toml`:
+
+```sh
+qcode setup
+qcode config check
+qcode --list-providers
+```
+
+`qcode setup` is a menuconfig-style wizard that writes your user config
+(e.g. `~/.local/etc/qcode/config.toml` on Linux). It picks the active
+provider, saves API keys to `0600` key files, verifies the connection and
+lets you select a model (plus thinking level when supported), and configures
+theme, sandbox, interactive questions, and MCP servers. Saving backs up the
+existing config to `config.toml.bak` and re-validates with `qcode config check`.
+Requires an interactive terminal.
+
+What it looks like:
+
+```text
+qcode setup (menuconfig)
+User config: ~/.local/etc/qcode/config.toml
+Navigate with Up/Down, Enter to open/select, Esc to go back.
+
+  Providers & Models  --->  (active: ollama / qwen2.5-coder:7b)
+  Appearance (Theme)  --->  (default)
+  Sandbox (Linux)     --->  (disabled)
+  Behavior            --->  (interactive: off)
+  MCP servers         --->
+  Save and Leave
+  Exit without saving
+```
+
+Pick `Providers & Models`, then a provider (`ollama`, `openai`,
+`opencode-go`, `gemini`, `chatgpt` — marked `(active)` / `(configured)`):
+
+```text
+  Set as active default provider
+  Configure credentials & endpoint
+  Verify connection & select model (gpt-5, thinking: high)
+  < Back
+```
+
+- `openai` / `gemini` / `opencode-go`: enter an API key (stored in a
+  `0600` key file such as `~/.config/qcode/openai.key`, never inline),
+  optionally set a custom `base_url`, then `Verify connection & select model`
+  to fetch the live model list (`Verifying openai connection and fetching
+  models...`).
+- `ollama`: just set the base URL (default `http://127.0.0.1:11434`).
+- `chatgpt`: runs `qcode login chatgpt` OAuth flow (Sign in with ChatGPT in
+  the browser, loopback to `http://127.0.0.1:1455/auth/callback`) instead of
+  an API key.
+
+Saving prints a summary, for example:
+
+```text
+Saved setup to ~/.local/etc/qcode/config.toml:
+  provider: openai
+  providers.openai.api_key_path: ~/.config/qcode/openai.key (0600)
+  providers.openai.model: gpt-5
+  providers.openai.thinking: high
+```
 
 ### Usage
 
+If you ran `qcode setup`, just start qcode — flags and environment variables
+override the saved defaults:
+
 ```sh
-# With Ollama (default)
+# After `qcode setup`, just run:
+qcode
+
+# Ad-hoc overrides (flags > env > config file > built-ins)
 ollama pull qwen2.5-coder:7b
 qcode --model qwen2.5-coder:7b
 
-# With OpenAI
-export OPENAI_API_KEY=...
+export OPENAI_API_KEY=...  # or GEMINI_API_KEY, QCODE_API_KEY
 qcode --provider openai --model gpt-5
+
+# ChatGPT subscription (OAuth, no API key)
+qcode login chatgpt
+qcode --provider chatgpt --model gpt-5.6-codex
 
 # Interactive tour without configuration
 qcode --demo
@@ -65,9 +139,14 @@ qcode --demo "show me how qcode works"
 # Update an installed qcode binary
 qcode update
 
-# Update using a different architecture for the current operating system
+# Update using a different architecture, or include pre-releases
 qcode update --arch arm64
+qcode update --pre
 ```
+
+Switch providers without restarting from inside the TUI with `/provider`;
+run `qcode config check` to validate config files and
+`qcode --list-providers` to see setup status.
 
 ## 📖 Documentation
 
@@ -80,8 +159,8 @@ qcode update --arch arm64
 - [Skill Plan mode](docs/skillplan.md) - Guided, review-first qcode skill creation
 - [Token usage](docs/token-usage.md) - Per-session totals and structured usage events
 - [Context usage](docs/context.md) - Remaining capacity, estimates, and automatic compaction
-- [Prompt caching](docs/prompt-caching.md) - Provider usage semantics and cache capability evidence (#70)
-- [Providers](docs/providers.md) - Ollama, OpenAI, Gemini, and OpenCode Go setup, plus named provider instances
+- [Prompt caching](docs/prompt-caching.md) - Provider usage semantics and cache capability evidence
+- [Providers](docs/providers.md) - Ollama, OpenAI-compatible, Gemini, OpenCode Go, and ChatGPT setup, plus named provider instances
 - [Multi-agent](docs/agents.md) - Concurrent agent tabs and orchestration
 - [Skills](docs/skills.md) - Workspace-local instruction bundles, [official release skills](docs/skills/), and authoring guidance
 - [Web Tools](docs/web-tools.md) - HTTP fetching and search capabilities
