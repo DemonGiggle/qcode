@@ -91,3 +91,60 @@ func TestContextWindowDiscovery(t *testing.T) {
 		t.Fatalf("%d, %v", got, err)
 	}
 }
+
+func TestOllamaContextWindowFallback(t *testing.T) {
+	// /api/ps misses (model not loaded) -> /api/show native maximum wins.
+	p, _ := newOllama(Config{HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/api/ps":
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"models":[]}`))}, nil
+		case "/api/show":
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"model_info":{"qwen3.context_length":131072,"qwen3.embedding_length":2560}}`))}, nil
+		default:
+			t.Errorf("unexpected path=%s", r.URL.Path)
+			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+		}
+	})})
+	got, err := p.(ContextWindowProvider).ContextWindow(context.Background(), "qwen3:8b")
+	if err != nil || got != 131072 {
+		t.Fatalf("show fallback got %d, %v", got, err)
+	}
+
+	// /api/ps and /api/show miss -> /api/tags details fallback wins.
+	p, _ = newOllama(Config{HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/api/ps":
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"models":[]}`))}, nil
+		case "/api/show":
+			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+		case "/api/tags":
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"models":[{"name":"qwen3:8b","model":"qwen3:8b","details":{"context_length":262144}}]}`))}, nil
+		default:
+			t.Errorf("unexpected path=%s", r.URL.Path)
+			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+		}
+	})})
+	got, err = p.(ContextWindowProvider).ContextWindow(context.Background(), "qwen3:8b")
+	if err != nil || got != 262144 {
+		t.Fatalf("tags fallback got %d, %v", got, err)
+	}
+
+	// All miss -> unknown, not an error.
+	p, _ = newOllama(Config{HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/api/ps":
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"models":[]}`))}, nil
+		case "/api/show":
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"model_info":{}}`))}, nil
+		case "/api/tags":
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"models":[]}`))}, nil
+		default:
+			t.Errorf("unexpected path=%s", r.URL.Path)
+			return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+		}
+	})})
+	got, err = p.(ContextWindowProvider).ContextWindow(context.Background(), "qwen3:8b")
+	if err != nil || got != 0 {
+		t.Fatalf("unknown got %d, %v", got, err)
+	}
+}

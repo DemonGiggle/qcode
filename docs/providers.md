@@ -88,6 +88,14 @@ qcode --provider ollama --model qwen3:8b --thinking high "reply with OK"
 qcode discovers thinking capability from Ollama's model metadata and preserves
 Ollama's default behavior when no explicit level is selected.
 
+### Context window
+
+qcode prefers the loaded model's allocated window from `/api/ps` and falls
+back to the native maximum from `/api/show` (`model_info.*.context_length`)
+and then `/api/tags` (`details.context_length`) when the model is not loaded,
+so `CTX` keeps a capacity instead of going unknown before the first
+completion. See [Context usage](context.md#window-limits).
+
 ## OpenAI-compatible
 
 ```sh

@@ -4,7 +4,7 @@ The status bar shows `CTX 73% left`, using the latest completion's input and out
 
 ## Window limits
 
-OpenAI, OpenCode Go, and ChatGPT limits come from a bundled [Models.dev catalog](https://models.dev/) (snapshot: 2026-11-04). ChatGPT Codex slugs also fall back to the matching base-model window (or a conservative Codex estimate) so new slugs do not show `CTX unknown`. Ollama discovers the loaded model's allocated window through [`/api/ps`](https://docs.ollama.com/api/ps), which may be unavailable before the first completion. Unknown limits show `CTX unknown`.
+OpenAI, OpenCode Go, ChatGPT, and Gemini limits come from a bundled [Models.dev catalog](https://models.dev/) (snapshot: 2026-11-04). ChatGPT Codex slugs also fall back to the matching base-model window (or a conservative Codex estimate) so new slugs do not show `CTX unknown`. Ollama prefers the loaded model's allocated window from [`/api/ps`](https://docs.ollama.com/api/ps) and falls back to the native maximum from `/api/show` (`model_info.*.context_length`) and then `/api/tags` (`details.context_length`) when the model is not loaded, so `CTX` keeps a capacity instead of going unknown before the first completion. Unknown limits show `CTX unknown`.
 
 For custom endpoints or unlisted models in terminal sessions, supply
 `--context-window 32768` or `context_window = 32768` in `config.toml`. The flag
