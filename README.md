@@ -94,20 +94,37 @@ qcode update --arch arm64
 
 ## 🔧 Configuration
 
-qcode layers every existing `config.toml` file it finds, with higher-priority
-locations overriding settings supplied by lower-priority ones. Copy
-[`config.toml.example`](config.toml.example) to one of the supported locations:
+qcode merges every `config.toml` file it finds, with higher-priority
+locations overriding only the settings they provide. Copy
+[`config.toml.example`](config.toml.example) to one of the supported locations
+and adapt it as needed. All fields are optional:
 
 ```toml
-provider = "openai"
-base_url = "http://localhost:8000/v1"
-api_key = "your-api-key"
-model = "my-model"
+provider = "ollama"
 max_steps = 32
-sandbox = true
+theme = "catppuccin-mocha"
+sandbox = false
+
+[providers.ollama]
+base_url = "http://127.0.0.1:11434"
+model = "qwen2.5-coder:7b"
+
+[providers.openai]
+api_key_path = "~/.config/qcode/openai.key"
+model = "gpt-5"
+thinking = "high"
 ```
 
-See [Configuration](docs/configuration.md) for lookup locations and precedence rules.
+- Root `provider` selects the startup default; each endpoint, credential,
+  model, and thinking level lives under its own `[providers.<name>]` table.
+- Prefer `api_key_path` (a `0600`/`0400` file holding only the key) or
+  environment variables (`QCODE_API_KEY`, `OPENAI_API_KEY`,
+  `GEMINI_API_KEY`/`GOOGLE_API_KEY`) over inline `api_key`. Root `base_url` /
+  `api_key` / `model` / `thinking` are deprecated.
+- Validate without starting a session with `qcode config check`.
+
+See [Configuration](docs/configuration.md) for lookup locations, precedence,
+named provider instances, and the full option list.
 
 ## 🤝 Contributing
 
