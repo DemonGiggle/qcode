@@ -211,7 +211,7 @@ func TestEnsureValidFailsFastWithoutRefresh(t *testing.T) {
 	_ = os.WriteFile(full, append(raw, '\n'), 0600)
 	if _, err := EnsureValid(context.Background(), do, path); err == nil {
 		t.Fatal("expected login error")
-	} else if !strings.Contains(err.Error(), "qcode login chatgpt") {
+	} else if !strings.Contains(err.Error(), "qcode setup") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -228,7 +228,7 @@ func TestLegacyFileRequiresLogin(t *testing.T) {
 		t.Fatal("must not refresh legacy file")
 		return nil, nil
 	})
-	if _, err := GetValidTokens(context.Background(), do, path); err == nil || !strings.Contains(err.Error(), "qcode login chatgpt") {
+	if _, err := GetValidTokens(context.Background(), do, path); err == nil || !strings.Contains(err.Error(), "qcode setup") {
 		t.Fatalf("err = %v", err)
 	}
 }

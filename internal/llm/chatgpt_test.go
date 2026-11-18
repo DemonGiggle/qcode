@@ -240,7 +240,7 @@ func TestChatGPTRequiresLogin(t *testing.T) {
 	}
 	if _, err := provider.Complete(context.Background(), Request{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}}, func(StreamEvent) {}); err == nil {
 		t.Fatal("expected login error")
-	} else if !strings.Contains(err.Error(), "qcode login chatgpt") {
+	} else if !strings.Contains(err.Error(), "qcode setup") {
 		t.Fatalf("err = %v", err)
 	}
 }

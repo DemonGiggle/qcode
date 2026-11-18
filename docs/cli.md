@@ -126,20 +126,21 @@ their kind and setup status). See [named instances](configuration.md#named-provi
 
 ## ChatGPT login
 
+Run `qcode setup` in an interactive terminal and open
+**Providers & Models → chatgpt → Configure credentials & endpoint**.
+For an existing connection, select **Re-authenticate with ChatGPT**.
+
 ```sh
-qcode login chatgpt
 qcode --provider chatgpt --model gpt-5.6-codex "explain this repository"
 ```
 
-`login chatgpt` connects a ChatGPT subscription via Sign in with ChatGPT
-(open-source token-sharing flow, interactive terminal required). It prints a
-browser URL, you Continue with ChatGPT and approve, then the loopback callback
-on `http://127.0.0.1:1455/auth/callback` completes automatically (paste the URL
+The Sign in with ChatGPT flow prints a browser URL. Choose Continue with
+ChatGPT and approve. The loopback callback on `http://127.0.0.1:1455/auth/callback` completes automatically (paste the URL
 back if your browser is on another machine); credentials are saved with mode
 `0600` at `~/.config/qcode/chatgpt-oauth.json` (override with `[chatgpt]
 oauth_path`) plus a stable host ID alongside it. The `chatgpt` provider uses
 that file instead of an API key; startup refreshes near-expiry tokens and fails
-fast with `run qcode login chatgpt` when login is missing. First sign-in
+fast with setup guidance when credentials are missing. First sign-in
 registers with `client_id=dynamic_agent_client`; later sign-ins reuse the
 issued client with `id_token_hint`/`login_hint`.
 

@@ -195,7 +195,7 @@ func (s Skills) NormalizedSelection() (selected []string, always []string) {
 
 // Config contains settings that may be supplied by a qcode config file.
 // ChatGPT holds the ChatGPT subscription (OAuth) settings. OAuthPath points
-// at the JSON file written by `qcode login chatgpt`. Empty means the default
+// at the JSON file written by ChatGPT sign-in in `qcode setup`. Empty means the default
 // ~/.config/qcode/chatgpt-oauth.json. It never holds a secret itself.
 type ChatGPT struct {
 	OAuthPath string `toml:"oauth_path"`

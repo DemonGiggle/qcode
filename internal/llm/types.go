@@ -146,8 +146,8 @@ type Config struct {
 	BaseURL         string
 	APIKey          string
 	HTTP            HTTPDoer
-	// ChatGPTOAuthPath points at the JSON file written by `qcode login
-	// chatgpt`. Empty selects the default path. Only used by the chatgpt
+	// ChatGPTOAuthPath points at the JSON file written by ChatGPT sign-in
+	// in `qcode setup`. Empty selects the default path. Only used by the chatgpt
 	// provider; other providers ignore it.
 	ChatGPTOAuthPath   string
 	InsecureSkipVerify bool

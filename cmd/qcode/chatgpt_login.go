@@ -3,19 +3,15 @@ package main
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
 
 	"qcode/internal/chatgptoauth"
-	"qcode/internal/config"
-	"qcode/internal/redaction"
 )
 
 // loginExchange swaps a code for tokens. Variable so tests can stub the token
@@ -25,42 +21,6 @@ var loginExchange = chatgptoauth.Exchange
 // loginVerify checks the ID token against the published JWKS. Variable so
 // tests can stub network verification.
 var loginVerify = chatgptoauth.VerifyIDTokenWithFetch
-
-// runLogin handles `qcode login chatgpt`: terminal-required loopback flow per
-// the open-source Sign in with ChatGPT page.
-func runLogin(args []string, stdin io.Reader, stdout, stderr io.Writer, isTerminal bool) error {
-	if len(args) != 1 || args[0] != "chatgpt" {
-		return fmt.Errorf("usage: qcode login chatgpt")
-	}
-	if !isTerminal {
-		return fmt.Errorf("login requires an interactive terminal")
-	}
-	cfg, _, diagnostics, err := config.Load()
-	if writer, ok := stderr.(*redaction.DiagnosticWriter); ok {
-		writer.Policy.RegisterSecrets(cfg.Secrets()...)
-	}
-	writeConfigDiagnostics(stderr, diagnostics, err)
-	if err != nil {
-		return err
-	}
-	oauthPath := cfg.ChatGPT.OAuthPath
-	if oauthPath == "" {
-		oauthPath = chatgptoauth.DefaultPath
-	}
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	return chatGPTLoginFlow(oauthPath, stdin, stdout, httpClient)
-}
-
-// writeConfigDiagnostics reports skipped files; a fatal diagnostic is returned
-// to the caller and printed separately by the CLI entry point.
-func writeConfigDiagnostics(out io.Writer, diagnostics []error, fatal error) {
-	for _, diagnostic := range diagnostics {
-		if fatal != nil && errors.Is(diagnostic, fatal) {
-			continue
-		}
-		fmt.Fprintln(out, "WARNING:", diagnostic, "Skipping file.")
-	}
-}
 
 // chatGPTLoginFlow performs dynamic registration (or reauthorization when a
 // registration already exists), exchanges the code, validates the ID token and

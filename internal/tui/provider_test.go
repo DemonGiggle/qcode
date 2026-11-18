@@ -203,7 +203,7 @@ func TestProviderSelectionCancellationAndFailureAreTransactional(t *testing.T) {
 		{name: "thinking cancel", keys: "\r" + string(ctrlC), target: &providerUIBackend{name: "openai", models: []string{"different"}, levels: []string{"low", "high"}}},
 		{name: "empty catalog", target: &providerUIBackend{name: "openai"}},
 		{name: "catalog failure", target: &providerUIBackend{name: "openai", err: errors.New("catalog unavailable")}},
-		{name: "missing login", factoryErr: errors.New("run qcode login chatgpt")},
+		{name: "missing login", factoryErr: errors.New("run qcode setup")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			u, h, recorder := newProviderUI(t, tc.keys)

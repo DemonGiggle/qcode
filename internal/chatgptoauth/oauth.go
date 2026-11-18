@@ -1,5 +1,5 @@
 // Package chatgptoauth implements the open-source Sign in with ChatGPT
-// (token-sharing) flow used by `qcode login chatgpt`.
+// (token-sharing) flow used by ChatGPT sign-in in `qcode setup`.
 //
 // It follows
 // https://developers.openai.com/siwc/token-sharing-open-source/sign-in :
@@ -515,7 +515,7 @@ func Load(path string) (Tokens, error) {
 	}
 	link, err := os.Lstat(full)
 	if err != nil {
-		return Tokens{}, fmt.Errorf("chatgpt oauth file: %w; run `qcode login chatgpt`", err)
+		return Tokens{}, fmt.Errorf("chatgpt oauth file: %w; configure ChatGPT credentials in `qcode setup`", err)
 	}
 	if err := checkFile(link, full); err != nil {
 		return Tokens{}, err
@@ -538,10 +538,10 @@ func Load(path string) (Tokens, error) {
 	}
 	var t Tokens
 	if err := json.Unmarshal(data, &t); err != nil {
-		return Tokens{}, fmt.Errorf("chatgpt oauth file is not valid JSON; run `qcode login chatgpt` again")
+		return Tokens{}, fmt.Errorf("chatgpt oauth file is not valid JSON; re-authenticate with ChatGPT in `qcode setup`")
 	}
 	if t.AccessToken == "" {
-		return Tokens{}, fmt.Errorf("chatgpt oauth file has no access token; run `qcode login chatgpt` again")
+		return Tokens{}, fmt.Errorf("chatgpt oauth file has no access token; re-authenticate with ChatGPT in `qcode setup`")
 	}
 	// Backfill explicit expiry from saved_at+expires_in when an old writer
 	// omitted expires_at.
@@ -786,7 +786,7 @@ func Exchange(ctx context.Context, do Doer, code, verifier, redirectURI, clientI
 // retain the grant.
 func Refresh(ctx context.Context, do Doer, refreshToken, clientID string) (Tokens, error) {
 	if clientID == "" || clientID == DynamicClientID || clientID == LegacyClientID {
-		return Tokens{}, fmt.Errorf("refresh requires the issued client_id; run `qcode login chatgpt` again")
+		return Tokens{}, fmt.Errorf("refresh requires the issued client_id; re-authenticate with ChatGPT in `qcode setup`")
 	}
 	form := url.Values{}
 	form.Set("grant_type", "refresh_token")
@@ -905,7 +905,7 @@ func withRefreshFileLockContext(ctx context.Context, resolved string, fn func() 
 }
 
 func legacyFileError() error {
-	return fmt.Errorf("chatgpt oauth file predates Sign in with ChatGPT; run `qcode login chatgpt` again")
+	return fmt.Errorf("chatgpt oauth file predates Sign in with ChatGPT; re-authenticate with ChatGPT in `qcode setup`")
 }
 
 func mergeRefresh(old, next Tokens) Tokens {
@@ -1000,11 +1000,11 @@ func GetValidTokensWithSecrets(ctx context.Context, do Doer, path string, regist
 			return nil
 		}
 		if t.RefreshToken == "" {
-			return fmt.Errorf("chatgpt token expired and no refresh token; run `qcode login chatgpt` again")
+			return fmt.Errorf("chatgpt token expired and no refresh token; re-authenticate with ChatGPT in `qcode setup`")
 		}
 		next, err := Refresh(ctx, do, t.RefreshToken, t.ClientID)
 		if err != nil {
-			return fmt.Errorf("chatgpt token refresh failed; run `qcode login chatgpt` again: %w", err)
+			return fmt.Errorf("chatgpt token refresh failed; re-authenticate with ChatGPT in `qcode setup`: %w", err)
 		}
 		next = mergeRefresh(t, next)
 		registerTokenSecrets(register, next)
@@ -1081,11 +1081,11 @@ func RefreshAndSaveWithStaleWithSecrets(ctx context.Context, do Doer, path, stal
 			return nil
 		}
 		if t.RefreshToken == "" {
-			return fmt.Errorf("no refresh token; run `qcode login chatgpt` again")
+			return fmt.Errorf("no refresh token; re-authenticate with ChatGPT in `qcode setup`")
 		}
 		next, err := Refresh(ctx, do, t.RefreshToken, t.ClientID)
 		if err != nil {
-			return fmt.Errorf("chatgpt token refresh failed; run `qcode login chatgpt` again: %w", err)
+			return fmt.Errorf("chatgpt token refresh failed; re-authenticate with ChatGPT in `qcode setup`: %w", err)
 		}
 		next = mergeRefresh(t, next)
 		registerTokenSecrets(register, next)
@@ -1113,14 +1113,14 @@ func RefreshAndSave(ctx context.Context, do Doer, path string) (string, error) {
 // EnsureValid is the startup preflight: it loads the file and, when the
 // access token is expired or near expiry, refreshes it now instead of letting
 // the first user task fail. A missing/unusable file or a failed refresh
-// reports `run qcode login chatgpt` before serve starts.
+// reports how to configure ChatGPT credentials before serve starts.
 func EnsureValid(ctx context.Context, do Doer, path string) (Tokens, error) {
 	t, err := GetValidTokens(ctx, do, path)
 	if err != nil {
 		return Tokens{}, err
 	}
 	if t.AccessToken == "" {
-		return Tokens{}, fmt.Errorf("chatgpt oauth file has no access token; run `qcode login chatgpt` again")
+		return Tokens{}, fmt.Errorf("chatgpt oauth file has no access token; re-authenticate with ChatGPT in `qcode setup`")
 	}
 	return t, nil
 }

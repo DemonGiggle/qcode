@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +17,22 @@ import (
 	"qcode/internal/skills"
 	"qcode/internal/tools"
 )
+
+func TestRetiredLoginSubcommand(t *testing.T) {
+	err := run([]string{"login", "chatgpt"}, os.Stdin, os.Stdout, os.Stderr)
+	if err == nil || !strings.Contains(err.Error(), "`qcode setup`") {
+		t.Fatalf("expected setup guidance, got %v", err)
+	}
+}
+
+func TestConfigDiagnosticsIncludeOtherWarningsOnFatalError(t *testing.T) {
+	fatal := errors.New("invalid redaction pattern")
+	var output bytes.Buffer
+	writeConfigDiagnostics(&output, []error{errors.New("parse config other.toml: invalid value"), fatal}, fatal)
+	if got := output.String(); !strings.Contains(got, "other.toml: invalid value") || strings.Contains(got, fatal.Error()) {
+		t.Fatalf("diagnostics = %q", got)
+	}
+}
 
 type autoloadProvider struct{ request llm.Request }
 
