@@ -700,7 +700,12 @@ def build_pdf(images: dict[str, Path]):
     body(pdf, "qcode is one program you run in your terminal. Build it once, then start it in any project folder.")
     code(pdf, "# Build from source (needs Go 1.23+)\nmake build\n./bin/qcode")
     body(pdf, "The remaining shell examples assume qcode is on your PATH. From this source checkout, use ./bin/qcode instead. make build creates the binary but does not install it.")
-    body(pdf, "Pick the assistant you want to use. Common choices are a local model (Ollama), a hosted model (OpenAI, Gemini, or OpenCode Go), or a ChatGPT subscription.")
+    body(pdf, "Pick the assistant you want to use. Common choices are a local model (Ollama), a hosted model (OpenAI, Gemini, or OpenCode Go), or a ChatGPT subscription. Easiest is the interactive wizard (requires an interactive terminal): it writes your user config, backs up the old file, and validates on save.")
+    code(
+        pdf,
+        "qcode setup\nqcode config check\nqcode --list-providers",
+    )
+    body(pdf, "qcode setup covers providers/models, API keys in 0600 key files, live model verification, theme, sandbox, interactive questions, and MCP servers. You can also configure manually:")
     code(
         pdf,
         "# Local model (default provider)\nollama pull qwen2.5-coder:7b\nqcode --model qwen2.5-coder:7b\n\n# Hosted model\n"
@@ -1135,6 +1140,8 @@ def build_pdf(images: dict[str, Path]):
             "In sandbox mode, enabling either web tool allows networking for native web tools and sandboxed shell commands (curl, package downloads); disabling both or using /new restores isolation.",
         ],
     )
+    h2(pdf, "MCP servers for extra tools")
+    body(pdf, "MCP servers add extra tools via local stdio commands or remote Streamable HTTP endpoints. Configure them with qcode setup -> MCP servers (recommended) or [mcp_servers.<name>] in config.toml: [mcp_servers.local] uses command plus optional args/env, [mcp_servers.remote] uses url. Servers are trusted to act without per-call approval and are unavailable in sandbox, plan, and skill-plan modes.")
     tip(pdf, "If a page needs login or runs an app, fetch will not see it. Paste the relevant text into qcode instead.")
 
     # 11 Sessions
@@ -1197,14 +1204,15 @@ def build_pdf(images: dict[str, Path]):
     body(pdf, "Open /statusline, move with Up/Down, toggle with Space, and apply with Enter. Or type /statusline tok off, /statusline show, or /statusline reset. Changes on main save statusline_hidden in your user config while preserving comments and unrelated tables, including redaction and skills settings.")
     code(
         pdf,
-        "provider = \"ollama\"\nmodel = \"qwen2.5-coder:7b\"\nmax_steps = 32\ntheme = \"catppuccin-mocha\"\nsandbox = true",
+        "provider = \"ollama\"\nmax_steps = 32\ntheme = \"catppuccin-mocha\"\nsandbox = false\n\n[providers.ollama]\nbase_url = \"http://127.0.0.1:11434\"\nmodel = \"qwen2.5-coder:7b\"\n\n[providers.openai]\napi_key_path = \"~/.config/qcode/openai.key\"\nmodel = \"gpt-5\"\nthinking = \"high\"",
     )
     bullets(
         pdf,
         [
-            "Copy `config.toml.example` to your user config location; missing files are ignored. Priority, highest first: file beside the program, user config (~/.local/etc/qcode on Linux, ~/Library/Application Support on macOS, %AppData% on Windows), system config (/usr/local/etc/qcode), then etc/ beside the program.",
+            "Copy `config.toml.example` to your user config location; missing files are ignored. Or run `qcode setup` (recommended): it writes the user config, backs up the old file to config.toml.bak, and re-validates with `qcode config check`. Priority, highest first: file beside the program, user config (~/.local/etc/qcode on Linux, ~/Library/Application Support on macOS, %AppData% on Windows), system config (/usr/local/etc/qcode), then etc/ beside the program.",
             "Command flags beat environment variables. Both beat config files. Config files beat built-ins. `--api-key` beats config and environment keys.",
-            "Prefer environment variables for keys: QCODE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY/GOOGLE_API_KEY. Keep key files private (mode 0600).",
+            "Prefer `qcode setup` or environment variables for keys: QCODE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY/GOOGLE_API_KEY, or `[providers.<name>].api_key_path` (0600 file, one line, no quotes). Inline `api_key` and root `base_url`/`model`/`thinking` are deprecated; new defaults belong under `[providers.<name>]`.",
+            "Extra tools via MCP servers: `[mcp_servers.local]` (command + args/env) or `[mcp_servers.remote]` (Streamable HTTP url); prefer `qcode setup` -> MCP servers. Servers are trusted without per-call approval and are disabled in sandbox/plan modes.",
             "Common knobs: provider/model/thinking, agent_timeout like \"5m\", interactive true/false, autoreview plus autoreview_provider/autoreview_model, statusline_hidden, web_search backend, learning context_budget, skills paths, autoload_paths, selected/selected_always, [[agents.allow_models]] roster, [providers.<name>] profiles and named instances with `type`, [chatgpt] oauth_path, redaction sinks/patterns, context_window and auto_compact_threshold.",            "Restart after changing the web backend. /model, /maxsteps, /statusline, /skill, /agent allow-models, and /autoreview on main save automatically; worker-tab changes to these settings stay within the session.",
         ],
     )
@@ -1237,7 +1245,7 @@ def build_pdf(images: dict[str, Path]):
             ("Approval prompt?", "Review the exact proposed call. Untrusted page, file, or shell text never authorizes it. Approve only the current run when you understand the action; one-shot runs deny such calls."),
             ("Paste collapsed?", "Long pastes into a non-empty draft show [head ... (hide N characters) ... tail] with head/tail preview. Pastes into an empty prompt stay inline. Left/Right jumps the block; Backspace/Delete removes it whole. Short pastes stay inline. Pasting never submits."),
             ("Model switch warns?", "A cross-backend model switch warns before applying. Same-backend switches apply silently. Unsupported thinking levels fail before any request."),
-            ("Provider not set up?", "Run qcode --list-providers to see kinds, named instances, and setup hints; set GEMINI_API_KEY/GOOGLE_API_KEY for Gemini or OPENAI_API_KEY for OpenAI."),
+            ("Provider not set up?", "Run qcode setup (recommended), or qcode --list-providers to see kinds, named instances, and setup hints; set GEMINI_API_KEY/GOOGLE_API_KEY for Gemini or OPENAI_API_KEY for OpenAI."),
             ("No review after main?", "/autoreview runs only for file-changing work on main with an empty queue; read-only answers and [skip review] opt out."),
             ("Directory denied?", "Approve request_directory_access or change_directory to an approved directory. The root can never be granted. /new clears added grants and resets to launch."),
             ("Compacted context?", "Run /compact show to inspect system + summary + recent tail after any compaction."),

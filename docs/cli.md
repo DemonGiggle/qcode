@@ -24,6 +24,22 @@ disabled when sandbox isolation is active. Configured skill autoloading
 TUI-only and has no one-shot, piped, `--json-events`, or remote-control
 surface; see [Memos](memo.md).
 
+## Setup wizard
+
+Run `qcode setup` once instead of hand-editing `config.toml`. It is a
+menuconfig-style wizard (requires an interactive terminal) that writes your
+user config, backs up the previous file to `config.toml.bak`, and runs
+`qcode config check` on save. It covers active provider, credentials in
+`0600` key files, live model verification, theme, sandbox, interactive
+questions, and MCP servers. See the [README](../README.md#first-time-setup-recommended)
+for a menu walkthrough.
+
+```sh
+qcode setup
+qcode config check
+qcode --list-providers
+```
+
 ## Startup flags
 
 `qcode --help` lists the flags supported by the installed binary. The defaults

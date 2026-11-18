@@ -9,7 +9,8 @@ and resuming or sharing work. The guide also covers automatic code review with `
 steering and pending-work removal, the live Todo panel with Alt+T, pasted-block handling, /compact show inspection,
 model-operation progress and elapsed time, Gemini and named provider instances with
 change_directory and directory approvals, allowed-model roster for helper
-model choice with main-decided thinking levels, tool approvals and prompt-injection
+model choice with main-decided thinking levels, `qcode setup` wizard and MCP servers,
+tool approvals and prompt-injection
 warnings, cross-backend model-switch warnings and /provider switching, ChatGPT subscription login,
 iterative Plan-mode question rounds, slash-command subcommand hints with Tab completion,
 word-wrapped composer drafts, latest-message /resume previews and snapshot-busy retries,

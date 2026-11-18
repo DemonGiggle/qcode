@@ -1,26 +1,39 @@
 # Configuration
 
-qcode loads every existing `config.toml` file in the locations below. Lower-priority files load first and higher-priority files override only the settings they provide. Copy [`config.toml.example`](../config.toml.example) to one of the locations below and adapt it as needed. All fields are optional:
+Easiest is the interactive wizard, which writes your user config, backs up
+the previous file to `config.toml.bak`, and re-validates on save:
+
+```sh
+qcode setup
+qcode config check
+qcode --list-providers
+```
+
+`qcode setup` is menuconfig-style (Up/Down, Enter to open/select, Esc to go
+back) and covers providers/models, credentials in `0600` key files, theme,
+sandbox, interactive questions, and MCP servers. It requires an interactive
+terminal. You can also copy [`config.toml.example`](../config.toml.example)
+to one of the locations below and adapt it as needed. All fields are optional:
 
 ```toml
-provider = "openai"
+provider = "ollama"
 max_steps = 32
 theme = "catppuccin-mocha"
 agent_timeout = "5m"
-sandbox = true
+sandbox = false
 sandbox_command_paths = ["~/.local/bin", "~/go/bin"]
 auto_compact_threshold = 80
 disable_auto_compact = false
 interactive = false
 
-[providers.openai]
-base_url = "http://localhost:8000/v1"
-api_key_path = "~/.config/qcode/openai.key"
-model = "my-model"
-thinking = "high"
-
 [providers.ollama]
 base_url = "http://127.0.0.1:11434"
+model = "qwen2.5-coder:7b"
+
+[providers.openai]
+api_key_path = "~/.config/qcode/openai.key"
+model = "gpt-5"
+thinking = "high"
 
 [skills]
 paths = ["/opt/qcode/team-skills", ".team/skills"]
@@ -247,7 +260,7 @@ provider = "openai"
 
 [providers.openai]
 api_key_path = "~/.config/qcode/openai.key"
-model = "my-model"
+model = "gpt-5"
 thinking = "high"
 
 [providers.ollama]

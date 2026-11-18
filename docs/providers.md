@@ -2,6 +2,11 @@
 
 qcode talks to Ollama, OpenAI-compatible APIs (including Google's Gemini API), OpenCode Go, and ChatGPT subscriptions. Provider-specific wire formats stay isolated behind the small `llm.Provider` interface; see [Extending providers](extending-providers.md) to add one.
 
+Easiest onboarding is `qcode setup`: it picks the active provider, stores API
+keys in `0600` key files, verifies the connection, and lets you select a model.
+You can also configure manually below. Validate with `qcode config check` and
+inspect setup status with `qcode --list-providers`.
+
 Normal agent turns leave temperature unspecified, preserving the provider's
 model defaults, including parameters stored in an Ollama model.
 
