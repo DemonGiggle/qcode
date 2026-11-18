@@ -30,22 +30,12 @@ func (u *UI) handleAgentCommand(ctx context.Context, fields []string) {
 		u.createAgent(ctx)
 		return
 	}
-	if len(fields) == 3 && fields[1] == "new" {
-		summary, err := u.createAgentWithProvider(fields[2])
-		if err != nil {
-			u.printSystemMessage(yellow + err.Error() + reset)
-			return
+	if (len(fields) == 3 || len(fields) == 4) && fields[1] == "new" {
+		thinking := ""
+		if len(fields) == 4 {
+			thinking = fields[3]
 		}
-		if created, ok := u.manager.Runner(summary.ID); ok {
-			if tracker, ok := created.(contextRunner); ok {
-				tracker.RefreshContext(ctx)
-			}
-		}
-		if err := u.switchAgent(summary.ID); err != nil {
-			u.printSystemMessage(yellow + err.Error() + reset)
-			return
-		}
-		u.printSystemMessage(green + "Created " + summary.ID + "." + reset)
+		u.createAndSelectAgent(ctx, fields[2], thinking)
 		return
 	}
 	switch fields[1] {
@@ -155,7 +145,11 @@ func (u *UI) createAgent(ctx context.Context) {
 		u.printSystemMessage(dim + "Agent creation cancelled." + reset)
 		return
 	}
-	summary, err := u.createAgentWithProvider(selected)
+	u.createAndSelectAgent(ctx, selected, thinking)
+}
+
+func (u *UI) createAndSelectAgent(ctx context.Context, model, thinking string) {
+	summary, err := u.createAgentWithProvider(model)
 	if err != nil {
 		u.printSystemMessage(yellow + err.Error() + reset)
 		return
@@ -200,7 +194,7 @@ func (u *UI) selectAgentModel(ctx context.Context, runner modelRunner) (string, 
 	for {
 		u.input.setRaw(true)
 		u.beginRawSelector()
-		selected, result, nextQuery, selectErr := selectModelWithQuery(u.input, u.themedSelectorWriter(), models, u.model, modelQuery, visible, u.width, ColorEnabled(u.out))
+		selected, result, nextQuery, selectErr := selectModelWithQuery(u.input, u.themedSelectorWriter(), models, u.currentModel(), modelQuery, visible, u.width, ColorEnabled(u.out))
 		modelQuery = nextQuery
 		u.input.setRaw(false)
 		u.endRawSelector()
@@ -234,7 +228,7 @@ func (u *UI) closeAgent(id string) {
 }
 
 func (u *UI) agentUsage() {
-	u.printSystemMessage(dim + "Usage: /agent [new [model]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]|allow-models [list [provider]|clear [provider|--all]]]" + reset)
+	u.printSystemMessage(dim + "Usage: /agent [new [model [thinking]]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]|allow-models [list [provider]|clear [provider|--all]]]" + reset)
 }
 
 func (u *UI) activeAgentConfigurable() bool {

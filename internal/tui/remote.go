@@ -303,6 +303,11 @@ func (u *UI) RemotePresentation() RemotePresentation {
 }
 
 func (u *UI) RemoteCatalog(ctx context.Context) RemoteCatalog {
+	catalog, _ := u.RemoteAgentCatalog(ctx, "")
+	return catalog
+}
+
+func (u *UI) RemoteAgentCatalog(ctx context.Context, id string) (RemoteCatalog, error) {
 	result := RemoteCatalog{
 		Models:   make([]string, 0),
 		Thinking: make(map[string]RemoteThinkingState),
@@ -315,7 +320,19 @@ func (u *UI) RemoteCatalog(ctx context.Context) RemoteCatalog {
 	catalogLoader := u.skillCatalogLoader
 	skillSummaries := append([]prompt.SkillSummary(nil), u.skills...)
 	currentModel := u.model
+	manager := u.manager
 	u.screenMu.Unlock()
+	if id != "" {
+		summary, err := remoteAgentSummary(manager, id)
+		if err != nil {
+			return result, err
+		}
+		runner, err = remoteAgentRunner(manager, id)
+		if err != nil {
+			return result, err
+		}
+		currentModel = summary.Model
+	}
 	if catalogLoader != nil {
 		if loaded, err := catalogLoader(); err == nil {
 			skillSummaries = loaded
@@ -362,7 +379,27 @@ func (u *UI) RemoteCatalog(ctx context.Context) RemoteCatalog {
 		}
 	}
 	result.Sessions = u.remoteSessions()
-	return redaction.Copy(u.redaction, redaction.Remote, result)
+	return redaction.Copy(u.redaction, redaction.Remote, result), nil
+}
+
+func remoteAgentSummary(manager agentController, id string) (session.Summary, error) {
+	if manager == nil {
+		return session.Summary{}, fmt.Errorf("%w %q", session.ErrUnknownAgent, id)
+	}
+	summary, err := manager.Summary(id)
+	if err == nil && summary.Status == session.StatusClosing {
+		err = fmt.Errorf("%w %q", session.ErrClosedAgent, id)
+	}
+	return summary, err
+}
+
+func remoteAgentRunner(manager agentController, id string) (Runner, error) {
+	value, found := manager.Runner(id)
+	runner, ok := value.(Runner)
+	if !found || !ok {
+		return nil, fmt.Errorf("%w %q", session.ErrUnknownAgent, id)
+	}
+	return runner, nil
 }
 
 func (u *UI) remoteSessions() []RemoteSessionState {
@@ -423,11 +460,19 @@ func (u *UI) remoteStatusBar() string {
 }
 
 func (u *UI) remoteAgentStatusBar(id, provider, model, cwd string) string {
-	if u.manager == nil || cwd == "" {
+	u.screenMu.Lock()
+	manager := u.manager
+	u.screenMu.Unlock()
+	if manager == nil {
 		return u.remoteStatusBar()
 	}
-	value, _ := u.manager.Runner(id)
-	runner, _ := value.(Runner)
+	runner, err := remoteAgentRunner(manager, id)
+	if err != nil {
+		return "Agent unavailable"
+	}
+	if cwd == "" {
+		return u.remoteStatusBar()
+	}
 	remote := false
 	if u.remoteService != nil {
 		remote = u.remoteService.Status().Running
@@ -495,8 +540,9 @@ func (u *UI) ResolveRemoteInteraction(actor, id string, value []byte) error {
 			return fmt.Errorf("remote answer count does not match questions")
 		}
 		for i, item := range questions {
-			normalized, valid := normalizeQuestionAnswerWithCustom(answers[i], item.Options, item.AllowCustom)
-			if !valid {
+			answer := strings.TrimSpace(answers[i])
+			normalized, valid := normalizeQuestionAnswerWithCustom(answer, item.Options, item.AllowCustom)
+			if answer == "" || !valid {
 				return fmt.Errorf("invalid answer for question %d", i+1)
 			}
 			answers[i] = normalized

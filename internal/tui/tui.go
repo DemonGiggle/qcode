@@ -242,6 +242,7 @@ type agentController interface {
 }
 
 type UI struct {
+	modelChangeMu        sync.Mutex
 	redaction            *redaction.Policy
 	observedTaskID       string
 	composerReading      bool
@@ -1272,6 +1273,12 @@ func openCodeGoBackendChanged(provider, oldModel, newModel string) bool {
 	return llm.OpenCodeGoRoute(oldModel) != llm.OpenCodeGoRoute(newModel)
 }
 
+func (u *UI) currentModel() string {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	return u.model
+}
+
 func (u *UI) chooseModel(ctx context.Context) {
 	if !u.activeAgentConfigurable() {
 		return
@@ -1313,7 +1320,7 @@ func (u *UI) chooseModel(ctx context.Context) {
 		u.beginRawSelector()
 		var result selectorResult
 		var selectErr error
-		selected, result, modelQuery, selectErr = selectModelWithQuery(u.input, u.themedSelectorWriter(), models, u.model, modelQuery, visible, u.width, ColorEnabled(u.out))
+		selected, result, modelQuery, selectErr = selectModelWithQuery(u.input, u.themedSelectorWriter(), models, u.currentModel(), modelQuery, visible, u.width, ColorEnabled(u.out))
 		u.input.setRaw(false)
 		u.endRawSelector()
 		if selectErr != nil {
@@ -1337,6 +1344,8 @@ func (u *UI) chooseModel(ctx context.Context) {
 		}
 		break
 	}
+	u.modelChangeMu.Lock()
+	defer u.modelChangeMu.Unlock()
 	if !u.configureActive(func() error {
 		runner.SetModel(selected)
 		if thinking, ok := runner.(thinkingRunner); ok {
@@ -1436,6 +1445,8 @@ func (u *UI) setModelCommand(ctx context.Context, fields []string) {
 			return
 		}
 	}
+	u.modelChangeMu.Lock()
+	defer u.modelChangeMu.Unlock()
 	if !u.configureActive(func() error {
 		runner.SetModel(fields[1])
 		if thinking, ok := runner.(thinkingRunner); ok {
@@ -1485,7 +1496,7 @@ func (u *UI) selectThinkingLevelWithBack(runner modelRunner, model string, visib
 		return "", true, false, nil
 	}
 	current := ""
-	if model == u.model {
+	if model == u.currentModel() {
 		current = thinking.ThinkingLevel()
 	}
 	u.input.setRaw(true)

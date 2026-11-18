@@ -199,6 +199,10 @@ func (h *Host) AllowedAgentModels() []agent.AllowedAgentModel {
 func (h *Host) Configure(id string, update func() error) error {
 	return h.manager.Configure(id, update)
 }
+func (h *Host) ConfigureIdle(id string, revision uint64, update func() error) error {
+	return h.manager.ConfigureIdle(id, revision, update)
+}
+
 func (h *Host) SetWaitingForApproval(id string, waiting bool) {
 	h.manager.SetWaitingForApproval(id, waiting)
 }

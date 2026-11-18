@@ -12,12 +12,15 @@ import (
 	"testing"
 	"time"
 
+	"qcode/internal/agent"
 	"qcode/internal/control"
 	"qcode/internal/lineedit"
 	"qcode/internal/llm"
 	"qcode/internal/prompt"
 	"qcode/internal/question"
 	"qcode/internal/session"
+	"qcode/internal/tools"
+	"qcode/internal/trace"
 )
 
 type fakeRemoteService struct {
@@ -178,7 +181,10 @@ func TestRemoteCanWinQuestionInteraction(t *testing.T) {
 	u.SetAgentManager(host)
 	result := make(chan []string, 1)
 	go func() {
-		answers, _ := u.AgentQuestioner("main")(context.Background(), []question.Question{{Text: "Database?", Options: []string{"SQLite", "Postgres"}}})
+		answers, _ := u.AgentQuestioner("main")(context.Background(), []question.Question{
+			{Text: "Database?", Options: []string{"SQLite", "Postgres"}},
+			{Text: "Why?"},
+		})
 		result <- answers
 	}()
 	deadline := time.After(time.Second)
@@ -196,13 +202,16 @@ func TestRemoteCanWinQuestionInteraction(t *testing.T) {
 			}
 		}
 	}
-	value, _ := json.Marshal([]string{"Postgres"})
+	if err := u.ResolveRemoteInteraction("alice@example.com", interaction.ID, []byte(`["Postgres","  "]`)); err == nil {
+		t.Fatal("blank remote answer was accepted")
+	}
+	value, _ := json.Marshal([]string{"Postgres", "  Existing schema  "})
 	if err := u.ResolveRemoteInteraction("alice@example.com", interaction.ID, value); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case answers := <-result:
-		if len(answers) != 1 || answers[0] != "Postgres" {
+		if len(answers) != 2 || answers[0] != "Postgres" || answers[1] != "Existing schema" {
 			t.Fatalf("answers = %v", answers)
 		}
 	case <-time.After(time.Second):
@@ -397,5 +406,156 @@ func TestRemoteConnectionLogsOnlyInVerboseMode(t *testing.T) {
 	u.RemoteRequestRejected("GET", "/api/v1/events", "missing Tailscale-User-Login")
 	if output.Len() != 0 {
 		t.Fatalf("non-verbose remote connection log = %q", output.String())
+	}
+}
+
+func TestRemoteAgentSettingsTargetBrowserTab(t *testing.T) {
+	ctx := context.Background()
+	u, host, _ := newProviderUI(t, "")
+	provider := &providerUIBackend{name: "worker", models: []string{"helper", "faster"}, levels: []string{"high"}}
+	host.SetFactory(func(id, _ string, model string, main bool) (*agent.Agent, error) {
+		registry, err := tools.NewWithOptions(t.TempDir(), tools.Options{})
+		if err != nil {
+			return nil, err
+		}
+		display, response := u.AddAgentView(id, provider.Name(), model)
+		return agent.New(provider, model, host.WrapToolset(id, registry, main), trace.New(display, false), response, 3), nil
+	})
+	worker, err := host.Create("helper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.rememberDraft("keep typing this in the terminal")
+	u.SetSkillCatalog([]prompt.SkillSummary{{Name: "review"}}, nil)
+	u.SetSkillBodyLoader(func([]string) (map[string]string, error) {
+		return map[string]string{"review": "review contents"}, nil
+	})
+	var selected, always []string
+	u.SetAgentSkillHandler(worker.ID, func(names, alwaysNames []string) {
+		selected, always = names, alwaysNames
+	})
+
+	catalog, err := u.RemoteAgentCatalog(ctx, worker.ID)
+	if err != nil || !strings.Contains(strings.Join(catalog.Models, ","), "faster") {
+		t.Fatalf("worker catalog = %+v, %v", catalog, err)
+	}
+	if _, err := u.RemoteAgentCatalog(ctx, "unknown"); err == nil {
+		t.Fatal("unknown agent catalog succeeded")
+	}
+	for _, change := range []RemoteAgentSettings{
+		{Model: "faster", Thinking: "high"},
+		{Tools: map[string]bool{"read": false}},
+		{Skills: []string{"review!"}},
+	} {
+		if err := u.ConfigureRemoteAgent(ctx, worker.ID, change); err != nil {
+			t.Fatalf("apply %+v: %v", change, err)
+		}
+	}
+	workerRunner, _ := host.Agent(worker.ID)
+	workerSummary, err := host.Summary(worker.ID)
+	if err != nil || workerSummary.Model != "faster" || workerRunner.ThinkingLevel() != "high" || workerRunner.ToolEnabled("read") {
+		t.Fatalf("worker = %+v, thinking=%q, read=%v, err=%v", workerSummary, workerRunner.ThinkingLevel(), workerRunner.ToolEnabled("read"), err)
+	}
+	if strings.Join(selected, ",") != "review" || strings.Join(always, ",") != "review" || !workerRunner.SelectedSkills()[0].AlwaysLoad {
+		t.Fatalf("worker skills = %v (always: %v)", selected, always)
+	}
+	main, _ := host.Agent("main")
+	if state := providerState(t, host, "main"); state.Model != "shared" || state.Thinking != "high" || len(main.SelectedSkills()) != 0 {
+		t.Fatalf("main settings changed: %+v", state)
+	}
+	if u.activeAgent != "main" || u.drafts["main"] != "keep typing this in the terminal" || len(u.input.injected) != 0 {
+		t.Fatal("remote settings affected the terminal selection or draft")
+	}
+
+	if err := u.ConfigureRemoteAgent(ctx, worker.ID, RemoteAgentSettings{Tools: map[string]bool{"read": true, "unknown": true}}); err == nil || workerRunner.ToolEnabled("read") {
+		t.Fatal("invalid tool batch was partially applied")
+	}
+	if err := u.ConfigureRemoteAgent(ctx, worker.ID, RemoteAgentSettings{Tools: map[string]bool{}}); !errors.Is(err, ErrInvalidRemoteAgentSettings) {
+		t.Fatalf("empty tool patch error = %v", err)
+	}
+	if err := u.ConfigureRemoteAgent(ctx, worker.ID, RemoteAgentSettings{Skills: []string{}}); err != nil || len(workerRunner.SelectedSkills()) != 0 {
+		t.Fatalf("clearing skills = %v, %v", workerRunner.SelectedSkills(), err)
+	}
+
+	provider.onModels = func() { _ = host.Close(worker.ID) }
+	if err := u.ConfigureRemoteAgent(ctx, worker.ID, RemoteAgentSettings{Model: "helper"}); err == nil {
+		t.Fatal("model change succeeded after target closed during discovery")
+	}
+}
+
+func TestRemoteCatalogReportsMissingRunner(t *testing.T) {
+	u, _ := layoutFixture(t)
+	if _, err := u.RemoteAgentCatalog(context.Background(), "main"); !errors.Is(err, session.ErrUnknownAgent) {
+		t.Fatalf("missing runner error = %v", err)
+	}
+	if got := u.remoteAgentStatusBar("main", "provider", "model", "/workspace"); got != "Agent unavailable" {
+		t.Fatalf("status for a missing runner = %q", got)
+	}
+}
+
+type remoteContextLookupProvider struct {
+	providerUIBackend
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *remoteContextLookupProvider) ContextWindow(ctx context.Context, _ string) (int, error) {
+	close(p.started)
+	select {
+	case <-p.release:
+		return 32000, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+func TestRemoteModelDiscoversContextOutsideCommitLocks(t *testing.T) {
+	ctx := context.Background()
+	u, host, _ := newProviderUI(t, "")
+	u.persistence = &sessionPersistence{requests: make(chan struct{}, 1)}
+	provider := &remoteContextLookupProvider{
+		providerUIBackend: providerUIBackend{name: "worker", models: []string{"worker", "replacement"}},
+		started:           make(chan struct{}),
+		release:           make(chan struct{}),
+	}
+	host.SetFactory(func(id, _ string, model string, main bool) (*agent.Agent, error) {
+		display, response := u.AddAgentView(id, provider.Name(), model)
+		return agent.New(provider, model, host.WrapToolset(id, &closeUITools{}, main), trace.New(display, false), response, 3), nil
+	})
+	worker, err := host.Create("worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- u.ConfigureRemoteAgent(ctx, worker.ID, RemoteAgentSettings{Model: "replacement"}) }()
+	select {
+	case <-provider.started:
+	case <-time.After(time.Second):
+		t.Fatal("provider context discovery did not start")
+	}
+	persistenceUnlocked := u.persistence.mu.TryLock()
+	if persistenceUnlocked {
+		u.persistence.mu.Unlock()
+	}
+	summary := make(chan error, 1)
+	go func() {
+		_, err := host.Summary(worker.ID)
+		summary <- err
+	}()
+	var lookupErr error
+	select {
+	case lookupErr = <-summary:
+	case <-time.After(time.Second):
+		lookupErr = errors.New("provider discovery blocked access to the agent manager")
+	}
+	close(provider.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !persistenceUnlocked || lookupErr != nil {
+		t.Fatalf("provider discovery held commit locks: persistence unlocked=%t, summary error=%v", persistenceUnlocked, lookupErr)
+	}
+	if state := providerState(t, host, worker.ID); state.Model != "replacement" || state.ContextWindow != 32000 {
+		t.Fatalf("model=%s, context window=%d", state.Model, state.ContextWindow)
 	}
 }

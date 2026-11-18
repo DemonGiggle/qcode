@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -284,7 +285,7 @@ func TestRemotePageHasCatalogBackedSelectorControls(t *testing.T) {
 		"Switch agent",
 		"Type to filter",
 		"No matching entries.",
-		"submitLines",
+		"submitSettings",
 		"e.key==='Escape'",
 		"viewport-fit=cover",
 		"100dvh",
@@ -723,5 +724,70 @@ func TestExportEndpointRendersFullHistoryWithoutWritingFiles(t *testing.T) {
 	files, err := os.ReadDir(root)
 	if err != nil || len(files) != 0 {
 		t.Fatalf("download wrote host files: %v %v", files, err)
+	}
+}
+
+type agentSettingsTestPresentation struct {
+	testPresentation
+	catalogID, settingsID string
+	settings              tui.RemoteAgentSettings
+	settingsErr           error
+}
+
+func (p *agentSettingsTestPresentation) RemoteAgentCatalog(_ context.Context, id string) (tui.RemoteCatalog, error) {
+	p.catalogID = id
+	return tui.RemoteCatalog{Models: []string{"worker-model"}}, nil
+}
+
+func (p *agentSettingsTestPresentation) ConfigureRemoteAgent(_ context.Context, id string, settings tui.RemoteAgentSettings) error {
+	p.settingsID, p.settings = id, settings
+	return p.settingsErr
+}
+
+func TestAgentSettingsRoutesRetainTarget(t *testing.T) {
+	presentation := &agentSettingsTestPresentation{}
+	handler := authorizedTestManager(presentation).routes()
+	catalog := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?agent_id=agent-2", nil)
+	authorizeTestRequest(catalog)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, catalog)
+	if response.Code != http.StatusOK || presentation.catalogID != "agent-2" || !strings.Contains(response.Body.String(), "worker-model") {
+		t.Fatalf("catalog = %d %s, target %q", response.Code, response.Body.String(), presentation.catalogID)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-2/settings", strings.NewReader(`{"skills":[]}`))
+	authorizeTestRequest(request)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || presentation.settingsID != "agent-2" || presentation.settings.Skills == nil {
+		t.Fatalf("settings = %d %s, target %q, payload %+v", response.Code, response.Body.String(), presentation.settingsID, presentation.settings)
+	}
+}
+
+func TestAgentSettingsRoutesClassifyErrors(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		want int
+	}{
+		{session.ErrUnknownAgent, http.StatusNotFound},
+		{session.ErrClosedAgent, http.StatusNotFound},
+		{session.ErrAgentBusy, http.StatusConflict},
+		{agent.ErrStaleConfiguration, http.StatusConflict},
+		{tui.ErrRemoteSessionChanged, http.StatusConflict},
+		{tui.ErrInvalidRemoteAgentSettings, http.StatusBadRequest},
+		{agent.ErrManagerClosed, http.StatusServiceUnavailable},
+		{context.DeadlineExceeded, http.StatusGatewayTimeout},
+		{errors.New("model discovery unavailable"), http.StatusInternalServerError},
+	} {
+		t.Run(test.err.Error(), func(t *testing.T) {
+			presentation := &agentSettingsTestPresentation{settingsErr: fmt.Errorf("update failed: %w", test.err)}
+			handler := authorizedTestManager(presentation).routes()
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-2/settings", strings.NewReader(`{"model":"worker"}`))
+			authorizeTestRequest(request)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.want, response.Body.String())
+			}
+		})
 	}
 }

@@ -9,7 +9,12 @@ import (
 	"time"
 )
 
-var ErrInteractionWithdrawn = errors.New("interaction withdrawn by user steering")
+var (
+	ErrInteractionWithdrawn = errors.New("interaction withdrawn by user steering")
+	ErrUnknownAgent         = errors.New("unknown agent")
+	ErrClosedAgent          = errors.New("closed agent")
+	ErrAgentBusy            = errors.New("agent is not idle")
+)
 
 type InteractionKind string
 

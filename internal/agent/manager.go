@@ -31,8 +31,8 @@ const (
 
 var (
 	ErrManagerClosed   = errors.New("agent manager is shutting down")
-	ErrUnknownAgent    = errors.New("unknown agent")
-	ErrClosedAgent     = errors.New("closed agent")
+	ErrUnknownAgent    = session.ErrUnknownAgent
+	ErrClosedAgent     = session.ErrClosedAgent
 	ErrPromptQueueFull = errors.New("prompt queue is full")
 	ErrRequestNotFound = errors.New("prompt request not found")
 	ErrRequestPending  = errors.New("prompt request is pending")
@@ -379,7 +379,7 @@ func (m *AgentManager) Summary(id string) (AgentSummary, error) {
 	defer m.mu.RUnlock()
 	s, ok := m.sessions[id]
 	if !ok {
-		return AgentSummary{}, fmt.Errorf("unknown agent %q", id)
+		return AgentSummary{}, fmt.Errorf("%w %q", ErrUnknownAgent, id)
 	}
 	return cloneSummary(s.summary), nil
 }
@@ -456,6 +456,28 @@ func (m *AgentManager) Configure(id string, update func() error) error {
 		return fmt.Errorf("%w %q", ErrUnknownAgent, id)
 	}
 	return update()
+}
+
+// ConfigureIdle applies settings to an explicit agent after catalog lookups.
+func (m *AgentManager) ConfigureIdle(id string, revision uint64, update func() error) error {
+	return m.Configure(id, func() error {
+		s := m.sessions[id]
+		if m.shutdown {
+			return ErrManagerClosed
+		}
+		if s.active != nil || len(s.queue) != 0 || s.summary.Status == StatusRunning || s.summary.Status == StatusWaitingForApproval {
+			return fmt.Errorf("%w: %q", session.ErrAgentBusy, id)
+		}
+		if s.runner.configurationRevision.Load() != revision {
+			return ErrStaleConfiguration
+		}
+		if err := update(); err != nil {
+			return err
+		}
+		s.summary.Model = s.runner.backendSnapshot.Load().model
+		s.runner.configurationRevision.Add(1)
+		return nil
+	})
 }
 
 func (m *AgentManager) Start(id, task string) error {

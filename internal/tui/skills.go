@@ -117,63 +117,10 @@ func (u *UI) setSkillCommand(fields []string) {
 		u.printSystemMessage(dim + "Skill selection is unavailable." + reset)
 		return
 	}
-	requested := strings.Split(strings.Join(fields[1:], " "), ",")
-	byName := make(map[string]prompt.SkillSummary, len(u.skills))
-	for _, skill := range u.skills {
-		byName[skill.Name] = skill
-	}
-	var names []string
-	var alwaysNames []string
-	var summaries []prompt.SkillSummary
-	alwaysSet := map[string]bool{}
-	seen := map[string]bool{}
-	for _, raw := range requested {
-		name, always := parseSkillToken(raw)
-		if name == "" {
-			continue
-		}
-		if name == "none" && len(requested) == 1 {
-			continue
-		}
-		summary, found := byName[name]
-		if !found {
-			u.printSystemMessage(yellow + "Unknown skill: " + sanitizeDiffLine(name, "<ESC>") + reset)
-			return
-		}
-		if seen[name] {
-			// Last occurrence wins for the mode.
-			for i, existing := range names {
-				if existing == name {
-					names = append(names[:i], names[i+1:]...)
-					for j, s := range summaries {
-						if s.Name == name {
-							summaries = append(summaries[:j], summaries[j+1:]...)
-							break
-						}
-					}
-					break
-				}
-			}
-			delete(alwaysSet, name)
-		}
-		seen[name] = true
-		summary.AlwaysLoad = always
-		if always {
-			alwaysSet[name] = true
-			alwaysNames = append(alwaysNames, name)
-		}
-		names, summaries = append(names, name), append(summaries, summary)
-	}
-	// Preserve catalog order for the prompt.
-	order := map[string]int{}
-	for i, skill := range u.skills {
-		order[skill.Name] = i
-	}
-	for i := 1; i < len(summaries); i++ {
-		for j := i; j > 0 && order[summaries[j].Name] < order[summaries[j-1].Name]; j-- {
-			summaries[j], summaries[j-1] = summaries[j-1], summaries[j]
-			names[j], names[j-1] = names[j-1], names[j]
-		}
+	names, alwaysNames, summaries, err := resolveSkillSelection(u.skills, strings.Split(strings.Join(fields[1:], " "), ","))
+	if err != nil {
+		u.printSystemMessage(yellow + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+		return
 	}
 	bodies, bodyErr := u.loadAlwaysBodies(alwaysNames)
 	if bodyErr != nil {
@@ -201,6 +148,35 @@ func (u *UI) setSkillCommand(fields []string) {
 	u.persistSkillsPreference(names, alwaysNames)
 	u.drawStatusBar()
 	u.printSystemMessage(formatSkillSelectionModes("Skills enabled", names, alwaysNames, u.width, u.unicode, ColorEnabled(u.out), green))
+}
+
+func resolveSkillSelection(catalog []prompt.SkillSummary, requested []string) (names, alwaysNames []string, summaries []prompt.SkillSummary, err error) {
+	modes := make(map[string]bool, len(requested))
+	byName := make(map[string]bool, len(catalog))
+	for _, skill := range catalog {
+		byName[skill.Name] = true
+	}
+	for _, raw := range requested {
+		name, always := parseSkillToken(raw)
+		if name == "" || (name == "none" && len(requested) == 1) {
+			continue
+		}
+		if !byName[name] {
+			return nil, nil, nil, fmt.Errorf("Unknown skill: %s", name)
+		}
+		modes[name] = always
+	}
+	for _, skill := range catalog {
+		if always, selected := modes[skill.Name]; selected {
+			skill.AlwaysLoad = always
+			names = append(names, skill.Name)
+			summaries = append(summaries, skill)
+			if always {
+				alwaysNames = append(alwaysNames, skill.Name)
+			}
+		}
+	}
+	return names, alwaysNames, summaries, nil
 }
 
 // parseSkillToken accepts "name" (lazy), "name!" / "name:always" /

@@ -149,8 +149,9 @@ main {
 .status,
 .waiting,
 .interaction,
+.attention,
 .command-panel,
-form {
+#form {
   width: min(100%, var(--content-width));
   margin-left: auto;
   margin-right: auto;
@@ -165,6 +166,7 @@ form {
   white-space: pre-wrap;
 }
 .status .online { color: var(--green); }
+.status .notice { display: block; }
 /* Mirrors the TUI task indicator: a dim spinner with the queued count. */
 .waiting {
   min-width: 0;
@@ -236,6 +238,24 @@ form {
   border: 1px solid var(--yellow);
   border-radius: .4rem;
 }
+.attention {
+  display: flex;
+  gap: .4rem;
+  margin-bottom: .5rem;
+  overflow-x: auto;
+}
+.attention:empty { display: none; }
+.attention button {
+  flex: 0 0 auto;
+  padding: .35rem .65rem;
+  background: var(--line);
+  color: var(--yellow);
+}
+.attention button[aria-pressed="true"] { outline: 1px solid var(--yellow); outline-offset: -1px; }
+.interaction-question { margin: 0 0 .55rem; }
+.interaction-question label { display: block; margin-bottom: .35rem; }
+.interaction-question input:not([hidden]) { display: block; margin-top: .35rem; }
+.interaction-error { margin-top: .45rem; color: var(--yellow); }
 .interaction.open,
 .command-panel.open { display: block; }
 .interaction-title,
@@ -267,13 +287,13 @@ form {
 }
 .selector-empty { padding: .35rem 0; color: var(--muted); }
 
-form {
+#form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: stretch;
   gap: .55rem;
 }
-input {
+input, select {
   width: 100%;
   min-width: 0;
   min-height: 2.75rem;
@@ -301,7 +321,8 @@ button {
 }
 button:focus-visible,
 main:focus-visible,
-input:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+input:focus-visible,
+select:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 button:disabled { opacity: .5; cursor: default; }
 .notice { color: var(--yellow); }
 .sr-only {
@@ -330,8 +351,8 @@ button:disabled { opacity: .5; cursor: default; }
   .interaction, .command-panel { padding: .6rem; }
   .command-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .command-actions button { width: 100%; }
-  form { grid-template-columns: 1fr; gap: .4rem; }
-  form button { width: 100%; }
+  #form { grid-template-columns: 1fr; gap: .4rem; }
+  #form button { width: 100%; }
   .selector-list { max-height: min(14rem, 30dvh); }
 }
 @media (max-height: 520px) and (orientation: landscape) {
@@ -344,17 +365,21 @@ button:disabled { opacity: .5; cursor: default; }
 <header class="top"><span class="brand" aria-label="qcode remote">qcode</span><nav id="tabs" aria-label="Agents"></nav><nav class="history-navigation" aria-label="Transcript navigation"><button id="history-home" class="tab" type="button" aria-controls="scroll" title="Beginning of transcript (Home)">Beginning</button><button id="history-end" class="tab" type="button" aria-controls="scroll" title="Latest transcript content (End)">Latest</button></nav></header>
 <section id="latest-prompt" class="latest-prompt" aria-label="Latest received prompt" hidden><div class="latest-prompt-lines"><strong id="latest-prompt-marker" aria-hidden="true">✦</strong> <span id="latest-prompt-text"></span></div></section>
 <main id="scroll" tabindex="0" aria-label="Transcript"><pre id="transcript" class="transcript empty">Sign in using the link or QR code displayed by /remote.</pre></main>
-<footer class="bottom"><div id="interaction" class="interaction"></div><div id="command" class="command-panel"></div><div id="waiting" class="waiting" hidden></div><div id="status" class="status" role="status" aria-live="polite">Connecting to qcode…</div><section id="queue-panel" class="queue-panel" aria-label="Queued prompts" hidden><button id="queue-toggle" class="queue-toggle" type="button" aria-expanded="false" aria-controls="queue-list"></button><div id="queue-list" class="queue-list" role="list" aria-label="Queued prompts in execution order" tabindex="-1"></div></section><form id="form"><label class="sr-only" for="input">Message or slash command</label><input id="input" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Send a prompt or slash command"><button id="send" type="submit">Send</button><button id="queue-submit" type="button" hidden>Queue</button></form></footer>
+<footer class="bottom"><nav id="attention" class="attention" aria-label="Agents needing input"></nav><div id="interaction" class="interaction"></div><div id="command" class="command-panel"></div><div id="waiting" class="waiting" hidden></div><div id="status" class="status" role="status" aria-live="polite">Connecting to qcode…</div><section id="queue-panel" class="queue-panel" aria-label="Queued prompts" hidden><button id="queue-toggle" class="queue-toggle" type="button" aria-expanded="false" aria-controls="queue-list"></button><div id="queue-list" class="queue-list" role="list" aria-label="Queued prompts in execution order" tabindex="-1"></div></section><form id="form"><label class="sr-only" for="input">Message or slash command</label><input id="input" autocomplete="off" autocapitalize="sentences" spellcheck="false" placeholder="Send a prompt or slash command"><button id="send" type="submit">Send</button><button id="queue-submit" type="button" hidden>Queue</button></form></footer>
 <script>
 (()=>{
 const latestPrompt=document.querySelector('#latest-prompt'),latestPromptText=document.querySelector('#latest-prompt-text'),latestPromptMarker=document.querySelector('#latest-prompt-marker'),tabs=document.querySelector('#tabs'),out=document.querySelector('#transcript'),status=document.querySelector('#status'),interaction=document.querySelector('#interaction'),command=document.querySelector('#command'),form=document.querySelector('#form'),input=document.querySelector('#input'),send=document.querySelector('#send'),scroll=document.querySelector('#scroll'),waiting=document.querySelector('#waiting'),queuePanel=document.querySelector('#queue-panel'),queueToggle=document.querySelector('#queue-toggle'),queueList=document.querySelector('#queue-list');
 let snapshot=null,active='',timer=0,closed=false,historyAtBeginning=false,promptNotice='';const drafts={},cleared={},queueExpanded={},queueScroll={};
 let sessionKey='',eventController=null;
+const attention=document.getElementById('attention');
+const interactionForms=new Map();
+let selectedInteraction='';
+let attentionKey='';
 const authRequired={{.AuthRequired}};
 const storageKey='qcode.remote.session:'+new URL(document.baseURI).pathname;
 const events={close(){if(eventController)eventController.abort();eventController=null}};
 input.disabled=true;send.disabled=true;
-function lockSession(message){closed=true;events.close();clearTimeout(timer);sessionKey='';snapshot=null;latestPromptText.textContent='';latestPrompt.hidden=true;try{sessionStorage.removeItem(storageKey)}catch(_){}input.disabled=true;send.disabled=true;waitingRunning=false;drawWaiting();queuePanel.hidden=true;tabs.replaceChildren();interaction.replaceChildren();interaction.className='interaction';command.replaceChildren();command.className='command-panel';out.textContent='Run /remote in the terminal for a new login link.';out.className='transcript empty';status.textContent=message}
+function lockSession(message){closed=true;events.close();clearTimeout(timer);sessionKey='';snapshot=null;latestPromptText.textContent='';latestPrompt.hidden=true;try{sessionStorage.removeItem(storageKey)}catch(_){}input.disabled=true;send.disabled=true;waitingRunning=false;drawWaiting();queuePanel.hidden=true;tabs.replaceChildren();attention.replaceChildren();attentionKey='';interactionForms.clear();interaction.replaceChildren();interaction.className='interaction';command.replaceChildren();command.className='command-panel';out.textContent='Run /remote in the terminal for a new login link.';out.className='transcript empty';status.textContent=message}
 async function apiFetch(path,options={}){if(authRequired&&!sessionKey)throw new Error('Authorization required. Run /remote for a new login link.');const headers=new Headers(options.headers);if(authRequired)headers.set('Authorization','Bearer '+sessionKey);const r=await fetch(path,{...options,headers});if(authRequired&&r.status===401){lockSession('Session is no longer authorized. Run /remote for a new login link.');throw new Error('Session is no longer authorized. Run /remote for a new login link.')}return r}
 function abortableDelay(ms,signal){return new Promise(resolve=>{if(signal.aborted){resolve();return}const finish=()=>{clearTimeout(id);signal.removeEventListener('abort',finish);resolve()};const id=setTimeout(finish,ms);signal.addEventListener('abort',finish,{once:true})})}
 async function streamEvents(){
@@ -492,10 +517,191 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Home'||e.key==='End'){e.preventDefault();jumpHistory(e.key==='Home')}
 });
 function renderLatestPrompt(view){const text=String(view&&view.latest_prompt||''),presentation=snapshot&&snapshot.presentation||{};latestPromptText.textContent=text;latestPromptMarker.textContent=presentation.prompt_marker||'✦';latestPrompt.hidden=!text;latestPrompt.style.color=presentation.prompt_color||'var(--prompt)';latestPrompt.style.backgroundColor=presentation.prompt_background||'var(--prompt-background)'}
-function render(){if(!snapshot||!snapshot.presentation)return;const live=new Set(agents().map(a=>a.id));const views=(snapshot.presentation.views||[]).filter(v=>live.has(v.id));for(const cache of [drafts,cleared,queueExpanded,queueScroll])for(const id of Object.keys(cache))if(!live.has(id))delete cache[id];const selectedClosed=!!active&&!live.has(active);if(command.dataset.agent&&!live.has(command.dataset.agent))closeCommand();if(!views.some(v=>v.id===active)){active=selectedClosed&&views.some(v=>v.id==='main')?'main':views.some(v=>v.id===snapshot.presentation.active)?snapshot.presentation.active:(views[0]&&views[0].id)||'';input.value=drafts[active]||'';}tabs.replaceChildren(...views.map(v=>{const b=document.createElement('button');b.className='tab '+(v.id===active?'active ':'')+(v.status==='running'?'running':'');b.textContent=(v.name||v.id)+(v.status==='closing'?' · closing':'');b.onclick=()=>{drafts[active]=input.value;active=v.id;input.value=drafts[active]||'';historyAtBeginning=false;render()};return b}));const v=views.find(v=>v.id===active);const nearBottom=!historyAtBeginning&&scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;renderLatestPrompt(v);const lines=v?v.lines.slice(cleared[active]||0):[];out.innerHTML=lines.length?ansiHTML(lines.join('\n')):'No transcript yet.';out.className='transcript '+(lines.length?'':'empty');status.innerHTML=ansiHTML(v&&v.status_bar||snapshot.presentation.status_bar||'Connecting to qcode…')+(promptNotice?'<span class="notice">'+escapeHTML(promptNotice)+'</span>':'');const activeSummary=agents().find(x=>x.id===active);waitingSummary=activeSummary||null;waitingRunning=!!activeSummary&&!!activeSummary.active_task_id;waitingQueued=waitingRunning&&activeSummary.queue_depth||0;if(!waitingRunning)waitingFrame=0;drawWaiting();send.textContent=activeSummary&&activeSummary.active_task_id?'Steer':'Send';document.getElementById('queue-submit').hidden=!(activeSummary&&activeSummary.active_task_id);renderQueue(v);renderInteraction((snapshot.runtime.interactions||[]).find(x=>x.agent_id===active)||(snapshot.runtime.interactions||[])[0]);if(historyAtBeginning)scroll.scrollTop=0;else if(nearBottom)scroll.scrollTop=scroll.scrollHeight}
-function choice(label,value,id){const b=document.createElement('button');b.textContent=label;b.onclick=()=>resolve(id,value);return b}
-function renderInteraction(item){interaction.replaceChildren();interaction.className='interaction'+(item?' open':'');if(!item)return;let payload={};try{payload=typeof item.payload==='string'?JSON.parse(item.payload):item.payload||{}}catch(_){}const title=document.createElement('div');title.className='interaction-title';title.textContent=item.kind.replaceAll('_',' ');interaction.append(title);const choices=document.createElement('div');choices.className='choices';if(item.kind==='directory_approval'){title.textContent='Directory access: '+(payload.requested||'');choices.append(choice('Grant '+(payload.proposed||'requested path'),{selected:'',approved:true},item.id),choice('Deny',{selected:'',approved:false},item.id))}else if(item.kind==='questions'){const questions=Array.isArray(payload)?payload:[];const fields=questions.map(q=>{const field=document.createElement('input'),options=q.Options||q.options||[];field.placeholder=(q.Text||q.text)+(options.length?' — '+options.map((option,index)=>(index+1)+') '+option).join(' / '):'');field.autocomplete='off';interaction.append(field);return field});title.textContent='Questions';const answer=choice('Submit answers',null,item.id);answer.onclick=()=>resolve(item.id,fields.map(field=>field.value));choices.append(answer)}else if(item.kind==='learning_approval'){title.textContent='Apply the proposed global learning changes?';choices.append(choice('Apply',true,item.id),choice('Reject',false,item.id))}else if(item.kind==='skill_plan_decision'){title.textContent='The skill draft is ready. Create it now?';choices.append(choice('Create skill','create',item.id),choice('Stay in Skill Plan mode','stay',item.id))}else{title.textContent='The plan is ready. What would you like to do?';choices.append(choice('Start implementation','implement',item.id),choice('Stay in plan mode','stay',item.id))}interaction.append(choices)}
-async function resolve(id,value){try{const r=await apiFetch('api/v1/interactions/'+encodeURIComponent(id)+'/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value})});if(!r.ok)throw new Error(await r.text());schedule()}catch(e){status.innerHTML='<span class="notice">'+escapeHTML(String(e))+'</span>'}}
+function render(){if(!snapshot||!snapshot.presentation)return;const live=new Set(agents().map(a=>a.id));const views=(snapshot.presentation.views||[]).filter(v=>live.has(v.id));for(const cache of [drafts,cleared,queueExpanded,queueScroll])for(const id of Object.keys(cache))if(!live.has(id))delete cache[id];const selectedClosed=!!active&&!live.has(active);if(command.dataset.agent&&!live.has(command.dataset.agent))closeCommand();if(!views.some(v=>v.id===active)){active=selectedClosed&&views.some(v=>v.id==='main')?'main':views.some(v=>v.id===snapshot.presentation.active)?snapshot.presentation.active:(views[0]&&views[0].id)||'';input.value=drafts[active]||'';}tabs.replaceChildren(...views.map(v=>{const b=document.createElement('button');b.className='tab '+(v.id===active?'active ':'')+(v.status==='running'?'running':'');b.textContent=(v.name||v.id)+(v.status==='closing'?' · closing':'');b.onclick=()=>selectAgent(v.id);return b}));const v=views.find(v=>v.id===active);const nearBottom=!historyAtBeginning&&scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<80;renderLatestPrompt(v);const lines=v?v.lines.slice(cleared[active]||0):[];out.innerHTML=lines.length?ansiHTML(lines.join('\n')):'No transcript yet.';out.className='transcript '+(lines.length?'':'empty');status.innerHTML=ansiHTML(v&&v.status_bar||snapshot.presentation.status_bar||'Connecting to qcode…')+(promptNotice?'<span class="notice">'+escapeHTML(promptNotice)+'</span>':'');const activeSummary=agents().find(x=>x.id===active);waitingSummary=activeSummary||null;waitingRunning=!!activeSummary&&!!activeSummary.active_task_id;waitingQueued=waitingRunning&&activeSummary.queue_depth||0;if(!waitingRunning)waitingFrame=0;drawWaiting();send.textContent=activeSummary&&activeSummary.active_task_id?'Steer':'Send';document.getElementById('queue-submit').hidden=!(activeSummary&&activeSummary.active_task_id);renderQueue(v);renderInteractions(snapshot.runtime.interactions||[]);if(historyAtBeginning)scroll.scrollTop=0;else if(nearBottom)scroll.scrollTop=scroll.scrollHeight}
+function selectAgent(id, interactionID=''){
+  drafts[active]=input.value;
+  active=id;
+  input.value=drafts[active]||'';
+  selectedInteraction=interactionID;
+  historyAtBeginning=false;
+  render();
+}
+function renderInteractions(items){
+  const ids=new Set(items.map(item=>item.id));
+  for(const id of interactionForms.keys())if(!ids.has(id))interactionForms.delete(id);
+
+  const item=items.find(item=>item.agent_id===active&&item.id===selectedInteraction)
+    ||items.find(item=>item.agent_id===active);
+  const name=id=>agents().find(agent=>agent.id===id)?.name||id;
+  const displayedID=item?.id||'';
+  const key=JSON.stringify([displayedID,items.map(item=>[item.id,name(item.agent_id)])]);
+  if(key!==attentionKey){
+    attentionKey=key;
+    const counts=new Map();
+    attention.replaceChildren(...items.map(pending=>{
+      const agent=name(pending.agent_id);
+      const count=(counts.get(pending.agent_id)||0)+1;
+      counts.set(pending.agent_id,count);
+      const button=document.createElement('button');
+      button.type='button';
+      button.textContent=agent+' needs input'+(count===1?'':' ('+count+')');
+      button.setAttribute('aria-pressed',String(pending.id===displayedID));
+      button.onclick=()=>{
+        selectAgent(pending.agent_id,pending.id);
+        interaction.querySelector('h2')?.focus();
+      };
+      return button;
+    }));
+  }
+
+  interaction.classList.toggle('open',!!item);
+  if(!item){
+    if(interaction.firstChild)interaction.replaceChildren();
+    return;
+  }
+  let panel=interactionForms.get(item.id);
+  if(!panel){
+    panel=interactionForm(item,name(item.agent_id));
+    interactionForms.set(item.id,panel);
+  }
+  if(interaction.firstChild!==panel)interaction.replaceChildren(panel);
+}
+function interactionForm(item,agent){
+  let payload={};
+  try{payload=typeof item.payload==='string'?JSON.parse(item.payload):item.payload||{}}catch(_){}
+  const panel=document.createElement('form');
+  const title=document.createElement('h2');
+  title.className='interaction-title';
+  title.style.font='inherit';
+  title.style.marginTop='0';
+  title.tabIndex=-1;
+  const choices=document.createElement('div');
+  choices.className='choices';
+  const error=document.createElement('div');
+  error.className='interaction-error';
+  error.setAttribute('role','alert');
+  panel.append(title);
+  panel.onsubmit=e=>e.preventDefault();
+  let submitting=false;
+  const submit=async value=>{
+    if(closed||submitting)return;
+    submitting=true;
+    error.textContent='';
+    const buttons=Array.from(choices.querySelectorAll('button'));
+    for(const button of buttons)button.disabled=true;
+    try{
+      const result=await apiFetch('api/v1/interactions/'+encodeURIComponent(item.id)+'/resolve',{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value})
+      });
+      if(result.status===404||result.status===409){
+        promptNotice='This request was already answered or withdrawn.';
+        schedule();
+        return;
+      }
+      if(!result.ok)throw new Error(await result.text());
+      schedule();
+    }catch(e){
+      error.textContent=String(e.message||e);
+      submitting=false;
+      for(const button of buttons)button.disabled=false;
+    }
+  };
+  const choice=(label,value)=>{
+    const button=document.createElement('button');
+    button.type='button';
+    button.textContent=label;
+    button.onclick=()=>submit(value);
+    choices.append(button);
+  };
+  if(item.kind==='questions'){
+    title.textContent=agent+' needs input';
+    const questions=Array.isArray(payload)?payload:[];
+    const answers=questions.map((question,index)=>questionField(panel,question,item.id+'-'+index));
+    const button=document.createElement('button');
+    button.type='submit';
+    button.textContent='Submit answers';
+    choices.append(button);
+    panel.onsubmit=e=>{
+      e.preventDefault();
+      const values=answers.map(answer=>answer());
+      if(values.some(value=>!value.trim())){
+        error.textContent='Answer every question before submitting.';
+        return;
+      }
+      submit(values);
+    };
+  }else if(item.kind==='directory_approval'){
+    title.textContent=agent+' requests directory access: '+(payload.requested||'');
+    choice('Grant '+(payload.proposed||'requested path'),{selected:'',approved:true});
+    choice('Deny',{selected:'',approved:false});
+  }else if(item.kind==='learning_approval'){
+    title.textContent=agent+' proposes global learning changes';
+    choice('Apply',true);
+    choice('Reject',false);
+  }else if(item.kind==='skill_plan_decision'){
+    title.textContent=agent+' has a skill draft ready';
+    choice('Create skill','create');
+    choice('Stay in Skill Plan mode','stay');
+  }else if(item.kind==='plan_decision'){
+    title.textContent=agent+' has a plan ready';
+    choice('Start implementation','implement');
+    choice('Stay in Plan mode','stay');
+  }else{
+    title.textContent=agent+' has a request that must be addressed in the terminal';
+  }
+  panel.append(choices,error);
+  return panel;
+}
+function questionField(panel,question,id){
+  const row=document.createElement('div');
+  row.className='interaction-question';
+  const label=document.createElement('label');
+  label.htmlFor=id;
+  label.textContent=question.Text||question.text||'Answer';
+  const options=question.Options||question.options||[];
+  const custom=document.createElement('input');
+  custom.autocomplete='off';
+  row.append(label);
+  panel.append(row);
+  if(!options.length){
+    custom.id=id;
+    custom.required=true;
+    row.append(custom);
+    return ()=>custom.value;
+  }
+
+  const select=document.createElement('select');
+  select.id=id;
+  select.required=true;
+  const descriptions=question.OptionDescriptions||question.option_descriptions||[];
+  const addOption=(text,value)=>{
+    const option=document.createElement('option');
+    option.textContent=text;
+    option.value=value;
+    select.append(option);
+  };
+  addOption('Select an answer','');
+  options.forEach((option,index)=>{
+    addOption(option+(descriptions[index]?' · '+descriptions[index]:''),String(index));
+  });
+  row.append(select);
+  if(question.AllowCustom||question.allow_custom){
+    addOption('Other…','custom');
+    custom.hidden=true;
+    custom.setAttribute('aria-label','Custom answer');
+    row.append(custom);
+    select.onchange=()=>{
+      custom.hidden=select.value!=='custom';
+      custom.required=!custom.hidden;
+      if(!custom.hidden)custom.focus();
+    };
+  }
+  return ()=>{
+    if(select.value==='')return '';
+    if(select.value==='custom')return custom.hidden?'':custom.value;
+    return options[Number(select.value)]||'';
+  };
+}
 async function downloadExport(line){
   const argument=line.replace(/^\/export(?:\s+|$)/,'').trim();
   try{
@@ -514,23 +720,139 @@ async function downloadExport(line){
   }catch(e){status.textContent=String(e)}
 }
 async function postLine(line){const r=await apiFetch('api/v1/actions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({line})});if(!r.ok)throw new Error(await r.text())}
-async function submitLine(line){send.disabled=true;try{await postLine(line);input.value='';schedule()}catch(e){status.innerHTML='<span class="notice">'+escapeHTML(String(e))+'</span>'}finally{send.disabled=closed;if(!closed)input.focus()}}
-async function submitLines(lines){send.disabled=true;try{for(const line of lines)await postLine(line);input.value='';schedule()}catch(e){status.innerHTML='<span class="notice">'+escapeHTML(String(e))+'</span>'}finally{send.disabled=closed;if(!closed)input.focus()}}
+function clearComposerLine(target,line){
+  if(active!==target||line===undefined||input.value.trim()!==line)return;
+  input.value='';
+  drafts[target]='';
+}
+async function submitLine(line,composerLine){
+  const target=active;
+  send.disabled=true;
+  try{
+    await postLine(line);
+    clearComposerLine(target,composerLine);
+    schedule();
+  }catch(e){
+    status.innerHTML='<span class="notice">'+escapeHTML(String(e))+'</span>';
+  }finally{
+    send.disabled=closed;
+    if(!closed&&active===target)input.focus();
+  }
+}
+async function submitSettings(target,settings,composerLine){
+  if(!target){
+    promptNotice='Select an agent first.';
+    status.textContent=promptNotice;
+    return;
+  }
+  try{
+    const response=await apiFetch('api/v1/agents/'+encodeURIComponent(target)+'/settings',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(settings)
+    });
+    if(!response.ok)throw new Error(await response.text());
+    clearComposerLine(target,composerLine);
+    promptNotice='Settings updated for '+(agents().find(agent=>agent.id===target)?.name||target)+'.';
+    schedule();
+  }catch(e){
+    promptNotice=String(e.message||e);
+    status.textContent=promptNotice;
+  }
+}
 function closeCommand(){delete command.dataset.agent;command.replaceChildren();command.className='command-panel';command.onkeydown=null;input.focus()}
-function openCommand(title,help,placeholder,onSubmit,submitLabel='Apply'){input.value='';command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent=title;const hint=document.createElement('div');hint.className='command-help';hint.textContent=help;const field=document.createElement('input');field.placeholder=placeholder;field.autocomplete='off';const actions=document.createElement('div');actions.className='command-actions';const apply=document.createElement('button');apply.textContent=submitLabel;const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';const commit=()=>{const value=field.value.trim();if(!value)return;closeCommand();onSubmit(value)};apply.onclick=commit;cancel.onclick=closeCommand;field.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}if(e.key==='Enter'){e.preventDefault();commit()}};actions.append(apply,cancel);command.append(heading,hint,field,actions);field.focus()}
-function openCloseAgent(name){command.dataset.agent=name;input.value='';command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent='Close agent '+name+'?';const hint=document.createElement('div');hint.className='command-help';hint.textContent='This matches the TUI confirmation step.';const actions=document.createElement('div');actions.className='command-actions';const close=document.createElement('button');close.textContent='Close agent';close.onclick=()=>{closeCommand();submitLine('/agent close '+name+' --yes')};const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';cancel.onclick=closeCommand;actions.append(close,cancel);command.append(heading,hint,actions);command.tabIndex=0;command.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}};close.focus()}
-async function catalog(){const r=await apiFetch('api/v1/catalog',{cache:'no-store'});if(!r.ok)throw new Error(await r.text());return r.json()}
+function openCommand(title,help,placeholder,onSubmit,submitLabel='Apply'){command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent=title;const hint=document.createElement('div');hint.className='command-help';hint.textContent=help;const field=document.createElement('input');field.placeholder=placeholder;field.autocomplete='off';const actions=document.createElement('div');actions.className='command-actions';const apply=document.createElement('button');apply.textContent=submitLabel;const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';const commit=()=>{const value=field.value.trim();if(!value)return;closeCommand();onSubmit(value)};apply.onclick=commit;cancel.onclick=closeCommand;field.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}if(e.key==='Enter'){e.preventDefault();commit()}};actions.append(apply,cancel);command.append(heading,hint,field,actions);field.focus()}
+function openCloseAgent(name){command.dataset.agent=name;command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent='Close agent '+name+'?';const hint=document.createElement('div');hint.className='command-help';hint.textContent='This matches the TUI confirmation step.';const actions=document.createElement('div');actions.className='command-actions';const close=document.createElement('button');close.textContent='Close agent';close.onclick=()=>{closeCommand();submitLine('/agent close '+name+' --yes')};const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';cancel.onclick=closeCommand;actions.append(close,cancel);command.append(heading,hint,actions);command.tabIndex=0;command.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}};close.focus()}
+async function catalog(target=''){const r=await apiFetch('api/v1/catalog'+(target?'?agent_id='+encodeURIComponent(target):''),{cache:'no-store'});if(!r.ok)throw new Error(await r.text());return r.json()}
 function agents(){return snapshot&&snapshot.runtime&&snapshot.runtime.agents||snapshot&&snapshot.presentation&&snapshot.presentation.agents||[]}
 function activeModel(){const item=agents().find(x=>x.id===active)||agents().find(x=>x.id===(snapshot&&snapshot.presentation&&snapshot.presentation.active));return item&&item.model||''}
 function selectorItem(label,value,current=false){return{label:String(label||value),value:String(value),current:!!current}}
-function openList(title,help,items,selected,multi,apply){command.dataset.agent=active;input.value='';command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent=title;const hint=document.createElement('div');hint.className='command-help';hint.textContent=help;const filter=document.createElement('input');filter.placeholder='Type to filter';filter.autocomplete='off';const list=document.createElement('div');list.className='selector-list';const chosen=new Set(selected||[]);const draw=()=>{list.replaceChildren();const query=filter.value.trim().toLowerCase();const matches=items.filter(item=>item.label.toLowerCase().includes(query));if(!matches.length){const empty=document.createElement('div');empty.className='selector-empty';empty.textContent=query?'No matching entries.':'No entries available.';list.append(empty);return}for(const item of matches){const button=document.createElement('button');button.type='button';button.className='cancel';const label=document.createElement('span');label.textContent=(chosen.has(item.value)?(multi?'[x] ':'> '):(multi?'[ ] ':'  '))+item.label;button.append(label);if(item.current){const badge=document.createElement('span');badge.className='selector-current';badge.textContent='Current';button.append(badge)}button.onclick=()=>{if(multi){if(chosen.has(item.value))chosen.delete(item.value);else chosen.add(item.value)}else{chosen.clear();chosen.add(item.value)}draw()};list.append(button)}};const actions=document.createElement('div');actions.className='command-actions';const ok=document.createElement('button');ok.textContent='Apply';const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';const commit=()=>{const values=[...chosen];closeCommand();apply(values)};ok.onclick=commit;cancel.onclick=closeCommand;filter.oninput=draw;filter.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}if(e.key==='Enter'){e.preventDefault();commit()}};actions.append(ok,cancel);command.append(heading,hint,filter,list,actions);draw();filter.focus()}
-function chooseModel(data,kind,model){const thinking=data.thinking&&data.thinking[model];const prefix=kind==='agent-model'?'/agent new ':'/model ';if(!thinking||!Array.isArray(thinking.levels)||!thinking.levels.length){submitLine(prefix+model);return}const levels=thinking.levels.map(x=>selectorItem(x,x));const current=thinking.current?[thinking.current]:[];openList('Select thinking level','Choose a thinking level. Cancel leaves the model unchanged.',levels,current,false,v=>{if(!v[0])return;const line='/model '+model+' '+v[0];if(kind==='agent-model')submitLines([prefix+model,line]);else submitLine(line)})}
-async function openCatalogSelector(kind){try{const data=await catalog();if(kind==='model'||kind==='agent-model'){const items=(data.models||[]).map(x=>selectorItem(x,x));const title=kind==='agent-model'?'New agent':'Select model';const help=kind==='agent-model'?'Choose a model for the new agent.':'Choose a model for the active agent.';openList(title,help,items,[activeModel()],false,v=>v[0]&&chooseModel(data,kind,v[0]));return}if(kind==='tool'){const items=(data.tools||[]).map(x=>selectorItem(x.name+(x.enabled?' · on':' · off'),x.name));const selected=(data.tools||[]).filter(x=>x.enabled).map(x=>x.name);openList('Select tools','Toggle tools, then apply the complete selection.',items,selected,true,v=>submitLines((data.tools||[]).map(x=>'/tool '+x.name+' '+(v.includes(x.name)?'on':'off'))));return}if(kind==='skill'){const items=(data.skills||[]).map(x=>selectorItem(x.name+(x.description?' — '+x.description:''),x.name));const selected=(data.skills||[]).filter(x=>x.selected).map(x=>x.name);openList('Select skills','Toggle workspace skills, then apply the complete selection.',items,selected,true,v=>submitLine('/skill '+(v.length?v.join(', '):'none')));return}if(kind==='resume'){const items=(data.sessions||[]).map(x=>{const when=x.recency||x.left||x.saved||x.created;let date='';try{if(when)date=' · '+new Date(when).toLocaleString()}catch(_){}const preview=x.problem?'Unavailable: '+x.problem:(x.busy?'Open elsewhere: ':'')+x.preview;return selectorItem(preview+(x.agent_count?' · '+x.agent_count+' agents':'')+date,x.id,x.current)});openList('Resume session','Choose a saved session. The Current badge marks the open session.',items,[],false,v=>v[0]&&submitLine('/resume '+v[0]));return}const items=agents().map(x=>selectorItem(x.id+' · '+(x.name||x.id)+' · '+(x.model||'unknown')+' · '+(x.status||'unknown'),x.id));openList('Switch agent','Choose an agent tab to make active in qcode.',items,[active],false,v=>{if(v[0]){active=v[0];render();submitLine('/agent switch '+v[0])}})}catch(e){status.innerHTML='<span class="notice">'+escapeHTML(String(e))+'</span>'}}
-function handleCommand(line){if(line==='/model'){openCatalogSelector('model');return true}if(line==='/tool'){openCatalogSelector('tool');return true}if(line==='/skill'){openCatalogSelector('skill');return true}if(line==='/resume'){openCatalogSelector('resume');return true}if(line==='/agent'||line==='/agent new'){openCatalogSelector('agent-model');return true}if(line==='/agent list'||line==='/agent switch'){openCatalogSelector('agent');return true}const switching=line.match(/^\/agent switch\s+(\S+)$/);if(switching){const id=switching[1];if(!agents().some(x=>x.id===id)){status.innerHTML='<span class="notice">Unknown agent: '+escapeHTML(id)+'</span>';return true}active=id;render();submitLine('/agent switch '+id);return true}const closing=line.match(/^\/agent close\s+(\S+)$/);if(closing){openCloseAgent(closing[1]);return true}return false}
+function openList(title,help,items,selected,multi,apply){command.dataset.agent=active;command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent=title;const hint=document.createElement('div');hint.className='command-help';hint.textContent=help;const filter=document.createElement('input');filter.placeholder='Type to filter';filter.autocomplete='off';const list=document.createElement('div');list.className='selector-list';const chosen=new Set(selected||[]);const draw=()=>{list.replaceChildren();const query=filter.value.trim().toLowerCase();const matches=items.filter(item=>item.label.toLowerCase().includes(query));if(!matches.length){const empty=document.createElement('div');empty.className='selector-empty';empty.textContent=query?'No matching entries.':'No entries available.';list.append(empty);return}for(const item of matches){const button=document.createElement('button');button.type='button';button.className='cancel';const label=document.createElement('span');label.textContent=(chosen.has(item.value)?(multi?'[x] ':'> '):(multi?'[ ] ':'  '))+item.label;button.append(label);if(item.current){const badge=document.createElement('span');badge.className='selector-current';badge.textContent='Current';button.append(badge)}button.onclick=()=>{if(multi){if(chosen.has(item.value))chosen.delete(item.value);else chosen.add(item.value)}else{chosen.clear();chosen.add(item.value)}draw()};list.append(button)}};const actions=document.createElement('div');actions.className='command-actions';const ok=document.createElement('button');ok.textContent='Apply';const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';const commit=()=>{const values=[...chosen];closeCommand();apply(values)};ok.onclick=commit;cancel.onclick=closeCommand;filter.oninput=draw;filter.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}if(e.key==='Enter'){e.preventDefault();commit()}};actions.append(ok,cancel);command.append(heading,hint,filter,list,actions);draw();filter.focus()}
+function chooseModel(data,kind,model,target,label){
+  const thinking=data.thinking&&data.thinking[model];
+  const apply=level=>{
+    if(kind==='agent-model')submitLine('/agent new '+model+(level?' '+level:''));
+    else submitSettings(target,{model,thinking:level});
+  };
+  if(!thinking||!Array.isArray(thinking.levels)||!thinking.levels.length){
+    apply('');
+    return;
+  }
+  const levels=thinking.levels.map(x=>selectorItem(x,x));
+  const current=thinking.current?[thinking.current]:[];
+  openList('Select thinking level'+label,'Choose a thinking level. Cancel leaves the model unchanged.',levels,current,false,v=>{if(v[0])apply(v[0])});
+}
+async function openCatalogSelector(kind,line){
+  const target=active, scoped=['model','tool','skill'].includes(kind);
+  const name=agents().find(agent=>agent.id===target)?.name||target;
+  const label=scoped?' for '+name:'';
+  try{
+    const data=await catalog(scoped?target:'');
+    if(target!==active)return;
+    clearComposerLine(target,line);
+    if(kind==='model'||kind==='agent-model'){
+      const items=(data.models||[]).map(x=>selectorItem(x,x));
+      const title=kind==='agent-model'?'New agent':'Select model'+label;
+      const help=kind==='agent-model'?'Choose a model for the new agent.':'Choose a model for '+name+'.';
+      const current=activeModel();
+      openList(title,help,items,items.some(item=>item.value===current)?[current]:[],false,v=>v[0]&&chooseModel(data,kind,v[0],target,label));
+      return;
+    }
+    if(kind==='tool'){
+      const tools=data.tools||[];
+      const items=tools.map(x=>selectorItem(x.name+(x.enabled?' · on':' · off'),x.name));
+      const selected=tools.filter(x=>x.enabled).map(x=>x.name);
+      openList('Select tools'+label,'Toggle the tools you want to change.',items,selected,true,v=>{
+        const updates=tools.filter(x=>x.enabled!==v.includes(x.name));
+        if(updates.length)submitSettings(target,{tools:Object.fromEntries(updates.map(x=>[x.name,v.includes(x.name)]))});
+      });
+      return;
+    }
+    if(kind==='skill'){
+      const skills=data.skills||[];
+      const items=skills.map(x=>selectorItem(x.name+(x.description?' — '+x.description:''),x.name));
+      const selected=skills.filter(x=>x.selected).map(x=>x.name);
+      const always=new Set(skills.filter(x=>x.always).map(x=>x.name));
+      openList('Select skills'+label,'Choose the enabled workspace skills.',items,selected,true,v=>{
+        submitSettings(target,{skills:v.map(name=>always.has(name)?name+'!':name)});
+      });
+      return;
+    }
+    if(kind==='resume'){
+      const items=(data.sessions||[]).map(x=>{const when=x.recency||x.left||x.saved||x.created;let date='';try{if(when)date=' · '+new Date(when).toLocaleString()}catch(_){}const preview=x.problem?'Unavailable: '+x.problem:(x.busy?'Open elsewhere: ':'')+x.preview;return selectorItem(preview+(x.agent_count?' · '+x.agent_count+' agents':'')+date,x.id,x.current)});
+      openList('Resume session','Choose a saved session. The Current badge marks the open session.',items,[],false,v=>v[0]&&submitLine('/resume '+v[0]));
+      return;
+    }
+    const items=agents().map(x=>selectorItem(x.id+' · '+(x.name||x.id)+' · '+(x.model||'unknown')+' · '+(x.status||'unknown'),x.id));
+    openList('Switch agent','Choose an agent tab to make active in qcode.',items,[active],false,v=>{if(v[0]){selectAgent(v[0]);submitLine('/agent switch '+v[0])}});
+  }catch(e){
+    status.innerHTML='<span class="notice">'+escapeHTML(String(e))+'</span>';
+  }
+}
+function handleSettingsLine(line){
+  const [command,...args]=line.split(/\s+/);
+  if(command==='/model'&&args.length>=1&&args.length<=2){
+    submitSettings(active,{model:args[0],thinking:args[1]||''},line);
+    return true;
+  }
+  if(command==='/tool'&&args.length===2&&['on','off'].includes(args[1])){
+    submitSettings(active,{tools:{[args[0]]:args[1]==='on'}},line);
+    return true;
+  }
+  if(command==='/skill'&&args.length){
+    submitSettings(active,{skills:args.join(' ').split(',')},line);
+    return true;
+  }
+  if(['/model','/tool','/skill'].includes(command)){
+    promptNotice='Invalid '+command+' arguments.';
+    status.textContent=promptNotice;
+    return true;
+  }
+  return false;
+}
+function handleCommand(line){if(line==='/model'){openCatalogSelector('model',line);return true}if(line==='/tool'){openCatalogSelector('tool',line);return true}if(line==='/skill'){openCatalogSelector('skill',line);return true}if(line==='/resume'){openCatalogSelector('resume',line);return true}if(line==='/agent'||line==='/agent new'){openCatalogSelector('agent-model',line);return true}if(line==='/agent list'||line==='/agent switch'){openCatalogSelector('agent',line);return true}const switching=line.match(/^\/agent switch\s+(\S+)$/);if(switching){const id=switching[1];if(!agents().some(x=>x.id===id)){status.innerHTML='<span class="notice">Unknown agent: '+escapeHTML(id)+'</span>';return true}clearComposerLine(active,line);selectAgent(id);submitLine('/agent switch '+id);return true}const closing=line.match(/^\/agent close\s+(\S+)$/);if(closing){clearComposerLine(active,line);openCloseAgent(closing[1]);return true}return false}
 async function promptAPI(path,options){const r=await apiFetch(path,options);if(!r.ok)throw new Error(await r.text());return r}
 async function submitPrompt(intent){const target=active,line=input.value.trim(),summary=agents().find(x=>x.id===target);if(!line)return;send.disabled=true;try{await promptAPI('api/v1/prompts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent_id:target,observed_task_id:summary&&summary.active_task_id||'',prompt:line,intent})});promptNotice='';if(active===target){if(input.value.trim()===line)input.value='';drafts[target]=input.value}else if((drafts[target]||'').trim()===line)drafts[target]='';schedule()}catch(e){promptNotice=String(e);status.textContent=promptNotice;schedule()}finally{send.disabled=closed}}
  document.getElementById('queue-submit').onclick=()=>submitPrompt('queue');
- form.onsubmit=e=>{e.preventDefault();const line=input.value.trim();if(!line)return;if(line==='/exit'||line==='/quit'){closed=true;events.close();status.textContent='Disconnected';send.disabled=true;input.disabled=true;waitingRunning=false;drawWaiting();return}if(line==='/clear'){const v=(snapshot.presentation.views||[]).find(v=>v.id===active);cleared[active]=v?v.lines.length:0;input.value='';render();return}if(/^\/export(?:\s|$)/.test(line)){downloadExport(line);return}if(handleCommand(line))return;if(line.startsWith('/'))submitLine(line);else submitPrompt('automatic')};
+ form.onsubmit=e=>{e.preventDefault();const line=input.value.trim();if(!line)return;if(line==='/exit'||line==='/quit'){closed=true;events.close();status.textContent='Disconnected';send.disabled=true;input.disabled=true;waitingRunning=false;drawWaiting();renderInteractions([]);return}if(line==='/clear'){const v=(snapshot.presentation.views||[]).find(v=>v.id===active);cleared[active]=v?v.lines.length:0;input.value='';render();return}if(/^\/export(?:\s|$)/.test(line)){downloadExport(line);return}if(handleCommand(line)||handleSettingsLine(line))return;if(line.startsWith('/'))submitLine(line,line);else submitPrompt('automatic')};
 login();
 // Pasting a fresh login link into an already-open tab only changes its fragment.
 // Reload that document so the normal login bootstrap exchanges the new token.
