@@ -537,7 +537,7 @@ func TestCLISelectsAndListsNamedInstance(t *testing.T) {
 		defer out.Close()
 		errOut, _ := os.CreateTemp(t.TempDir(), "err")
 		defer errOut.Close()
-		args := []string{"--provider", "lab", "--cwd", t.TempDir(), "hello"}
+		args := []string{"--provider", "lab", "--cwd", t.TempDir(), "prompt", "hello"}
 		want := "instance answer"
 		if listing {
 			args = []string{"--list-providers"}

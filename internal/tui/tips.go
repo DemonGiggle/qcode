@@ -154,9 +154,9 @@ var tipTexts = []string{
 	// Command-line usage and configuration.
 	"Run `qcode --help` from your shell for startup flags, or `qcode --list-providers` for providers and named instances.",
 	"Start with `qcode --cwd /path/to/project` to choose a workspace without changing your shell's directory.",
-	"Pass a prompt such as `qcode \"explain this repository\"` for a one-shot answer, or pipe prompt text into qcode.",
+	"Pass a prompt such as `qcode prompt \"explain this repository\"` for a one-shot answer, or pipe the message into `qcode prompt`.",
 	"In one-shot mode, answers go to stdout and activity goes to stderr; redirect them separately for scripts.",
-	"Use `qcode --json-events \"your task\" 2>events.jsonl` for structured activity and per-completion token usage.",
+	"Use `qcode --json-events prompt \"your task\" 2>events.jsonl` for structured activity and per-completion token usage.",
 	"Run `qcode --demo` for an offline interactive showcase with mocked tools, queued prompts, diffs, and model selection.",
 	"Use `--provider` and `--model` at launch, or set `QCODE_PROVIDER` and `QCODE_MODEL` for shell defaults.",
 	"Use `--base-url` or `QCODE_BASE_URL` to point qcode at your provider endpoint.",

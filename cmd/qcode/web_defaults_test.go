@@ -90,6 +90,7 @@ func TestStartupWebDefaultsFollowEffectiveSandbox(t *testing.T) {
 			in, out, diagnostics := newFile("stdin"), newFile("stdout"), newFile("stderr")
 			args := []string{"--provider", providerName, "--model", "test", "--cwd", root}
 			args = append(args, tc.flags...)
+			args = append(args, "prompt")
 			if tc.piped {
 				if _, err := in.WriteString("hello"); err != nil {
 					t.Fatal(err)

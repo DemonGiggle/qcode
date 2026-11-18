@@ -25,6 +25,40 @@ func TestRetiredLoginSubcommand(t *testing.T) {
 	}
 }
 
+func TestPromptSubcommandRejectsInvalidInput(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		args  []string
+		input string
+		want  string
+	}{
+		{"legacy positional text", []string{"run the tests"}, "", "unexpected positional argument"},
+		{"multiple message arguments", []string{"prompt", "run", "tests"}, "", "usage: qcode [options] prompt"},
+		{"empty message argument", []string{"prompt", " "}, "", "prompt message must not be empty"},
+		{"empty stdin", []string{"prompt"}, "", "stdin contained no prompt"},
+		{"stdin without subcommand", nil, "run the tests", "interactive mode requires a terminal"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			stdin, writer, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stdin.Close()
+			if _, err := writer.WriteString(tt.input); err != nil {
+				writer.Close()
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			err = run(append([]string{"--demo"}, tt.args...), stdin, os.Stdout, os.Stderr)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error containing %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
 func TestConfigDiagnosticsIncludeOtherWarningsOnFatalError(t *testing.T) {
 	fatal := errors.New("invalid redaction pattern")
 	var output bytes.Buffer

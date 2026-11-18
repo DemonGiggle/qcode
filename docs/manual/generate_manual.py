@@ -692,7 +692,7 @@ def build_pdf(images: dict[str, Path]):
             "Esc goes back one level. Ctrl+C closes a command view; agents continue working. In the composer, Ctrl+C cancels active work.",
         ],
     )
-    tip(pdf, "Run qcode --demo for the interactive tour with automatic queued prompts. Add a quoted prompt for a one-shot text demo. Both use mocked tools and leave your workspace untouched.")
+    tip(pdf, "Run qcode --demo for the interactive tour with automatic queued prompts. Use qcode --demo prompt with a quoted message for a one-shot text demo. Both use mocked tools and leave your workspace untouched.")
 
     # 1 Getting started
     h1(pdf, "1. Getting started")
@@ -717,8 +717,8 @@ def build_pdf(images: dict[str, Path]):
     code(pdf, "qcode update\nqcode update --arch arm64\nqcode update --pre\nqcode update --help")
     body(pdf, "Without --pre only stable releases are considered; --pre also considers pre-releases such as release candidates. The command installs the latest release for the current operating system and chosen architecture.")
     h2(pdf, "Startup flags and environment")
-    body(pdf, "qcode --help lists every flag supported by your installed binary. The most useful launch choices are workspace, model, thinking, step limit, context accounting, compaction, sandbox, networking, and one-shot output. Put flags before any one-shot prompt; option parsing stops at the first positional word.")
-    code(pdf, "qcode --cwd /path/to/project\nqcode --provider ollama --model qwen3:8b --thinking high \"reply with OK\"\nqcode --max-steps 64 \"explain this repository\"\nqcode --context-window 32768 \"explain this repository\"\nqcode --disable-auto-compact\nqcode --sandbox --sandbox-command-path ~/.local/bin\nqcode --danger-skip-tls-verify \"run the tests\"\nqcode --agent-timeout 90s \"explain this repository\"\nqcode --json-events \"run the tests\" 2>events.jsonl\nqcode --list-providers\nqcode --provider openai --update-model-meta\nqcode --version")
+    body(pdf, "qcode --help lists every flag supported by your installed binary. The most useful launch choices are workspace, model, thinking, step limit, context accounting, compaction, sandbox, networking, and one-shot output. Put startup flags before the prompt subcommand.")
+    code(pdf, "qcode --cwd /path/to/project\nqcode --provider ollama --model qwen3:8b --thinking high prompt \"reply with OK\"\nqcode --max-steps 64 prompt \"explain this repository\"\nqcode --context-window 32768 prompt \"explain this repository\"\nqcode --disable-auto-compact\nqcode --sandbox --sandbox-command-path ~/.local/bin\nqcode --danger-skip-tls-verify prompt \"run the tests\"\nqcode --agent-timeout 90s prompt \"explain this repository\"\nqcode --json-events prompt \"run the tests\" 2>events.jsonl\nqcode --list-providers\nqcode --provider openai --update-model-meta\nqcode --version")
     bullets(
         pdf,
         [
@@ -967,7 +967,7 @@ def build_pdf(images: dict[str, Path]):
             "Use `/provider` (or `/provider openai`, `/provider gemini`, `/provider ollama-lab`) to switch an idle tab without restarting; unconfigured providers are dimmed and cannot be chosen. Main-tab switches save the default; workers stay local. History is kept with a `/new` warning; browser provider commands are rejected. Keep separate endpoints/keys with [providers.<name>] connection profiles or named instances with a `type` field.",            "Flags can also come from QCODE_PROVIDER, QCODE_MODEL, QCODE_THINKING, QCODE_BASE_URL, QCODE_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY.",
         ],
     )
-    code(pdf, "qcode --provider ollama --model qwen3:8b --thinking high \"reply with OK\"\nqcode --provider gemini --model gemini-3-flash-preview --thinking high \"reply with OK\"\nqcode --provider ollama-lab --model qwen2.5-coder:32b \"reply with OK\"\nqcode --provider opencode-go --model deepseek-v4-flash --thinking high \"reply with OK\"\nqcode setup\nqcode --provider chatgpt --model gpt-5.6-codex \"explain this repository\"")
+    code(pdf, "qcode --provider ollama --model qwen3:8b --thinking high prompt \"reply with OK\"\nqcode --provider gemini --model gemini-3-flash-preview --thinking high prompt \"reply with OK\"\nqcode --provider ollama-lab --model qwen2.5-coder:32b prompt \"reply with OK\"\nqcode --provider opencode-go --model deepseek-v4-flash --thinking high prompt \"reply with OK\"\nqcode setup\nqcode --provider chatgpt --model gpt-5.6-codex prompt \"explain this repository\"")
     bullets(
         pdf,
         [
@@ -980,8 +980,8 @@ def build_pdf(images: dict[str, Path]):
     )
     tip(pdf, "On `main`, /model and /maxsteps remember your choice. Other tabs, demo, one-shot, and piped runs keep changes for that session only.")
     h2(pdf, "One-shot and demo")
-    code(pdf, "qcode \"explain this repository\"\nqcode --json-events \"run the tests\" 2>events.jsonl\nprintf '%s\\n' 'explain this repository' | qcode\nqcode --demo \"show me how qcode works\"")
-    body(pdf, "Put flags before one-shot prompts or piped text. Empty stdin fails. Answers use stdout; activity or diagnostics use stderr. One-shot and piped runs never wait for questions or directory approvals and do not save sessions. Configured skill autoloading and learning retrieval still apply. With --json-events, each completion also emits a usage event with provider, model, per-completion usage (null when unavailable), and session totals. Demo tools are mocked; /export still writes a file. --demo without a prompt starts the automatic interactive showcase.")
+    code(pdf, "qcode prompt \"explain this repository\"\nqcode --json-events prompt \"run the tests\" 2>events.jsonl\nprintf '%s\\n' 'explain this repository' | qcode prompt\nqcode --demo prompt \"show me how qcode works\"")
+    body(pdf, "Put flags before the prompt subcommand. Quote the message as one argument or pipe nonempty text to qcode prompt. Answers use stdout; activity or diagnostics use stderr. One-shot and piped runs never wait for questions or directory approvals and do not save sessions. Configured skill autoloading and learning retrieval still apply. With --json-events, each completion also emits a usage event with provider, model, per-completion usage (null when unavailable), and session totals. Demo tools are mocked; /export still writes a file. qcode --demo starts the automatic interactive showcase.")
 
     # 6 Agents
     h1(pdf, "6. Working with multiple agents")
@@ -1288,10 +1288,10 @@ def build_pdf(images: dict[str, Path]):
     body(pdf, "One-shot recipes:")
     code(
         pdf,
-        "qcode --model qwen2.5-coder:7b \"explain this repository\"\n"
-        "qcode --provider openai --model gpt-5 \"summarize the diff\"\n"
-        "qcode --provider gemini --model gemini-3-flash-preview \"summarize the diff\"\n"
-        "qcode --demo \"show me how qcode works\"",
+        "qcode --model qwen2.5-coder:7b prompt \"explain this repository\"\n"
+        "qcode --provider openai --model gpt-5 prompt \"summarize the diff\"\n"
+        "qcode --provider gemini --model gemini-3-flash-preview prompt \"summarize the diff\"\n"
+        "qcode --demo prompt \"show me how qcode works\"",
     )
 
     # Back cover note

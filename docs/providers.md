@@ -82,7 +82,7 @@ For automation, pass `--thinking` (or set `QCODE_THINKING` / `thinking` in
 `config.toml`):
 
 ```sh
-qcode --provider ollama --model qwen3:8b --thinking high "reply with OK"
+qcode --provider ollama --model qwen3:8b --thinking high prompt "reply with OK"
 ```
 
 qcode discovers thinking capability from Ollama's model metadata and preserves
@@ -234,7 +234,7 @@ For automation, pass an explicit level with `--thinking` (or `QCODE_THINKING` /
 `thinking` in `config.toml`):
 
 ```sh
-qcode --provider opencode-go --model deepseek-v4-flash --thinking high "reply with OK"
+qcode --provider opencode-go --model deepseek-v4-flash --thinking high prompt "reply with OK"
 ```
 
 Known models may support `off`, `on`, `none`, `minimal`, `low`, `medium`,
@@ -259,7 +259,7 @@ Run `qcode setup` and open
 **Providers & Models → chatgpt → Configure credentials & endpoint** to sign in.
 
 ```sh
-qcode --provider chatgpt --model gpt-5.6-codex "explain this repository"
+qcode --provider chatgpt --model gpt-5.6-codex prompt "explain this repository"
 ```
 
 The `chatgpt` provider talks to the Sign in with ChatGPT Responses endpoint
@@ -295,7 +295,7 @@ with Codex-suffix fallback, so `CTX` shows remaining capacity instead of
 Vision-capable models can inspect PNG, JPEG, WEBP, and GIF files inside the workspace. Name the image in the prompt; the agent can load it with `view_image` and send it through the active provider:
 
 ```sh
-qcode --provider ollama --model gemma3 "describe assets/screenshot.png"
+qcode --provider ollama --model gemma3 prompt "describe assets/screenshot.png"
 ```
 
 Images are limited to 20 MiB each. Ollama receives native `images` data; OpenAI
@@ -306,26 +306,26 @@ support image input.
 
 ## One-shot mode
 
-Pass a prompt for non-interactive use. Assistant text goes to stdout and concise action events go to stderr. `--json-events` serializes machine-readable trace and activity records as JSON Lines instead of human-readable events:
+Use the `prompt` subcommand for non-interactive use. Assistant text goes to stdout and concise action events go to stderr. `--json-events` serializes machine-readable trace and activity records as JSON Lines instead of human-readable events:
 
 ```sh
-qcode "explain this repository"
-qcode --json-events "run the tests" 2>events.jsonl
-printf '%s\n' 'explain this repository' | qcode
+qcode prompt "explain this repository"
+qcode --json-events prompt "run the tests" 2>events.jsonl
+printf '%s\n' 'explain this repository' | qcode prompt
 ```
 
-Flags must appear before the prompt. Stdin is read when no positional prompt
-was supplied. See the [command-line reference](cli.md) for all startup options.
+Put startup flags before `prompt`. Quote the message as one argument, or pipe
+text into `qcode prompt` without a message argument. See the [command-line reference](cli.md) for all startup options.
 
 ## Demo mode
 
 Demo mode runs the full agent loop without configuring or connecting to an LLM:
 
 ```sh
-qcode --demo "show me how qcode works"
+qcode --demo prompt "show me how qcode works"
 ```
 
-Run `qcode --demo` without a prompt to start an automatic interactive showcase.
+Run `qcode --demo` to start an automatic interactive showcase.
 It submits one full tool tour and two follow-up prompts while work is running.
 The pending area displays the queued prompts in FIFO order, and the tabs and
 task indicator show their count. Mocked model and tool calls pause long enough

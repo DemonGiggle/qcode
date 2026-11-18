@@ -1,22 +1,22 @@
 # Command line
 
-Run `qcode` without a prompt to open the terminal UI. Pass a quoted prompt or
-pipe text into stdin for a one-shot run. From a source checkout, substitute
+Run `qcode` to open the terminal UI. Use the `prompt` subcommand for a
+one-shot run. From a source checkout, substitute
 `./bin/qcode` after `make build` unless you have added the binary to your `PATH`.
 
 ```sh
 qcode --cwd /path/to/project
-qcode --provider ollama --model qwen2.5-coder:7b "explain this repository"
-printf '%s\n' 'Review the current changes without editing files.' | qcode
-qcode --json-events "run the tests" >answer.txt 2>events.jsonl
+qcode --provider ollama --model qwen2.5-coder:7b prompt "explain this repository"
+printf '%s\n' 'Review the current changes without editing files.' | qcode prompt
+qcode --json-events prompt "run the tests" >answer.txt 2>events.jsonl
 qcode --demo
-qcode --demo "show me how qcode works"
+qcode --demo prompt 'show me how qcode works'
 ```
 
-Put flags before the prompt; option parsing stops at the first positional
-argument. Positional words are joined into one prompt. Stdin supplies the prompt
-only when no nonempty positional prompt was provided; empty piped input is an
-error. Assistant text goes to stdout and activity or diagnostics go to stderr.
+Put startup flags before `prompt`. Use double or single quotes to pass the
+message as one argument. Multiple arguments and empty messages are errors.
+When you supply no message argument to `qcode prompt`, pipe or redirect nonempty text
+to its stdin. Assistant text goes to stdout and activity or diagnostics go to stderr.
 One-shot and piped runs do not save sessions or wait for interactive questions
 or directory approvals. Both web tools start enabled outside the sandbox and
 disabled when sandbox isolation is active. Configured skill autoloading
@@ -131,7 +131,7 @@ Run `qcode setup` in an interactive terminal and open
 For an existing connection, select **Re-authenticate with ChatGPT**.
 
 ```sh
-qcode --provider chatgpt --model gpt-5.6-codex "explain this repository"
+qcode --provider chatgpt --model gpt-5.6-codex prompt "explain this repository"
 ```
 
 The Sign in with ChatGPT flow prints a browser URL. Choose Continue with

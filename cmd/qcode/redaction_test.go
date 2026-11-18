@@ -43,7 +43,7 @@ func TestCLIRegistersEffectiveKeyAndFiltersRedirectedErrors(t *testing.T) {
 		defer errOut.Close()
 		in, _ := os.CreateTemp(t.TempDir(), "in")
 		defer in.Close()
-		args := []string{"--provider", provider.Name(), "--model", "test", "--cwd", t.TempDir(), "--api-key", cliRedactionSecret, "prompt " + cliRedactionSecret}
+		args := []string{"--provider", provider.Name(), "--model", "test", "--cwd", t.TempDir(), "--api-key", cliRedactionSecret, "prompt", "prompt " + cliRedactionSecret}
 		if events {
 			args = append([]string{"--json-events"}, args...)
 		}
@@ -190,7 +190,7 @@ func TestInvalidRedactionConfigStopsCLIStartup(t *testing.T) {
 	}
 	out, _ := os.CreateTemp(t.TempDir(), "output")
 	defer out.Close()
-	err := run([]string{"hello"}, out, out, out)
+	err := run([]string{"prompt", "hello"}, out, out, out)
 	if err == nil || !strings.Contains(err.Error(), "redaction.custom_patterns[0]") || strings.Contains(err.Error(), "private-regex") {
 		t.Fatalf("startup diagnostic: %v", err)
 	}
