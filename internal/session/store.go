@@ -38,6 +38,7 @@ type Snapshot struct {
 type Entry struct {
 	Snapshot
 	Metadata
+	WorkspaceKey    string
 	Current         bool
 	Problem         string
 	MetadataProblem string
@@ -53,6 +54,7 @@ type SnapshotFilter func(Snapshot) (Snapshot, error)
 // The filter is installed before the store is used concurrently.
 type Store struct {
 	dir, workspace string
+	workspaceKey   string
 	filter         SnapshotFilter
 	nameFilter     func(string) string
 	mu             sync.Mutex
@@ -127,12 +129,23 @@ func Open(directory, workspace string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	hash := sha256.Sum256([]byte(p))
-	s := &Store{dir: filepath.Join(directory, hex.EncodeToString(hash[:])), workspace: p}
+	s := &Store{dir: filepath.Join(directory, workspaceKey(p)), workspace: p}
 	if err := os.MkdirAll(s.dir, 0700); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+func workspaceKey(workspace string) string {
+	hash := sha256.Sum256([]byte(workspace))
+	return hex.EncodeToString(hash[:])
+}
+
+func (s *Store) matchesWorkspace(workspace string) bool {
+	if s.workspaceKey != "" {
+		return filepath.IsAbs(workspace) && workspaceKey(workspace) == s.workspaceKey
+	}
+	return workspace == s.workspace
 }
 
 func validID(id string) bool {
@@ -305,7 +318,7 @@ func (s *Store) Load(id string) (Snapshot, error) {
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return snap, err
 	}
-	if snap.ID != id || snap.Workspace != s.workspace || snap.Version != SnapshotVersion {
+	if snap.ID != id || !s.matchesWorkspace(snap.Workspace) || snap.Version != SnapshotVersion {
 		return snap, fmt.Errorf("incompatible session snapshot %s", id)
 	}
 	return snap, nil
@@ -359,7 +372,7 @@ func (s *Store) loadListHeader(id string) (Snapshot, int, error) {
 	if err := json.Unmarshal(data, &header); err != nil {
 		return Snapshot{}, 0, err
 	}
-	if header.ID != id || header.Workspace != s.workspace || header.Version != SnapshotVersion {
+	if header.ID != id || !s.matchesWorkspace(header.Workspace) || header.Version != SnapshotVersion {
 		return Snapshot{}, 0, fmt.Errorf("incompatible session snapshot %s", id)
 	}
 	snap := Snapshot{
@@ -402,7 +415,7 @@ func (s *Store) List() ([]Entry, error) {
 			continue
 		}
 		metadata, metadataErr := s.LoadMetadata(id)
-		entry := Entry{Metadata: metadata}
+		entry := Entry{Metadata: metadata, WorkspaceKey: s.workspaceKey}
 		if metadataErr != nil {
 			entry.MetadataProblem = metadataErr.Error()
 		}
@@ -439,11 +452,15 @@ func (s *Store) List() ([]Entry, error) {
 		}
 		entries = append(entries, entry)
 	}
+	sortEntries(entries)
+	return entries, nil
+}
+
+func sortEntries(entries []Entry) {
 	sort.SliceStable(entries, func(i, j int) bool {
 		if entries[i].Pinned != entries[j].Pinned {
 			return entries[i].Pinned
 		}
 		return ResumeTime(entries[i].Snapshot).After(ResumeTime(entries[j].Snapshot))
 	})
-	return entries, nil
 }

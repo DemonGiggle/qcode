@@ -122,6 +122,17 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		isTerminal := term.IsTerminal(int(stdin.Fd())) && term.IsTerminal(int(stdout.Fd()))
 		return runSetup(arguments[1:], stdin, stdout, diagnosticsOut, isTerminal)
 	}
+	var selectedSession *tui.SavedSessionSelection
+	var startupInput io.Reader = stdin
+	if len(arguments) > 0 && arguments[0] == "sessions" {
+		selection, err := runSessions(arguments[1:], stdin, stdout, diagnosticsOut)
+		if err != nil || selection == nil {
+			return err
+		}
+		selectedSession = selection
+		startupInput = selection.Input()
+		arguments = []string{"--cwd", selection.Workspace}
+	}
 
 	opts := options{learningBudget: learning.DefaultBudget, autoCompactThreshold: agent.DefaultAutoCompactThreshold}
 	var configPaths []string
@@ -159,7 +170,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	flags.Lookup("api-key").DefValue = ""
 	flags.BoolVar(&opts.dangerSkipTLSVerify, "danger-skip-tls-verify", false, "skip TLS certificate verification (insecure)")
 	flags.Usage = func() {
-		fmt.Fprintf(diagnosticsOut, "Usage: qcode [options]\n       qcode [options] prompt \"message\"\n       qcode [options] prompt < prompt.txt\n\nWithout a subcommand, qcode starts its terminal UI.\nFor a one-shot run, pass one quoted message or pipe input to the prompt subcommand.\nUse 'qcode setup' to configure providers, including ChatGPT sign-in.\nUse 'qcode update' to install the latest release.\nUse 'qcode config check [--json]' to validate config files with fix suggestions.\n\nOptions:\n")
+		fmt.Fprintf(diagnosticsOut, "Usage: qcode [options]\n       qcode [options] prompt \"message\"\n       qcode [options] prompt < prompt.txt\n       qcode sessions\n\nWithout a subcommand, qcode starts its terminal UI.\nFor a one-shot run, pass one quoted message or pipe input to the prompt subcommand.\nUse 'qcode sessions' to manage saved sessions across workspaces.\nUse 'qcode setup' to configure providers, including ChatGPT sign-in.\nUse 'qcode update' to install the latest release.\nUse 'qcode config check [--json]' to validate config files with fix suggestions.\n\nOptions:\n")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(arguments); err != nil {
@@ -225,7 +236,7 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			opts.sandboxCommandPaths = append([]string(nil), sandboxCommandPathFlags...)
 		}
 		applyConfig(&opts, cfg, setFlags)
-		if err := enforceStartupConfigCheck(diagnosticsOut, stdin, stdout, stderr, opts.jsonEvents, opts.provider, opts.apiKey); err != nil {
+		if err := enforceStartupConfigCheck(diagnosticsOut, startupInput, stdin, stdout, stderr, opts.jsonEvents, opts.provider, opts.apiKey); err != nil {
 			return err
 		}
 	} else if len(sandboxCommandPathFlags) > 0 {
@@ -432,7 +443,12 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 
 	// Terminal output must go through term.Terminal so asynchronous-looking stream
 	// updates do not corrupt the editable input line.
-	ui := tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
+	var ui *tui.UI
+	if selectedSession != nil {
+		ui = selectedSession.NewUI(stdin, stdout, opts.provider, opts.model)
+	} else {
+		ui = tui.New(stdin, stdout, nil, opts.provider, opts.model, root)
+	}
 	ui.SetRedaction(policy)
 	installProviderFactory(ui)
 	seededModels, seededThinking := loadedConfig.SeededProviderModels()

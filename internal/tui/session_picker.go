@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -28,6 +29,7 @@ type sessionPickerOptions struct {
 	setPinned              func(string, bool) error
 	deleteSession          func(string) (bool, error)
 	deleteAllSessions      func() (bool, error)
+	deleteSelected         func([]string) error
 	accept                 func(string) error
 }
 
@@ -39,6 +41,7 @@ const (
 	sessionPickerRename
 	sessionPickerDelete
 	sessionPickerDeleteAll
+	sessionPickerDeleteSelected
 )
 
 type sessionPicker struct {
@@ -51,6 +54,14 @@ type sessionPicker struct {
 	confirmation   int
 	edit           []rune
 	cursor         int
+	marked         map[string]bool
+}
+
+func sessionEntryKey(entry session.Entry) string {
+	if entry.WorkspaceKey != "" {
+		return entry.WorkspaceKey + "/" + entry.ID
+	}
+	return entry.ID
 }
 
 // sessionPickerWriter paints absolute rows under the same lock as the footer.
@@ -101,7 +112,7 @@ func (u *UI) pickSession(entries []session.Entry, accept func(string) error) (st
 
 func runSessionPicker(in io.Reader, out io.Writer, entries []session.Entry, options sessionPickerOptions) (string, bool, error) {
 	entries = terminalSessionEntries(entries, options.policy)
-	p := sessionPicker{entries: entries, matches: matchingSessionIndices(entries, "")}
+	p := sessionPicker{entries: entries, matches: matchingSessionIndices(entries, ""), marked: make(map[string]bool)}
 	height, width := options.height, options.width
 	defer func() {
 		if options.size != nil {
@@ -136,50 +147,43 @@ func runSessionPicker(in io.Reader, out io.Writer, entries []session.Entry, opti
 			continue
 		}
 		switch p.mode {
-		case sessionPickerDelete, sessionPickerDeleteAll:
+		case sessionPickerDelete, sessionPickerDeleteAll, sessionPickerDeleteSelected:
 			switch key {
 			case arrowUpSequence, arrowDownSequence:
 				p.confirmation = 1 - p.confirmation
 			case "\r", "\n":
 				if p.confirmation == 0 {
-					if p.mode == sessionPickerDeleteAll {
-						p.mode = sessionPickerList
-					} else {
+					if p.mode == sessionPickerDelete {
 						p.mode = sessionPickerActions
+					} else {
+						p.mode = sessionPickerList
 					}
 					p.message = ""
 					continue
 				}
-				all := p.mode == sessionPickerDeleteAll
-				if !all && options.deleteSession == nil || all && options.deleteAllSessions == nil {
-					p.message = "Session deletion is unavailable"
-					continue
-				}
-				id := ""
-				var closed bool
-				var err error
-				if all {
-					closed, err = options.deleteAllSessions()
-				} else {
-					id = p.entries[p.matches[p.selected]].ID
-					closed, err = options.deleteSession(id)
-				}
+				id, closed, err := p.confirmDeletion(options)
 				if err == nil && closed {
 					return id, true, nil
 				}
 				row := p.selected
+				deletion := p.mode
 				p.mode = sessionPickerList
 				if err != nil {
 					p.refreshAt(options, id, row)
 					message := "Cannot delete: " + err.Error()
-					if all {
+					if deletion == sessionPickerDeleteAll {
 						message = "Cannot delete all: " + err.Error()
+					} else if deletion == sessionPickerDeleteSelected {
+						message = "Cannot delete selected: " + err.Error()
 					}
 					if p.message != "" {
 						message += "; " + p.message
 					}
 					p.message = message
 				} else {
+					if deletion != sessionPickerDelete {
+						clear(p.marked)
+					}
 					p.refreshAt(options, "", row)
 				}
 			}
@@ -188,11 +192,11 @@ func runSessionPicker(in io.Reader, out io.Writer, entries []session.Entry, opti
 				entry := p.entries[p.matches[p.selected]]
 				if options.rename == nil {
 					p.message = "Session editing is unavailable"
-				} else if err := options.rename(entry.ID, strings.TrimSpace(string(p.edit))); err != nil {
+				} else if err := options.rename(sessionEntryKey(entry), strings.TrimSpace(string(p.edit))); err != nil {
 					p.message = "Cannot rename: " + err.Error()
 				} else {
 					p.mode = sessionPickerList
-					p.refresh(options, entry.ID)
+					p.refresh(options, sessionEntryKey(entry))
 				}
 			} else {
 				p.editKey(key)
@@ -214,18 +218,32 @@ func runSessionPicker(in io.Reader, out io.Writer, entries []session.Entry, opti
 					p.mode, p.confirmation = sessionPickerDelete, 0
 				} else if options.setPinned == nil {
 					p.message = "Session editing is unavailable"
-				} else if err := options.setPinned(entry.ID, !entry.Pinned); err != nil {
+				} else if err := options.setPinned(sessionEntryKey(entry), !entry.Pinned); err != nil {
 					p.message = "Cannot change pin: " + err.Error()
 				} else {
 					p.mode = sessionPickerList
-					p.refresh(options, entry.ID)
+					p.refresh(options, sessionEntryKey(entry))
 				}
 			}
 		case sessionPickerList:
 			switch key {
 			case "\x04": // Ctrl+D opens bulk deletion without changing the filter.
-				if len(p.entries) > 0 {
+				if len(p.entries) > 0 && options.deleteAllSessions != nil {
 					p.mode, p.confirmation, p.message = sessionPickerDeleteAll, 0, ""
+				}
+			case "\x18": // Ctrl+X marks a session while keeping Space available for search.
+				if options.deleteSelected != nil && len(p.matches) > 0 {
+					id := sessionEntryKey(p.entries[p.matches[p.selected]])
+					if p.marked[id] {
+						delete(p.marked, id)
+					} else {
+						p.marked[id] = true
+					}
+					p.message = ""
+				}
+			case "\x1b[3~":
+				if len(p.marked) > 0 {
+					p.mode, p.confirmation, p.message = sessionPickerDeleteSelected, 0, ""
 				}
 			case "\t":
 				if len(p.matches) > 0 {
@@ -234,13 +252,14 @@ func runSessionPicker(in io.Reader, out io.Writer, entries []session.Entry, opti
 			case "\r", "\n":
 				if len(p.matches) > 0 {
 					entry := p.entries[p.matches[p.selected]]
+					id := sessionEntryKey(entry)
 					if options.accept != nil {
-						if err := options.accept(entry.ID); err != nil {
+						if err := options.accept(id); err != nil {
 							p.message = "Cannot resume: " + err.Error()
 							continue
 						}
 					}
-					return entry.ID, true, nil
+					return id, true, nil
 				}
 			case arrowUpSequence, arrowDownSequence, selectorPageUp, selectorPageDown:
 				if len(p.matches) > 0 {
@@ -275,6 +294,29 @@ func runSessionPicker(in io.Reader, out io.Writer, entries []session.Entry, opti
 	}
 }
 
+func (p *sessionPicker) confirmDeletion(options sessionPickerOptions) (string, bool, error) {
+	switch p.mode {
+	case sessionPickerDeleteAll:
+		closed, err := options.deleteAllSessions()
+		return "", closed, err
+	case sessionPickerDeleteSelected:
+		keys := make([]string, 0, len(p.marked))
+		for _, entry := range p.entries {
+			key := sessionEntryKey(entry)
+			if p.marked[key] {
+				keys = append(keys, key)
+			}
+		}
+		return "", false, options.deleteSelected(keys)
+	}
+	id := sessionEntryKey(p.entries[p.matches[p.selected]])
+	if options.deleteSession == nil {
+		return id, false, fmt.Errorf("session deletion is unavailable")
+	}
+	closed, err := options.deleteSession(id)
+	return id, closed, err
+}
+
 func (p *sessionPicker) refresh(options sessionPickerOptions, selectedID string) {
 	p.refreshAt(options, selectedID, 0)
 }
@@ -294,8 +336,17 @@ func (p *sessionPicker) refreshAt(options sessionPickerOptions, selectedID strin
 	p.entries = entries
 	p.matches = matchingSessionIndices(entries, p.query)
 	p.selected = max(0, min(fallback, len(p.matches)-1))
+	if len(p.marked) > 0 {
+		remaining := make(map[string]bool, len(p.marked))
+		for _, entry := range entries {
+			if id := sessionEntryKey(entry); p.marked[id] {
+				remaining[id] = true
+			}
+		}
+		p.marked = remaining
+	}
 	for i, index := range p.matches {
-		if entries[index].ID == selectedID {
+		if sessionEntryKey(entries[index]) == selectedID {
 			p.selected = i
 			break
 		}
@@ -354,15 +405,20 @@ func (p *sessionPicker) editKey(key string) {
 
 func (p *sessionPicker) render(options sessionPickerOptions, width, height int) ([]string, int) {
 	lines := make([]string, height)
+	global := options.deleteSelected != nil
 	legend := interfaceGlyph(options.unicode, "● current | ◆ pinned", "* current | ^ pinned")
 	lines[0] = fmt.Sprintf("Resume (%d/%d) | %s | Filter: %s", len(p.matches), len(p.entries), legend, options.policy.Text(redaction.Terminal, p.query))
 	footer := sessionPickerListHint(width)
+	if global {
+		lines[0] = fmt.Sprintf("Sessions (%d/%d) | %d marked | Filter: %s", len(p.matches), len(p.entries), len(p.marked), options.policy.Text(redaction.Terminal, p.query))
+		footer = "Tab actions | Ctrl+X mark | Del delete marked | Ctrl+D delete all"
+	}
 	message := p.message
 	var entry session.Entry
 	if len(p.matches) > 0 {
 		entry = p.entries[p.matches[p.selected]]
 		entry.Name = options.policy.Text(redaction.Terminal, stripSessionEscapes(entry.Name))
-		if message == "" {
+		if message == "" && (!global || p.mode == sessionPickerList) {
 			message = entry.MetadataProblem
 			if entry.Problem != "" {
 				message = entry.Problem
@@ -375,6 +431,8 @@ func (p *sessionPicker) render(options sessionPickerOptions, width, height int) 
 			lines[0] = "> " + sessionActions(entry)[p.action]
 		} else if p.mode == sessionPickerDeleteAll {
 			lines[0] = "> " + []string{"Cancel", "Delete all"}[p.confirmation] + fmt.Sprintf(" | Delete all %d saved sessions?", len(p.entries))
+		} else if p.mode == sessionPickerDeleteSelected {
+			lines[0] = "> " + []string{"Cancel", "Delete marked"}[p.confirmation] + fmt.Sprintf(" | Delete %d marked sessions?", len(p.marked))
 		} else if p.mode == sessionPickerDelete {
 			lines[0] = "> " + []string{"Cancel", "Delete"}[p.confirmation] + " | Delete " + sessionConfirmationName(entry) + "?"
 		}
@@ -387,6 +445,11 @@ func (p *sessionPicker) render(options sessionPickerOptions, width, height int) 
 	if height >= 3 {
 		footerRows = 1
 	}
+	showManagerNavigation := global && p.mode == sessionPickerList && height >= 5
+	if showManagerNavigation {
+		footerRows++
+		lines[height-2] = "Type to filter | Enter resume | Esc quit"
+	}
 	if message != "" && height >= 3 {
 		errorRows = 1
 		if height == 3 {
@@ -397,33 +460,55 @@ func (p *sessionPicker) render(options sessionPickerOptions, width, height int) 
 	available := height - 1 - footerRows - errorRows
 	visible := min(max(1, options.visible), maxSessionListRows, max(1, len(p.matches)), available)
 	if p.mode == sessionPickerList {
+		showWorkspace := global && len(p.matches) > 0 && available > 1
+		if showWorkspace {
+			visible = min(visible, available-1)
+		}
 		start := selectorStart(p.selected, len(p.matches), visible, 0)
 		for row := 0; row < visible; row++ {
 			index := start + row
 			if index < len(p.matches) {
 				listed := p.entries[p.matches[index]]
 				listed.Name = options.policy.Text(redaction.Terminal, stripSessionEscapes(listed.Name))
-				lines[1+row] = renderSessionLineWithUnicode(listed, index == p.selected, width, options.color, options.unicode)
+				if global {
+					mark := "[ ] "
+					if p.marked[sessionEntryKey(listed)] {
+						mark = "[x] "
+					}
+					folder := sessionWorkspaceLabel(options.policy, listed)
+					if listed.Workspace != "" {
+						folder = filepath.Base(folder)
+					}
+					prefix := mark + truncateDiffLine(folder, max(5, width/4), options.unicode) + " | "
+					lines[1+row] = prefix + renderSessionLineWithUnicode(listed, index == p.selected, max(1, width-visibleWidth(prefix)), options.color, options.unicode)
+				} else {
+					lines[1+row] = renderSessionLineWithUnicode(listed, index == p.selected, width, options.color, options.unicode)
+				}
 			} else if row == 0 {
 				lines[1] = "  No matching sessions"
 			}
 		}
 		// Reserve the heading and its gap, then a bottom rule and a blank row
 		// separating the preview from errors and keyboard hints.
-		previewRows := max(0, available-visible-4)
+		bodyRows := visible
+		if showWorkspace {
+			bodyRows++
+			lines[bodyRows] = "Workspace: " + sessionWorkspaceLabel(options.policy, entry)
+		}
+		previewRows := max(0, available-bodyRows-4)
 		if previewRows > 0 && len(p.matches) > 0 {
-			lines[2+visible] = sessionPreviewRule("Preview", width, options.color, options.unicode)
+			lines[2+bodyRows] = sessionPreviewRule("Preview", width, options.color, options.unicode)
 			preview := sessionPreview(entry.Snapshot, options.policy, width, options.unicode, options.color)
 			preview = preview[max(0, len(preview)-previewRows):]
-			previewEnd := 3 + visible + previewRows
-			copy(lines[3+visible:previewEnd], preview)
+			previewEnd := 3 + bodyRows + previewRows
+			copy(lines[3+bodyRows:previewEnd], preview)
 			lines[previewEnd] = sessionPreviewRule("", width, options.color, options.unicode)
 		}
 	} else if p.mode == sessionPickerActions {
 		lines[0] = "Session actions | " + sessionName(entry)
 		renderSessionChoices(lines, 1, available, sessionActions(entry), p.action, options.color)
 		footer = "Up/Down | Enter apply | " + selectorLeaveHint
-	} else if p.mode == sessionPickerDelete || p.mode == sessionPickerDeleteAll {
+	} else if p.mode == sessionPickerDelete || p.mode == sessionPickerDeleteAll || p.mode == sessionPickerDeleteSelected {
 		lines[0] = "Delete session | " + sessionConfirmationName(entry)
 		warnings := []string{"Delete this saved snapshot, custom name, and pin?"}
 		choices := []string{"Cancel", "Delete"}
@@ -431,7 +516,11 @@ func (p *sessionPicker) render(options sessionPickerOptions, width, height int) 
 			warnings[0] = "All tabs, drafts, and conversation history will be cleared."
 		}
 		if p.mode == sessionPickerDeleteAll {
-			lines[0] = fmt.Sprintf("Delete all sessions | %d saved sessions in this workspace", len(p.entries))
+			scope := "in this workspace"
+			if global {
+				scope = "across all workspaces"
+			}
+			lines[0] = fmt.Sprintf("Delete all sessions | %d saved sessions %s", len(p.entries), scope)
 			warnings = []string{"Every saved snapshot, custom name, and pin will be deleted, including sessions hidden by the filter."}
 			choices[1] = "Delete all"
 			for _, listed := range p.entries {
@@ -440,6 +529,11 @@ func (p *sessionPicker) render(options sessionPickerOptions, width, height int) 
 					break
 				}
 			}
+		}
+		if p.mode == sessionPickerDeleteSelected {
+			lines[0] = fmt.Sprintf("Delete %d marked sessions?", len(p.marked))
+			warnings = []string{"Marked snapshots, custom names, and pins will be deleted, including marked sessions hidden by the filter."}
+			choices[1] = "Delete marked"
 		}
 		choiceRow := 1
 		for _, warning := range warnings {
@@ -452,7 +546,7 @@ func (p *sessionPicker) render(options sessionPickerOptions, width, height int) 
 		}
 		renderSessionChoices(lines, choiceRow, available-choiceRow+1, choices, p.confirmation, options.color)
 		footer = "Up/Down | Enter apply | Esc actions | Ctrl+C cancel"
-		if p.mode == sessionPickerDeleteAll {
+		if p.mode != sessionPickerDelete {
 			footer = "Up/Down | Enter apply | " + selectorLeaveHint
 		}
 	} else {
@@ -476,6 +570,13 @@ func (p *sessionPicker) render(options sessionPickerOptions, width, height int) 
 		lines[0] = "Error: " + singleSessionLine(options.policy.Text(redaction.Terminal, message))
 	}
 	return lines, max(1, visible)
+}
+
+func sessionWorkspaceLabel(policy *redaction.Policy, entry session.Entry) string {
+	if entry.Workspace == "" {
+		return "Unknown workspace " + entry.WorkspaceKey[:min(12, len(entry.WorkspaceKey))]
+	}
+	return singleSessionLine(policy.Text(redaction.Terminal, displayRoot(entry.Workspace)))
 }
 
 func sessionPickerListHint(width int) string {
@@ -548,6 +649,9 @@ func matchingSessionIndices(entries []session.Entry, query string) []int {
 	matches := make([]int, 0, len(entries))
 	for i, entry := range entries {
 		text := sessionEntryLabel(entry) + " " + singleSessionLine(entry.Preview)
+		if entry.WorkspaceKey != "" {
+			text += " " + entry.Workspace
+		}
 		if strings.Contains(strings.ToLower(text), query) {
 			matches = append(matches, i)
 		}
