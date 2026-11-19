@@ -5,7 +5,7 @@ import "strings"
 // Explicit caching is documented for these model generations. Keep unknown
 // aliases and earlier models on implicit caching instead of guessing support.
 func chatGPTSupportsCacheBreakpoints(model string) bool {
-	for _, family := range []string{"gpt-5.6", "gpt-6", "gpt-6.1"} {
+	for _, family := range []string{"gpt-5.6", "gpt-6", "gpt-6.1", "gpt-6.2"} {
 		if model == family || strings.HasPrefix(model, family+"-") {
 			return true
 		}
