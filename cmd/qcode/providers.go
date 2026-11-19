@@ -270,6 +270,19 @@ func (b *providerBuilder) ensureThinking(ctx context.Context, name string, endpo
 	}
 }
 
+// prepareWithThinking prepares a provider and refreshes missing capability
+// metadata when an explicit level needs validation. ChatGPT's account-specific
+// catalog is attached to each provider instance rather than persisted with a
+// session, so restored providers must rediscover it before restoring settings.
+func (b *providerBuilder) prepareWithThinking(ctx context.Context, name string, endpoint *string, model, thinking string) (preparedProvider, error) {
+	prepared, err := b.prepare(ctx, name, endpoint)
+	if err != nil {
+		return prepared, err
+	}
+	b.ensureThinking(ctx, name, endpoint, &prepared, model, thinking)
+	return prepared, nil
+}
+
 // An override was requested even if its value was empty. Never replace an
 // explicit --api-key= or --base-url= with a profile value.
 func applyProviderConnection(opts *options, cfg config.Config, flags map[string]bool) {

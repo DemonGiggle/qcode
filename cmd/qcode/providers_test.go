@@ -552,3 +552,47 @@ func TestCLISelectsAndListsNamedInstance(t *testing.T) {
 		}
 	}
 }
+
+func TestPrepareWithThinkingLoadsLiveChatGPTMetadataForRestore(t *testing.T) {
+	oauthPath := filepath.Join(t.TempDir(), "oauth.json")
+	if err := chatgptoauth.Save(oauthPath, chatgptoauth.Tokens{
+		AccessToken: "access-test-token", RefreshToken: "refresh-test-token",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(), ClientID: "oaiapp_test123",
+		ExtAgentHostID: "urn:uuid:host-test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/models" {
+			t.Errorf("unexpected discovery request: %s %s", r.Method, r.URL.Path)
+		}
+		io.WriteString(w, `{"models":[{"slug":"future-chatgpt-model","supported_reasoning_levels":[{"effort":"low"},{"effort":"ultra"}],"default_reasoning_level":"low"}]}`)
+	}))
+	defer server.Close()
+
+	kind := "chatgpt"
+	baseURL := server.URL
+	policy, _ := redaction.New(redaction.Config{}, nil)
+	builder := &providerBuilder{
+		config: config.Config{
+			ChatGPT: config.ChatGPT{OAuthPath: oauthPath},
+			Providers: map[string]config.ProviderProfile{
+				"chatgpt": {Type: &kind, BaseURL: &baseURL},
+			},
+		},
+		policy: policy,
+	}
+	prepared, err := builder.prepareWithThinking(context.Background(), "chatgpt", nil, "future-chatgpt-model", "ultra")
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability := prepared.Provider.(llm.ThinkingProvider).ThinkingCapability("future-chatgpt-model")
+	if !thinkingAllowed(capability, "ultra") {
+		t.Fatalf("restored capability = %+v", capability)
+	}
+	if requests != 1 {
+		t.Fatalf("metadata discovery requests = %d, want 1", requests)
+	}
+}

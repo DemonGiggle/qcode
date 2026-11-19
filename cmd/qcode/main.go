@@ -379,15 +379,10 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		opts.provider = provider.Name()
 		opts.model = demo.Model
 	} else {
-		prepared, prepareErr := providers.prepare(context.Background(), opts.provider, nil)
+		prepared, prepareErr := providers.prepareWithThinking(context.Background(), opts.provider, nil, opts.model, opts.thinking)
 		if prepareErr != nil {
 			return prepareErr
 		}
-		// New models may be missing from the cached/bundled thinking metadata.
-		// Automatically refresh once (the equivalent of --update-model-meta for
-		// Models.dev providers, or live discovery for chatgpt) before deciding
-		// the requested level is unsupported.
-		providers.ensureThinking(context.Background(), opts.provider, nil, &prepared, opts.model, opts.thinking)
 		provider = prepared.Provider
 		if prepared.MissingThinkingMeta && opts.thinking != "" {
 			fmt.Fprintln(diagnosticsOut, "WARNING: ignoring configured thinking level because no choices are available")
@@ -528,7 +523,11 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 					if backend.ResolveProfile {
 						endpoint = nil
 					}
-					prepared, providerErr := providers.prepare(creationCtx, backend.Provider, endpoint)
+					restoreThinking := ""
+					if state, ok := saved[id]; ok {
+						restoreThinking = state.Thinking
+					}
+					prepared, providerErr := providers.prepareWithThinking(creationCtx, backend.Provider, endpoint, model, restoreThinking)
 					if providerErr != nil {
 						return nil, providerErr
 					}
