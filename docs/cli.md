@@ -24,6 +24,26 @@ disabled when sandbox isolation is active. Configured skill autoloading
 TUI-only and has no one-shot, piped, `--json-events`, or remote-control
 surface; see [Memos](memo.md).
 
+## Saved sessions across workspaces
+
+Run `qcode sessions` in a terminal from any directory. The list shows the
+workspace for each saved session. Type to filter by workspace path, name, or
+preview. Pinned sessions appear first.
+
+| Key | Action |
+| --- | --- |
+| Up/Down, PgUp/PgDn | Move through the list. |
+| Enter | Resume the highlighted session in its original workspace. |
+| Tab | Open Rename, Pin/Unpin, and Delete for the highlighted session. |
+| Ctrl+X | Mark or unmark a session. Marks persist as you change the filter. |
+| Delete | Delete all marked sessions after confirmation. |
+| Ctrl+D | Delete every saved session after confirmation, including pinned sessions and sessions hidden by the filter. |
+| Ctrl+U | Clear the filter. |
+| Esc, Ctrl+C | Exit the session manager. |
+
+Sessions whose original workspace is missing can still be deleted. The
+in-app `/resume` picker continues to show sessions in the current workspace.
+
 ## Setup wizard
 
 Run `qcode setup` once instead of hand-editing `config.toml`. It is a

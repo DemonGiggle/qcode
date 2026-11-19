@@ -24,7 +24,7 @@ func testGateFiles(t *testing.T) (stdin, stdout, stderr *os.File) {
 func TestHandleStartupConfigIssuesEmptySilent(t *testing.T) {
 	stdin, stdout, stderr := testGateFiles(t)
 	var out strings.Builder
-	if err := handleStartupConfigIssues(&out, stdin, stdout, stderr, false, nil, nil); err != nil {
+	if err := handleStartupConfigIssues(&out, stdin, stdin, stdout, stderr, false, nil, nil); err != nil {
 		t.Fatalf("empty issues should not fail: %v", err)
 	}
 	if out.Len() != 0 {
@@ -38,7 +38,7 @@ func TestHandleStartupConfigIssuesWarningsNoPauseWhenNonTerminal(t *testing.T) {
 	issues := []config.Issue{
 		{Severity: config.SeverityWarning, File: "/a.toml", Key: "model", Message: "root model is deprecated", Fix: "Move it."},
 	}
-	if err := handleStartupConfigIssues(&out, stdin, stdout, stderr, false, issues, []string{"/a.toml"}); err != nil {
+	if err := handleStartupConfigIssues(&out, stdin, stdin, stdout, stderr, false, issues, []string{"/a.toml"}); err != nil {
 		t.Fatalf("warnings should not fail: %v", err)
 	}
 	got := out.String()
@@ -58,7 +58,7 @@ func TestHandleStartupConfigIssuesWarningsNoPauseWhenJSONEvents(t *testing.T) {
 	issues := []config.Issue{
 		{Severity: config.SeverityWarning, File: "/a.toml", Key: "model", Message: "root model is deprecated", Fix: "Move it."},
 	}
-	if err := handleStartupConfigIssues(&out, stdin, stdout, stderr, true, issues, []string{"/a.toml"}); err != nil {
+	if err := handleStartupConfigIssues(&out, stdin, stdin, stdout, stderr, true, issues, []string{"/a.toml"}); err != nil {
 		t.Fatalf("json-events warnings should not fail: %v", err)
 	}
 	if strings.Contains(out.String(), "Press Enter") {
@@ -72,7 +72,7 @@ func TestHandleStartupConfigIssuesErrorsFail(t *testing.T) {
 	issues := []config.Issue{
 		{Severity: config.SeverityError, File: "/a.toml", Key: "providers.openai.api_key_path", Message: "missing file", Fix: "Create it."},
 	}
-	if err := handleStartupConfigIssues(&out, stdin, stdout, stderr, false, issues, []string{"/a.toml"}); err == nil {
+	if err := handleStartupConfigIssues(&out, stdin, stdin, stdout, stderr, false, issues, []string{"/a.toml"}); err == nil {
 		t.Fatal("errors should fail startup")
 	}
 	got := out.String()

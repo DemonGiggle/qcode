@@ -289,6 +289,7 @@ type UI struct {
 	statusBarText        string
 	startupNotice        string
 	startupChoice        bool
+	startupSessionID     string
 	skills               []prompt.SkillSummary
 	skillLocations       []string
 	skillCatalogLoader   skillCatalogLoader
@@ -397,7 +398,10 @@ func (u *UI) ensureSkillCatalog() bool {
 }
 
 func New(in, out *os.File, runner Runner, provider, model, root string) *UI {
-	input := newInterruptReader(in)
+	return newUI(in, out, newInterruptReader(in), runner, provider, model, root)
+}
+
+func newUI(in, out *os.File, input *interruptReader, runner Runner, provider, model, root string) *UI {
 	rw := readWriter{Reader: input, Writer: out}
 	t := lineedit.NewTerminal(rw, inputPrompt)
 	width, height := terminalSize(out)
@@ -816,6 +820,15 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		if !continued {
 			return nil
+		}
+	}
+	if id := u.startupSessionID; id != "" {
+		if err := u.restoreSession(id); err != nil {
+			return fmt.Errorf("cannot resume saved session: %w", err)
+		}
+		u.activateRestoredTab()
+		if _, err := u.persistence.store.LoadMetadata(id); err != nil {
+			u.printSystemMessage("Session metadata: " + err.Error())
 		}
 	}
 	stopDemoScript := u.startDemoPromptScript(ctx)

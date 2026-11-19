@@ -96,6 +96,11 @@ func (s *Store) SetPinned(id string, pinned bool) error {
 }
 
 func (s *Store) writeMetadata(id, field string, value any) error {
+	lock, err := s.lockSnapshots()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	if _, err := s.Load(id); err != nil {
 		return err
 	}

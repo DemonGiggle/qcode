@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -20,20 +19,20 @@ import (
 //   - warnings only: print the same report + tip, then wait for Enter when
 //     running in an interactive terminal so the user notices. Non-terminal,
 //     piped, or --json-events runs only print and continue.
-func enforceStartupConfigCheck(out io.Writer, stdin, stdout, stderr *os.File, jsonEvents bool, launchProvider, launchAPIKey string) error {
+func enforceStartupConfigCheck(out io.Writer, input io.Reader, stdin, stdout, stderr *os.File, jsonEvents bool, launchProvider, launchAPIKey string) error {
 	issues, inspected, err := config.CheckDefault()
 	if err != nil {
 		fmt.Fprintln(out, "WARNING: cannot validate config:", err)
 		return nil
 	}
 	filtered := filterConfigIssuesForStartup(issues, launchProvider, launchAPIKey)
-	return handleStartupConfigIssues(out, stdin, stdout, stderr, jsonEvents, filtered, inspected)
+	return handleStartupConfigIssues(out, input, stdin, stdout, stderr, jsonEvents, filtered, inspected)
 }
 
 // handleStartupConfigIssues prints the check report and enforces the
 // error/warning gate. It is split out from enforceStartupConfigCheck so tests
 // can inject issues without touching the real filesystem.
-func handleStartupConfigIssues(out io.Writer, stdin, stdout, stderr *os.File, jsonEvents bool, issues []config.Issue, inspected []string) error {
+func handleStartupConfigIssues(out io.Writer, input io.Reader, stdin, stdout, stderr *os.File, jsonEvents bool, issues []config.Issue, inspected []string) error {
 	if len(issues) == 0 {
 		return nil
 	}
@@ -54,8 +53,14 @@ func handleStartupConfigIssues(out io.Writer, stdin, stdout, stderr *os.File, js
 		return nil
 	}
 	fmt.Fprintln(out, "Press Enter to continue...")
-	_, _ = bufio.NewReader(stdin).ReadString('\n')
-	return nil
+	// Read through the session picker's input pump when it already owns stdin.
+	// Stop at Enter so subsequent keystrokes stay queued for the composer.
+	var key [1]byte
+	for {
+		if _, err := io.ReadFull(input, key[:]); err != nil || key[0] == '\n' || key[0] == '\r' {
+			return nil
+		}
+	}
 }
 
 // filterConfigIssuesForStartup drops api_key_path file errors for the launch
