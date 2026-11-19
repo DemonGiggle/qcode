@@ -514,6 +514,8 @@ and prompts are not supported. Server connection failures produce warnings and
 leave other tools available. Connections are shared by agents during a qcode
 run and closed at shutdown.
 
+For a runnable local server, see the [Go MCP greeter example](../examples/mcp-greeter/README.md).
+
 Use `qcode setup` → **MCP servers** to stage a local or remote server, then
 choose **Save and Leave** to write it to the user configuration. Local
 arguments and environment overrides are entered one at a time; environment
