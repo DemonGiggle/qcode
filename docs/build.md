@@ -15,13 +15,9 @@ your shell's `PATH`.
 
 ```sh
 make test
-cd tools/qcode-tester && go test ./...
 ```
 
-`make test` runs the root Go module's tests. The evaluator has a separate Go
-module; its tests do not launch a real provider. `make eval` builds qcode,
-runs those tests, and performs live evaluations using your current provider
-configuration. See [qcode-tester](../tools/qcode-tester/README.md).
+`make test` runs the root Go module's tests.
 
 `make manual` regenerates the user manual PDF and illustrative PNG screens;
 see the [manual build guide](manual/README.md) for Python dependencies and
