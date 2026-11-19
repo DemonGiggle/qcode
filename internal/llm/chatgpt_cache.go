@@ -1,16 +1,68 @@
 package llm
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
-// Explicit caching is documented for these model generations. Keep unknown
-// aliases and earlier models on implicit caching instead of guessing support.
+// Explicit caching follows the documented old/new generation split: GPT-5.6
+// and later use explicit breakpoints plus implicit lookup, earlier models
+// stay on implicit caching. Compare as a version so future minors/majors
+// (gpt-6.3, gpt-7, ...) automatically inherit the new-model rule instead of
+// needing another allowlist entry. Models that advertise the new generation
+// but reject cache fields (for example gpt-6.1-terra) are healed by the
+// once-only fallback in doCodex that retries without any prompt_cache_*
+// fields on a 400 cache-field rejection.
 func chatGPTSupportsCacheBreakpoints(model string) bool {
-	for _, family := range []string{"gpt-5.6", "gpt-6", "gpt-6.1", "gpt-6.2"} {
-		if model == family || strings.HasPrefix(model, family+"-") {
-			return true
+	major, minor, ok := parseGPTVersion(model)
+	if !ok {
+		return false
+	}
+	if major != 5 {
+		return major > 5
+	}
+	return minor >= 6
+}
+
+// parseGPTVersion extracts the (major, minor) generation from a model slug
+// such as "gpt-6.2-sol", "gpt-5.6-codex", or "gpt-6-astra". The variant suffix
+// after "-" is not part of the version. Missing minor means .0 (so "gpt-5"
+// is 5.0 and "gpt-6" is 6.0). Anything that is not a gpt-<digits>[.<digits>]
+// slug reports ok=false so unknown aliases stay on the conservative path.
+func parseGPTVersion(model string) (major, minor int, ok bool) {
+	s := strings.ToLower(strings.TrimSpace(model))
+	if !strings.HasPrefix(s, "gpt-") {
+		return 0, 0, false
+	}
+	rest := s[len("gpt-"):]
+	i := 0
+	for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+		i++
+	}
+	if i == 0 {
+		return 0, 0, false
+	}
+	major, err := strconv.Atoi(rest[:i])
+	if err != nil {
+		return 0, 0, false
+	}
+	rest = rest[i:]
+	minor = 0
+	if strings.HasPrefix(rest, ".") {
+		rest = rest[1:]
+		j := 0
+		for j < len(rest) && rest[j] >= '0' && rest[j] <= '9' {
+			j++
+		}
+		if j == 0 {
+			return 0, 0, false
+		}
+		minor, err = strconv.Atoi(rest[:j])
+		if err != nil {
+			return 0, 0, false
 		}
 	}
-	return false
+	return major, minor, true
 }
 
 // chatGPTCacheInput decorates freshly allocated wire items only. Never modify

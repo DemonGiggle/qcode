@@ -787,8 +787,8 @@ On the official SIWC endpoint only, ChatGPT now sends the existing session-stabl
 provider/model/purpose-namespaced `prompt_cache_key` when present. Session resume,
 reset, compaction and learning retain their existing identity lifecycle.
 
-For the documented GPT-5.6, GPT-6, GPT-6.1, and GPT-6.2 families (including hyphenated
-variants/snapshots), ChatGPT also:
+For GPT-5.6 and later (version-compared, so future GPT-6.x/7.x slugs
+automatically inherit the new-model rule), ChatGPT also:
 
 - Sends durable instructions as a leading developer input message, with an
   explicit breakpoint on its final content block. Top-level `instructions`
