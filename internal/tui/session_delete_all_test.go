@@ -238,7 +238,7 @@ func TestSessionPickerDeleteAllHotkeyCancellationKeepsFilterAndSelection(t *test
 
 func TestSessionPickerDeleteAllHotkeyHintAndScope(t *testing.T) {
 	s, entries, options := sessionPickerFixture(t)
-	p := sessionPicker{entries: entries, matches: matchingSessionIndices(entries, "")}
+	p := sessionPicker{entries: entries, matches: options.matchingIndices(entries, "")}
 	for _, width := range []int{80, 120} {
 		lines, _ := p.render(options, width, 18)
 		for _, hint := range []string{"Ctrl+D delete all", "Tab actions", "Esc back", "Ctrl+C cancel"} {

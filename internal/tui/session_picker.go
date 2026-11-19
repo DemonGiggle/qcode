@@ -15,13 +15,23 @@ import (
 )
 
 const (
-	maxSessionListRows   = 8
-	currentSessionMarker = "<<CURRENT>>"
+	maxSessionListRows        = 8
+	sessionManagerFolderWidth = 24
+	currentSessionMarker      = "<<CURRENT>>"
 )
+
+func (o sessionPickerOptions) global() bool { return o.manager || o.deleteSelected != nil }
+
+func (o sessionPickerOptions) folderWidth(width int) int {
+	folder := min(sessionManagerFolderWidth, max(5, width/4))
+	// Keep at least one cell for the session label after "[ ] " + folder + " | ".
+	return min(folder, max(1, width-8))
+}
 
 type sessionPickerOptions struct {
 	visible, width, height int
 	color, unicode         bool
+	manager                bool
 	policy                 *redaction.Policy
 	size                   func() (int, int)
 	refresh                func() ([]session.Entry, error)
@@ -112,7 +122,7 @@ func (u *UI) pickSession(entries []session.Entry, accept func(string) error) (st
 
 func runSessionPicker(in io.Reader, out io.Writer, entries []session.Entry, options sessionPickerOptions) (string, bool, error) {
 	entries = terminalSessionEntries(entries, options.policy)
-	p := sessionPicker{entries: entries, matches: matchingSessionIndices(entries, ""), marked: make(map[string]bool)}
+	p := sessionPicker{entries: entries, matches: options.matchingIndices(entries, ""), marked: make(map[string]bool)}
 	height, width := options.height, options.width
 	defer func() {
 		if options.size != nil {
@@ -287,7 +297,7 @@ func runSessionPicker(in io.Reader, out io.Writer, entries []session.Entry, opti
 				}
 				if query != p.query {
 					p.query, p.selected, p.message = query, 0, ""
-					p.matches = matchingSessionIndices(p.entries, query)
+					p.matches = options.matchingIndices(p.entries, query)
 				}
 			}
 		}
@@ -334,7 +344,7 @@ func (p *sessionPicker) refreshAt(options sessionPickerOptions, selectedID strin
 	}
 	entries = terminalSessionEntries(entries, options.policy)
 	p.entries = entries
-	p.matches = matchingSessionIndices(entries, p.query)
+	p.matches = options.matchingIndices(entries, p.query)
 	p.selected = max(0, min(fallback, len(p.matches)-1))
 	if len(p.marked) > 0 {
 		remaining := make(map[string]bool, len(p.marked))
@@ -405,7 +415,7 @@ func (p *sessionPicker) editKey(key string) {
 
 func (p *sessionPicker) render(options sessionPickerOptions, width, height int) ([]string, int) {
 	lines := make([]string, height)
-	global := options.deleteSelected != nil
+	global := options.global()
 	legend := interfaceGlyph(options.unicode, "● current | ◆ pinned", "* current | ^ pinned")
 	lines[0] = fmt.Sprintf("Resume (%d/%d) | %s | Filter: %s", len(p.matches), len(p.entries), legend, options.policy.Text(redaction.Terminal, p.query))
 	footer := sessionPickerListHint(width)
@@ -425,6 +435,13 @@ func (p *sessionPicker) render(options sessionPickerOptions, width, height int) 
 			}
 		}
 	}
+	errorLine := ""
+	if message != "" {
+		errorLine = "Error: " + singleSessionLine(options.policy.Text(redaction.Terminal, message))
+		if global && options.color {
+			errorLine = red + errorLine + reset
+		}
+	}
 	if height == 1 {
 		lines[0] = footer
 		if p.mode == sessionPickerActions {
@@ -436,8 +453,8 @@ func (p *sessionPicker) render(options sessionPickerOptions, width, height int) 
 		} else if p.mode == sessionPickerDelete {
 			lines[0] = "> " + []string{"Cancel", "Delete"}[p.confirmation] + " | Delete " + sessionConfirmationName(entry) + "?"
 		}
-		if message != "" {
-			lines[0] = "Error: " + singleSessionLine(options.policy.Text(redaction.Terminal, message))
+		if errorLine != "" {
+			lines[0] = errorLine
 		}
 		return lines, 1
 	}
@@ -450,12 +467,12 @@ func (p *sessionPicker) render(options sessionPickerOptions, width, height int) 
 		footerRows++
 		lines[height-2] = "Type to filter | Enter resume | Esc quit"
 	}
-	if message != "" && height >= 3 {
+	if errorLine != "" && height >= 3 {
 		errorRows = 1
 		if height == 3 {
 			footerRows = 0
 		}
-		lines[height-1-footerRows] = "Error: " + singleSessionLine(options.policy.Text(redaction.Terminal, message))
+		lines[height-1-footerRows] = errorLine
 	}
 	available := height - 1 - footerRows - errorRows
 	visible := min(max(1, options.visible), maxSessionListRows, max(1, len(p.matches)), available)
@@ -465,11 +482,13 @@ func (p *sessionPicker) render(options sessionPickerOptions, width, height int) 
 			visible = min(visible, available-1)
 		}
 		start := selectorStart(p.selected, len(p.matches), visible, 0)
+		folderWidth := options.folderWidth(width)
 		for row := 0; row < visible; row++ {
 			index := start + row
 			if index < len(p.matches) {
 				listed := p.entries[p.matches[index]]
 				listed.Name = options.policy.Text(redaction.Terminal, stripSessionEscapes(listed.Name))
+				prefix := ""
 				if global {
 					mark := "[ ] "
 					if p.marked[sessionEntryKey(listed)] {
@@ -479,11 +498,10 @@ func (p *sessionPicker) render(options sessionPickerOptions, width, height int) 
 					if listed.Workspace != "" {
 						folder = filepath.Base(folder)
 					}
-					prefix := mark + truncateDiffLine(folder, max(5, width/4), options.unicode) + " | "
-					lines[1+row] = prefix + renderSessionLineWithUnicode(listed, index == p.selected, max(1, width-visibleWidth(prefix)), options.color, options.unicode)
-				} else {
-					lines[1+row] = renderSessionLineWithUnicode(listed, index == p.selected, width, options.color, options.unicode)
+					folder = truncateDiffLine(folder, folderWidth, options.unicode)
+					prefix = mark + folder + strings.Repeat(" ", folderWidth-visibleWidth(folder)) + " | "
 				}
+				lines[1+row] = prefix + options.renderEntry(listed, index == p.selected, max(1, width-visibleWidth(prefix)))
 			} else if row == 0 {
 				lines[1] = "  No matching sessions"
 			}
@@ -566,8 +584,8 @@ func (p *sessionPicker) render(options sessionPickerOptions, width, height int) 
 	if footerRows > 0 {
 		lines[height-1] = footer
 	}
-	if message != "" && height == 2 {
-		lines[0] = "Error: " + singleSessionLine(options.policy.Text(redaction.Terminal, message))
+	if errorLine != "" && height == 2 {
+		lines[0] = errorLine
 	}
 	return lines, max(1, visible)
 }
@@ -644,11 +662,12 @@ func paintSessionRows(out io.Writer, lines []string, width int, unicodeEnabled b
 	_, _ = io.WriteString(out, output.String())
 }
 
-func matchingSessionIndices(entries []session.Entry, query string) []int {
+func (o sessionPickerOptions) matchingIndices(entries []session.Entry, query string) []int {
 	query = strings.ToLower(query)
 	matches := make([]int, 0, len(entries))
 	for i, entry := range entries {
-		text := sessionEntryLabel(entry) + " " + singleSessionLine(entry.Preview)
+		when := session.ResumeTime(entry.Snapshot).In(time.Local)
+		text := o.entryLabel(entry) + " " + when.Format("Jan 02 15:04") + " " + when.Format("2006/01/02") + " " + singleSessionLine(entry.Preview)
 		if entry.WorkspaceKey != "" {
 			text += " " + entry.Workspace
 		}
@@ -660,10 +679,14 @@ func matchingSessionIndices(entries []session.Entry, query string) []int {
 }
 
 func renderSessionLine(entry session.Entry, selected bool, width int, color bool) string {
-	return renderSessionLineWithUnicode(entry, selected, width, color, UnicodeEnabled())
+	return (sessionPickerOptions{color: color, unicode: UnicodeEnabled()}).renderEntry(entry, selected, width)
 }
 
 func renderSessionLineWithUnicode(entry session.Entry, selected bool, width int, color, unicodeEnabled bool) string {
+	return (sessionPickerOptions{color: color, unicode: unicodeEnabled}).renderEntry(entry, selected, width)
+}
+
+func (o sessionPickerOptions) renderEntry(entry session.Entry, selected bool, width int) string {
 	marker, current, pin := "  ", "", "  "
 	if selected {
 		marker = "> "
@@ -672,22 +695,33 @@ func renderSessionLineWithUnicode(entry session.Entry, selected bool, width int,
 		current = currentSessionMarker + " "
 	}
 	if entry.Pinned {
-		pin = interfaceGlyph(unicodeEnabled, "◆ ", "^ ")
+		pin = interfaceGlyph(o.unicode, "◆ ", "^ ")
 	}
-	line := truncateDiffLine(marker+current+pin+sessionEntryLabel(entry), width, unicodeEnabled)
-	if color {
+	line := truncateDiffLine(marker+current+pin+o.entryLabel(entry), width, o.unicode)
+	if o.color {
+		problem := entry.Problem != "" || entry.MetadataProblem != ""
+		if o.global() && problem {
+			if selected {
+				return red + bold + line + reset
+			}
+			return red + line + reset
+		}
 		if selected {
 			return cyan + bold + line + reset
 		}
-		if entry.Problem != "" || entry.MetadataProblem != "" {
+		if problem {
 			return yellow + line + reset
 		}
 	}
 	return line
 }
 
-func sessionEntryLabel(entry session.Entry) string {
-	when := session.ResumeTime(entry.Snapshot).In(time.Local).Format("Jan 02 15:04")
+func (o sessionPickerOptions) entryLabel(entry session.Entry) string {
+	layout := "Jan 02 15:04"
+	if o.global() {
+		layout = "2006/01/02"
+	}
+	when := session.ResumeTime(entry.Snapshot).In(time.Local).Format(layout)
 	agents := "1 agent"
 	if len(entry.Agents) != 1 {
 		agents = fmt.Sprintf("%d agents", len(entry.Agents))

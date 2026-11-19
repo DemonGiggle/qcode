@@ -29,12 +29,13 @@ func TestCurrentSessionLabel(t *testing.T) {
 	}, Current: true}
 	for _, unicodeEnabled := range []bool{false, true} {
 		for _, color := range []bool{false, true} {
-			line := renderSessionLineWithUnicode(entry, true, 80, color, unicodeEnabled)
+			options := sessionPickerOptions{color: color, unicode: unicodeEnabled}
+			line := options.renderEntry(entry, true, 80)
 			if strings.Count(line, "<<CURRENT>>") != 1 || strings.Contains(line, "Untitled session") {
 				t.Fatalf("current empty session label = %q", line)
 			}
 			entry.Preview = "Current conversation"
-			line = renderSessionLineWithUnicode(entry, true, 80, color, unicodeEnabled)
+			line = options.renderEntry(entry, true, 80)
 			if !strings.Contains(line, "<<CURRENT>>") || !strings.Contains(line, entry.Preview) {
 				t.Fatalf("current conversation label = %q", line)
 			}
@@ -382,7 +383,7 @@ func TestSessionPickerPreviewReservesHintSeparator(t *testing.T) {
 		presentation.Views[0].History.Archive = append(presentation.Views[0].History.Archive, fmt.Sprintf("%sline %02d%s", green, i, reset))
 	}
 	entries[0].Presentation, _ = json.Marshal(presentation)
-	p := sessionPicker{entries: entries, matches: matchingSessionIndices(entries, "")}
+	p := sessionPicker{entries: entries, matches: options.matchingIndices(entries, "")}
 	options.color = true
 	for _, test := range []struct{ height, wantLines int }{{20, 6}, {32, 18}, {60, 46}} {
 		lines, visible := p.render(options, 80, test.height)
@@ -543,7 +544,7 @@ func TestSessionPickerDeleteRetainsFilterAndSelectsAdjacentMatch(t *testing.T) {
 				t.Fatal(err)
 			}
 			entries, _ = s.List()
-			matches := matchingSessionIndices(entries, "match")
+			matches := options.matchingIndices(entries, "match")
 			adjacent := deleted + 1
 			if adjacent == len(matches) {
 				adjacent = deleted - 1

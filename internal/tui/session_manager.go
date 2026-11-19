@@ -65,7 +65,7 @@ func ManageSavedSessions(in, out *os.File, catalog *session.Catalog, policy *red
 	defer input.setRaw(false)
 	var selection *SavedSessionSelection
 	options := sessionPickerOptions{
-		visible: maxSessionListRows, color: ColorEnabled(out), unicode: UnicodeEnabled(),
+		visible: maxSessionListRows, color: ColorEnabled(out), unicode: UnicodeEnabled(), manager: true,
 		policy: policy, size: func() (int, int) { return terminalSize(out) }, refresh: refresh,
 		rename:    func(key, name string) error { return catalog.Rename(byKey[key], name) },
 		setPinned: func(key string, pinned bool) error { return catalog.SetPinned(byKey[key], pinned) },

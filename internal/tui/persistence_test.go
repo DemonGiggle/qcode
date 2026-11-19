@@ -668,10 +668,10 @@ func TestMatchingSessionIndicesFiltersUsefulSessionDetails(t *testing.T) {
 		{Snapshot: session.Snapshot{ID: "a1b2c3d4", Preview: "Review the deployment plan"}},
 		{Snapshot: session.Snapshot{ID: "e5f6g7h8", Preview: "Investigate a test failure"}},
 	}
-	if got := matchingSessionIndices(entries, "deployment"); !reflect.DeepEqual(got, []int{0}) {
+	if got := (sessionPickerOptions{}).matchingIndices(entries, "deployment"); !reflect.DeepEqual(got, []int{0}) {
 		t.Fatalf("preview matches = %v", got)
 	}
-	if got := matchingSessionIndices(entries, "g7h8"); len(got) != 0 {
+	if got := (sessionPickerOptions{}).matchingIndices(entries, "g7h8"); len(got) != 0 {
 		t.Fatalf("opaque ID matched = %v", got)
 	}
 }
@@ -684,7 +684,7 @@ func TestSessionSelectorLineUsesTimeAgentsAndPreviewWithoutID(t *testing.T) {
 		Preview: "Fix terminal input flicker",
 		Agents:  []session.SavedAgent{{}, {}},
 	}, Current: true}
-	line := renderSessionLine(entry, true, 120, false)
+	line := (sessionPickerOptions{}).renderEntry(entry, true, 120)
 	for _, want := range []string{"> ", "<<CURRENT>>", "Sep 09 14:32", "2 agents", "Fix terminal input flicker"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("session line missing %q: %q", want, line)
