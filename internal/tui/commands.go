@@ -139,7 +139,7 @@ var slashCommands = []slashCommand{
 	{
 		name: "/provider", usage: "/provider [name]", description: "Switch the active tab's provider (terminal only)",
 		arguments: []helpArgument{{name: "name", description: "Built-in provider or configured instance name (for example ollama-lab); omit to open the picker showing names and kinds. Restore the provider's last-used model when available, otherwise keep the model if supported. Main-tab changes save the default; workers stay local."}},
-		examples:  []string{"/provider", "/provider openai", "/provider ollama-lab"},
+		examples:  []string{"/provider", "/provider openai", "/provider ollama-cloud", "/provider ollama-lab"},
 	},
 	{
 		name: "/resume", usage: "/resume [session-id]", description: "Browse, rename, pin, delete, and continue saved sessions",

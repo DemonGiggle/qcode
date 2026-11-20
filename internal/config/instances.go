@@ -16,7 +16,7 @@ func (c Config) ProviderKind(name string) (string, error) {
 		return "", fmt.Errorf("invalid provider instance %q: use 1-64 lowercase letters, digits, hyphens or underscores; custom is reserved", name)
 	}
 	if !exists || profile.Type == nil || !validProvider(*profile.Type) {
-		return "", fmt.Errorf("providers.%s.type must name a built-in provider (ollama, openai, opencode-go, chatgpt or gemini)", name)
+		return "", fmt.Errorf("providers.%s.type must name a built-in provider (ollama, ollama-cloud, openai, opencode-go, chatgpt or gemini)", name)
 	}
 	return *profile.Type, nil
 }

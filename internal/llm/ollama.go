@@ -192,11 +192,9 @@ type ollamaMessage struct {
 // Pointer fields preserve presence: nil means unreported, a pointer to zero
 // is an explicitly reported zero. Per the documented Ollama contract,
 // prompt_eval_count maps to normalized InputTokens and eval_count maps to
-// normalized OutputTokens. This endpoint documents no prompt-cache
-// accounting, so no cache or reasoning breakdown is mapped here: those
-// fields stay unknown (nil, never zero) unless a separately documented
-// field is mapped by a later task. Cache behavior is never inferred from
-// timing, warm models, keep_alive, or prompt counts.
+// normalized OutputTokens. Local Ollama continues to report these totals
+// only. The Cloud adapter additionally recognizes an explicit cache-read
+// count; neither adapter infers cache usage from timings or token totals.
 type ollamaUsageWire struct {
 	PromptEvalCount *int `json:"prompt_eval_count"`
 	EvalCount       *int `json:"eval_count"`
@@ -219,6 +217,10 @@ func (w *ollamaUsageWire) mergeInto(acc *Usage) {
 }
 
 func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
+	return completeOllama(ctx, input, onText, p.baseURL, p.client, thinkingFields(p.ThinkingCapability(input.Model), input.Thinking), "")
+}
+
+func completeOllama(ctx context.Context, input Request, onText StreamCallback, baseURL string, client HTTPDoer, thinking map[string]any, cloudKey string) (Response, error) {
 	// Cache policy (#81): the Ollama route never emits prompt_cache_key or
 	// other cache fields, even when Request carries a key.
 	messages := make([]map[string]any, 0, len(input.Messages))
@@ -261,24 +263,30 @@ func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText Str
 	if len(tools) > 0 {
 		body["tools"] = tools
 	}
-	for field, value := range thinkingFields(p.ThinkingCapability(input.Model), input.Thinking) {
+	for field, value := range thinking {
 		body[field] = value
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return Response{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/api/chat", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/chat", bytes.NewReader(payload))
 	if err != nil {
 		return Response{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := p.client.Do(req)
+	if cloudKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cloudKey)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return Response{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if cloudKey != "" {
+			return Response{}, ollamaCloudHTTPError(resp)
+		}
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		return Response{}, fmt.Errorf("provider returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
 	}
@@ -308,6 +316,14 @@ func (p *ollamaProvider) Complete(ctx context.Context, input Request, onText Str
 		var wire ollamaUsageWire
 		if err := json.Unmarshal(line, &wire); err == nil {
 			wire.mergeInto(accumulated)
+		}
+		if cloudKey != "" {
+			var cache struct {
+				Read *int `json:"prompt_eval_cached_count"`
+			}
+			if json.Unmarshal(line, &cache) == nil && cache.Read != nil {
+				accumulated.CacheReadTokens = cache.Read
+			}
 		}
 		if event.Error != "" {
 			return Response{}, fmt.Errorf("ollama: %s", event.Error)

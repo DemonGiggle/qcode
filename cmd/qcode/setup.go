@@ -21,7 +21,7 @@ import (
 	"qcode/internal/tui"
 )
 
-var setupBuiltInProviders = []string{"ollama", "openai", "opencode-go", "gemini", "chatgpt"}
+var setupBuiltInProviders = []string{"ollama", llm.OllamaCloudKind, "openai", "opencode-go", "gemini", "chatgpt"}
 
 var defaultSandboxCandidatePaths = []string{
 	"~/.local/bin",
@@ -47,6 +47,7 @@ type setupUI interface {
 type setupProbeResult struct {
 	models      []string
 	thinkingCap func(string) llm.ThinkingCapability
+	metadata    llm.ModelMetadataProvider
 }
 
 type setupDeps struct {
@@ -240,6 +241,11 @@ func (s *setupState) effectiveModel(provider string) (string, string) {
 
 func (s *setupState) effectiveConnection(provider string) (baseURL, apiKey string) {
 	baseURL, apiKey = s.initial.ProviderConnection(provider)
+	if provider == llm.OllamaCloudKind {
+		if key := config.ProviderEnvironmentAPIKey(provider); key != "" {
+			apiKey = key
+		}
+	}
 	if d, ok := s.providers[provider]; ok {
 		if d.baseURL != nil {
 			baseURL = *d.baseURL
@@ -458,6 +464,9 @@ func runProviderSubmenu(ui setupUI, state *setupState, provider string, stdin io
 			credLabel = "Configure credentials & endpoint (configured)"
 		}
 		modelLabel := fmt.Sprintf("Verify connection & select model (%s)", modelSummary)
+		if provider == llm.OllamaCloudKind {
+			modelLabel = fmt.Sprintf("Fetch Cloud catalog & select model (%s)", modelSummary)
+		}
 
 		options := []string{activeLabel, credLabel, modelLabel, backMenuItem}
 		choice, nav, err := ui.SelectOptionNav(provider+" menu", options, nil, currentItem, false)
@@ -545,7 +554,7 @@ func configureProviderCredentials(ui setupUI, state *setupState, provider string
 		}
 		return tui.SetupAccepted, nil
 
-	default: // openai, opencode-go, gemini
+	default: // API-key providers
 		var stagedKey string
 		var stagedKeyPath *string
 
@@ -617,6 +626,12 @@ func configureProviderCredentials(ui setupUI, state *setupState, provider string
 			stagedBaseURL = &empty
 		}
 
+		if stagedBaseURL != nil && provider == llm.OllamaCloudKind {
+			if _, err := llm.OllamaCloudBaseURL(*stagedBaseURL); err != nil {
+				fmt.Fprintln(stderr, err)
+				return tui.SetupBack, nil
+			}
+		}
 		if stagedKey != "" {
 			registerSetupSecret(policy, stderr, stagedKey)
 			draft.apiKey = stagedKey
@@ -661,17 +676,23 @@ func promptNewAPIKey(ui setupUI, provider, userPath string, profile config.Provi
 func verifyAndSelectModel(ui setupUI, state *setupState, provider string, stdin io.Reader, stdout, stderr io.Writer, policy *redaction.Policy, deps setupDeps) (tui.SetupNavResult, error) {
 	var models []string
 	var thinkingCap func(string) llm.ThinkingCapability
+	var metadata llm.ModelMetadataProvider
 	manualModel := false
 
 	for {
 		overrideBase, overrideKey := state.effectiveConnection(provider)
-		fmt.Fprintf(stdout, "Verifying %s connection and fetching models...\n", provider)
+		if provider == llm.OllamaCloudKind {
+			fmt.Fprintln(stdout, "Fetching Ollama Cloud models (catalog access may not validate the API key)...")
+		} else {
+			fmt.Fprintf(stdout, "Verifying %s connection and fetching models...\n", provider)
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		res, probeErr := deps.probeModels(ctx, state.initial, provider, overrideBase, overrideKey, policy)
 		cancel()
 		if probeErr == nil {
 			models = res.models
 			thinkingCap = res.thinkingCap
+			metadata = res.metadata
 			break
 		}
 
@@ -747,6 +768,11 @@ func verifyAndSelectModel(ui setupUI, state *setupState, provider string, stdin 
 			chosenModel = m
 		}
 
+		if metadata != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			metadata.RefreshModelMetadata(ctx, chosenModel)
+			cancel()
+		}
 		if thinkingCap != nil {
 			cap := thinkingCap(chosenModel)
 			if cap.Adjustable && len(cap.Levels) > 0 {
@@ -754,7 +780,17 @@ func verifyAndSelectModel(ui setupUI, state *setupState, provider string, stdin 
 				if defaultThink == "" {
 					defaultThink = cap.Default
 				}
-				chosenThink, nav, err := ui.SelectThinkingNav(cap.Levels, defaultThink)
+				levels := cap.Levels
+				if provider == llm.OllamaCloudKind {
+					levels = append([]string{tui.ModelDefaultThinking}, levels...)
+					if !thinkingAllowed(cap, currentThinking) || currentThinking == "" {
+						defaultThink = tui.ModelDefaultThinking
+					}
+				}
+				chosenThink, nav, err := ui.SelectThinkingNav(levels, defaultThink)
+				if chosenThink == tui.ModelDefaultThinking {
+					chosenThink = ""
+				}
 				if err != nil {
 					return tui.SetupCancelled, err
 				}
@@ -769,6 +805,9 @@ func verifyAndSelectModel(ui setupUI, state *setupState, provider string, stdin 
 				draft.thinking = chosenThink
 				draft.thinkingChanged = true
 			}
+		}
+		if provider == llm.OllamaCloudKind && (thinkingCap == nil || !thinkingCap(chosenModel).Adjustable) {
+			draft.thinking, draft.thinkingChanged = "", true
 		}
 
 		draft.model = chosenModel
@@ -1015,6 +1054,9 @@ func isProviderConfigured(cfg config.Config, name string) bool {
 	if name == "ollama" {
 		return strings.TrimSpace(base) != "" || (profile.Model != nil && strings.TrimSpace(*profile.Model) != "")
 	}
+	if name == llm.OllamaCloudKind && config.ProviderEnvironmentAPIKey(name) != "" {
+		return true
+	}
 	return strings.TrimSpace(key) != "" || (profile.APIKeyPath != nil && strings.TrimSpace(*profile.APIKeyPath) != "")
 }
 
@@ -1027,6 +1069,9 @@ func defaultProbeProviderModels(ctx context.Context, cfg config.Config, provider
 			APIKey:  overrideAPIKey,
 		},
 		policy: policy,
+	}
+	if provider == llm.OllamaCloudKind && cfg.DangerSkipTLSVerify != nil {
+		builder.launch.InsecureSkipVerify = *cfg.DangerSkipTLSVerify
 	}
 	var endpoint *string
 	if overrideBaseURL != "" {
@@ -1047,7 +1092,9 @@ func defaultProbeProviderModels(ctx context.Context, cfg config.Config, provider
 	if tp, ok := prepared.Provider.(llm.ThinkingProvider); ok {
 		thinkingCap = tp.ThinkingCapability
 	}
+	metadata, _ := prepared.Provider.(llm.ModelMetadataProvider)
 	return setupProbeResult{
+		metadata:    metadata,
 		models:      models,
 		thinkingCap: thinkingCap,
 	}, nil

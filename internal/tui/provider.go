@@ -197,6 +197,9 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 		model, level := oldModel, oldThinking
 		if rememberedModel, rememberedThinking, ok := u.rememberedProviderModel(name); ok && containsOption(models, rememberedModel) {
 			model, level = rememberedModel, rememberedThinking
+			if _, cancelled := u.refreshModelMetadata(fetchCtx, candidate, model); cancelled {
+				return
+			}
 			if !providerThinkingAllowed(provider, model, level) {
 				level = ""
 			}
@@ -204,7 +207,7 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 			u.printSystemMessage(dim + "The current model is unavailable on " + u.providerLabel(name) + "; select a model before switching." + reset)
 			var accepted bool
 			var back bool
-			model, level, accepted, back, err = u.selectProviderModel(candidate)
+			model, level, accepted, back, err = u.selectProviderModel(fetchCtx, candidate)
 			if back && len(fields) == 1 {
 				cancel()
 				continue
@@ -216,8 +219,13 @@ func (u *UI) handleProviderCommand(ctx context.Context, fields []string) {
 			if !accepted {
 				return
 			}
-		} else if !providerThinkingAllowed(provider, model, level) {
-			level = ""
+		} else {
+			if _, cancelled := u.refreshModelMetadata(fetchCtx, candidate, model); cancelled {
+				return
+			}
+			if !providerThinkingAllowed(provider, model, level) {
+				level = ""
+			}
 		}
 		if validator, ok := provider.(llm.ModelValidator); ok {
 			if err := validator.ValidateModel(model); err != nil {
@@ -302,6 +310,10 @@ type providerModelRunner struct {
 
 func (r *providerModelRunner) ListModels(context.Context) ([]string, error) { return r.models, nil }
 func (*providerModelRunner) SetModel(string)                                {}
+func (r *providerModelRunner) ModelMetadata() llm.ModelMetadataProvider {
+	metadata, _ := r.provider.(llm.ModelMetadataProvider)
+	return metadata
+}
 func (r *providerModelRunner) ThinkingCapabilityFor(model string) llm.ThinkingCapability {
 	if p, ok := r.provider.(llm.ThinkingProvider); ok {
 		return p.ThinkingCapability(model)
@@ -314,7 +326,7 @@ func (r *providerModelRunner) ThinkingCapability() llm.ThinkingCapability {
 func (*providerModelRunner) SetThinking(string) error { return nil }
 func (*providerModelRunner) ThinkingLevel() string    { return "" }
 
-func (u *UI) selectProviderModel(runner *providerModelRunner) (string, string, bool, bool, error) {
+func (u *UI) selectProviderModel(ctx context.Context, runner *providerModelRunner) (string, string, bool, bool, error) {
 	visible, query := min(12, max(3, u.height-6)), ""
 	for {
 		u.input.setRaw(true)
@@ -326,7 +338,7 @@ func (u *UI) selectProviderModel(runner *providerModelRunner) (string, string, b
 		if err != nil || result != selectorAccepted {
 			return "", "", false, result == selectorBack, err
 		}
-		level, accepted, back, err := u.selectThinkingLevelWithBack(runner, model, visible)
+		level, accepted, back, err := u.selectThinkingLevelWithBack(ctx, runner, model, visible)
 		if back {
 			continue
 		}

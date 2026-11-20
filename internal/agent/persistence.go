@@ -210,7 +210,7 @@ func (a *Agent) RestoreFreshState(data json.RawMessage) error {
 		return err
 	}
 	// An empty level explicitly clears a factory's startup thinking preference.
-	if err := a.SetThinking(saved.Thinking); err != nil {
+	if err := a.setRestoredThinking(saved.Thinking); err != nil {
 		return err
 	}
 	a.ResetSession()
@@ -257,6 +257,16 @@ func restoreContextUsage(saved *llm.Usage, version int) *llm.Usage {
 		return nil
 	}
 	return llm.NormalizeUsage(saved)
+}
+
+func (a *Agent) setRestoredThinking(level string) error {
+	if err := a.SetThinking(level); err != nil {
+		if llm.Kind(a.provider) == llm.OllamaCloudKind {
+			return a.SetThinking("")
+		}
+		return err
+	}
+	return nil
 }
 
 func (a *Agent) RestoreState(data json.RawMessage) error {
@@ -308,11 +318,13 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 		}
 		a.messages = append(a.messages, m.Message)
 	}
-	a.endpoint = s.Endpoint
+	if llm.Kind(a.provider) != llm.OllamaCloudKind {
+		a.endpoint = s.Endpoint
+	}
 	a.lastResponse, _ = trust.UnwrapRestored("assistant", s.LastResponse)
 	a.messages[0].Content = a.system // Never import a system prompt from a saved file.
 	if s.Thinking != "" {
-		if err := a.SetThinking(s.Thinking); err != nil {
+		if err := a.setRestoredThinking(s.Thinking); err != nil {
 			return fmt.Errorf("incompatible thinking level: %w", err)
 		}
 	}

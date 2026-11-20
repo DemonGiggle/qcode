@@ -55,7 +55,7 @@ var builtinFields = []string{"api_key", "apikey", "password", "passwd", "secret"
 var defaultPolicy, _ = New(Config{}, nil)
 
 // CredentialEnvironment lists supported credential sources. Values are never logged.
-var CredentialEnvironment = []string{"QCODE_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY", "OPENCODE_GO_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "GOOGLE_API_KEY", "GEMINI_API_KEY", "BRAVE_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY"}
+var CredentialEnvironment = []string{"QCODE_API_KEY", "OLLAMA_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY", "OPENCODE_GO_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "GOOGLE_API_KEY", "GEMINI_API_KEY", "BRAVE_API_KEY", "TAVILY_API_KEY", "SERPER_API_KEY"}
 
 func EnvironmentValues() []string {
 	var values []string

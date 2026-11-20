@@ -940,7 +940,7 @@ func mergeRedaction(dst *redaction.Config, src redaction.Config) {
 
 func validProvider(name string) bool {
 	switch name {
-	case "ollama", "openai", "opencode-go", "chatgpt", "gemini":
+	case "ollama", "ollama-cloud", "openai", "opencode-go", "chatgpt", "gemini":
 		return true
 	}
 	return false
@@ -948,6 +948,8 @@ func validProvider(name string) bool {
 
 func ProviderEnvironmentAPIKey(name string) string {
 	switch name {
+	case "ollama-cloud":
+		return strings.TrimSpace(os.Getenv("OLLAMA_API_KEY"))
 	case "openai":
 		return os.Getenv("OPENAI_API_KEY")
 	case "gemini":

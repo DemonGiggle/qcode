@@ -304,6 +304,12 @@ func (a *Agent) ThinkingCapabilityFor(model string) llm.ThinkingCapability {
 	return thinkingCapability(a.backendSnapshot.Load().provider, model)
 }
 
+// ModelMetadata exposes optional discovery without changing the live model.
+func (a *Agent) ModelMetadata() llm.ModelMetadataProvider {
+	metadata, _ := a.backendSnapshot.Load().provider.(llm.ModelMetadataProvider)
+	return metadata
+}
+
 func thinkingCapability(p llm.Provider, model string) llm.ThinkingCapability {
 	if provider, ok := p.(llm.ThinkingProvider); ok {
 		return provider.ThinkingCapability(model)

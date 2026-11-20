@@ -13,6 +13,8 @@ func providerDisplayName(provider string) string {
 	switch strings.ToLower(provider) {
 	case "ollama":
 		return "Ollama"
+	case "ollama-cloud":
+		return "Ollama Cloud"
 	case "openai":
 		return "OpenAI"
 	case "opencode-go":

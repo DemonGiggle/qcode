@@ -1344,7 +1344,7 @@ func (u *UI) chooseModel(ctx context.Context) {
 			return
 		}
 		var selectedThinking, back bool
-		level, selectedThinking, back, err = u.selectThinkingLevelWithBack(runner, selected, visible)
+		level, selectedThinking, back, err = u.selectThinkingLevelWithBack(ctx, runner, selected, visible)
 		if err != nil {
 			u.printSystemMessage(yellow + "Unable to select thinking level: " + err.Error() + reset)
 			return
@@ -1446,6 +1446,9 @@ func (u *UI) setModelCommand(ctx context.Context, fields []string) {
 			u.printSystemMessage(yellow + "Thinking configuration is unavailable." + reset)
 			return
 		}
+		if _, cancelled := u.refreshModelMetadata(fetchCtx, runner, fields[1]); cancelled {
+			return
+		}
 		capability := thinking.ThinkingCapabilityFor(fields[1])
 		for _, candidate := range capability.Levels {
 			if candidate == fields[2] {
@@ -1495,14 +1498,44 @@ func (u *UI) setModelCommand(ctx context.Context, fields []string) {
 	}
 }
 
+const ModelDefaultThinking = "Model default"
+
+// refreshModelMetadata reports whether the runner supports selected-model
+// lookup and whether the user cancelled it. Optional lookup failures do not
+// prevent model selection.
+func (u *UI) refreshModelMetadata(ctx context.Context, runner any, model string) (bool, bool) {
+	lookup, ok := runner.(interface {
+		ModelMetadata() llm.ModelMetadataProvider
+	})
+	if !ok {
+		return false, false
+	}
+	metadata := lookup.ModelMetadata()
+	if metadata == nil {
+		return false, false
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if u.input != nil {
+		previous := u.input.swapCancel(cancel)
+		defer u.input.setCancel(previous)
+	}
+	metadata.RefreshModelMetadata(ctx, model)
+	return true, ctx.Err() != nil
+}
+
 // selectThinkingLevelWithBack is a second, model-aware selector. It never
 // presents a selector for unknown or fixed models, and an empty result means
 // the model default (no optional request field) rather than an invented effort
 // level.
-func (u *UI) selectThinkingLevelWithBack(runner modelRunner, model string, visible int) (string, bool, bool, error) {
+func (u *UI) selectThinkingLevelWithBack(ctx context.Context, runner modelRunner, model string, visible int) (string, bool, bool, error) {
 	thinking, ok := runner.(thinkingRunner)
 	if !ok {
 		return "", true, false, nil
+	}
+	withDefault, cancelled := u.refreshModelMetadata(ctx, runner, model)
+	if cancelled {
+		return "", false, false, nil
 	}
 	capability := thinking.ThinkingCapabilityFor(model)
 	if !capability.Adjustable || len(capability.Levels) == 0 {
@@ -1514,7 +1547,17 @@ func (u *UI) selectThinkingLevelWithBack(runner modelRunner, model string, visib
 	}
 	u.input.setRaw(true)
 	u.beginRawSelector()
-	selected, accepted, back, err := selectThinkingWithBack(u.input, u.themedSelectorWriter(), capability.Levels, current, visible, u.width, ColorEnabled(u.out))
+	levels := capability.Levels
+	if withDefault {
+		levels = append([]string{ModelDefaultThinking}, levels...)
+		if current == "" {
+			current = ModelDefaultThinking
+		}
+	}
+	selected, accepted, back, err := selectThinkingWithBack(u.input, u.themedSelectorWriter(), levels, current, visible, u.width, ColorEnabled(u.out))
+	if selected == ModelDefaultThinking {
+		selected = ""
+	}
 	u.input.setRaw(false)
 	u.endRawSelector()
 	if err != nil || !accepted {

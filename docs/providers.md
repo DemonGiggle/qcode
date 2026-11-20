@@ -1,6 +1,6 @@
 # Providers and modes
 
-qcode talks to Ollama, OpenAI-compatible APIs (including Google's Gemini API), OpenCode Go, and ChatGPT subscriptions. Provider-specific wire formats stay isolated behind the small `llm.Provider` interface; see [Extending providers](extending-providers.md) to add one.
+qcode talks to local Ollama, Ollama Cloud, OpenAI-compatible APIs (including Google's Gemini API), OpenCode Go, and ChatGPT subscriptions. Provider-specific wire formats stay isolated behind the small `llm.Provider` interface; see [Extending providers](extending-providers.md) to add one.
 
 Easiest onboarding is `qcode setup`: it picks the active provider, stores API
 keys in `0600` key files, verifies the connection, and lets you select a model.
@@ -17,6 +17,7 @@ In the normal terminal UI:
 ```text
 /provider
 /provider openai
+/provider ollama-cloud
 /provider gemini
 /provider opencode-go
 /provider chatgpt
@@ -52,7 +53,9 @@ capacity override. Because reasoning/tool history can be backend-specific, qcode
 warns that the next request may fail; run `/new` if a fresh conversation is needed.
 
 Configure separate endpoints/keys with [connection profiles](configuration.md#provider-connection-profiles).
-Official OpenAI, Gemini, and OpenCode Go endpoints require API credentials; custom endpoints can remain unauthenticated. For ChatGPT, sign in through `qcode setup`.
+Official OpenAI, Gemini, and OpenCode Go endpoints require API credentials;
+their custom endpoints can remain unauthenticated. Ollama Cloud requires a
+key even with a custom HTTPS proxy. For ChatGPT, sign in through `qcode setup`.
 Missing credentials produce setup guidance rather than changing the live tab.
 On main, provider/model/thinking save to the user config. Worker selections are
 session-local. New tabs inherit their creator's provider, and `/resume` restores
@@ -95,6 +98,49 @@ back to the native maximum from `/api/show` (`model_info.*.context_length`)
 and then `/api/tags` (`details.context_length`) when the model is not loaded,
 so `CTX` keeps a capacity instead of going unknown before the first
 completion. See [Context usage](context.md#window-limits).
+
+## Ollama Cloud
+
+`ollama-cloud` connects directly to `https://ollama.com/api`. Prompts and any
+included tool results or images are sent to the hosted service. No local Ollama
+installation or daemon is required.
+
+Create an [Ollama API key](https://ollama.com/settings/keys), then run
+`qcode setup`. Under **Providers & Models → ollama-cloud**, configure the key
+and pick **Fetch Cloud catalog & select model**. You can make it the startup
+default or switch an idle tab with `/provider ollama-cloud`. The catalog check
+does not perform inference or an account check, so a rejected key may only be
+reported on the first prompt.
+
+For a one-shot launch, set `OLLAMA_API_KEY` in your environment and pass a model:
+
+```sh
+qcode --provider ollama-cloud --model gemma4:31b prompt "Reply with OK"
+```
+
+Use the exact model ID from the [Cloud catalog](https://ollama.com/api/tags),
+not a local `:cloud` alias. Direct launch requires `--model`, `QCODE_MODEL`, or
+a saved Cloud model. To use a private key file instead of an environment variable:
+
+```toml
+[providers.ollama-cloud]
+api_key_path = "~/.config/qcode/ollama-cloud.key"
+model = "gemma4:31b"
+```
+
+A custom `base_url`, such as `https://gateway.example/ollama/api`, must be HTTPS.
+That proxy receives the Bearer key and request data; use only a proxy you trust.
+Redirects are not followed. Resumed tabs use the currently configured endpoint
+and key, not an endpoint saved in a session checkpoint.
+
+Tools, images, and thinking output depend on the selected model. qcode offers
+thinking controls and automatic context sizing when Cloud metadata provides them.
+When it doesn't, chat still works with the model's default thinking behavior;
+you can supply `--context-window` if you know the limit.
+
+If you previously configured a named instance called `ollama-cloud`, rename
+that instance and update references to it before upgrading: the name is now
+reserved for the built-in provider.
 
 ## OpenAI-compatible
 

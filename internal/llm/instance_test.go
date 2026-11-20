@@ -5,11 +5,16 @@ import "testing"
 func TestInstanceIdentityPreservesProviderCapabilities(t *testing.T) {
 	for _, kind := range Names() {
 		t.Run(kind, func(t *testing.T) {
-			original, err := New(kind, Config{})
+			cfg := Config{}
+			if kind == OllamaCloudKind {
+				cfg.APIKey = "fixture-key"
+			}
+			original, err := New(kind, cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
-			instance, err := New(kind, Config{InstanceName: "second-" + kind})
+			cfg.InstanceName = "second-" + kind
+			instance, err := New(kind, cfg)
 			if err != nil {
 				t.Fatal(err)
 			}

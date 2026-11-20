@@ -164,3 +164,36 @@ func TestInheritedInstanceKeyPathUsesDeclaringDirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestOllamaCloudProfileInheritance(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "cloud.key"), []byte("fixture-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := writeConfig(t, dir, "config.toml", `provider = "company-cloud"
+[providers.ollama-cloud]
+api_key_path = "cloud.key"
+model = "Gemma:31b"
+[providers.company-cloud]
+type = "ollama-cloud"
+base_url = "https://proxy.test/ollama/api"
+`)
+	cfg, _, problems := load([]string{path})
+	if len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	if kind, err := cfg.ProviderKind(cfg.Provider); err != nil || kind != "ollama-cloud" {
+		t.Fatalf("kind = %q, %v", kind, err)
+	}
+	if base, key := cfg.ProviderConnection(cfg.Provider); base != "https://proxy.test/ollama/api" || key != "fixture-key" {
+		t.Fatal("wrong inherited profile connection")
+	}
+	if model, _ := cfg.EffectiveModel(cfg.Provider); model != "Gemma:31b" {
+		t.Fatalf("inherited model = %q", model)
+	}
+	for _, issue := range CheckPaths([]string{path}) {
+		if issue.Severity == SeverityError {
+			t.Fatal(issue)
+		}
+	}
+}

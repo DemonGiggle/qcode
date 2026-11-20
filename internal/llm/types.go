@@ -128,6 +128,12 @@ type ThinkingProvider interface {
 	ThinkingCapability(model string) ThinkingCapability
 }
 
+// ModelMetadataProvider optionally discovers thinking controls for one selected
+// model. A failed lookup leaves the provider's default behavior available.
+type ModelMetadataProvider interface {
+	RefreshModelMetadata(context.Context, string)
+}
+
 // ModelValidator is optional. It lets a provider reject a known model that is
 // advertised by a shared catalog but requires an endpoint qcode does not yet
 // implement.

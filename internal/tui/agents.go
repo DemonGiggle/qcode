@@ -157,6 +157,9 @@ func (u *UI) createAndSelectAgent(ctx context.Context, model, thinking string) {
 	if created, ok := u.manager.Runner(summary.ID); ok {
 		if thinking != "" {
 			if configured, ok := created.(thinkingRunner); ok {
+				if _, cancelled := u.refreshModelMetadata(ctx, created, model); cancelled {
+					return
+				}
 				if err := configured.SetThinking(thinking); err != nil {
 					u.printSystemMessage(yellow + err.Error() + reset)
 					return
@@ -201,7 +204,7 @@ func (u *UI) selectAgentModel(ctx context.Context, runner modelRunner) (string, 
 		if selectErr != nil || result != selectorAccepted {
 			return selected, "", result == selectorAccepted, selectErr
 		}
-		level, selectedThinking, back, thinkingErr := u.selectThinkingLevelWithBack(runner, selected, visible)
+		level, selectedThinking, back, thinkingErr := u.selectThinkingLevelWithBack(ctx, runner, selected, visible)
 		if thinkingErr != nil {
 			return selected, "", false, thinkingErr
 		}

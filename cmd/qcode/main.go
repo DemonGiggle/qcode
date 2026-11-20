@@ -42,6 +42,7 @@ type options struct {
 	provider             string
 	model                string
 	thinking             string
+	explicitThinking     bool
 	interactive          bool
 	baseURL              string
 	apiKey               string
@@ -150,8 +151,8 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 	var sandboxCommandPathFlags sandboxCommandPathsFlag
 	flags := flag.NewFlagSet("qcode", flag.ContinueOnError)
 	flags.SetOutput(diagnosticsOut)
-	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider kind or configured instance name")
-	flags.StringVar(&opts.model, "model", env("QCODE_MODEL", "qwen2.5-coder:7b"), "model identifier")
+	flags.StringVar(&opts.provider, "provider", env("QCODE_PROVIDER", "ollama"), "LLM provider kind (including ollama-cloud) or configured instance name")
+	flags.StringVar(&opts.model, "model", env("QCODE_MODEL", "qwen2.5-coder:7b"), "model identifier (Ollama Cloud has no default)")
 	flags.StringVar(&opts.thinking, "thinking", os.Getenv("QCODE_THINKING"), "thinking level for a model that supports it (for example: low, high, max, off)")
 	flags.StringVar(&opts.baseURL, "base-url", os.Getenv("QCODE_BASE_URL"), "provider API base URL")
 	flags.StringVar(&opts.apiKey, "api-key", os.Getenv("QCODE_API_KEY"), "API key (prefer QCODE_API_KEY or the provider-specific environment variable)")
@@ -267,6 +268,9 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 		}
 		fmt.Fprintf(stdout, "Updated %s thinking metadata (%d models).\n", opts.provider, len(meta.Models))
 		return nil
+	}
+	if !opts.demo && providerKind(loadedConfig, opts.provider) == llm.OllamaCloudKind && strings.TrimSpace(opts.model) == "" {
+		return fmt.Errorf("provider %s requires a model: pass --model, set QCODE_MODEL, or select a model in `qcode setup`", opts.provider)
 	}
 	if !opts.demo && opts.model == "" {
 		return errors.New("model must not be empty")
@@ -395,6 +399,16 @@ func run(arguments []string, stdin *os.File, stdout, stderr *os.File) (runErr er
 			return prepareErr
 		}
 		provider = prepared.Provider
+		if llm.Kind(provider) == llm.OllamaCloudKind {
+			opts.baseURL = prepared.Endpoint
+			if !thinkingAllowed(provider.(llm.ThinkingProvider).ThinkingCapability(opts.model), opts.thinking) {
+				if opts.explicitThinking {
+					return fmt.Errorf("Ollama Cloud model %q does not advertise thinking level %q; omit --thinking (or QCODE_THINKING) to use the model default", opts.model, opts.thinking)
+				}
+				fmt.Fprintln(diagnosticsOut, "WARNING: saved Ollama Cloud thinking level is unavailable; using the model default")
+				opts.thinking = ""
+			}
+		}
 		if prepared.MissingThinkingMeta && opts.thinking != "" {
 			fmt.Fprintln(diagnosticsOut, "WARNING: ignoring configured thinking level because no choices are available")
 			opts.thinking = ""
@@ -938,7 +952,8 @@ func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
 	// Converged precedence for model/thinking: [providers.<name>] model/thinking
 	// first, then the deprecated provider_models/provider_thinking memory, then
 	// deprecated root model/thinking when the root provider matches.
-	providerConfigApplies := cfg.Provider == "" || opts.provider == cfg.Provider
+	cloud := providerKind(cfg, opts.provider) == llm.OllamaCloudKind
+	providerConfigApplies := cfg.Provider == opts.provider || (cfg.Provider == "" && !cloud)
 	if !setFlags["model"] && os.Getenv("QCODE_MODEL") == "" {
 		if profileModel, _, ok := cfg.ProviderModel(opts.provider); ok {
 			opts.model = profileModel
@@ -946,9 +961,12 @@ func applyConfig(opts *options, cfg config.Config, setFlags map[string]bool) {
 			opts.model = rememberedModel
 		} else if providerConfigApplies && cfg.Model != "" {
 			opts.model = cfg.Model
+		} else if cloud {
+			opts.model = ""
 		}
 	}
-	if !setFlags["thinking"] && os.Getenv("QCODE_THINKING") == "" {
+	opts.explicitThinking = setFlags["thinking"] || os.Getenv("QCODE_THINKING") != ""
+	if !opts.explicitThinking {
 		if profileThinking, ok := cfg.ProfileThinking(opts.provider); ok {
 			opts.thinking = profileThinking
 		} else if _, rememberedThinking, ok := cfg.RememberedProviderModel(opts.provider); ok {

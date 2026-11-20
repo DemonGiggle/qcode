@@ -249,7 +249,7 @@ Worker-tab edits remain session-only; persistence failures are reported.
 
 Each provider can have its own optional `[providers.<name>]` table containing
 `base_url`, `api_key_path` (preferred), `api_key` (deprecated inline),
-`model`, and `thinking`. Built-in profiles are `ollama`, `openai`, `gemini`,
+`model`, and `thinking`. Built-in profiles are `ollama`, `ollama-cloud`, `openai`, `gemini`,
 `opencode-go`, and `chatgpt`. Named instances add a `type` field identifying one
 of these kinds; see [named instances](#named-provider-instances). Profiles do not
 change the active provider by themselves; the root `provider` selects the
@@ -320,11 +320,14 @@ Launch `--base-url`, `--api-key`, `QCODE_BASE_URL`, and `QCODE_API_KEY` override
 stay associated with the provider selected at launch, including when switching
 back to it. Switching to another provider uses its own profile/defaults instead
 of forwarding the launch overrides. Provider-specific environment keys remain
-available for their matching provider: `OPENAI_API_KEY` for OpenAI, and
+available for their matching provider: `OLLAMA_API_KEY` for Ollama Cloud,
+`OPENAI_API_KEY` for OpenAI, and
 `GEMINI_API_KEY` (preferred) or `GOOGLE_API_KEY` for Gemini. At startup, key
 precedence is `--api-key` > `QCODE_API_KEY` > provider-specific environment key
 > `[providers.<name>].api_key_path` > deprecated inline `api_key` / legacy config.
-For Gemini, `GEMINI_API_KEY` takes precedence over `GOOGLE_API_KEY`.
+For Gemini, `GEMINI_API_KEY` takes precedence over `GOOGLE_API_KEY`. Ollama Cloud
+requires a key and a model at launch; see [Ollama Cloud](providers.md#ollama-cloud)
+for setup and HTTPS proxy configuration.
 
 Main-tab `/provider` writes root `provider` and `[providers.<name>]`
 model/thinking together atomically so switching back restores it; an empty
@@ -392,7 +395,7 @@ Explicit command-line flags take precedence over environment variables, which ta
 
 When a flag or environment variable selects a provider different from the configured provider, the configured `model`, `thinking`, and `context_window` are not inherited; set them explicitly if they should apply to the selected provider. The provider's `[providers.<name>]` model/thinking (then deprecated `[provider_models]` / `[provider_thinking]` memory, then root `model`/`thinking`) still applies when no explicit `--model` / `--thinking` override is given. The selected provider's own connection profile is used; legacy credentials owned by another provider are not inherited. A configured `context_window` also applies only when the configured model is unset or matches the selected model.
 
-API keys can be set with `[providers.<name>].api_key_path` (preferred file, `0600`/`0400`) or deprecated inline `[providers.<name>].api_key` (or legacy root `api_key`), though `QCODE_API_KEY` or the provider-specific environment key (`OPENAI_API_KEY` for OpenAI; `GEMINI_API_KEY` or `GOOGLE_API_KEY` for Gemini) is preferable on shared systems. `--api-key` takes precedence over both environment variables and the configuration file. Keep key files and any config containing an inline key private. The `chatgpt` provider uses OAuth. Configure ChatGPT credentials in `qcode setup` and optionally set the OAuth file with `[chatgpt] oauth_path` (default `~/.config/qcode/chatgpt-oauth.json`).
+API keys can be set with `[providers.<name>].api_key_path` (preferred file, `0600`/`0400`) or deprecated inline `[providers.<name>].api_key` (or legacy root `api_key`), though `QCODE_API_KEY` or the provider-specific environment key (`OLLAMA_API_KEY` for Ollama Cloud; `OPENAI_API_KEY` for OpenAI; `GEMINI_API_KEY` or `GOOGLE_API_KEY` for Gemini) is preferable on shared systems. `--api-key` takes precedence over both environment variables and the configuration file. Keep key files and any config containing an inline key private. The `chatgpt` provider uses OAuth. Configure ChatGPT credentials in `qcode setup` and optionally set the OAuth file with `[chatgpt] oauth_path` (default `~/.config/qcode/chatgpt-oauth.json`).
 
 `thinking` (or `--thinking` / `QCODE_THINKING`) is an optional level such as
 `off`, `low`, `high`, or `max`. It is validated against the selected provider
@@ -466,7 +469,9 @@ model = "work-coder"
 
 Names contain 1–64 lowercase letters, digits, hyphens or underscores. `custom`
 is reserved. Built-in names retain their kind. `type` must reference a built-in
-kind, including Gemini; instance-to-instance inheritance is unsupported. The
+kind; instance-to-instance inheritance is unsupported. If a preexisting instance
+is named `ollama-cloud` and points to another kind, rename the instance and its
+references before upgrading. The
 flat schema keeps existing profile tables and preference writes compatible;
 `[providers.custom.<name>]` and `inherit_provider` are not supported.
 

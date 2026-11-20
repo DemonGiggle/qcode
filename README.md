@@ -24,7 +24,7 @@ Run `/remote` and steer the *same* live agents from a browser — queues, approv
 Separate static binaries per platform — Linux, macOS, Windows (`amd64`/`arm64`) plus FreeBSD (`amd64`). ARM builds happily run on Pi-class boards and small servers. Self-updates with `qcode update`. Details: [Building](docs/build.md).
 
 ### 🔌 Bring any model, switch mid-thought
-Ollama for local, OpenAI-compatible endpoints, native Gemini, OpenCode Go (Claude, GPT, Grok, Qwen and more), or ChatGPT via OAuth — plus named instances like `[providers.ollama-lab]` for that second server. Swap with `/provider` without restarting; each tab keeps its own model. Details: [Providers](docs/providers.md).
+Ollama for local inference, [Ollama Cloud](docs/providers.md#ollama-cloud) without a local daemon, OpenAI-compatible endpoints, native Gemini, OpenCode Go (Claude, GPT, Grok, Qwen and more), or ChatGPT via OAuth — plus named instances like `[providers.ollama-lab]` for that second server. Swap with `/provider` without restarting; each tab keeps its own model. Details: [Providers](docs/providers.md).
 
 ### 🔒 Let it run shell — without letting it roam
 Opt-in Linux sandbox (bubblewrap): fresh namespace per command, no network by default, hidden home, read-only root, approved directories only. Keys and configs stay outside the sandbox. Details: [Trust Model](docs/trust-model.md).
@@ -69,7 +69,7 @@ No setup patience? Take the offline tour: `qcode --demo`. Full flags, env vars, 
 - [Token usage](docs/token-usage.md) - Per-session totals and structured usage events
 - [Context usage](docs/context.md) - Remaining capacity, estimates, and automatic compaction
 - [Prompt caching](docs/prompt-caching.md) - Provider usage semantics and cache capability evidence
-- [Providers](docs/providers.md) - Ollama, OpenAI-compatible, Gemini, OpenCode Go, and ChatGPT setup, plus named provider instances
+- [Providers](docs/providers.md) - Ollama, Ollama Cloud, OpenAI-compatible, Gemini, OpenCode Go, and ChatGPT setup, plus named provider instances
 - [Multi-agent](docs/agents.md) - Concurrent agent tabs and orchestration
 - [Skills](docs/skills.md) - Workspace-local instruction bundles, [official release skills](docs/skills/), and authoring guidance
 - [Web Tools](docs/web-tools.md) - HTTP fetching and search capabilities

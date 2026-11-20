@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"reflect"
 	"strings"
@@ -322,18 +324,19 @@ func TestProviderPickerRegistryHighlightCancellationAndSameProvider(t *testing.T
 func TestProviderDisplayNamesAccepted(t *testing.T) {
 	names := llm.Names()
 	labels := providerPickerLabels(names)
-	want := []string{"ChatGPT", "Gemini", "Ollama", "OpenAI", "OpenCode Go"}
+	want := []string{"ChatGPT", "Gemini", "Ollama", "Ollama Cloud", "OpenAI", "OpenCode Go"}
 	if !reflect.DeepEqual(labels, want) {
 		t.Fatalf("picker labels = %q, want %q", labels, want)
 	}
 	for input, wantID := range map[string]string{
-		"OpenAI":      "openai",
-		"OPENAI":      "openai",
-		"openai":      "openai",
-		"OpenCode Go": "opencode-go",
-		"opencode-go": "opencode-go",
-		"ChatGPT":     "chatgpt",
-		"Ollama":      "ollama",
+		"OpenAI":       "openai",
+		"OPENAI":       "openai",
+		"openai":       "openai",
+		"OpenCode Go":  "opencode-go",
+		"opencode-go":  "opencode-go",
+		"ChatGPT":      "chatgpt",
+		"Ollama":       "ollama",
+		"Ollama Cloud": "ollama-cloud",
 	} {
 		if got, ok := resolveProviderID(input, names); !ok || got != wantID {
 			t.Fatalf("resolveProviderID(%q) = %q, %v; want %q", input, got, ok, wantID)
@@ -570,3 +573,53 @@ func TestConfiguredInstancePickerLabels(t *testing.T) {
 		t.Fatal("unknown instance accepted")
 	}
 }
+
+// The real adapter loads only the selected model's metadata before offering
+// thinking settings. Accepting Model default must not turn it into an override.
+func TestCloudProviderPickerLoadsSelectedMetadataAndKeepsDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name, keys, wantProvider string
+		wantSaves                int
+	}{
+		{"keep model default", "\r\r", "ollama-cloud", 1},
+		{"cancel thinking picker", "\r\x03", "ollama", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u, h, recorder := newProviderUI(t, tc.keys)
+			var paths []string
+			p, err := llm.New(llm.OllamaCloudKind, llm.Config{APIKey: "fixture-key", HTTP: cloudPickerHTTP(func(req *http.Request) (*http.Response, error) {
+				paths = append(paths, req.URL.Path)
+				var body string
+				switch req.URL.Path {
+				case "/api/tags":
+					body = `{"models":[{"name":"Cloud:Model"},{"name":"other"}]}`
+				case "/api/show":
+					var selection map[string]string
+					if err := json.NewDecoder(req.Body).Decode(&selection); err != nil || selection["model"] != "Cloud:Model" {
+						t.Errorf("unexpected model metadata request: %v, %v", selection, err)
+					}
+					body = `{"context_length":32768,"thinking":{"values":[false,true],"default":true}}`
+				default:
+					t.Errorf("unexpected request %s", req.URL)
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			u.SetProviderFactory(func(context.Context, string) (llm.Provider, string, error) { return p, "https://ollama.com", nil })
+			u.handleProviderCommand(context.Background(), []string{"/provider", "ollama-cloud"})
+			state := providerState(t, h, "main")
+			if !reflect.DeepEqual(paths, []string{"/api/tags", "/api/show"}) || state.Provider != tc.wantProvider || recorder.providerCalls != tc.wantSaves {
+				t.Fatalf("wrong provider switch/cancel: requests=%v provider=%q saves=%d", paths, state.Provider, recorder.providerCalls)
+			}
+			if tc.wantSaves > 0 && (state.Model != "Cloud:Model" || state.Thinking != "" || state.ContextWindow != 32768) {
+				t.Fatalf("wrong Cloud selection: %+v", state)
+			}
+		})
+	}
+}
+
+type cloudPickerHTTP func(*http.Request) (*http.Response, error)
+
+func (f cloudPickerHTTP) Do(r *http.Request) (*http.Response, error) { return f(r) }

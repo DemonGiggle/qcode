@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -129,5 +130,34 @@ func TestCheckpointPreservesMalformedToolArgumentsAndPendingImages(t *testing.T)
 	b.repairInterruptedCalls()
 	if len(b.messages[len(b.messages)-1].Images) != 1 || b.pendingImages != nil {
 		t.Fatal("pending images unavailable to next request")
+	}
+}
+
+func TestCloudRestoreUsesResolvedEndpointAndDropsUnsupportedThinking(t *testing.T) {
+	p, err := llm.New(llm.OllamaCloudKind, llm.Config{APIKey: "test-restore-credential"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New(p, "cloud-model", &managerToolset{}, trace.New(io.Discard, false), io.Discard, 3)
+	a.SetEndpoint("https://configured.test")
+	var saved SavedState
+	if err := json.Unmarshal(*a.checkpoint.Load(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	saved.Endpoint, saved.Thinking = "https://checkpoint-only.test", "stale-level"
+	data, err := json.Marshal(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, restore := range []func(json.RawMessage) error{a.RestoreState, a.RestoreFreshState} {
+		if err := restore(data); err != nil {
+			t.Fatal(err)
+		}
+		if a.endpoint != "https://configured.test" || a.ThinkingLevel() != "" {
+			t.Fatal("cloud restore reused a checkpoint endpoint or unsupported thinking")
+		}
+		if bytes.Contains(*a.checkpoint.Load(), []byte("test-restore-credential")) {
+			t.Fatal("credential saved into checkpoint")
+		}
 	}
 }

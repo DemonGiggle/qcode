@@ -67,8 +67,8 @@ below are the built-in values before configuration and environment overrides.
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--provider NAME` | `ollama` | Built-in kind (`ollama`, `openai`, `gemini`, `opencode-go`, `chatgpt`) or a configured named instance (e.g. `--provider ollama-lab`). |
-| `--model ID` | `qwen2.5-coder:7b` | Model ID for the selected provider. |
+| `--provider NAME` | `ollama` | Built-in kind (`ollama`, `ollama-cloud`, `openai`, `gemini`, `opencode-go`, `chatgpt`) or a configured named instance (e.g. `--provider ollama-lab`). |
+| `--model ID` | `qwen2.5-coder:7b` (none for Ollama Cloud) | Model ID for the selected provider. |
 | `--thinking LEVEL` | unset | An explicit level supported by that exact model. |
 | `--base-url URL` | provider default | Override the provider endpoint. |
 | `--api-key KEY` | unset | Provider credential; environment variables avoid putting it in command arguments. |
@@ -116,6 +116,7 @@ inheritance and file lookup order.
 | `QCODE_THINKING` | Explicit thinking level. |
 | `QCODE_BASE_URL` | Provider endpoint. |
 | `QCODE_API_KEY` | Provider credential; takes priority over provider-specific keys. |
+| `OLLAMA_API_KEY` | Fallback credential for `ollama-cloud` (and its instances) when `QCODE_API_KEY` is empty. |
 | `OPENAI_API_KEY` | Fallback credential for `openai` (and its instances) when `QCODE_API_KEY` is empty. |
 | `GEMINI_API_KEY` | Preferred fallback credential for `gemini` (and its instances); takes priority over `GOOGLE_API_KEY`. |
 | `GOOGLE_API_KEY` | Fallback credential for `gemini` when `QCODE_API_KEY` and `GEMINI_API_KEY` are empty. |

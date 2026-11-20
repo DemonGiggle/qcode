@@ -141,7 +141,7 @@ func (u *UI) selectPlanProviderAndCommit(ctx context.Context, manager backendCon
 			initial = oldModel
 		}
 		candidate := &providerModelRunner{provider: provider, models: models}
-		model, level, accepted, back, selectErr := u.selectPlanModelThinking(candidate, initial, visible)
+		model, level, accepted, back, selectErr := u.selectPlanModelThinking(fetchCtx, candidate, initial, visible)
 		if selectErr != nil {
 			u.input.setCancel(nil)
 			cancel()
@@ -204,7 +204,7 @@ func (u *UI) selectPlanProviderAndCommit(ctx context.Context, manager backendCon
 // selectPlanModelThinking always prompts for a model and then for a thinking
 // level when the backend supports it. Back reports Esc at the model step so
 // the caller can return to the provider picker.
-func (u *UI) selectPlanModelThinking(runner *providerModelRunner, initial string, visible int) (string, string, bool, bool, error) {
+func (u *UI) selectPlanModelThinking(ctx context.Context, runner *providerModelRunner, initial string, visible int) (string, string, bool, bool, error) {
 	query := ""
 	current := initial
 	for {
@@ -218,7 +218,7 @@ func (u *UI) selectPlanModelThinking(runner *providerModelRunner, initial string
 			return "", "", false, result == selectorBack, err
 		}
 		current = model
-		level, accepted, back, err := u.selectThinkingLevelWithBack(runner, model, visible)
+		level, accepted, back, err := u.selectThinkingLevelWithBack(ctx, runner, model, visible)
 		if back {
 			continue
 		}
@@ -271,7 +271,7 @@ func (u *UI) selectPlanModelAndCommit(ctx context.Context) bool {
 			return false
 		}
 		var selectedThinking, back bool
-		level, selectedThinking, back, err = u.selectThinkingLevelWithBack(runner, selected, visible)
+		level, selectedThinking, back, err = u.selectThinkingLevelWithBack(ctx, runner, selected, visible)
 		if err != nil {
 			u.printSystemMessage(yellow + "Unable to select thinking level: " + err.Error() + reset)
 			return false

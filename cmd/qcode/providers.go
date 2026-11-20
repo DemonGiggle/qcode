@@ -50,7 +50,9 @@ func (b *providerBuilder) connection(name string, endpoint *string) llm.Config {
 			key = value
 		}
 	}
-	if endpoint != nil {
+	// A saved/inherited endpoint is not authorization to send a Cloud key.
+	// Resolve Cloud destinations from the current launch options or profile.
+	if endpoint != nil && providerKind(b.config, name) != llm.OllamaCloudKind {
 		base = *endpoint // An empty saved endpoint means the provider's default.
 	}
 	return llm.Config{InstanceName: name, BaseURL: base, APIKey: key, HTTP: b.launch.HTTP,
@@ -70,6 +72,11 @@ func (b *providerBuilder) availability(name string) (bool, string) {
 		return false, err.Error()
 	}
 	connection := b.connection(name, nil)
+	if kind == llm.OllamaCloudKind {
+		if _, err := cloudConnection(name, connection); err != nil {
+			return false, err.Error()
+		}
+	}
 	if kind == "chatgpt" {
 		if connection.APIKey != "" {
 			return false, fmt.Sprintf("provider %s (chatgpt) uses ChatGPT OAuth configured in qcode setup; clear api-key", name)
@@ -95,6 +102,17 @@ func (b *providerBuilder) availability(name string) (bool, string) {
 	return true, ""
 }
 
+func cloudConnection(name string, connection llm.Config) (string, error) {
+	base, err := llm.OllamaCloudBaseURL(connection.BaseURL)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(connection.APIKey) == "" {
+		return "", fmt.Errorf("provider %s requires an API key: use `qcode setup`, [providers.%s].api_key_path, OLLAMA_API_KEY, QCODE_API_KEY, or --api-key", name, name)
+	}
+	return base, nil
+}
+
 func (b *providerBuilder) prepare(ctx context.Context, name string, endpoint *string) (result preparedProvider, err error) {
 	defer func() { err = b.policy.Error(redaction.Terminal, err) }()
 	kind, kindErr := resolveProviderKind(b.config, name)
@@ -104,6 +122,12 @@ func (b *providerBuilder) prepare(ctx context.Context, name string, endpoint *st
 	connection := b.connection(name, endpoint)
 	b.policy.RegisterSecrets(connection.APIKey)
 	result.Endpoint = connection.BaseURL
+	if kind == llm.OllamaCloudKind {
+		result.Endpoint, err = cloudConnection(name, connection)
+		if err != nil {
+			return result, err
+		}
+	}
 	if kind == "chatgpt" {
 		if connection.APIKey != "" {
 			return result, fmt.Errorf("provider %s (chatgpt) uses ChatGPT OAuth configured in qcode setup; clear api-key", name)
@@ -200,6 +224,10 @@ func (b *providerBuilder) ensureThinking(ctx context.Context, name string, endpo
 	}
 	thinkingProvider, ok := prepared.Provider.(llm.ThinkingProvider)
 	if !ok {
+		return
+	}
+	if metadata, ok := prepared.Provider.(llm.ModelMetadataProvider); ok {
+		metadata.RefreshModelMetadata(ctx, model)
 		return
 	}
 	if thinkingAllowed(thinkingProvider.ThinkingCapability(model), thinking) {

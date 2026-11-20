@@ -92,6 +92,14 @@ func (r *interruptReader) start() {
 	r.once.Do(func() { go r.readLoop() })
 }
 
+func (r *interruptReader) swapCancel(cancel context.CancelFunc) context.CancelFunc {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	previous := r.cancel
+	r.cancel = cancel
+	return previous
+}
+
 func (r *interruptReader) setCancel(cancel context.CancelFunc) {
 	r.mu.Lock()
 	r.cancel = cancel
