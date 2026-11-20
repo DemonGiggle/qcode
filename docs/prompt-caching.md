@@ -826,8 +826,7 @@ different model/workload is not a directly comparable target. See
 Snapshot: `openai/codex @ 583ec34` (Nov 2026), surveyed via sparse checkout
 (`codex-rs/core`, `codex-rs/codex-api`, `codex-rs/protocol`).
 qcode baseline: `internal/llm/chatgpt.go` (`buildCodexBody`, `doCodex`),
-`internal/llm/chatgpt_cache.go` (`chatGPTCacheInput`,
-`chatGPTSupportsCacheBreakpoints`), `internal/llm/responses.go`
+`internal/llm/chatgpt_cache.go` (`chatGPTCacheInput`), `internal/llm/responses.go`
 (`responsesInput`, `responsesUsageWire`, `parseResponsesStream`),
 `internal/llm/cachekey.go`, `internal/agent/prepared_request.go`
 (`prepareNormalRequest`), `internal/agent/cache_session.go`.
@@ -913,7 +912,7 @@ qcode baseline: `internal/llm/chatgpt.go` (`buildCodexBody`, `doCodex`),
 | Key lifecycle | per-agent, survives resume, rotates on `/new`, changes on model switch | per-thread, survives resume/fork, inherited by children, stable across model switches | Model-switch and compact/learn purpose changes start a new accounting group in qcode. |
 | `prompt_cache_options` | never sent (implicit default, like Codex) | omitted unless a TTL override is set (server implicit default) | Parity: both rely on the server implicit default; no explicit-send vs omit mismatch. |
 | Breakpoints | none explicit (implicit only) | none explicit (implicit only) | Parity. Previously qcode marked every user/tool-result ending, consuming up to 4 write slots and risking implicit-write misses when modes mixed; removed to match Codex. |
-| `gpt-6.1-terra` | key only, no options/breakpoints, so no 400 path in practice; key rejection (if ever) falls back to keyless same-shape retry | sends no cache fields, so no 400 path | Parity. Version-compare explicit gating removed; `chatGPTSupportsCacheBreakpoints` retained only as deferred explicit-mode evidence, unused by the wire. |
+| `gpt-6.1-terra` | key only, no options/breakpoints, so no 400 path in practice; key rejection (if ever) falls back to keyless same-shape retry | sends no cache fields, so no 400 path | Parity. Version-compare explicit gating removed with the implicit-only wire. |
 | Instructions | always leading developer message in `input`, never top-level (all models) | first developer message in `input`, never top-level `instructions` (asserted `body["instructions"] is none`) | Full parity, including the GPT-6.2+ rule (top-level instructions billed uncached and excluded from cacheable prefix). |
 | Reasoning | omitted when thinking is empty | always explicit (default resolved), plus summary/context/verbosity controls | Both stable if unchanged; mid-session thinking changes break the prefix on qcode (top-level change) where Codex uses `configuration_update` on supported GPT-6+. qcode has no verbosity/text control. |
 | Tools | full list resent each turn, stable order, no `allowed_tools`/`defer_loading` | stable list plus `allowed_tools`, `defer_loading: true`, incremental `AdditionalTools` | Same prefix when stable; Codex avoids rewriting the tool prefix when the callable set changes. |

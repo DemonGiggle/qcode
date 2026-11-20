@@ -21,7 +21,8 @@ import (
 // route whose access enforcement rejects third-party OAuth clients with
 // 401 rejected_by_access_enforcement/no_matching_rule.
 // The Responses wire format is shared with a subscription contract:
-// top-level instructions, store:false, stream:true, no system role in input.
+// leading developer instructions in input, store:false, stream:true,
+// no system role in input.
 const chatGPTBaseURL = "https://api.openai.com/v1"
 
 // chatGPTClientVersion is kept for custom baseURLs that still target the
@@ -261,9 +262,9 @@ func decodeChatGPTModels(data []byte) ([]string, error) {
 	return models, nil
 }
 
-// splitChatGPTMessages lifts system messages into top-level instructions. The
-// SIWC Responses route rejects system roles inside input (use instructions
-// or developer messages), so they must not be sent there.
+// splitChatGPTMessages lifts system messages into durable instructions text,
+// sent as the leading developer message in input. The SIWC Responses route
+// rejects system roles inside input, so they must not be sent there.
 func splitChatGPTMessages(messages []Message) (string, []Message) {
 	var systems []string
 	rest := make([]Message, 0, len(messages))
@@ -324,12 +325,7 @@ func (p *chatGPTProvider) buildCodexBody(input Request, instructions string, res
 	// GPT-6.2+, are appended after input and billed uncached. Codex sends no
 	// prompt_cache_options and no explicit prompt_cache_breakpoint markers;
 	// cache reuse comes from a stable key plus an exact reusable prefix.
-	if strings.TrimSpace(instructions) != "" {
-		initial := responsesMessage("developer", instructions, nil)
-		body["input"] = append([]any{initial}, responsesInput(rest)...)
-	} else {
-		body["input"] = responsesInput(rest)
-	}
+	body["input"] = chatGPTCacheInput(instructions, rest)
 	if useCache && IsOfficialOpenAIEndpoint(p.baseURL) {
 		if input.PromptCacheKey != "" {
 			body["prompt_cache_key"] = input.PromptCacheKey
@@ -346,11 +342,10 @@ func (p *chatGPTProvider) buildCodexBody(input Request, instructions string, res
 }
 
 // isChatGPTCacheFieldRejection reports whether a non-2xx Responses body is a
-// cache-control rejection (for example, "prompt_cache_options is not
-// supported on this model" on gpt-6.1-terra, or "prompt_cache_breakpoint is
-// not supported on this model" on Codex-backend models). A 400 means the
-// request was rejected before execution, so retrying once without any
-// prompt_cache_* fields is safe and cannot double-bill.
+// cache-control rejection (for example, "prompt_cache_key is not supported
+// on this model"). A 400 means the request was rejected before execution,
+// so retrying once without any prompt_cache_* fields is safe and cannot
+// double-bill.
 func isChatGPTCacheFieldRejection(statusCode int, body string) bool {
 	if statusCode != http.StatusBadRequest {
 		return false
@@ -423,16 +418,10 @@ func (p *chatGPTProvider) postCodexRaw(ctx context.Context, creds chatgptoauth.T
 func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chatgptoauth.Tokens, onText StreamCallback) (Response, error) {
 	instructions, rest := splitChatGPTMessages(input.Messages)
 	body := p.buildCodexBody(input, instructions, rest, true)
-	usedCache := false
-	if _, ok := body["prompt_cache_key"]; ok {
-		usedCache = true
-	}
-	if _, ok := body["prompt_cache_options"]; ok {
-		usedCache = true
-	}
-	if encoded, _ := json.Marshal(body); strings.Contains(string(encoded), "prompt_cache_breakpoint") {
-		usedCache = true
-	}
+	// The implicit-only wire sends no prompt_cache_options and no explicit
+	// breakpoints, so only the presence of the stable key can trigger the
+	// keyless retry below.
+	_, usedCache := body["prompt_cache_key"]
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return Response{}, err
