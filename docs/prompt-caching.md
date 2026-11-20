@@ -825,3 +825,148 @@ with `sum(cached_tokens) / sum(input_tokens)`, separately report cold and repeat
 turns, and retain missing-usage coverage and latency. A 97% OpenCode result on a
 different model/workload is not a directly comparable target. See
 [cachebench](cachebench.md) for synthetic measurement and its limitations.
+
+## Codex static comparison (gpt-6.x SIWC, no live calls)
+
+Snapshot: `openai/codex @ 583ec34` (Nov 2026), surveyed via sparse checkout
+(`codex-rs/core`, `codex-rs/codex-api`, `codex-rs/protocol`).
+qcode baseline: `internal/llm/chatgpt.go` (`buildCodexBody`, `doCodex`),
+`internal/llm/chatgpt_cache.go` (`chatGPTCacheInput`,
+`chatGPTSupportsCacheBreakpoints`), `internal/llm/responses.go`
+(`responsesInput`, `responsesUsageWire`, `parseResponsesStream`),
+`internal/llm/cachekey.go`, `internal/agent/prepared_request.go`
+(`prepareNormalRequest`), `internal/agent/cache_session.go`.
+
+### qcode baseline freeze (gpt-6.x)
+
+- SIWC contract: `POST {base}/responses` on `https://api.openai.com/v1`,
+  `store: false`, `stream: true`, Bearer OAuth, no `ChatGPT-Account-Id`.
+- Durable system content becomes a leading developer message for
+  `chatGPTSupportsCacheBreakpoints` models (version-compared `>= 5.6`, so all
+  `gpt-6.x`); `top-level instructions` is deleted on that path because it
+  cannot carry a breakpoint. Older/unknown models keep top-level
+  `instructions`. Verified by `TestChatGPTCachePolicyRouting` and the new
+  `TestChatGPTCodexParityBaselineWire`.
+- Cache controls on official endpoint only
+  (`IsOfficialOpenAIEndpoint`): session-stable hashed `prompt_cache_key`
+  (`NamespacedCacheKey(base, provider, model, purpose)`, 64-char digest,
+  rotated on `/new`, namespaced by model/purpose) plus
+  `prompt_cache_options: {mode: implicit}` and explicit
+  `prompt_cache_breakpoint: {mode: explicit}` on the developer instructions
+  block, each user-message ending and each tool-result ending. The trailing
+  ephemeral developer tail is unmarked; assistant/reasoning replay is
+  untouched. Continuation keeps the first N items byte-identical
+  (`TestChatGPTCacheBoundariesSurviveContinuation`).
+- Thinking: `thinkingFields` omits `reasoning` when no level is set
+  (server default preserved); otherwise sends the Responses `reasoning`
+  effort object. No `verbosity`, `text.format`, `parallel_tool_calls`,
+  `configuration_update`, `allowed_tools`, `defer_loading`, TTL, prewarm,
+  or `previous_response_id` is sent.
+- Rejection: a 400 mentioning `prompt_cache*` (e.g. `prompt_cache_options`
+  on `gpt-6.1-terra`) is retried once with the pre-cache baseline
+  (top-level `instructions`, plain `input`, no `prompt_cache_*`); other
+  400s are not retried.
+
+### Codex wire (same snapshot)
+
+- Request type: `codex-api/src/common.rs` `ResponsesApiRequest` carries
+  `model, stream, input, tools, tool_choice: "auto", parallel_tool_calls,
+  reasoning (always `Some`, model default resolved), store: false,
+  stream: true, include: ["reasoning.encrypted_content", ...],
+  prompt_cache_key (optional), prompt_cache_options (only when a per-turn
+  `prompt_cache_ttl` override is set), text (verbosity/output schema),
+  no top-level `instructions` field. Base instructions enter `input` as the
+  first developer message with thread-namespaced stable IDs
+  (`core/src/client.rs` `build_responses_request`).
+- Key policy: `core/src/thread_manager.rs` `PromptCacheKey::{SessionDerived,
+  Custom, Omit}` (default `SessionDerived`), independent of session identity
+  headers. Derivation (`core/src/client.rs` `session_derived_cache_key`):
+  `session_id_override`, else `source:parent_thread_id` for internal
+  sessions, else `responses_metadata.session_id` (raw thread UUID, not a
+  hash). Inherited by child/delegate/guardian sessions unless overridden.
+  Tests: `core/tests/suite/prompt_cache_key.rs`.
+- Prefix: `Prompt { base_instructions, input, tools }` plus thread-scoped
+  prefix IDs; `for_prompt()` normalization; reference-context injected once
+  then diffed; settings/permission/environment changes appended after the
+  existing prefix (`core/tests/suite/prompt_caching.rs`
+  `prefixes_context_and_instructions_once_and_consistently_across_requests`,
+  `overrides_turn_context_but_keeps_cached_prefix_and_key_constant`).
+  No `prompt_cache_breakpoint` string exists anywhere under `codex-rs`
+  (implicit caching only); `prompt_cache_options` is `None` unless the host
+  passes a TTL override.
+- Transport: HTTP sends full `input` with `store: false`; WebSocket reuses
+  one connection per turn and sends only the delta with
+  `previous_response_id` when the full logical request is a compatible
+  extension (`core/src/client.rs` continuation logic). This saves bytes, not
+  cache eligibility: KV reuse still needs an exact prefix match.
+- Reasoning mid-conversation: on supported GPT-6+ models Codex appends a
+  `configuration_update` input item to change effort while keeping
+  top-level `reasoning.effort` unchanged, preserving the earlier prefix.
+  Tool evolution uses stable definitions plus `allowed_tools` /
+  `defer_loading` / incremental `AdditionalTools` instead of rewriting the
+  tool list.
+- Usage: `codex-api/src/sse/responses.rs` `ResponseCompletedUsage` maps
+  `input_tokens_details.cached_tokens` and `cache_write_tokens` into
+  `TokenUsage { input_tokens, cached_input_tokens,
+  cache_write_input_tokens, ... }` as `i64` with `#[serde(default)]`
+  (missing/null becomes `0`). `protocol/src/protocol.rs` `TokenUsage`
+  reports `cached_input` and `non_cached_input = input - cached`.
+
+### Diff matrix (qcode vs Codex)
+
+| Area | qcode | Codex | Cache relevance |
+| --- | --- | --- | --- |
+| `prompt_cache_key` value | 64-char SHA-256 digest of (base, provider, model, purpose) | raw `session_id` (or `source:parent_thread`) | For GPT-5.6+ the key is accounting separation, not routing; form alone should not change hit rate. Model/purpose namespacing rotates the key where Codex keeps it. |
+| Key lifecycle | per-agent, survives resume, rotates on `/new`, changes on model switch | per-thread, survives resume/fork, inherited by children, stable across model switches | Model-switch and compact/learn purpose changes start a new accounting group in qcode. |
+| `prompt_cache_options` | always `implicit` for `>= 5.6` on official endpoint | omitted unless a TTL override is set (server implicit default) | Should be equivalent when the server default is implicit, but explicit-send vs omit is unproven on SIWC. |
+| Breakpoints | explicit on developer instructions + every user/tool-result ending (+ implicit) | none explicit (implicit only) | qcode uses up to 4 write slots per request; long agent loops may evict or fragment writes where Codex keeps one implicit write at the latest eligible message plus lookup of earlier eligible endings. Extending a message in place (vs appending) also breaks reuse without a matching block boundary. |
+| `gpt-6.1-terra` | version-compare enables cache fields, server 400s, fallback strips all cache fields | sends no cache fields, so no 400 path | Confirmed fallback (`TestChatGPTCodexParityTerraRejectsCacheFields`). After fallback that turn has no key/breakpoints at all. Version-compare auto-enable is therefore unsafe per model. |
+| Instructions | leading developer message for `>= 5.6` (matches Codex); top-level otherwise | first developer message in `input`, never top-level `instructions` (asserted `body["instructions"] is none`) | Parity on the GPT-6.2+ rule (top-level instructions billed uncached and excluded from cacheable prefix). |
+| Reasoning | omitted when thinking is empty | always explicit (default resolved), plus summary/context/verbosity controls | Both stable if unchanged; mid-session thinking changes break the prefix on qcode (top-level change) where Codex uses `configuration_update` on supported GPT-6+. qcode has no verbosity/text control. |
+| Tools | full list resent each turn, stable order, no `allowed_tools`/`defer_loading` | stable list plus `allowed_tools`, `defer_loading: true`, incremental `AdditionalTools` | Same prefix when stable; Codex avoids rewriting the tool prefix when the callable set changes. |
+| Tail | trailing developer message (unmarked) with cwd/restored/learning/dynamic/history/notice/recovery suffix | permissions + environment messages appended after the prefix | Same append-only discipline; either tail still counts as suffix after the reusable prefix. |
+| `store` / `previous_response_id` | `store: false`, full resend, no `previous_response_id` | `store: false`; HTTP full resend, WebSocket delta via `previous_response_id` when compatible | Transport parity on HTTP; WebSocket delta is a byte saver, not a separate cache switch. |
+| Compaction | new shorter prefix, new purpose key (`compact`) | new shorter prefix, same session-derived key | Both reset the reusable prefix; qcode additionally separates accounting. |
+| Usage parse | presence-aware pointers: missing/null details stay unknown (`unavailable`, never `0`); inconsistent breakdowns discarded | `i64` defaults: missing/null details become `0` | Explains the reported symptom directly: the same SIWC payload with omitted `input_tokens_details` shows `unavailable` in qcode `/usage`/trace and `0 cached` in Codex. Neither is a hit. |
+
+### Why `/usage` shows missing cache-read fields
+
+`responsesUsageWire` already maps the documented Responses shape
+(`input_tokens_details.cached_tokens`, `cache_write_tokens`,
+`output_tokens_details.reasoning_tokens`) and `NormalizeUsage` keeps
+explicit zeros distinct from unknown. So a missing field in `/usage`/trace
+means the SIWC `response.completed` event carried no usable cache detail
+for that completion (omitted object, `null`, or only totals), or the
+request fell back to the no-cache baseline after a 400, or the reusable
+prefix was below the model minimum (1024 visible input tokens for
+GPT-5.6+), or the entry expired/evicted before reuse. `cache_write_tokens`
+without a top-level total, or `cache_write_tokens_details` TTL splits
+(`ttl_30m_tokens`/`ttl_12h_tokens`), are not separately parsed; the TTL
+itself is never sent by qcode (server default `30m` at 1.25x write,
+reads 0.1x, 0.05x on Astra/Sol/Terra). Presence-aware reporting is
+working as designed: unknown must not be displayed or billed as zero.
+
+### Proposed minimal parity fixes (not implemented here)
+
+- Gate explicit cache fields per model with evidence, not version-compare
+  alone: at minimum exclude `gpt-6.1-terra`-class rejectors (and any future
+  400-confirmed slug) from `prompt_cache_options`/breakpoints while keeping
+  the stable key, mirroring Codex which never triggers the 400 path.
+- Consider implicit-only parity for gpt-6.x (send key without explicit
+  breakpoints/options, or omit options when no TTL is requested) and
+  re-measure; explicit markers consume write slots and can miss implicit
+  writes when modes mix across turns.
+- Preserve the prefix across thinking changes on supported GPT-6+ via a
+  `configuration_update` input item instead of changing top-level
+  `reasoning.effort`; keep verbosity/text controls stable or absent.
+- Adopt append-only tool evolution (`allowed_tools`/`defer_loading`-style)
+  only if tool churn is proven to break the prefix; otherwise keep the
+  stable full list.
+- Keep trust boundaries: never move untrusted content between roles to
+  chase prefix stability. Keep the single 400-cache-rejection retry
+  (safe: 400 rejects before execution).
+
+Live matched-session hit-rate measurement (`sum(cached_tokens) /
+sum(input_tokens)`, cold vs repeated turns, latency retained) remains
+deferred by requester; static comparison above is the acceptance basis for
+this issue.
