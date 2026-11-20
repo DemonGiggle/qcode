@@ -36,7 +36,9 @@ Commands:
   asks again for any unresolved decision, continuing the same planning request
   until a complete plan is submitted. The normal model step limit still applies.
 - After a complete plan is submitted, qcode asks whether to start
-  implementation (the same action as `/plan act`) or stay in Plan mode.
+  implementation (the same action as `/plan act`), select a
+  provider/model/thinking level first and then start implementation, or stay
+  in Plan mode.
 - `/plan show` opens the latest submitted plan in a temporary, scrollable view.
   It does not add the plan text to the conversation output.
 - `/plan off` leaves Plan mode without executing the plan.

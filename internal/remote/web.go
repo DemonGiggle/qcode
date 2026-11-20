@@ -645,6 +645,7 @@ function interactionForm(item,agent){
   }else if(item.kind==='plan_decision'){
     title.textContent=agent+' has a plan ready';
     choice('Start implementation','implement');
+    choice('Select provider/model/thinking and start implementation','implement_with_model');
     choice('Stay in Plan mode','stay');
   }else{
     title.textContent=agent+' has a request that must be addressed in the terminal';

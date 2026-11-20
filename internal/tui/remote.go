@@ -573,7 +573,7 @@ func (u *UI) ResolveRemoteInteraction(actor, id string, value []byte) error {
 		value, _ = json.Marshal(answer)
 	case session.InteractionPlanDecision:
 		var decision string
-		if json.Unmarshal(value, &decision) != nil || decision != "implement" && decision != "stay" {
+		if json.Unmarshal(value, &decision) != nil || decision != "implement" && decision != "implement_with_model" && decision != "stay" {
 			return fmt.Errorf("invalid plan decision")
 		}
 	case session.InteractionSkillPlanDecision:

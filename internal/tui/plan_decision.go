@@ -28,7 +28,34 @@ type skillPlanDecisionRunner interface {
 
 var planDecisionOptions = []string{
 	"Start implementation (same as /plan act)",
+	"Select provider/model/thinking and start implementation",
 	"Stay in Plan mode",
+}
+
+const (
+	planDecisionImplement          = "implement"
+	planDecisionImplementWithModel = "implement_with_model"
+	planDecisionStay               = "stay"
+)
+
+// planDecisionFromAnswer maps a questionnaire answer to its stable decision
+// value. The first option starts implementation with the current backend, the
+// second switches provider/model/thinking first, and anything else stays.
+func planDecisionFromAnswer(answer string, options []string) string {
+	if len(options) >= 3 {
+		switch answer {
+		case options[0]:
+			return planDecisionImplement
+		case options[1]:
+			return planDecisionImplementWithModel
+		default:
+			return planDecisionStay
+		}
+	}
+	if len(options) > 0 && answer == options[0] {
+		return planDecisionImplement
+	}
+	return planDecisionStay
 }
 
 var skillPlanDecisionOptions = []string{
@@ -184,9 +211,13 @@ func (u *UI) handlePendingModeDecision(ctx context.Context) {
 		var answers []string
 		answers, err = u.runQuestionnaireWithFooter(ctx, questions, "Ctrl+C keeps the current mode active.")
 		if len(answers) > 0 {
-			decision = "stay"
-			if answers[0] == options[0] {
-				decision = action
+			if request.kind == session.InteractionPlanDecision {
+				decision = planDecisionFromAnswer(answers[0], options)
+			} else {
+				decision = "stay"
+				if answers[0] == options[0] {
+					decision = action
+				}
 			}
 		}
 	} else {
@@ -216,9 +247,13 @@ func (u *UI) handlePendingModeDecision(ctx context.Context) {
 		case local := <-localResult:
 			err = local.err
 			if len(local.answers) > 0 {
-				decision = "stay"
-				if local.answers[0] == options[0] {
-					decision = action
+				if request.kind == session.InteractionPlanDecision {
+					decision = planDecisionFromAnswer(local.answers[0], options)
+				} else {
+					decision = "stay"
+					if local.answers[0] == options[0] {
+						decision = action
+					}
 				}
 				value, _ := json.Marshal(decision)
 				if broker, ok := u.manager.(interactionController); ok {
@@ -255,9 +290,11 @@ func (u *UI) handlePendingModeDecision(ctx context.Context) {
 	switch request.kind {
 	case session.InteractionPlanDecision:
 		switch decision {
-		case "implement", planDecisionOptions[0]:
+		case planDecisionImplement, planDecisionOptions[0]:
 			u.handlePlanCommand(ctx, []string{"/plan", "act"})
-		case "stay", planDecisionOptions[1]:
+		case planDecisionImplementWithModel, planDecisionOptions[1]:
+			u.handlePlanActWithModelSelection(ctx)
+		case planDecisionStay, planDecisionOptions[2]:
 			u.printSystemMessage(green + "Plan saved; staying in Plan mode." + reset)
 		}
 	case session.InteractionSkillPlanDecision:
