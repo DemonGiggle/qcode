@@ -729,13 +729,13 @@ func TestExportEndpointRendersFullHistoryWithoutWritingFiles(t *testing.T) {
 
 type agentSettingsTestPresentation struct {
 	testPresentation
-	catalogID, settingsID string
-	settings              tui.RemoteAgentSettings
-	settingsErr           error
+	catalogID, catalogModel, settingsID string
+	settings                            tui.RemoteAgentSettings
+	settingsErr                         error
 }
 
-func (p *agentSettingsTestPresentation) RemoteAgentCatalog(_ context.Context, id string) (tui.RemoteCatalog, error) {
-	p.catalogID = id
+func (p *agentSettingsTestPresentation) RemoteAgentCatalogForModel(_ context.Context, id, model string) (tui.RemoteCatalog, error) {
+	p.catalogID, p.catalogModel = id, model
 	return tui.RemoteCatalog{Models: []string{"worker-model"}}, nil
 }
 
@@ -747,12 +747,12 @@ func (p *agentSettingsTestPresentation) ConfigureRemoteAgent(_ context.Context, 
 func TestAgentSettingsRoutesRetainTarget(t *testing.T) {
 	presentation := &agentSettingsTestPresentation{}
 	handler := authorizedTestManager(presentation).routes()
-	catalog := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?agent_id=agent-2", nil)
+	catalog := httptest.NewRequest(http.MethodGet, "/api/v1/catalog?agent_id=agent-2&model=worker%3Amodel", nil)
 	authorizeTestRequest(catalog)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, catalog)
-	if response.Code != http.StatusOK || presentation.catalogID != "agent-2" || !strings.Contains(response.Body.String(), "worker-model") {
-		t.Fatalf("catalog = %d %s, target %q", response.Code, response.Body.String(), presentation.catalogID)
+	if response.Code != http.StatusOK || presentation.catalogID != "agent-2" || presentation.catalogModel != "worker:model" || !strings.Contains(response.Body.String(), "worker-model") {
+		t.Fatalf("catalog = %d %s, target %q, model %q", response.Code, response.Body.String(), presentation.catalogID, presentation.catalogModel)
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-2/settings", strings.NewReader(`{"skills":[]}`))
 	authorizeTestRequest(request)

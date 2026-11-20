@@ -258,6 +258,10 @@ func (h *Host) CreateWithProvider(model string, backend agent.CreationBackend) (
 	return h.manager.CreateWithProvider(model, backend)
 }
 
+func (h *Host) CreateConfigured(ctx context.Context, model, thinking string, backend ...session.CreationBackend) (session.Summary, error) {
+	return h.manager.CreateConfigured(ctx, model, thinking, backend...)
+}
+
 func (h *Host) ConfigurationRevision(id string) (uint64, error) {
 	return h.manager.ConfigurationRevision(id)
 }

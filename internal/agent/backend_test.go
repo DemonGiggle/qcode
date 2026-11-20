@@ -206,6 +206,38 @@ func TestProviderAwareCreationAndInheritance(t *testing.T) {
 	}
 }
 
+type workerMetadataProvider struct {
+	switchProvider
+	model string
+}
+
+func (p *workerMetadataProvider) RefreshModelMetadata(_ context.Context, model string) {
+	p.model = model
+}
+
+func (p *workerMetadataProvider) ThinkingCapability(model string) llm.ThinkingCapability {
+	if model != p.model {
+		return llm.ThinkingCapability{}
+	}
+	return llm.ThinkingCapability{Adjustable: true, Levels: []string{"high"}}
+}
+
+func TestInheritedWorkerDiscoversThinkingOnItsOwnProvider(t *testing.T) {
+	m := newTestManager(t, 2)
+	p := &workerMetadataProvider{}
+	m.SetProviderFactory(func(id, _ string, model string, main bool, _ CreationBackend) (*Agent, error) {
+		return New(p, model, m.WrapToolset(id, &managerToolset{}, main), trace.New(io.Discard, false), io.Discard, 4), nil
+	})
+	summary, err := m.CreateInheritedWithThinking(context.Background(), "main", "worker-model", "high", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, _ := m.Agent(summary.ID)
+	if p.model != "worker-model" || child.ThinkingLevel() != "high" {
+		t.Fatalf("metadata model = %q, child thinking = %q", p.model, child.ThinkingLevel())
+	}
+}
+
 func TestNamedInstanceCreationSwitchAndResume(t *testing.T) {
 	m := newTestManager(t, 5)
 	makeProvider := func(name, endpoint string) llm.Provider {

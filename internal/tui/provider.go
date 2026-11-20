@@ -358,18 +358,34 @@ func (u *UI) persistProviderPreference(writer RuntimePreferenceWriter, id, provi
 
 // Manual terminal creation inherits the selected tab's backend, but retains its
 // existing tool/workspace defaults. Tool-created helpers use CreateInheritedAt.
-func (u *UI) createAgentWithProvider(model string) (session.Summary, error) {
+func (u *UI) createAgentWithProvider(ctx context.Context, model, thinking string) (session.Summary, error) {
 	if manager, ok := u.manager.(interface {
 		Backend(string) (session.CreationBackend, error)
-		CreateWithProvider(string, session.CreationBackend) (session.Summary, error)
-	}); ok && u.providerFactory != nil {
+		CreateConfigured(context.Context, string, string, ...session.CreationBackend) (session.Summary, error)
+	}); ok {
+		if u.providerFactory == nil {
+			return manager.CreateConfigured(ctx, model, thinking)
+		}
 		backend, err := manager.Backend(u.activeAgent)
 		if err != nil {
 			return session.Summary{}, err
 		}
-		return manager.CreateWithProvider(model, backend)
+		backend.Context = ctx
+		return manager.CreateConfigured(ctx, model, thinking, backend)
 	}
-	return u.manager.Create(model)
+	summary, err := u.manager.Create(model)
+	if err != nil || thinking == "" {
+		return summary, err
+	}
+	if created, ok := u.manager.Runner(summary.ID); ok {
+		if configured, ok := created.(thinkingRunner); ok {
+			if err := configured.SetThinking(thinking); err != nil {
+				_ = u.manager.Close(summary.ID)
+				return session.Summary{}, err
+			}
+		}
+	}
+	return summary, nil
 }
 
 // SetProviderInstances installs the configured identities without mutating the

@@ -149,23 +149,20 @@ func (u *UI) createAgent(ctx context.Context) {
 }
 
 func (u *UI) createAndSelectAgent(ctx context.Context, model, thinking string) {
-	summary, err := u.createAgentWithProvider(model)
+	creationCtx, cancel := context.WithCancel(ctx)
+	previous := u.input.swapCancel(cancel)
+	summary, err := u.createAgentWithProvider(creationCtx, model, thinking)
+	u.input.setCancel(previous)
+	cancel()
 	if err != nil {
-		u.printSystemMessage(yellow + err.Error() + reset)
+		if errors.Is(err, context.Canceled) {
+			u.printSystemMessage(dim + "Agent creation cancelled." + reset)
+		} else {
+			u.printSystemMessage(yellow + err.Error() + reset)
+		}
 		return
 	}
 	if created, ok := u.manager.Runner(summary.ID); ok {
-		if thinking != "" {
-			if configured, ok := created.(thinkingRunner); ok {
-				if _, cancelled := u.refreshModelMetadata(ctx, created, model); cancelled {
-					return
-				}
-				if err := configured.SetThinking(thinking); err != nil {
-					u.printSystemMessage(yellow + err.Error() + reset)
-					return
-				}
-			}
-		}
 		if tracker, ok := created.(contextRunner); ok {
 			tracker.RefreshContext(ctx)
 		}

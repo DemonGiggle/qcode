@@ -185,7 +185,7 @@ func TestProviderSwitchWorkerIsLocalAndCreationUsesCreator(t *testing.T) {
 	if recorder.providerCalls != 0 || providerState(t, h, "main").Provider != "ollama" {
 		t.Fatal("worker changed default/main")
 	}
-	created, err := u.createAgentWithProvider("shared")
+	created, err := u.createAgentWithProvider(context.Background(), "shared", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -623,3 +623,31 @@ func TestCloudProviderPickerLoadsSelectedMetadataAndKeepsDefault(t *testing.T) {
 type cloudPickerHTTP func(*http.Request) (*http.Response, error)
 
 func (f cloudPickerHTTP) Do(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestCloudTerminalWorkerCancellationRollsBackCreation(t *testing.T) {
+	u, host, _ := newProviderUI(t, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	host.SetProviderFactory(func(id, _ string, model string, main bool, _ session.CreationBackend) (*agent.Agent, error) {
+		client := cloudPickerHTTP(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path == "/api/show" {
+				cancel()
+				return nil, r.Context().Err()
+			}
+			body := `{"models":[{"name":"Cloud:Model"}]}`
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
+		})
+		p, err := llm.New(llm.OllamaCloudKind, llm.Config{APIKey: "fixture-key", HTTP: client})
+		if err != nil {
+			return nil, err
+		}
+		display, response := u.AddAgentView(id, p.Name(), model)
+		child := agent.New(p, model, host.WrapToolset(id, &closeUITools{}, main), trace.New(display, false), response, 3)
+		child.SetCreationRollback(func() { u.RemoveAgentView(id) })
+		return child, nil
+	})
+	u.handleAgentCommand(ctx, []string{"/agent", "new", "Cloud:Model", "on"})
+	if ctx.Err() == nil || len(host.List()) != 1 || len(u.views) != 1 || u.activeAgent != "main" {
+		t.Fatalf("cancelled worker creation left state behind: agents=%v, views=%d, active=%q", host.List(), len(u.views), u.activeAgent)
+	}
+}

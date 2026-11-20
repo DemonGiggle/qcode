@@ -762,13 +762,32 @@ async function submitSettings(target,settings,composerLine){
 function closeCommand(){delete command.dataset.agent;command.replaceChildren();command.className='command-panel';command.onkeydown=null;input.focus()}
 function openCommand(title,help,placeholder,onSubmit,submitLabel='Apply'){command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent=title;const hint=document.createElement('div');hint.className='command-help';hint.textContent=help;const field=document.createElement('input');field.placeholder=placeholder;field.autocomplete='off';const actions=document.createElement('div');actions.className='command-actions';const apply=document.createElement('button');apply.textContent=submitLabel;const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';const commit=()=>{const value=field.value.trim();if(!value)return;closeCommand();onSubmit(value)};apply.onclick=commit;cancel.onclick=closeCommand;field.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}if(e.key==='Enter'){e.preventDefault();commit()}};actions.append(apply,cancel);command.append(heading,hint,field,actions);field.focus()}
 function openCloseAgent(name){command.dataset.agent=name;command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent='Close agent '+name+'?';const hint=document.createElement('div');hint.className='command-help';hint.textContent='This matches the TUI confirmation step.';const actions=document.createElement('div');actions.className='command-actions';const close=document.createElement('button');close.textContent='Close agent';close.onclick=()=>{closeCommand();submitLine('/agent close '+name+' --yes')};const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';cancel.onclick=closeCommand;actions.append(close,cancel);command.append(heading,hint,actions);command.tabIndex=0;command.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}};close.focus()}
-async function catalog(target=''){const r=await apiFetch('api/v1/catalog'+(target?'?agent_id='+encodeURIComponent(target):''),{cache:'no-store'});if(!r.ok)throw new Error(await r.text());return r.json()}
+async function catalog(target='',model=''){
+  const query=new URLSearchParams();
+  if(target)query.set('agent_id',target);
+  if(model)query.set('model',model);
+  const r=await apiFetch('api/v1/catalog?'+query,{cache:'no-store'});
+  if(!r.ok)throw new Error(await r.text());
+  return r.json();
+}
 function agents(){return snapshot&&snapshot.runtime&&snapshot.runtime.agents||snapshot&&snapshot.presentation&&snapshot.presentation.agents||[]}
 function activeModel(){const item=agents().find(x=>x.id===active)||agents().find(x=>x.id===(snapshot&&snapshot.presentation&&snapshot.presentation.active));return item&&item.model||''}
 function selectorItem(label,value,current=false){return{label:String(label||value),value:String(value),current:!!current}}
 function openList(title,help,items,selected,multi,apply){command.dataset.agent=active;command.replaceChildren();command.className='command-panel open';const heading=document.createElement('div');heading.className='command-title';heading.textContent=title;const hint=document.createElement('div');hint.className='command-help';hint.textContent=help;const filter=document.createElement('input');filter.placeholder='Type to filter';filter.autocomplete='off';const list=document.createElement('div');list.className='selector-list';const chosen=new Set(selected||[]);const draw=()=>{list.replaceChildren();const query=filter.value.trim().toLowerCase();const matches=items.filter(item=>item.label.toLowerCase().includes(query));if(!matches.length){const empty=document.createElement('div');empty.className='selector-empty';empty.textContent=query?'No matching entries.':'No entries available.';list.append(empty);return}for(const item of matches){const button=document.createElement('button');button.type='button';button.className='cancel';const label=document.createElement('span');label.textContent=(chosen.has(item.value)?(multi?'[x] ':'> '):(multi?'[ ] ':'  '))+item.label;button.append(label);if(item.current){const badge=document.createElement('span');badge.className='selector-current';badge.textContent='Current';button.append(badge)}button.onclick=()=>{if(multi){if(chosen.has(item.value))chosen.delete(item.value);else chosen.add(item.value)}else{chosen.clear();chosen.add(item.value)}draw()};list.append(button)}};const actions=document.createElement('div');actions.className='command-actions';const ok=document.createElement('button');ok.textContent='Apply';const cancel=document.createElement('button');cancel.className='cancel';cancel.type='button';cancel.textContent='Cancel';const commit=()=>{const values=[...chosen];closeCommand();apply(values)};ok.onclick=commit;cancel.onclick=closeCommand;filter.oninput=draw;filter.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeCommand()}if(e.key==='Enter'){e.preventDefault();commit()}};actions.append(ok,cancel);command.append(heading,hint,filter,list,actions);draw();filter.focus()}
-function chooseModel(data,kind,model,target,label){
-  const thinking=data.thinking&&data.thinking[model];
+let modelChoiceRequest=0;
+async function chooseModel(data,kind,model,target,label){
+  let thinking=data.thinking&&data.thinking[model];
+  const request=++modelChoiceRequest;
+  if(data.deferred_thinking&&!thinking){
+    try{
+      const selected=await catalog(target,model);
+      if(request!==modelChoiceRequest||target!==active||command.classList.contains('open'))return;
+      thinking=selected.thinking&&selected.thinking[model];
+    }catch(e){
+      if(request===modelChoiceRequest&&target===active)status.textContent=String(e.message||e);
+      return;
+    }
+  }
   const apply=level=>{
     if(kind==='agent-model')submitLine('/agent new '+model+(level?' '+level:''));
     else submitSettings(target,{model,thinking:level});
@@ -778,8 +797,9 @@ function chooseModel(data,kind,model,target,label){
     return;
   }
   const levels=thinking.levels.map(x=>selectorItem(x,x));
-  const current=thinking.current?[thinking.current]:[];
-  openList('Select thinking level'+label,'Choose a thinking level. Cancel leaves the model unchanged.',levels,current,false,v=>{if(v[0])apply(v[0])});
+  if(data.deferred_thinking)levels.unshift(selectorItem('Model default',''));
+  const current=thinking.current?[thinking.current]:data.deferred_thinking?['']:[];
+  openList('Select thinking level'+label,'Choose a thinking level. Cancel leaves the model unchanged.',levels,current,false,v=>{if(v.length)apply(v[0])});
 }
 async function openCatalogSelector(kind,line){
   const target=active, scoped=['model','tool','skill'].includes(kind);

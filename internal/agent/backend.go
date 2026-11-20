@@ -38,6 +38,34 @@ func (m *AgentManager) CreateWithProvider(model string, backend CreationBackend)
 	return m.createNew(model, nil, backend)
 }
 
+// CreateConfigured installs the worker's thinking level before registration.
+// An optional backend selects the connection for the fresh worker.
+func (m *AgentManager) CreateConfigured(ctx context.Context, model, thinking string, backend ...CreationBackend) (AgentSummary, error) {
+	if err := ctx.Err(); err != nil {
+		return AgentSummary{}, err
+	}
+	return m.createNew(model, func(child *Agent) error {
+		return child.configureCreationThinking(ctx, thinking)
+	}, backend...)
+}
+
+// configureCreationThinking runs before the new worker is registered.
+func (a *Agent) configureCreationThinking(ctx context.Context, level string) error {
+	level = strings.TrimSpace(level)
+	if level != "" && ctx.Err() == nil {
+		if metadata := a.ModelMetadata(); metadata != nil {
+			metadata.RefreshModelMetadata(ctx, a.model)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if level != "" {
+		return a.SetThinking(level)
+	}
+	return nil
+}
+
 // BackendSwitch contains an externally prepared provider and discovered capacity.
 // ContextCapacity is zero when unknown. No discovery is performed by SwitchBackend.
 // Provider thinking capabilities must already be available locally.

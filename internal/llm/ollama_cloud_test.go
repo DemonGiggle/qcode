@@ -17,6 +17,21 @@ import (
 
 const cloudFixtureKey = "cloud-fixture-key"
 
+func TestOllamaCloudRejectsTruncatedStream(t *testing.T) {
+	client := doerFunc(func(*http.Request) (*http.Response, error) {
+		body := `{"message":{"content":"partial"},"done":false}` + "\n"
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	p, err := New(OllamaCloudKind, Config{APIKey: cloudFixtureKey, HTTP: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := p.Complete(context.Background(), Request{Model: "cloud-model"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "stream ended before completion") || resp.Message.Content != "" {
+		t.Fatalf("expected a truncated stream error, got %+v, %v", resp, err)
+	}
+}
+
 func TestOllamaCloudConnection(t *testing.T) {
 	for _, base := range []string{"http://proxy.test", "//proxy.test", "https:proxy.test", "https:///path", "https://user:secret@proxy.test", "https://proxy.test?", "https://proxy.test?x=1", "https://proxy.test#"} {
 		if _, err := New(OllamaCloudKind, Config{BaseURL: base, APIKey: cloudFixtureKey}); err == nil || strings.Contains(err.Error(), base) {

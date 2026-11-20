@@ -80,6 +80,12 @@ func (u *UI) ConfigureRemoteAgent(ctx context.Context, id string, settings Remot
 			if thinking == nil {
 				return fmt.Errorf("%w: thinking configuration is unavailable", ErrInvalidRemoteAgentSettings)
 			}
+			if metadata := modelMetadata(runner); metadata != nil {
+				metadata.RefreshModelMetadata(ctx, settings.Model)
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
 			capability := thinking.ThinkingCapabilityFor(settings.Model)
 			if !capability.Adjustable || !slices.Contains(capability.Levels, settings.Thinking) {
 				return fmt.Errorf("%w: unsupported thinking level %q", ErrInvalidRemoteAgentSettings, settings.Thinking)

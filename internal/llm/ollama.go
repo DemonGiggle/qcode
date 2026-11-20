@@ -304,6 +304,7 @@ func completeOllama(ctx context.Context, input Request, onText StreamCallback, b
 		var event struct {
 			Message ollamaMessage `json:"message"`
 			Error   string        `json:"error"`
+			Done    bool          `json:"done"`
 		}
 		if err := json.Unmarshal(line, &event); err != nil {
 			return Response{}, fmt.Errorf("decode provider stream: %w", err)
@@ -343,9 +344,12 @@ func completeOllama(ctx context.Context, input Request, onText StreamCallback, b
 		for _, call := range event.Message.ToolCalls {
 			result.ToolCalls = append(result.ToolCalls, ToolCall{Name: call.Function.Name, Arguments: call.Function.Arguments})
 		}
+		if event.Done {
+			return Response{Message: result, Usage: NormalizeUsage(accumulated)}, nil
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return Response{}, err
 	}
-	return Response{Message: result, Usage: NormalizeUsage(accumulated)}, nil
+	return Response{}, fmt.Errorf("Ollama chat stream ended before completion: %w", io.ErrUnexpectedEOF)
 }

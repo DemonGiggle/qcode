@@ -36,7 +36,7 @@ type presentation interface {
 }
 
 type agentSettingsPresentation interface {
-	RemoteAgentCatalog(context.Context, string) (tui.RemoteCatalog, error)
+	RemoteAgentCatalogForModel(context.Context, string, string) (tui.RemoteCatalog, error)
 	ConfigureRemoteAgent(context.Context, string, tui.RemoteAgentSettings) error
 }
 
@@ -587,6 +587,7 @@ func (m *Manager) catalog(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	id := r.URL.Query().Get("agent_id")
+	model := r.URL.Query().Get("model")
 	if id == "" {
 		writeJSON(w, http.StatusOK, m.ui.RemoteCatalog(ctx))
 		return
@@ -596,7 +597,7 @@ func (m *Manager) catalog(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "agent catalogs are unavailable", http.StatusNotImplemented)
 		return
 	}
-	catalog, err := ui.RemoteAgentCatalog(ctx, id)
+	catalog, err := ui.RemoteAgentCatalogForModel(ctx, id, model)
 	if err != nil {
 		http.Error(w, m.redact(err.Error()), http.StatusNotFound)
 		return

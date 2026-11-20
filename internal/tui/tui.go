@@ -1500,17 +1500,20 @@ func (u *UI) setModelCommand(ctx context.Context, fields []string) {
 
 const ModelDefaultThinking = "Model default"
 
+func modelMetadata(runner any) llm.ModelMetadataProvider {
+	if lookup, ok := runner.(interface {
+		ModelMetadata() llm.ModelMetadataProvider
+	}); ok {
+		return lookup.ModelMetadata()
+	}
+	return nil
+}
+
 // refreshModelMetadata reports whether the runner supports selected-model
 // lookup and whether the user cancelled it. Optional lookup failures do not
 // prevent model selection.
 func (u *UI) refreshModelMetadata(ctx context.Context, runner any, model string) (bool, bool) {
-	lookup, ok := runner.(interface {
-		ModelMetadata() llm.ModelMetadataProvider
-	})
-	if !ok {
-		return false, false
-	}
-	metadata := lookup.ModelMetadata()
+	metadata := modelMetadata(runner)
 	if metadata == nil {
 		return false, false
 	}

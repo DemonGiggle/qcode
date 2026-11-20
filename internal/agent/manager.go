@@ -233,15 +233,12 @@ func (m *AgentManager) CreateInheritedWithThinking(ctx context.Context, parentID
 	if err := ctx.Err(); err != nil {
 		return AgentSummary{}, err
 	}
-	thinking = strings.ToLower(strings.TrimSpace(thinking))
 	return m.createNew(model, func(child *Agent) error {
 		if err := child.InheritCapabilitiesFrom(parent); err != nil {
 			return fmt.Errorf("inherit capabilities: %w", err)
 		}
-		if thinking != "" {
-			if err := child.SetThinking(thinking); err != nil {
-				return err
-			}
+		if err := child.configureCreationThinking(ctx, thinking); err != nil {
+			return err
 		}
 		if cwd != "" {
 			tools, ok := child.tools.(directoryTools)

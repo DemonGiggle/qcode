@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -406,6 +407,50 @@ func TestRemoteConnectionLogsOnlyInVerboseMode(t *testing.T) {
 	u.RemoteRequestRejected("GET", "/api/v1/events", "missing Tailscale-User-Login")
 	if output.Len() != 0 {
 		t.Fatalf("non-verbose remote connection log = %q", output.String())
+	}
+}
+
+func TestRemoteCloudThinkingDiscoversSelectedModelAndValidatesOnColdCache(t *testing.T) {
+	ctx := context.Background()
+	u, host, _ := newProviderUI(t, "")
+	var lookups []string
+	client := cloudPickerHTTP(func(r *http.Request) (*http.Response, error) {
+		body := `{"models":[{"name":"Cloud:One"},{"name":"Cloud:Two"}]}`
+		if r.URL.Path == "/api/show" {
+			var request struct{ Model string }
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				return nil, err
+			}
+			lookups = append(lookups, request.Model)
+			body = `{"context_length":32768,"thinking":{"values":[false,true],"default":true}}`
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	p, err := llm.New(llm.OllamaCloudKind, llm.Config{APIKey: "fixture-key", HTTP: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := host.ConfigurationRevision("main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := host.SwitchBackend("main", revision, session.BackendSwitch{Provider: p, Model: "Cloud:One"}); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := u.RemoteAgentCatalog(ctx, "main")
+	if err != nil || !catalog.DeferredThinking || len(catalog.Thinking) != 0 || len(lookups) != 0 {
+		t.Fatalf("initial catalog = %+v, lookups = %v, error = %v", catalog, lookups, err)
+	}
+	catalog, err = u.RemoteAgentCatalogForModel(ctx, "main", "Cloud:Two")
+	if err != nil || strings.Join(catalog.Thinking["Cloud:Two"].Levels, ",") != "off,on" || strings.Join(lookups, ",") != "Cloud:Two" {
+		t.Fatalf("selected catalog = %+v, lookups = %v, error = %v", catalog, lookups, err)
+	}
+	if err := u.ConfigureRemoteAgent(ctx, "main", RemoteAgentSettings{Model: "Cloud:One", Thinking: "on"}); err != nil {
+		t.Fatal(err)
+	}
+	owner, _ := host.Agent("main")
+	if owner.ThinkingLevel() != "on" || strings.Join(lookups, ",") != "Cloud:Two,Cloud:One" {
+		t.Fatalf("thinking = %q, lookups = %v", owner.ThinkingLevel(), lookups)
 	}
 }
 

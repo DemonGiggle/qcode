@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -53,11 +54,12 @@ type RemotePresentation struct {
 // RemoteCatalog contains the read-only selector data needed by the browser UI.
 // It deliberately mirrors existing TUI runtime state without changing it.
 type RemoteCatalog struct {
-	Models   []string                       `json:"models"`
-	Thinking map[string]RemoteThinkingState `json:"thinking"`
-	Tools    []RemoteToolState              `json:"tools"`
-	Skills   []RemoteSkillState             `json:"skills"`
-	Sessions []RemoteSessionState           `json:"sessions"`
+	DeferredThinking bool                           `json:"deferred_thinking,omitempty"`
+	Models           []string                       `json:"models"`
+	Thinking         map[string]RemoteThinkingState `json:"thinking"`
+	Tools            []RemoteToolState              `json:"tools"`
+	Skills           []RemoteSkillState             `json:"skills"`
+	Sessions         []RemoteSessionState           `json:"sessions"`
 }
 
 type RemoteToolState struct {
@@ -308,6 +310,10 @@ func (u *UI) RemoteCatalog(ctx context.Context) RemoteCatalog {
 }
 
 func (u *UI) RemoteAgentCatalog(ctx context.Context, id string) (RemoteCatalog, error) {
+	return u.RemoteAgentCatalogForModel(ctx, id, "")
+}
+
+func (u *UI) RemoteAgentCatalogForModel(ctx context.Context, id, selectedModel string) (RemoteCatalog, error) {
 	result := RemoteCatalog{
 		Models:   make([]string, 0),
 		Thinking: make(map[string]RemoteThinkingState),
@@ -356,7 +362,12 @@ func (u *UI) RemoteAgentCatalog(ctx context.Context, id string) (RemoteCatalog, 
 		})
 	}
 	if modelRunner, ok := runner.(modelRunner); ok {
+		metadata := modelMetadata(runner)
+		result.DeferredThinking = metadata != nil
 		if models, err := modelRunner.ListModels(ctx); err == nil {
+			if metadata != nil && slices.Contains(models, selectedModel) {
+				metadata.RefreshModelMetadata(ctx, selectedModel)
+			}
 			result.Models = append(result.Models, models...)
 			if thinkingRunner, ok := runner.(thinkingRunner); ok {
 				for _, model := range models {
