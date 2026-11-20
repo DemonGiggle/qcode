@@ -45,17 +45,21 @@ func TestChatGPTCodexParityBaselineWire(t *testing.T) {
 		t.Fatalf("SIWC contract changed: %v", body)
 	}
 	if _, ok := body["instructions"]; ok {
-		t.Fatalf("gpt-6.x must use leading developer message, not top-level instructions: %v", body)
+		t.Fatalf("must use leading developer message, not top-level instructions: %v", body)
 	}
 	if _, ok := body["prompt_cache_key"]; !ok {
 		t.Fatalf("session-stable prompt_cache_key missing: %v", body)
 	}
-	if opts, ok := body["prompt_cache_options"].(map[string]any); !ok || opts["mode"] != "implicit" {
-		t.Fatalf("prompt_cache_options mode implicit missing: %v", body)
+	// Codex parity: implicit caching only — no options, no explicit markers.
+	if _, ok := body["prompt_cache_options"]; ok {
+		t.Fatalf("prompt_cache_options must not be sent (Codex parity): %v", body)
 	}
 	encoded, _ := json.Marshal(body["input"])
-	if !strings.Contains(string(encoded), "prompt_cache_breakpoint") {
-		t.Fatalf("explicit reusable boundaries missing: %s", encoded)
+	if strings.Contains(string(encoded), "prompt_cache_breakpoint") {
+		t.Fatalf("explicit breakpoints must not be sent (Codex parity): %s", encoded)
+	}
+	if !strings.Contains(string(encoded), "durable") {
+		t.Fatalf("leading developer instructions missing: %s", encoded)
 	}
 }
 
@@ -85,12 +89,11 @@ func TestChatGPTCodexParityNullDetailsStayUnknown(t *testing.T) {
 	}
 }
 
-func TestChatGPTCodexParityTerraRejectsCacheFields(t *testing.T) {
-	// gpt-6.1-terra proves version-compare auto-enable is unsafe: qcode sends
-	// cache fields on first attempt (like other gpt-6.x), the model rejects
-	// prompt_cache_options, and qcode falls back to the pre-cache baseline.
-	// Codex never sends prompt_cache_options/breakpoints by default, so it
-	// never triggers this 400 path.
+func TestChatGPTCodexParityTerraSendsKeyOnly(t *testing.T) {
+	// Codex parity sends key only (no options/breakpoints), so Terra-class
+	// models no longer 400 on prompt_cache_options. If the key itself is
+	// rejected, the fallback strips the key but keeps the developer-message
+	// shape so the reusable prefix stays byte-identical.
 	calls := 0
 	var bodies []map[string]any
 	p, err := newChatGPT(Config{ChatGPTOAuthPath: writeChatGPTOAuth(t, chatgptoauth.Tokens{AccessToken: "test", RefreshToken: "refresh"}), HTTP: doerFunc(func(r *http.Request) (*http.Response, error) {
@@ -101,7 +104,7 @@ func TestChatGPTCodexParityTerraRejectsCacheFields(t *testing.T) {
 		}
 		bodies = append(bodies, body)
 		if calls == 1 {
-			return &http.Response{StatusCode: 400, Status: "400 Bad Request", Body: io.NopCloser(strings.NewReader(`{"error":{"message":"prompt_cache_options is not supported on this model","type":"invalid_request_error","param":"prompt_cache_options","code":"invalid_parameter"}}`))}, nil
+			return &http.Response{StatusCode: 400, Status: "400 Bad Request", Body: io.NopCloser(strings.NewReader(`{"error":{"message":"prompt_cache_key is not supported on this model","type":"invalid_request_error","param":"prompt_cache_key","code":"invalid_parameter"}}`))}, nil
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(responsesStream("ok")))}, nil
 	})})
@@ -112,11 +115,14 @@ func TestChatGPTCodexParityTerraRejectsCacheFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	if calls != 2 {
-		t.Fatalf("requests = %d, want 2 (cache attempt + baseline fallback)", calls)
+		t.Fatalf("requests = %d, want 2 (key attempt + keyless fallback)", calls)
 	}
 	first, _ := json.Marshal(bodies[0])
-	if !strings.Contains(string(first), "prompt_cache_options") {
-		t.Fatalf("first Terra attempt must carry cache fields to document rejection risk: %s", first)
+	if !strings.Contains(string(first), "prompt_cache_key") {
+		t.Fatalf("first Terra attempt must carry the stable key: %s", first)
+	}
+	if strings.Contains(string(first), "prompt_cache_options") || strings.Contains(string(first), "prompt_cache_breakpoint") {
+		t.Fatalf("Codex parity sends key only, no explicit cache fields: %s", first)
 	}
 	second, _ := json.Marshal(bodies[1])
 	if strings.Contains(string(second), "prompt_cache") {

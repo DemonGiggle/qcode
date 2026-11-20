@@ -13,26 +13,29 @@ import (
 )
 
 func TestChatGPTCachePolicyRouting(t *testing.T) {
+	// Codex parity: implicit caching only. The wire carries the stable
+	// prompt_cache_key on the official endpoint and never sends explicit
+	// breakpoints, prompt_cache_options, or top-level instructions.
 	for _, tc := range []struct {
-		model, base   string
-		explicit, key bool
+		model, base string
+		key         bool
 	}{
-		{"gpt-5.6-codex", "", true, true},
-		{"gpt-6.1-sol", "https://api.openai.com/v1/", true, true},
-		{"gpt-6-astra", "", true, true},
-		{"gpt-6.2-sol", "", true, true},
-		{"gpt-6.3", "", true, true},
-		{"gpt-6.10-test", "", true, true},
-		{"gpt-7", "", true, true},
-		{"gpt-5.6", "", true, true},
-		{"gpt-5.5", "", false, true},
-		{"gpt-5.4-mini", "", false, true},
-		{"gpt-5", "", false, true},
-		{"gpt-4o", "", false, true},
-		{"unknown", "", false, true},
-		{"gpt-5.60", "", true, true},
-		{"gpt-6.1-sol", "https://proxy.example/v1", false, false},
-		{"gpt-6.1-sol", "https://chatgpt.com/backend-api/codex", false, false},
+		{"gpt-5.6-codex", "", true},
+		{"gpt-6.1-sol", "https://api.openai.com/v1/", true},
+		{"gpt-6-astra", "", true},
+		{"gpt-6.2-sol", "", true},
+		{"gpt-6.3", "", true},
+		{"gpt-6.10-test", "", true},
+		{"gpt-7", "", true},
+		{"gpt-5.6", "", true},
+		{"gpt-5.5", "", true},
+		{"gpt-5.4-mini", "", true},
+		{"gpt-5", "", true},
+		{"gpt-4o", "", true},
+		{"unknown", "", true},
+		{"gpt-5.60", "", true},
+		{"gpt-6.1-sol", "https://proxy.example/v1", false},
+		{"gpt-6.1-sol", "https://chatgpt.com/backend-api/codex", false},
 	} {
 		t.Run(tc.model+tc.base, func(t *testing.T) {
 			var body map[string]any
@@ -56,14 +59,23 @@ func TestChatGPTCachePolicyRouting(t *testing.T) {
 					t.Fatalf("cache key policy: %v", body)
 				}
 				encoded, _ := json.Marshal(body)
-				if strings.Contains(string(encoded), "prompt_cache_breakpoint") != tc.explicit {
-					t.Fatalf("breakpoint policy: %s", encoded)
+				if strings.Contains(string(encoded), "prompt_cache_breakpoint") {
+					t.Fatalf("explicit breakpoints must not be sent (Codex parity): %s", encoded)
 				}
-				if _, ok := body["prompt_cache_options"]; ok != tc.explicit {
-					t.Fatalf("options policy: %s", encoded)
+				if _, ok := body["prompt_cache_options"]; ok {
+					t.Fatalf("prompt_cache_options must not be sent (Codex parity): %v", body)
 				}
-				if _, ok := body["instructions"]; ok == tc.explicit {
-					t.Fatalf("instructions policy: %s", encoded)
+				if _, ok := body["instructions"]; ok {
+					t.Fatalf("top-level instructions must not be sent (leading developer message): %v", body)
+				}
+				// Durable instructions travel as the leading developer message.
+				items, ok := body["input"].([]any)
+				if !ok || len(items) < 2 {
+					t.Fatalf("input must start with developer instructions: %v", body)
+				}
+				initial, ok := items[0].(map[string]any)
+				if !ok || initial["role"] != "developer" {
+					t.Fatalf("first input item must be developer instructions: %v", body)
 				}
 				if body["store"] != false || body["stream"] != true {
 					t.Fatal("SIWC contract changed")
@@ -84,20 +96,28 @@ func TestChatGPTCacheBoundariesSurviveContinuation(t *testing.T) {
 	first := chatGPTCacheInput("stable instructions", append(append([]Message(nil), history...), Message{Role: "developer", Content: "cwd /one"}))
 	nextHistory := append(append([]Message(nil), history...), Message{Role: "assistant", Content: "done"}, Message{Role: "user", Content: "continue"}, Message{Role: "developer", Content: "cwd /two"})
 	second := chatGPTCacheInput("stable instructions", nextHistory)
-	// Stable instructions, image, opaque reasoning/call, and tool result retain
-	// identical wire prefixes and breakpoint positions despite a changed tail.
+	// Codex parity: stable instructions, image, opaque reasoning/call, and
+	// tool result retain identical wire prefixes despite a changed tail.
+	// No explicit breakpoints are emitted; the server selects implicit
+	// boundaries.
 	if !reflect.DeepEqual(first[:5], second[:5]) {
 		t.Fatal("continuation changed reusable prefix")
 	}
 	for _, index := range []int{0, 1, 4} {
 		encoded, _ := json.Marshal(first[index])
-		if strings.Count(string(encoded), "prompt_cache_breakpoint") != 1 {
-			t.Fatalf("missing reusable boundary: %s", encoded)
+		if strings.Contains(string(encoded), "prompt_cache_breakpoint") {
+			t.Fatalf("explicit breakpoints must not be sent: %s", encoded)
 		}
 	}
 	imageContent := first[1].(map[string]any)["content"].([]map[string]any)
-	if _, ok := imageContent[1]["prompt_cache_breakpoint"]; !ok {
-		t.Fatal("breakpoint must follow image, not precede it")
+	if len(imageContent) != 2 || imageContent[1]["type"] != "input_image" {
+		t.Fatalf("image content must be preserved without breakpoint markers: %v", imageContent)
+	}
+	// Leading developer instructions stay stable; the ephemeral tail is a
+	// plain developer message appended after history.
+	initial, _ := json.Marshal(first[0])
+	if !strings.Contains(string(initial), "stable instructions") {
+		t.Fatalf("leading developer instructions missing: %s", initial)
 	}
 	tail, _ := json.Marshal(first[len(first)-1])
 	if strings.Contains(string(tail), "prompt_cache_breakpoint") {
@@ -128,7 +148,7 @@ func TestChatGPTCacheRejectionRetriesWithoutCache(t *testing.T) {
 		}
 		bodies = append(bodies, body)
 		if calls == 1 {
-			return &http.Response{StatusCode: 400, Status: "400 Bad Request", Body: io.NopCloser(strings.NewReader(`{"error":{"message":"prompt_cache_options is not supported on this model","type":"invalid_request_error","param":"prompt_cache_options","code":"invalid_parameter"}}`))}, nil
+			return &http.Response{StatusCode: 400, Status: "400 Bad Request", Body: io.NopCloser(strings.NewReader(`{"error":{"message":"prompt_cache_key is not supported on this model","type":"invalid_request_error","param":"prompt_cache_key","code":"invalid_parameter"}}`))}, nil
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(responsesStream("ok")))}, nil
 	})})
@@ -143,15 +163,24 @@ func TestChatGPTCacheRejectionRetriesWithoutCache(t *testing.T) {
 		t.Fatalf("text=%q", resp.Message.Content)
 	}
 	first, _ := json.Marshal(bodies[0])
-	if !strings.Contains(string(first), "prompt_cache_options") || !strings.Contains(string(first), "prompt_cache_breakpoint") {
-		t.Fatalf("first attempt must carry cache fields: %s", first)
+	if !strings.Contains(string(first), "prompt_cache_key") {
+		t.Fatalf("first attempt must carry the stable key: %s", first)
+	}
+	if strings.Contains(string(first), "prompt_cache_options") || strings.Contains(string(first), "prompt_cache_breakpoint") {
+		t.Fatalf("Codex parity sends key only, no explicit cache fields: %s", first)
 	}
 	second, _ := json.Marshal(bodies[1])
 	if strings.Contains(string(second), "prompt_cache") {
 		t.Fatalf("fallback must strip all cache fields: %s", second)
 	}
-	if _, ok := bodies[1]["instructions"]; ok == false {
-		t.Fatalf("fallback must restore top-level instructions: %s", second)
+	// Codex parity keeps the leading developer message on fallback; only the
+	// key is stripped so the reusable prefix stays byte-identical.
+	input, _ := json.Marshal(bodies[1]["input"])
+	if !strings.Contains(string(input), "durable") {
+		t.Fatalf("fallback must keep developer instructions in input: %s", second)
+	}
+	if _, ok := bodies[1]["instructions"]; ok {
+		t.Fatalf("fallback must not restore top-level instructions: %s", second)
 	}
 }
 
@@ -164,7 +193,9 @@ func TestChatGPTCacheRejectionGivesUpAfterFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = p.Complete(context.Background(), Request{Model: "gpt-6.1-sol", Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
+	// A key must be present to enter the cache-fallback path; without a key
+	// there is nothing to strip and no retry occurs (covered separately).
+	_, err = p.Complete(context.Background(), Request{Model: "gpt-6.1-sol", PromptCacheKey: "session-key", Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
 	if err == nil || calls != 2 {
 		t.Fatalf("err=%v requests=%d", err, calls)
 	}

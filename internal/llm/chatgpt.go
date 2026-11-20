@@ -312,26 +312,27 @@ func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText St
 func (p *chatGPTProvider) buildCodexBody(input Request, instructions string, rest []Message, useCache bool) map[string]any {
 	body := map[string]any{
 		"model":  input.Model,
-		"input":  responsesInput(rest),
 		"stream": true,
 		"store":  false,
 	}
 	for field, value := range thinkingFields(p.ThinkingCapability(input.Model), input.Thinking) {
 		body[field] = value
 	}
+	// Codex parity (implicit caching only): durable instructions always travel
+	// as the leading developer message in input, never as top-level
+	// instructions. Top-level instructions cannot carry a breakpoint and, on
+	// GPT-6.2+, are appended after input and billed uncached. Codex sends no
+	// prompt_cache_options and no explicit prompt_cache_breakpoint markers;
+	// cache reuse comes from a stable key plus an exact reusable prefix.
 	if strings.TrimSpace(instructions) != "" {
-		body["instructions"] = instructions
+		initial := responsesMessage("developer", instructions, nil)
+		body["input"] = append([]any{initial}, responsesInput(rest)...)
+	} else {
+		body["input"] = responsesInput(rest)
 	}
 	if useCache && IsOfficialOpenAIEndpoint(p.baseURL) {
 		if input.PromptCacheKey != "" {
 			body["prompt_cache_key"] = input.PromptCacheKey
-		}
-		if chatGPTSupportsCacheBreakpoints(input.Model) {
-			// Instructions need an input content block to expose a reusable
-			// boundary before the changing conversation and request context.
-			delete(body, "instructions")
-			body["input"] = chatGPTCacheInput(instructions, rest)
-			body["prompt_cache_options"] = map[string]any{"mode": "implicit"}
 		}
 	}
 	if len(input.Tools) > 0 {
@@ -454,10 +455,11 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 	if !isChatGPTCacheFieldRejection(statusCode, bodyText) {
 		return Response{}, err
 	}
-	// Fall back once to the pre-cache baseline contract (top-level
-	// instructions, plain input, no prompt_cache_* fields). This heals
-	// models such as gpt-6.1-terra that reject prompt_cache_options and
-	// Codex-backend models that reject prompt_cache_breakpoint.
+	// Fall back once to the same developer-message shape without any
+	// prompt_cache_* fields. Codex parity sends only the stable key, so a
+	// rejection here means the key itself was rejected; stripping it cannot
+	// double-bill (a 400 rejects before execution) and keeps the reusable
+	// prefix byte-identical.
 	clean := p.buildCodexBody(input, instructions, rest, false)
 	cleanPayload, err := json.Marshal(clean)
 	if err != nil {
