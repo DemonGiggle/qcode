@@ -278,6 +278,7 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 		}
 	}
 	a.messages = nil
+	a.chatGPTContext = chatGPTContextHistory{}
 	cleanedHistory := false
 	for _, m := range s.Messages {
 		m.Message.Images = m.Images
@@ -382,6 +383,9 @@ func (a *Agent) repairInterruptedCalls() {
 			}
 			repaired = append(repaired, result)
 		}
+	}
+	if len(repaired) != len(a.messages) {
+		a.chatGPTContext = chatGPTContextHistory{}
 	}
 	a.messages = repaired
 	if len(a.pendingImages) > 0 {

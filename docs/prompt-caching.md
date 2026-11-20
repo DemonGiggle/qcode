@@ -182,10 +182,9 @@ covers any `base_url`). Differences:
   clients (`rejected_by_access_enforcement / no_matching_rule`); the
   supported route is the default. Auth failures (401/403) are retried once
   after a serialized refresh.
-- **Subscription contract (verified gateway):** durable instructions are normally
-  sent as top-level `instructions`; supported cache-breakpoint models on the
-  official endpoint use a leading developer message instead (see the current
-  cache-boundary policy below). The SIWC route rejects system roles. Requests
+- **Subscription contract (verified gateway):** qcode sends durable instructions
+  in the first developer message in `input` (see the current cache-boundary
+  policy below). The SIWC route rejects system roles. Requests
   use `store: false`, `stream: true`, plain Bearer auth, no
   `ChatGPT-Account-Id` on the supported route. Thinking level, when set, is
   sent as the Responses `reasoning` effort object; empty preserves the
@@ -750,28 +749,22 @@ session usage, or UI; persistence stores only the base identity.
 
 ## ChatGPT, Gemini, and OpenAI Chat Completions request context refinement
 
-Normal ChatGPT turns keep the durable system instructions and conversation
-history unchanged at the start of the request. Request-only additions (working
-directory, restored-history references, learning, dynamic context, work history,
-question budget and recovery notices) are sent once in a trailing developer
-message. Trust wrappers are preserved, and this message is never persisted to
-conversation history.
+ChatGPT puts durable instructions in the first developer message in Responses
+`input`. During a running conversation, qcode inserts the working directory,
+agent roster and work-history excerpts before the new user message, or after a
+completed group of tool results. Each subsequent request replays those context
+updates at their original positions. When a field changes, qcode adds an update
+for that field. Roster and work-history excerpts retain their trust wrappers.
 
-Normal Gemini turns (#103) and OpenAI Chat Completions turns (#105) keep the
-same durable prefix byte-stable with the same ephemeral suffix, but sent once in
-a trailing user message instead of developer: developer-role support on the
-Gemini OpenAI-compat endpoint and custom OpenAI-compatible endpoints configured
-with the `openai` provider (`Kind == "openai"`) is undocumented or varies, while
-user is universally accepted and keeps untrusted wrappers as data without
-elevating them. Other providers (`ollama`, `opencode-go`, `anthropic`) retain
-their existing message layout.
+Retrieved learning keeps its position while the same material is selected.
+Changing or withdrawing that selection removes the previous learning from the
+request. Question budgets and recovery notices apply to the current request
+only. The context updates live in memory. After resume or compaction, qcode
+rebuilds them from current state against the new history.
 
-This revises the first-release restriction on moving request-only instructions:
-ChatGPT already sends system content with developer authority via top-level
-`instructions`. The trailing message retains that authority while preventing
-changing context from rewriting the prefix before conversation history. Context
-estimation includes the tail, and changes still invalidate token calibration.
-The ChatGPT-only cache policy below adds supported routing keys and breakpoints.
+Gemini and OpenAI Chat Completions continue to send request context as a
+trailing user message, which their compatible endpoints accept. The request
+estimate includes the messages and tools sent to each provider.
 
 The [official prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)
 explains that reuse requires a matching prefix and recommends stable content
@@ -793,9 +786,8 @@ travel as a leading developer input message (never top-level
 `instructions`, which on GPT-6.2+ is appended after input and billed
 uncached). No `prompt_cache_options` and no explicit
 `prompt_cache_breakpoint` markers are sent; the server selects implicit
-writes and lookup boundaries. The transient trailing developer context
-stays unmarked and assistant output/reasoning replay is preserved without
-modification. This matches Codex, which sends a stable key, a leading
+writes and lookup boundaries. Assistant output and reasoning items are
+replayed in their original order. This matches Codex, which sends a stable key, a leading
 developer prefix, and no explicit cache fields by default.
 
 Custom endpoints and legacy backend-api routes receive none of these
@@ -916,7 +908,7 @@ qcode baseline: `internal/llm/chatgpt.go` (`buildCodexBody`, `doCodex`),
 | Instructions | always leading developer message in `input`, never top-level (all models) | first developer message in `input`, never top-level `instructions` (asserted `body["instructions"] is none`) | Full parity, including the GPT-6.2+ rule (top-level instructions billed uncached and excluded from cacheable prefix). |
 | Reasoning | omitted when thinking is empty | always explicit (default resolved), plus summary/context/verbosity controls | Both stable if unchanged; mid-session thinking changes break the prefix on qcode (top-level change) where Codex uses `configuration_update` on supported GPT-6+. qcode has no verbosity/text control. |
 | Tools | full list resent each turn, stable order, no `allowed_tools`/`defer_loading` | stable list plus `allowed_tools`, `defer_loading: true`, incremental `AdditionalTools` | Same prefix when stable; Codex avoids rewriting the tool prefix when the callable set changes. |
-| Tail | trailing developer message (unmarked) with cwd/restored/learning/dynamic/history/notice/recovery suffix | permissions + environment messages appended after the prefix | Same append-only discipline; either tail still counts as suffix after the reusable prefix. |
+| Tail at the comparison snapshot | request-only developer message moved after new history on each turn | permissions and environment updates appended to prior history | The moving message shortened the matching prefix. The current ChatGPT request builder keeps reusable context at its original position. |
 | `store` / `previous_response_id` | `store: false`, full resend, no `previous_response_id` | `store: false`; HTTP full resend, WebSocket delta via `previous_response_id` when compatible | Transport parity on HTTP; WebSocket delta is a byte saver, not a separate cache switch. |
 | Compaction | new shorter prefix, new purpose key (`compact`) | new shorter prefix, same session-derived key | Both reset the reusable prefix; qcode additionally separates accounting. |
 | Usage parse | presence-aware pointers: missing/null details stay unknown (`unavailable`, never `0`); inconsistent breakdowns discarded | `i64` defaults: missing/null details become `0` | Explains the reported symptom directly: the same SIWC payload with omitted `input_tokens_details` shows `unavailable` in qcode `/usage`/trace and `0 cached` in Codex. Neither is a hit. |

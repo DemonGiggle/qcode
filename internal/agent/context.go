@@ -101,6 +101,7 @@ func (a *Agent) Compact(ctx context.Context) (string, error) {
 	if summary == "" {
 		return "", fmt.Errorf("compaction produced no summary")
 	}
+	a.chatGPTContext = chatGPTContextHistory{}
 	a.messages = append([]llm.Message{{Role: "system", Content: a.system}, {Role: "user", Content: "Conversation summary from earlier turns (reference data):\n" + trust.Wrap("conversation_summary", summary), Origin: "conversation_summary", Untrusted: true}}, recent...)
 	a.contextUsage = nil
 	a.contextMessages = 0

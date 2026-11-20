@@ -54,6 +54,7 @@ type Agent struct {
 	maxSteps                 atomic.Int64
 	currentStep              atomic.Int64
 	messages                 []llm.Message
+	chatGPTContext           chatGPTContextHistory
 	stateMu                  sync.RWMutex
 	requestContext           func() string
 	taskContext              string
@@ -122,6 +123,7 @@ type Toolset interface {
 // Journal records live in the manager and are deliberately retained.
 func (a *Agent) releaseContext() {
 	a.messages = nil
+	a.chatGPTContext = chatGPTContextHistory{}
 	a.pendingImages = nil
 	a.taskContext, a.dynamicContext = "", ""
 	a.checkpoint.Store(nil)
@@ -471,6 +473,7 @@ func (a *Agent) resetSession() {
 	a.stateMu.Unlock()
 	a.system = a.modeSystem(a.selectedSkills)
 	a.messages = []llm.Message{{Role: "system", Content: a.system}}
+	a.chatGPTContext = chatGPTContextHistory{}
 	// /new rotates the cache-session identity so the next session cannot
 	// reuse the previous session's cache accounting group.
 	a.rotateCacheSessionID()
@@ -829,6 +832,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 				response.Message.ToolCalls[index].ID = fmt.Sprintf("call_%d_%d", step+1, index+1)
 			}
 		}
+		a.chatGPTContext = prep.chatGPTContext
 		a.messages = append(a.messages, response.Message)
 		a.contextUsage = response.Usage
 		a.contextMessages = len(a.messages)

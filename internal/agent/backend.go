@@ -96,6 +96,7 @@ func (m *AgentManager) SwitchBackend(id string, expectedRevision uint64, next Ba
 			return fmt.Errorf("thinking level %q is not supported by model %q", level, next.Model)
 		}
 	}
+	a.chatGPTContext = chatGPTContextHistory{}
 	a.provider, a.endpoint, a.model, a.thinking = next.Provider, next.Endpoint, next.Model, level
 	a.contextWindow, a.contextOverride = next.ContextCapacity, 0
 	a.contextUsage, a.contextMessages = nil, 0

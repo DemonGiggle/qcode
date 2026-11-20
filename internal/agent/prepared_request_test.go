@@ -344,12 +344,16 @@ func TestChatGPTChangingContextPreservesConversationPrefix(t *testing.T) {
 	second := a.prepareNormalRequest(context.Background(), "")
 	for i, prep := range []preparedRequest{first, second} {
 		msgs := prep.Request.Messages
-		if len(msgs) != len(before)+1 || !stablePrefixEqual(msgs[:len(before)], before) {
+		wantLen := len(before) + 1
+		if i == 0 {
+			wantLen++ // recovery has its own request-only message
+		}
+		if len(msgs) != wantLen || !stablePrefixEqual(msgs[:len(before)], before) {
 			t.Fatalf("conversation prefix changed: %+v", msgs)
 		}
-		tail := msgs[len(before)]
-		if tail.Role != "developer" || !strings.Contains(tail.Content, trust.Wrap("request_context", []string{"first status", "second status"}[i])) {
-			t.Fatalf("missing wrapped developer context: %+v", tail)
+		contextMessage := msgs[len(before)]
+		if contextMessage.Role != "developer" || !strings.Contains(contextMessage.Content, trust.Wrap("request_context", []string{"first status", "second status"}[i])) {
+			t.Fatalf("missing wrapped developer context: %+v", contextMessage)
 		}
 		if prep.Estimate != estimateTokens(msgs)+estimateTokens(prep.Request.Tools) {
 			t.Fatal("estimate excludes tail")
@@ -358,7 +362,7 @@ func TestChatGPTChangingContextPreservesConversationPrefix(t *testing.T) {
 	if first.PrefixHash == second.PrefixHash {
 		t.Fatal("changing tail must invalidate calibration")
 	}
-	if !strings.Contains(first.Request.Messages[len(before)].Content, "retry once") || strings.Contains(second.Request.Messages[len(before)].Content, "retry once") {
+	if !strings.Contains(first.Request.Messages[len(first.Request.Messages)-1].Content, "retry once") || strings.Contains(second.Request.Messages[len(before)].Content, "retry once") {
 		t.Fatal("recovery must be request-only")
 	}
 	if !stablePrefixEqual(a.messages, before) {

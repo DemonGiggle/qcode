@@ -52,6 +52,8 @@ type preparedRequest struct {
 	Request  llm.Request
 	Estimate int
 
+	chatGPTContext chatGPTContextHistory
+
 	// Fingerprints for calibration and prefix-stability checks.
 	ToolsHash  string
 	PrefixHash string
@@ -198,18 +200,7 @@ func (a *Agent) resolveDynamicOnce() string {
 }
 
 // prepareNormalRequest builds the exact normal-turn request on the owning
-// goroutine. Durable a.messages are preserved byte-for-byte; only the copy's
-// leading system message gains the ephemeral suffix in existing order:
-// cwd, restored-history reference, learning, dynamic context, work history,
-// question-budget notice, recovery instruction. For ChatGPT this suffix is
-// instead sent as a trailing developer message so changing context does not
-// invalidate the durable conversation prefix. For Gemini (#103) and OpenAI
-// Chat Completions (#105) the same suffix is sent as a trailing user message:
-// developer-role support on Gemini OpenAI-compat and custom OpenAI-compatible
-// endpoints is undocumented or varies by model/proxy, while user is
-// universally accepted and keeps untrusted wrappers as data. Trust wrappers
-// are preserved in all cases. Tool schemas are captured once and never
-// reordered for speculative caching gain.
+// goroutine. All provider-specific additions apply to a copy of durable history.
 func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction string) preparedRequest {
 	extra := a.resolveLearningOnce(ctx)
 	dynamic := a.resolveDynamicOnce()
@@ -247,56 +238,52 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 		}
 	}
 	cwd := a.WorkingDirectory()
-	if len(messages) > 0 {
-		if cwd != "" {
-			messages[0].Content += "\n\nCurrent agent working directory: " + strconv.Quote(cwd)
-		}
-		if len(restoredPositions) > 0 {
-			messages[0].Content += fmt.Sprintf(prompt.RestoredHistoryReference, strings.Join(restoredPositions, ", "))
-		}
-		messages[0].Content += extra
-		if dynamic != "" {
-			messages[0].Content += "\n\nAdditional context: " + trust.Wrap("request_context", dynamic)
-		}
-		if a.taskContext != "" {
-			messages[0].Content += "\n\nWork history: " + trust.Wrap("work_history", a.taskContext)
-		}
+	var fields chatGPTContextFields
+	if cwd != "" {
+		fields.cwd = "\n\nCurrent agent working directory: " + strconv.Quote(cwd)
 	}
+	if dynamic != "" {
+		fields.dynamic = "\n\nAdditional context: " + trust.Wrap("request_context", dynamic)
+	}
+	if a.taskContext != "" {
+		fields.work = "\n\nWork history: " + trust.Wrap("work_history", a.taskContext)
+	}
+	restored := ""
+	if len(restoredPositions) > 0 {
+		restored = fmt.Sprintf(prompt.RestoredHistoryReference, strings.Join(restoredPositions, ", "))
+	}
+
 	tools := a.enabledSchemas()
-	// Defensive copy so later toggles cannot mutate the prepared snapshot.
 	toolsCopy := append([]llm.Tool(nil), tools...)
 	notice := a.questionBudgetNotice()
-	if notice != "" && len(messages) > 0 {
-		messages[0].Content += notice
-	}
 	recovery := ""
+	transient := notice
 	if recoveryInstruction != "" && len(messages) > 0 && messages[0].Role == "system" {
-		messages[0].Content += "\n\n" + recoveryInstruction
 		recovery = recoveryInstruction
+		transient += "\n\n" + recovery
 	}
-	if a.provider != nil && (llm.Kind(a.provider) == "chatgpt" || llm.Kind(a.provider) == "gemini" || llm.Kind(a.provider) == "openai") && len(messages) > 0 && messages[0].Role == "system" {
-		// Keep request-only context after history. ChatGPT lifts the stable
-		// system message into instructions; a developer message preserves
-		// instruction authority and the existing trust wrappers on context.
-		// Gemini (#103) and OpenAI Chat Completions (#105) keep the system role on the wire, so the same durable
-		// prefix is kept byte-stable by moving the ephemeral suffix to a
-		// trailing message. Developer-role support on Gemini OpenAI-compat and custom OpenAI-compatible endpoints (Kind "openai")
-		// is undocumented or varies, so both use a trailing user message: it is
-		// universally accepted and keeps untrusted wrappers as data without
-		// elevating them. Either way the first N bytes (durable system +
-		// history) stay identical across no-op turns for implicit-cache
-		// prefix match; PrefixHash still changes on dynamic-only edits so
-		// calibration invalidates correctly.
-		kind := llm.Kind(a.provider)
-		base := a.messages[0].Content
-		suffix := strings.TrimPrefix(messages[0].Content, base)
-		messages[0].Content = base
-		if strings.TrimSpace(suffix) != "" {
-			role := "developer"
-			if kind == "gemini" || kind == "openai" {
-				role = "user"
+
+	kind := ""
+	if a.provider != nil && len(messages) > 0 && messages[0].Role == "system" {
+		kind = llm.Kind(a.provider)
+	}
+	var chatGPTContext chatGPTContextHistory
+	if kind == "chatgpt" {
+		// The restored positions describe the durable transcript. Insertions
+		// start with fresh input after the restored messages.
+		messages[0].Content += restored
+		messages, chatGPTContext = a.chatGPTContext.prepare(messages, fields, extra)
+		if transient != "" {
+			messages = append(messages, llm.Message{Role: "developer", Content: transient})
+		}
+	} else if len(messages) > 0 {
+		suffix := fields.cwd + restored + extra + fields.dynamic + fields.work + transient
+		if kind == "gemini" || kind == "openai" {
+			if strings.TrimSpace(suffix) != "" {
+				messages = append(messages, llm.Message{Role: "user", Content: suffix})
 			}
-			messages = append(messages, llm.Message{Role: role, Content: suffix})
+		} else {
+			messages[0].Content += suffix
 		}
 	}
 	estimate := estimateTokens(messages) + estimateTokens(toolsCopy)
@@ -327,6 +314,8 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 		Notice:       notice,
 		Recovery:     recovery,
 		DurableCount: len(a.messages),
+
+		chatGPTContext: chatGPTContext,
 	}
 	a.cachePreparedSnapshot(prep)
 	return prep
@@ -468,14 +457,15 @@ func (a *Agent) maybeAutoCompactForPrepared(ctx context.Context, estimate int) b
 	if !a.shouldAutoCompactForEstimate(estimate) {
 		return false
 	}
-	before := len(a.messages)
 	fmt.Fprintln(transcript.NewGroup(a.out), "Compacting conversation to make room for the next request...")
 	if _, err := a.Compact(ctx); err != nil {
 		fmt.Fprintln(transcript.NewGroup(a.out), "Conversation compaction failed:", a.redaction.Error(redaction.Terminal, err))
 		return false
 	}
 	fmt.Fprintln(transcript.NewGroup(a.out), "Conversation compacted.")
-	return len(a.messages) != before
+	// Compact invalidates this snapshot whenever it replaces the history,
+	// including when the summary and retained tail have the original length.
+	return !a.prepared.valid
 }
 
 // stablePrefixEqual reports byte-identical durable history for golden tests:
