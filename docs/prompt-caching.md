@@ -964,17 +964,15 @@ sum(input_tokens)`, cold vs repeated turns, latency retained) remains
 deferred by requester; fixture tests plus `go test ./...` are the
 acceptance basis for this issue.
 
-## Responses complete implementation (issue #116)
+## Responses coverage for issue #116
 
-Opt-in Responses coverage on top of the stateless implicit-cache-only
-default. Defaults are unchanged: `store:false`, full-history resend, function
-tools only, no comparison, no structured-output overrides. All new fields are
-omitted when zero so `TestBuildResponsesBodyDefaultsStayStateless`,
-`TestChatGPTCachePolicyRouting`, and Codex-parity tests keep passing.
+The default ChatGPT request uses `store:false`, sends the full history,
+and uses implicit caching and function tools. Cache comparisons and
+structured output are opt-in.
 
 Shared core: `internal/llm/responses.go:buildResponsesBody` is used by both
-the `chatgpt` SIWC route and the `opencode-go` Responses route (issues
-#115/#116 converge here instead of two partial copies). `chatgpt` prepends
+the `chatgpt` and `opencode-go` Responses routes. The API-key `openai`
+provider still uses Chat Completions pending #115. `chatgpt` prepends
 durable instructions as the leading developer message and applies the 6.2+
 top-level `instructions` dual-track; other routes pass `responsesInput`
 directly. Cache-key policy (#81/Codex parity) is unchanged: only the official
@@ -1011,24 +1009,22 @@ endpoint may send `prompt_cache_key`.
   `QCODE_RESPONSES_DIAGNOSTICS=1`. Default stays stateless +
   implicit-cache-only.
 
-### Phase 2 — Stateful continuation (Request-layer opt-in; agent delta deferred)
+### Phase 2 — Stateful continuation
 
-- Request: `PreviousResponseID` -> `previous_response_id`,
-  `StoreResponses`/`ConversationID` -> `store:true`/`conversation`. A
-  `previous_response_id` chain implies `store:true` even when only the id is
-  set. Omit all three for the default stateless full resend.
-- Stateful auto-chaining is deferred: sending full history alongside
-  `previous_response_id` would duplicate every prior turn server-side,
-  so `PreviousResponseID` stays Request-layer opt-in for callers that
-  send a true delta.
-- Chaining still bills all prior input tokens as input tokens. `store:false`
-  (ZDR) stays available: preserve and replay returned reasoning items
-  (including `encrypted_content`) manually.
-- Retry: 400/404 mentioning `previous_response_id`/`conversation` retries
-  once with the same full-history input and no continuation id (no
-  double-bill; the server never executed).
-- Agent default stays stateless; `Agent.LastResponseID` exposes the chaining
-  baseline for future opt-in wiring.
+- [Sign in with ChatGPT over HTTP](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations#responses-api-requirements)
+  requires `store:false` and full input history. qcode rejects storage and
+  continuation options for this route before sending a request. OpenAI also
+  documents connection-local continuation for WebSocket clients.
+- On compatible `opencode-go` routes, callers can opt into storage and use
+  either `PreviousResponseID` or `ConversationID`. Send only the new items
+  when continuing. If the server rejects the ID, the caller can start a new
+  request with the full history. qcode returns the error so a delta never
+  gets sent as a standalone conversation.
+- Automatic continuation in the agent remains open. With
+  `previous_response_id`, prior input tokens still count toward billing.
+  The 40–80% cache-utilization improvement OpenAI reported was from
+  internal tests comparing Responses with Chat Completions. Measure any
+  continuation benefit on qcode's workload. [OpenAI migration guide](https://developers.openai.com/api/docs/guides/migrate-to-responses)
 
 ### Phase 3 — Tools + structured output (opt-in)
 
@@ -1036,10 +1032,10 @@ endpoint may send `prompt_cache_key`.
   optional `verbosity` via `Verbosity`); `ToolChoice` -> `tool_choice`;
   `ParallelToolCalls` -> `parallel_tool_calls`.
 - `BuiltinTools` passthrough for `web_search`/`file_search`/
-  `code_interpreter`/`computer_use`/`image_generation`/`mcp`. Callers must
-  enforce a config allowlist; the provider only validates the type against the
-  known set and drops unknown entries so a typo cannot poison the cached
-  tool prefix.
+  `code_interpreter`/`computer`/`image_generation`/`mcp` on compatible
+  Responses routes. Sign in with ChatGPT HTTP forwards web search only,
+  subject to model and account support. A user-configurable allowlist
+  remains open.
 - Keep tool definitions and ordering stable; prefer `tool_choice:none` or an
   allowlist over rewriting the list (`tools_changed` is the most common
   miss).
@@ -1049,15 +1045,16 @@ endpoint may send `prompt_cache_key`.
 - `ReasoningSummary` overrides the summary detail (`auto`/`concise`/
   `detailed`) while keeping the `thinkingFields` effort; empty preserves the
   `auto`-when-enabled default. `MaxOutputTokens`, `ServiceTier`, `Metadata`,
-  `Background`, `Truncation`, `Include` (e.g.
-  `reasoning.encrypted_content`) forwarded when set.
-- Stream: `refusal` deltas surfaced as output text (never an empty
-  completion without explanation); `response.completed` and bare terminal
-  `response.incomplete` / `response.failed` events capture `id`, output,
-  usage, and diagnostics; `incomplete` (with `incomplete_details.reason`)
-  and `failed` return errors instead of being dropped;
-  `output_item.done` / `function_call_arguments.done` fill gaps the delta
-  path missed.
+  `Background`, `Truncation`, and `Include` (e.g.
+  `reasoning.encrypted_content`) are available on compatible routes.
+  Sign in with ChatGPT HTTP omits `Background`, `MaxOutputTokens`,
+  `Metadata`, and `Truncation`.
+- Stream: refusal text can come from a delta, `response.refusal.done`,
+  or the final output. A stream that ends before a terminal response
+  returns an error with the partial output. Terminal events also
+  capture the response ID, usage, and diagnostics when present.
+  `output_item.done` and `function_call_arguments.done` can fill gaps
+  in the streamed tool call.
 - Explicit cache controls (`ttl`/`retention`/explicit breakpoints) remain
   intentionally unsent (implicit-only, Codex parity). Server defaults apply
   (`30m` at 1.25x write, reads 0.1x, 0.05x on Astra/Sol/Terra).
@@ -1071,11 +1068,6 @@ Built-in tools stay Request-layer opt-in (`Request.BuiltinTools` with
 provider-side known-type allowlist); the agent Toolset does not auto-map MCP
 tools to Responses built-ins — that allowlist lives in a future config change.
 
-Acceptance: diagnostics round trip (`QCODE_RESPONSES_DIAGNOSTICS=1` with
-`comparison_response_id` -> `cache_hit/miss` + reason visible in trace),
-stateful substrate ready at Request/provider layer with agent delta sending
-deferred (no duplication), no default-path regression in
-cached_tokens accounting or 6.2 billing, docs updated here, fixture tests
-(`internal/llm/responses_complete_test.go`,
-`internal/trace/cache_diagnostics_test.go`,
-`internal/agent/responses_result_test.go`) plus `go test ./...`.
+Fixtures cover cache diagnostics, cache accounting, and stream handling.
+Live GPT-5.6+ diagnostics and a multi-turn tool chain using server-side
+continuation are still unverified.

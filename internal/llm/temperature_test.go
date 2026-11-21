@@ -73,6 +73,8 @@ func TestProviderTemperature(t *testing.T) {
 						stream := "data: [DONE]\n\n"
 						if adapter.nested {
 							stream = "{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"done\":true}\n"
+						} else if adapter.path == "/responses" {
+							stream = responsesStream("ok")
 						} else if adapter.path == "/messages" {
 							stream = "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
 						}

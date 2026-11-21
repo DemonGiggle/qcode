@@ -67,21 +67,14 @@ type Request struct {
 	// cache-field rejection (safe: a 400 rejects before execution); no adapter
 	// may replay a potentially billable completion.
 	PromptCacheKey string
-	// Responses opt-ins (issue #116). All optional; zero values preserve the
-	// default stateless implicit-cache-only wire (store:false, full history
-	// resend, no comparison, no structured-output overrides).
+	// Responses opt-ins (issue #116).
 	//
-	// PreviousResponseID requests stateful continuation
-	// (previous_response_id). The provider forwards the id with store:true
-	// and sends whatever input items the caller supplied; callers wanting
-	// byte savings must supply only the new-turn delta (agent auto-chaining
-	// is deferred to avoid duplicating full history server-side). On
-	// 400/404 mentioning the field it falls back once to a full-history
-	// stateless retry.
+	// PreviousResponseID opts into stored history. Supply only new items in
+	// Messages when using this field. If the server rejects the ID, retry
+	// with full history and no ID. Sign in with ChatGPT HTTP rejects this option.
 	PreviousResponseID string
-	// StoreResponses opts into store:true so the completed response id can
-	// seed a later PreviousResponseID or ComparisonResponseID. Default false
-	// preserves the SIWC store:false contract.
+	// StoreResponses opts into storage on compatible Responses routes.
+	// Cache diagnostics can use a completed response ID with storage disabled.
 	StoreResponses bool
 	// ComparisonResponseID opts into prompt-cache diagnostics
 	// (prompt_cache_options.comparison_response_id). It never changes
@@ -90,8 +83,8 @@ type Request struct {
 	// prompt_cache_options/comparison the provider retries once without it.
 	ComparisonResponseID string
 	// ConversationID opts into the Conversations API container
-	// (conversation: "...") for persistent server-side history. Empty omits
-	// it and preserves the stateless default.
+	// (conversation: "...") for persistent server-side history. Use it
+	// independently of PreviousResponseID on compatible Responses routes.
 	ConversationID string
 	// ResponseFormat opts into structured output (text.format). Nil preserves
 	// the default free-text wire.

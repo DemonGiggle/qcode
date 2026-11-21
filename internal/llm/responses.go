@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 )
 
 type responsesPartialCall struct{ id, name, arguments string }
+
+type responsesContentIndex struct{ output, content int }
 
 // completeResponses adapts qcode's normalized turn representation to the
 // OpenAI Responses protocol used by the OpenCode Go Muse, Luna, and Grok
@@ -25,57 +28,34 @@ type responsesPartialCall struct{ id, name, arguments string }
 // Request carries a key. Only the official OpenAI Chat Completions route may
 // transmit that field.
 func (p *openAIProvider) completeResponses(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
-	// Reasoning Responses models reject temperature (Luna returns 400).
-	// Omit it and keep the provider default, as the Anthropic adapter does.
+	if input.PreviousResponseID != "" && input.ConversationID != "" {
+		return Response{}, errors.New("Responses: use either PreviousResponseID or ConversationID")
+	}
 	inputItems := responsesInput(input.Messages)
-	body := buildResponsesBody(input.Model, p.ThinkingCapability(input.Model), input, inputItems, "", false)
-	payload, err := json.Marshal(body)
+	capability := p.ThinkingCapability(input.Model)
+	payload, err := json.Marshal(buildResponsesBody(input.Model, capability, input, inputItems, "", false))
 	if err != nil {
 		return Response{}, err
 	}
 	resp, err := p.postResponses(ctx, payload, onText)
-	if err == nil {
-		return resp, nil
+	var status *responsesStatusError
+	if input.ComparisonResponseID == "" || !errors.As(err, &status) ||
+		(status.statusCode != http.StatusBadRequest && status.statusCode != http.StatusNotFound) {
+		return resp, err
 	}
-	// Preserve partial accounting: postResponses returns the accumulated
-	// content/usage/id/diagnostics alongside terminal errors so
-	// recordResponsesResult still counts billed usage.
-	// Opt-in fallback: a comparison or continuation rejection happens before
-	// execution, so retrying once without the rejected opt-in field cannot
-	// double-bill. Strip only the rejected dimension so the surviving opt-in
-	// (comparison vs continuation) is preserved.
-	if shouldRetryResponsesWithoutOption(err, input) {
-		se, _ := asResponsesStatusError(err)
-		lower := strings.ToLower(se.body)
-		clean := input
-		if clean.ComparisonResponseID != "" && (strings.Contains(lower, "prompt_cache_options") || strings.Contains(lower, "comparison_response")) {
-			clean.ComparisonResponseID = ""
-		}
-		if (clean.PreviousResponseID != "" || clean.ConversationID != "") && (strings.Contains(lower, "previous_response") || strings.Contains(lower, "conversation")) {
-			clean.PreviousResponseID = ""
-			clean.ConversationID = ""
-			// Builder derives store:true from continuation ids, so clearing
-			// the ids returns to stateless unless StoreResponses is set.
-		}
-		if responsesStoreRejection(lower) {
-			clean.StoreResponses = false
-			// If store itself was rejected, drop continuation as well since
-			// chaining implies store:true.
-			if strings.Contains(lower, "previous_response") || strings.Contains(lower, "conversation") || clean.PreviousResponseID != "" || clean.ConversationID != "" {
-				clean.PreviousResponseID = ""
-				clean.ConversationID = ""
-			}
-		}
-		// shouldRetry ensures at least one dimension matched, so clean
-		// differs from input here; no generic fallback needed.
-		cleanBody := buildResponsesBody(clean.Model, p.ThinkingCapability(clean.Model), clean, inputItems, "", false)
-		cleanPayload, merr := json.Marshal(cleanBody)
-		if merr != nil {
-			return resp, merr
-		}
-		return p.postResponses(ctx, cleanPayload, onText)
+	lower := strings.ToLower(status.body)
+	if !strings.Contains(lower, "prompt_cache_options") && !strings.Contains(lower, "comparison_response") {
+		return resp, err
 	}
-	return resp, err
+
+	// Only diagnostics can be removed safely. A continuation payload may
+	// contain just the new items, so retrying it needs history from the caller.
+	input.ComparisonResponseID = ""
+	payload, err = json.Marshal(buildResponsesBody(input.Model, capability, input, inputItems, "", false))
+	if err != nil {
+		return resp, err
+	}
+	return p.postResponses(ctx, payload, onText)
 }
 
 func (p *openAIProvider) postResponses(ctx context.Context, payload []byte, onText StreamCallback) (Response, error) {
@@ -117,69 +97,6 @@ func (e *responsesStatusError) Error() string {
 	return fmt.Sprintf("provider returned %s: %s", e.status, e.body)
 }
 
-func asResponsesStatusError(err error) (responsesStatusError, bool) {
-	if err == nil {
-		return responsesStatusError{}, false
-	}
-	for cur := err; cur != nil; {
-		if v, ok := cur.(*responsesStatusError); ok {
-			return *v, true
-		}
-		type unwrapper interface{ Unwrap() error }
-		u, ok := cur.(unwrapper)
-		if !ok {
-			break
-		}
-		cur = u.Unwrap()
-	}
-	// Also accept the chatgpt variant so shared helpers work across providers.
-	if se, ok := asChatGPTStatusError(err); ok {
-		return responsesStatusError{statusCode: se.statusCode, status: se.status, body: se.body}, true
-	}
-	return responsesStatusError{}, false
-}
-
-// responsesStoreRejection requires a param-shaped store match so unrelated
-// 400s mentioning "restore"/"storefront" don't trigger a misleading retry.
-func responsesStoreRejection(lower string) bool {
-	if !strings.Contains(lower, "store") {
-		return false
-	}
-	// Explicit param shape ("store":, param":"store) always counts.
-	if strings.Contains(lower, "\"store\"") || strings.Contains(lower, "param\":\"store") || strings.Contains(lower, "'store'") {
-		return true
-	}
-	// Otherwise require error wording so "restore succeeded" doesn't match.
-	return strings.Contains(lower, "unsupported") || strings.Contains(lower, "not supported") || strings.Contains(lower, "invalid") || strings.Contains(lower, "unknown")
-}
-
-// shouldRetryResponsesWithoutOption reports whether err is a pre-execution
-// rejection of an opt-in Responses field, in which case stripping that field
-// and retrying once with the same history cannot double-bill.
-func shouldRetryResponsesWithoutOption(err error, input Request) bool {
-	se, ok := asResponsesStatusError(err)
-	if !ok {
-		return false
-	}
-	if se.statusCode != http.StatusBadRequest && se.statusCode != http.StatusNotFound {
-		return false
-	}
-	lower := strings.ToLower(se.body)
-	if input.ComparisonResponseID != "" && (strings.Contains(lower, "prompt_cache_options") || strings.Contains(lower, "comparison_response")) {
-		return true
-	}
-	if input.PreviousResponseID != "" && (strings.Contains(lower, "previous_response") || strings.Contains(lower, "conversation")) {
-		return true
-	}
-	if input.ConversationID != "" && strings.Contains(lower, "conversation") {
-		return true
-	}
-	if (input.StoreResponses || input.PreviousResponseID != "" || input.ConversationID != "") && responsesStoreRejection(lower) {
-		return true
-	}
-	return false
-}
-
 // allowedResponsesBuiltins is the closed set of server-side tool types qcode
 // forwards. Unknown types are dropped so a typo cannot silently change the
 // cached tool prefix.
@@ -188,7 +105,7 @@ var allowedResponsesBuiltins = map[string]bool{
 	"web_search_preview":   true,
 	"file_search":          true,
 	"code_interpreter":     true,
-	"computer_use":         true,
+	"computer":             true,
 	"computer_use_preview": true,
 	"image_generation":     true,
 	"mcp":                  true,
@@ -252,9 +169,6 @@ func buildResponsesBody(model string, capability ThinkingCapability, input Reque
 		} else {
 			reasoning = map[string]any{}
 			fields = map[string]any{"reasoning": reasoning}
-			if len(fields) == 1 && len(reasoning) == 0 {
-				// keep fields non-nil; reasoning effort omitted preserves default
-			}
 		}
 		reasoning["summary"] = input.ReasoningSummary
 	}
@@ -496,14 +410,20 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 	var completedOutput []json.RawMessage
 	var responseID string
 	var diagnostics *ResponsesCacheDiagnostics
+	completed := false
 	partials := map[int]*responsesPartialCall{}
+	refusalBytes := map[responsesContentIndex]int{}
 	finalize := func() Response {
 		if len(completedOutput) > 0 {
 			// Preserve output items for replay; ignore marshal errors.
 			if details, err := json.Marshal(completedOutput); err == nil {
 				result.ReasoningDetails = details
 			}
-			responsesCompletedOutput(&result, completedOutput, partials)
+			streamed := len(result.Content)
+			responsesCompletedOutput(&result, completedOutput, partials, refusalBytes)
+			if onText != nil && len(result.Content) > streamed {
+				onText(StreamEvent{Kind: StreamOutput, Text: result.Content[streamed:]})
+			}
 		}
 		indexes := make([]int, 0, len(partials))
 		for index := range partials {
@@ -531,16 +451,21 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 			continue
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "" || data == "[DONE]" {
+		if data == "" {
 			continue
 		}
+		if data == "[DONE]" {
+			break
+		}
 		var event struct {
-			Type        string `json:"type"`
-			Delta       string `json:"delta"`
-			Text        string `json:"text"`
-			Arguments   string `json:"arguments"`
-			OutputIndex int    `json:"output_index"`
-			Item        struct {
+			Type         string `json:"type"`
+			Delta        string `json:"delta"`
+			Text         string `json:"text"`
+			Refusal      string `json:"refusal"`
+			Arguments    string `json:"arguments"`
+			OutputIndex  int    `json:"output_index"`
+			ContentIndex int    `json:"content_index"`
+			Item         struct {
 				Type      string `json:"type"`
 				CallID    string `json:"call_id"`
 				Name      string `json:"name"`
@@ -572,7 +497,7 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 			} `json:"error"`
 		}
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			return Response{}, fmt.Errorf("decode Responses stream: %w", err)
+			return finalize(), fmt.Errorf("decode Responses stream: %w", err)
 		}
 		if event.Error != nil {
 			partial := finalize()
@@ -644,18 +569,17 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 					result.Content = event.Text
 				}
 			}
-		case "response.refusal.delta":
-			// Refusals are terminal model text: surface them like output so
-			// callers never see an empty completion with no explanation.
-			result.Content += event.Delta
-			if onText != nil {
-				onText(StreamEvent{Kind: StreamOutput, Text: event.Delta})
+		case "response.refusal.delta", "response.refusal.done":
+			index := responsesContentIndex{event.OutputIndex, event.ContentIndex}
+			text := event.Delta
+			if event.Type == "response.refusal.done" && len(event.Refusal) > refusalBytes[index] {
+				text = event.Refusal[refusalBytes[index]:]
 			}
-		case "response.refusal.done":
-			if event.Text != "" && result.Content == "" {
-				result.Content = event.Text
+			if text != "" {
+				refusalBytes[index] += len(text)
+				result.Content += text
 				if onText != nil {
-					onText(StreamEvent{Kind: StreamOutput, Text: event.Text})
+					onText(StreamEvent{Kind: StreamOutput, Text: text})
 				}
 			}
 		case "response.reasoning_summary_text.delta":
@@ -712,6 +636,7 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 				}
 			}
 		case "response.completed":
+			completed = true
 			completedOutput = event.Response.Output
 			if event.Response.ID != "" {
 				responseID = event.Response.ID
@@ -752,10 +677,14 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 		partial := finalize()
 		return partial, err
 	}
+	if !completed {
+		return finalize(), fmt.Errorf("Responses stream ended before completion: %w", io.ErrUnexpectedEOF)
+	}
 	return finalize(), nil
 }
 
-func responsesCompletedOutput(result *Message, output []json.RawMessage, partials map[int]*responsesPartialCall) {
+func responsesCompletedOutput(result *Message, output []json.RawMessage, partials map[int]*responsesPartialCall, refusalBytes map[responsesContentIndex]int) {
+	fillText := result.Content == ""
 	for index, raw := range output {
 		var item struct {
 			Type      string `json:"type"`
@@ -763,8 +692,9 @@ func responsesCompletedOutput(result *Message, output []json.RawMessage, partial
 			Name      string `json:"name"`
 			Arguments string `json:"arguments"`
 			Content   []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
+				Type    string `json:"type"`
+				Text    string `json:"text"`
+				Refusal string `json:"refusal"`
 			} `json:"content"`
 		}
 		if json.Unmarshal(raw, &item) != nil {
@@ -787,13 +717,19 @@ func responsesCompletedOutput(result *Message, output []json.RawMessage, partial
 			}
 			continue
 		}
-		if item.Type == "message" && result.Content == "" {
-			for _, block := range item.Content {
-				if block.Type == "output_text" {
+		if item.Type != "message" {
+			continue
+		}
+		for contentIndex, block := range item.Content {
+			switch block.Type {
+			case "output_text":
+				if fillText {
 					result.Content += block.Text
 				}
-				if block.Type == "refusal" {
-					result.Content += block.Text
+			case "refusal":
+				streamed := refusalBytes[responsesContentIndex{index, contentIndex}]
+				if len(block.Refusal) > streamed {
+					result.Content += block.Refusal[streamed:]
 				}
 			}
 		}

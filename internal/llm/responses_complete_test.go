@@ -166,16 +166,37 @@ func TestParseResponsesDiagnosticsNotFoundUnavailable(t *testing.T) {
 }
 
 func TestParseResponsesRefusalSurfaced(t *testing.T) {
-	stream := strings.Join([]string{
-		`data: {"type":"response.refusal.delta","delta":"cannot help"}`,
-		`data: {"type":"response.completed","response":{"id":"resp_r","output":[{"type":"message","content":[{"type":"refusal","text":"cannot help"}]}]}}`,
-	}, "\n") + "\n"
-	resp, err := parseResponsesStream(strings.NewReader(stream), nil)
-	if err != nil {
-		t.Fatal(err)
+	const delta = `data: {"type":"response.refusal.delta","delta":"cannot "}`
+	const done = `data: {"type":"response.refusal.done","refusal":"cannot help"}`
+	const completed = `data: {"type":"response.completed","response":{"id":"resp_r","output":[{"type":"message","content":[{"type":"refusal","refusal":"cannot help"}]}]}}`
+	for _, tc := range []struct {
+		name  string
+		lines []string
+	}{
+		{"delta and done", []string{delta, done, completed}},
+		{"done only", []string{done, completed}},
+		{"completed only", []string{completed}},
+		{"completed fills missing delta", []string{delta, completed}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var streamed strings.Builder
+			resp, err := parseResponsesStream(strings.NewReader(chatStream(tc.lines...)), func(event StreamEvent) {
+				streamed.WriteString(event.Text)
+			})
+			if err != nil || resp.Message.Content != "cannot help" || streamed.String() != "cannot help" {
+				t.Fatalf("content=%q streamed=%q err=%v", resp.Message.Content, streamed.String(), err)
+			}
+		})
 	}
-	if !strings.Contains(resp.Message.Content, "cannot help") {
-		t.Fatalf("refusal missing: %q", resp.Message.Content)
+}
+
+func TestParseResponsesStreamRequiresCompletion(t *testing.T) {
+	const partial = `data: {"type":"response.output_text.delta","delta":"partial"}`
+	for _, stream := range []string{partial, chatStream(partial, "data: [DONE]")} {
+		resp, err := parseResponsesStream(strings.NewReader(stream), nil)
+		if !errors.Is(err, io.ErrUnexpectedEOF) || resp.Message.Content != "partial" {
+			t.Fatalf("content=%q err=%v", resp.Message.Content, err)
+		}
 	}
 }
 
@@ -213,21 +234,34 @@ func TestParseResponsesIncompleteFailed(t *testing.T) {
 	}
 }
 
-func TestChatGPTBodyCarriesDiagnosticsAndContinuation(t *testing.T) {
+func TestChatGPTBodyUsesSupportedHTTPFields(t *testing.T) {
 	p := &chatGPTProvider{baseURL: "https://api.openai.com/v1"}
+	background, maxTokens := true, 500
 	body := p.buildCodexBody(Request{
 		Model: "gpt-6.2-sol", PromptCacheKey: "k", ComparisonResponseID: "resp_base",
-		PreviousResponseID: "resp_prev", StoreResponses: true,
-		Messages: []Message{{Role: "user", Content: "hi"}},
+		PreviousResponseID: "resp_prev", ConversationID: "conv_prev", StoreResponses: true,
+		Background: &background, MaxOutputTokens: &maxTokens, Truncation: "auto",
+		Metadata: map[string]any{"test": "value"},
+		Tools:    []Tool{{Name: "read"}},
+		BuiltinTools: []map[string]any{
+			{"type": "web_search"}, {"type": "file_search"}, {"type": "code_interpreter"},
+			{"type": "image_generation"}, {"type": "computer"}, {"type": "mcp"},
+		},
 	}, "durable", []Message{{Role: "user", Content: "hi"}}, true)
-	if body["store"] != true || body["previous_response_id"] != "resp_prev" {
-		t.Fatalf("continuation missing: %v", body)
+	if body["store"] != false || body["stream"] != true {
+		t.Fatalf("wrong HTTP defaults: %v", body)
 	}
-	if _, ok := body["prompt_cache_options"]; !ok {
-		t.Fatalf("comparison missing: %v", body)
+	for _, key := range []string{"previous_response_id", "conversation", "background", "max_output_tokens", "metadata", "truncation"} {
+		if _, ok := body[key]; ok {
+			t.Fatalf("unsupported field %q in %v", key, body)
+		}
 	}
-	if _, ok := body["prompt_cache_key"]; !ok {
-		t.Fatalf("key missing: %v", body)
+	if _, ok := body["prompt_cache_options"]; !ok || body["prompt_cache_key"] != "k" {
+		t.Fatalf("cache options missing: %v", body)
+	}
+	tools, _ := body["tools"].([]map[string]any)
+	if len(tools) != 2 || tools[0]["type"] != "function" || tools[1]["type"] != "web_search" {
+		t.Fatalf("unexpected tools: %v", tools)
 	}
 	encoded, _ := json.Marshal(body["input"])
 	if !strings.Contains(string(encoded), "durable") {
@@ -235,42 +269,53 @@ func TestChatGPTBodyCarriesDiagnosticsAndContinuation(t *testing.T) {
 	}
 }
 
-func TestChatGPTContinuationFallbackResendsFullHistory(t *testing.T) {
+func TestChatGPTRejectsContinuationBeforeHTTP(t *testing.T) {
 	path := writeChatGPTOAuth(t, chatgptoauth.Tokens{AccessToken: "test", RefreshToken: "refresh"})
-	calls := 0
-	var bodies []map[string]any
 	client := doerFunc(func(r *http.Request) (*http.Response, error) {
-		calls++
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		bodies = append(bodies, body)
-		if calls == 1 {
-			return &http.Response{StatusCode: 404, Status: "404 Not Found", Body: io.NopCloser(strings.NewReader(`{"error":{"message":"previous_response_id not found"}}`))}, nil
-		}
-		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(responsesStream("ok")))}, nil
+		t.Fatal("stateful request reached HTTP")
+		return nil, nil
 	})
 	provider, err := newChatGPT(Config{ChatGPTOAuthPath: path, HTTP: client})
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := provider.Complete(context.Background(), Request{
-		Model:              "gpt-6.2-sol",
-		PreviousResponseID: "resp_missing",
-		Messages:           []Message{{Role: "user", Content: "hi"}},
+	for _, req := range []Request{
+		{PreviousResponseID: "resp_missing"},
+		{ConversationID: "conv_missing"},
+		{StoreResponses: true},
+	} {
+		req.Model = "gpt-6.2-sol"
+		_, err := provider.Complete(context.Background(), req, nil)
+		if err == nil || !strings.Contains(err.Error(), "requires full conversation history") {
+			t.Fatalf("err=%v", err)
+		}
+	}
+}
+
+func TestOpenCodeGoRejectedContinuationSendsNoContextFreeRetry(t *testing.T) {
+	calls := 0
+	client := doerFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		var body map[string]any
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["previous_response_id"] != "resp_missing" || body["store"] != true {
+			t.Fatalf("continuation lost: %v", body)
+		}
+		return &http.Response{StatusCode: http.StatusNotFound, Status: "404 Not Found",
+			Body: io.NopCloser(strings.NewReader(`{"error":{"message":"previous_response_id not found"}}`))}, nil
+	})
+	provider, err := newOpenCodeGo(Config{BaseURL: "http://go.test/v1", APIKey: "test", HTTP: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = provider.Complete(context.Background(), Request{
+		Model: "muse-spark-1.3-contributor", PreviousResponseID: "resp_missing",
+		Messages: []Message{{Role: "tool", ToolCallID: "call_1", Content: "done"}},
 	}, nil)
-	if err != nil || calls != 2 {
+	if err == nil || !strings.Contains(err.Error(), "previous_response_id not found") || calls != 1 {
 		t.Fatalf("err=%v calls=%d", err, calls)
-	}
-	if resp.Message.Content != "ok" {
-		t.Fatalf("content=%q", resp.Message.Content)
-	}
-	if _, ok := bodies[0]["previous_response_id"]; !ok {
-		t.Fatalf("first attempt must carry previous_response_id: %v", bodies[0])
-	}
-	if _, ok := bodies[1]["previous_response_id"]; ok {
-		t.Fatalf("fallback must drop previous_response_id: %v", bodies[1])
 	}
 }
 
@@ -335,8 +380,11 @@ func TestResponsesDiagnosticsFixTable(t *testing.T) {
 }
 
 func TestResponsesBuiltinUnknownDropped(t *testing.T) {
-	got := responsesBuiltinTools([]map[string]any{{"type": "web_search"}, {"type": "web_search_preview"}, {"type": "computer_use_preview"}, {"type": "nope"}, nil})
-	want := map[string]bool{"web_search": true, "web_search_preview": true, "computer_use_preview": true}
+	got := responsesBuiltinTools([]map[string]any{
+		{"type": "web_search"}, {"type": "web_search_preview"}, {"type": "computer"},
+		{"type": "computer_use_preview"}, {"type": "computer_use"}, {"type": "nope"}, nil,
+	})
+	want := map[string]bool{"web_search": true, "web_search_preview": true, "computer": true, "computer_use_preview": true}
 	if len(got) != len(want) {
 		t.Fatalf("allowlist = %v", got)
 	}
@@ -384,26 +432,6 @@ func TestParseResponsesIncompletePreservesPartial(t *testing.T) {
 	var incErr *ResponsesIncompleteError
 	if !errors.As(err, &incErr) || incErr.Reason != "max_output_tokens" {
 		t.Fatalf("typed error wrong: %T %v", err, err)
-	}
-}
-
-func TestResponsesStoreRejection(t *testing.T) {
-	for _, tc := range []struct {
-		body string
-		want bool
-	}{
-		{`{"param":"store","message":"unsupported"}`, true},
-		{`{"error":{"param":"store","message":"unknown"}}`, true},
-		{`store is not supported on this model`, true},
-		{`previous_response_id not found`, false},
-		{`restore succeeded`, false},
-		{`storefront error`, false},
-		{`store invalid but for another param: tool_choice invalid`, true},
-		{``, false},
-	} {
-		if got := responsesStoreRejection(tc.body); got != tc.want {
-			t.Fatalf("body %q = %v, want %v", tc.body, got, tc.want)
-		}
 	}
 }
 

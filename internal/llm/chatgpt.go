@@ -285,6 +285,9 @@ func splitChatGPTMessages(messages []Message) (string, []Message) {
 // refreshing once on 401 before giving up. An explicit thinking level is sent
 // as the Responses reasoning object; empty preserves the provider default.
 func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
+	if input.StoreResponses || input.PreviousResponseID != "" || input.ConversationID != "" {
+		return Response{}, fmt.Errorf("Sign in with ChatGPT over HTTP requires full conversation history and store:false")
+	}
 	level := strings.ToLower(strings.TrimSpace(input.Thinking))
 	if level != "" && !validThinkingLevel(p.ThinkingCapability(input.Model), level) {
 		return Response{}, fmt.Errorf("thinking level %q is not supported by model %q", input.Thinking, input.Model)
@@ -327,20 +330,27 @@ func (p *chatGPTProvider) buildCodexBody(input Request, instructions string, res
 	if useCache && IsOfficialOpenAIEndpoint(p.baseURL) {
 		cacheKey = input.PromptCacheKey
 	}
-	// Shared Responses core (issues #115/#116): store, previous_response_id,
-	// comparison, reasoning, tools, structured output, and lifecycle knobs.
-	// Zero-value opt-ins are omitted in the shared builder so the opencode-go
-	// route keeps its previous wire; the SIWC contract below re-adds
-	// store:false to stay stateless.
-	body := buildResponsesBody(input.Model, p.ThinkingCapability(input.Model), input, items, cacheKey, useCache && IsOfficialOpenAIEndpoint(p.baseURL))
-	if _, ok := body["store"]; !ok {
-		body["store"] = false
+	// The Sign in with ChatGPT HTTP route only supports web search among
+	// the hosted tools. Availability still depends on the model and account.
+	var hostedTools []map[string]any
+	for _, tool := range input.BuiltinTools {
+		switch tool["type"] {
+		case "web_search", "web_search_preview":
+			hostedTools = append(hostedTools, tool)
+		}
 	}
+	input.BuiltinTools = hostedTools
+	input.Background = nil
+	input.MaxOutputTokens = nil
+	input.Metadata = nil
+	input.Truncation = ""
+
+	body := buildResponsesBody(input.Model, p.ThinkingCapability(input.Model), input, items, cacheKey, useCache && IsOfficialOpenAIEndpoint(p.baseURL))
+	body["store"] = false
+	delete(body, "previous_response_id")
+	delete(body, "conversation")
 	if topLevelInstructions != "" {
 		body["instructions"] = topLevelInstructions
-		// GPT-6.2+ renders top-level instructions after input (billed
-		// uncached). The shared builder already placed request-only
-		// guidance correctly; nothing else changes.
 	}
 	return body
 }
@@ -387,18 +397,6 @@ func isChatGPTCacheFieldRejection(statusCode int, body string) bool {
 		return true
 	}
 	return false
-}
-
-// isChatGPTContinuationRejection reports whether a non-2xx Responses body
-// rejects an opt-in stateful field (previous_response_id / conversation).
-// A 400/404 here happens before execution, so retrying once with the same
-// full-history input and no continuation id cannot double-bill.
-func isChatGPTContinuationRejection(statusCode int, body string) bool {
-	if statusCode != http.StatusBadRequest && statusCode != http.StatusNotFound {
-		return false
-	}
-	lower := strings.ToLower(body)
-	return strings.Contains(lower, "previous_response") || strings.Contains(lower, "conversation")
 }
 
 // chatGPTStatusError preserves the HTTP status for retry decisions while
@@ -458,15 +456,8 @@ func (p *chatGPTProvider) postCodexRaw(ctx context.Context, creds chatgptoauth.T
 func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chatgptoauth.Tokens, onText StreamCallback) (Response, error) {
 	instructions, rest := splitChatGPTMessages(input.Messages)
 	body := p.buildCodexBody(input, instructions, rest, true)
-	// The implicit-only default sends no prompt_cache_options and no explicit
-	// breakpoints, so only opt-in cache/continuation fields can trigger the
-	// safe keyless/delta-less retry below.
 	_, usedCache := body["prompt_cache_key"]
 	_, usedComparison := body["prompt_cache_options"]
-	_, usedContinuation := body["previous_response_id"]
-	if _, ok := body["conversation"]; ok {
-		usedContinuation = true
-	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return Response{}, err
@@ -506,20 +497,6 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 		cleanPayload, err := json.Marshal(clean)
 		if err != nil {
 			return Response{}, err
-		}
-		return p.postCodexRaw(ctx, creds, cleanPayload, onText)
-	}
-	// Continuation fallback: same full-history input without the
-	// previous_response_id/conversation delta. The server never executed,
-	// so resending the full history cannot double-bill.
-	if usedContinuation && isChatGPTContinuationRejection(statusCode, bodyText) {
-		cleanInput := input
-		cleanInput.PreviousResponseID = ""
-		cleanInput.ConversationID = ""
-		clean := p.buildCodexBody(cleanInput, instructions, rest, true)
-		cleanPayload, err := json.Marshal(clean)
-		if err != nil {
-			return resp, err
 		}
 		return p.postCodexRaw(ctx, creds, cleanPayload, onText)
 	}
