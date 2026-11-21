@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -341,22 +342,7 @@ func TestResponsesBuiltinUnknownDropped(t *testing.T) {
 }
 
 func errorAs(err error, target any) bool {
-	type causer interface{ As(any) bool }
-	// Minimal errors.As without importing errors in test file header churn.
-	// Use type switches for our two terminal types.
-	switch v := target.(type) {
-	case **ResponsesIncompleteError:
-		if e, ok := err.(*ResponsesIncompleteError); ok {
-			*v = e
-			return true
-		}
-	case **ResponsesFailedError:
-		if e, ok := err.(*ResponsesFailedError); ok {
-			*v = e
-			return true
-		}
-	}
-	return false
+	return errors.As(err, target)
 }
 
 func TestChatGPTWrapperPreservesStatelessStoreFalse(t *testing.T) {
@@ -391,5 +377,25 @@ func TestParseResponsesIncompletePreservesPartial(t *testing.T) {
 	var incErr *ResponsesIncompleteError
 	if !errorAs(err, &incErr) || incErr.Reason != "max_output_tokens" {
 		t.Fatalf("typed error wrong: %T %v", err, err)
+	}
+}
+
+func TestResponsesStoreRejection(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want bool
+	}{
+		{`{"param":"store","message":"unsupported"}`, true},
+		{`{"error":{"param":"store","message":"unknown"}}`, true},
+		{`store is not supported on this model`, true},
+		{`previous_response_id not found`, false},
+		{`restore succeeded`, false},
+		{`storefront error`, false},
+		{`store invalid but for another param: tool_choice invalid`, true},
+		{``, false},
+	} {
+		if got := responsesStoreRejection(tc.body); got != tc.want {
+			t.Fatalf("body %q = %v, want %v", tc.body, got, tc.want)
+		}
 	}
 }

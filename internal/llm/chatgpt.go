@@ -298,15 +298,16 @@ func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText St
 		return resp, nil
 	}
 	if !isChatGPTUnauthorized(err) {
-		return Response{}, err
+		return resp, err
 	}
-	fresh, err := chatgptoauth.RefreshAndSaveWithStaleWithSecrets(ctx, p.client, p.tokensPath, creds.AccessToken, p.registerSecrets)
-	if err != nil {
-		return Response{}, err
+	fresh, ferr := chatgptoauth.RefreshAndSaveWithStaleWithSecrets(ctx, p.client, p.tokensPath, creds.AccessToken, p.registerSecrets)
+	if ferr != nil {
+		// Preserve partial accounting from the first attempt when refresh fails.
+		return resp, ferr
 	}
 	resp, err = p.doCodex(ctx, input, fresh, onText)
 	if err != nil {
-		return Response{}, annotateChatGPTAuthError(err)
+		return resp, annotateChatGPTAuthError(err)
 	}
 	return resp, nil
 }

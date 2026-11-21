@@ -53,7 +53,6 @@ func TestPreparedRequestWiresResponsesOptInsBehindFlags(t *testing.T) {
 	a := newAgent()
 	a.recordResponsesResult(llm.Response{ResponseID: "resp_123", Usage: &llm.Usage{InputTokens: llm.IntPtr(10)}})
 	t.Setenv("QCODE_RESPONSES_DIAGNOSTICS", "")
-	t.Setenv("QCODE_RESPONSES_STATEFUL", "")
 	prep := a.prepareNormalRequest(context.Background(), "")
 	if prep.Request.ComparisonResponseID != "" || prep.Request.PreviousResponseID != "" || prep.Request.StoreResponses {
 		t.Fatalf("default must stay stateless: %+v", prep.Request)
@@ -62,7 +61,6 @@ func TestPreparedRequestWiresResponsesOptInsBehindFlags(t *testing.T) {
 	a = newAgent()
 	a.recordResponsesResult(llm.Response{ResponseID: "resp_123", Usage: &llm.Usage{InputTokens: llm.IntPtr(10)}})
 	t.Setenv("QCODE_RESPONSES_DIAGNOSTICS", "1")
-	t.Setenv("QCODE_RESPONSES_STATEFUL", "")
 	prep = a.prepareNormalRequest(context.Background(), "")
 	if prep.Request.ComparisonResponseID != "resp_123" {
 		t.Fatalf("diagnostics flag must set comparison: %+v", prep.Request)
@@ -70,13 +68,12 @@ func TestPreparedRequestWiresResponsesOptInsBehindFlags(t *testing.T) {
 	if prep.Request.PreviousResponseID != "" {
 		t.Fatalf("diagnostics must not imply continuation: %+v", prep.Request)
 	}
-	// No stateful auto-wiring: full history + previous_response_id would
+	// No continuation auto-wiring: full history + previous_response_id would
 	// duplicate every prior turn server-side, so delta sending is deferred
 	// and the agent stays diagnostics-only.
 	a = newAgent()
 	a.recordResponsesResult(llm.Response{ResponseID: "resp_456", Usage: &llm.Usage{InputTokens: llm.IntPtr(10)}})
 	t.Setenv("QCODE_RESPONSES_DIAGNOSTICS", "")
-	t.Setenv("QCODE_RESPONSES_STATEFUL", "1")
 	prep = a.prepareNormalRequest(context.Background(), "")
 	if prep.Request.PreviousResponseID != "" || prep.Request.StoreResponses {
 		t.Fatalf("agent must not auto-chain previous_response_id (delta deferred): %+v", prep.Request)

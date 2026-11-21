@@ -1007,13 +1007,13 @@ endpoint may send `prompt_cache_key`.
   A comparison-only rejection keeps the stable `prompt_cache_key` so
   accounting separation survives.
 
-### Phase 2 — Stateful continuation (opt-in, flagged)
+### Phase 2 — Stateful continuation (Request-layer opt-in; agent delta deferred)
 
 - Request: `PreviousResponseID` -> `previous_response_id`,
   `StoreResponses`/`ConversationID` -> `store:true`/`conversation`. A
   `previous_response_id` chain implies `store:true` even when only the id is
   set. Omit all three for the default stateless full resend.
-- Agent wiring (flagged, no config migration): `prepareNormalRequest` reuses
+- Agent wiring (`QCODE_RESPONSES_DIAGNOSTICS=1`, no config migration): `prepareNormalRequest` reuses
   `Agent.LastResponseID` only as `comparison_response_id` when
   `QCODE_RESPONSES_DIAGNOSTICS=1`. Stateful auto-chaining is deferred:
   sending full history alongside `previous_response_id` would duplicate

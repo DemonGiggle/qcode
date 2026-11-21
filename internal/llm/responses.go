@@ -139,9 +139,6 @@ func asResponsesStatusError(err error) (responsesStatusError, bool) {
 	return responsesStatusError{}, false
 }
 
-// shouldRetryResponsesWithoutOption reports whether err is a pre-execution
-// rejection of an opt-in Responses field, in which case stripping that field
-// and retrying once with the same history cannot double-bill.
 // responsesStoreRejection requires a param-shaped store match so unrelated
 // 400s mentioning "restore"/"storefront" don't trigger a misleading retry.
 func responsesStoreRejection(lower string) bool {
@@ -156,6 +153,9 @@ func responsesStoreRejection(lower string) bool {
 	return strings.Contains(lower, "unsupported") || strings.Contains(lower, "not supported") || strings.Contains(lower, "invalid") || strings.Contains(lower, "unknown")
 }
 
+// shouldRetryResponsesWithoutOption reports whether err is a pre-execution
+// rejection of an opt-in Responses field, in which case stripping that field
+// and retrying once with the same history cannot double-bill.
 func shouldRetryResponsesWithoutOption(err error, input Request) bool {
 	se, ok := asResponsesStatusError(err)
 	if !ok {
