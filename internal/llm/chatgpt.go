@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"qcode/internal/chatgptoauth"
 )
@@ -197,7 +199,7 @@ func (p *chatGPTProvider) fetchModels(ctx context.Context, creds chatgptoauth.To
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return nil, fmt.Errorf("provider returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		return nil, &chatGPTStatusError{statusCode: resp.StatusCode, status: resp.Status, body: strings.TrimSpace(string(data))}
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
@@ -296,23 +298,32 @@ func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText St
 	if err != nil {
 		return Response{}, err
 	}
-	resp, err := p.doCodex(ctx, input, creds, onText)
-	if err == nil {
-		return resp, nil
+	refreshed, retriedAvailability := false, false
+	for {
+		resp, err := p.doCodex(ctx, input, creds, onText)
+		var status *chatGPTStatusError
+		if !errors.As(err, &status) {
+			return resp, err
+		}
+		delay, retryAvailability := status.availabilityRetryDelay()
+		switch {
+		case status.statusCode == http.StatusUnauthorized && !refreshed:
+			creds, err = chatgptoauth.RefreshAndSaveWithStaleWithSecrets(ctx, p.client, p.tokensPath, creds.AccessToken, p.registerSecrets)
+			if err != nil {
+				return resp, err
+			}
+			refreshed = true
+		case retryAvailability && !retriedAvailability && IsOfficialOpenAIEndpoint(p.baseURL):
+			retriedAvailability = true
+			select {
+			case <-ctx.Done():
+				return resp, ctx.Err()
+			case <-time.After(delay):
+			}
+		default:
+			return resp, annotateChatGPTAuthError(err)
+		}
 	}
-	if !isChatGPTUnauthorized(err) {
-		return resp, err
-	}
-	fresh, ferr := chatgptoauth.RefreshAndSaveWithStaleWithSecrets(ctx, p.client, p.tokensPath, creds.AccessToken, p.registerSecrets)
-	if ferr != nil {
-		// Preserve partial accounting from the first attempt when refresh fails.
-		return resp, ferr
-	}
-	resp, err = p.doCodex(ctx, input, fresh, onText)
-	if err != nil {
-		return resp, annotateChatGPTAuthError(err)
-	}
-	return resp, nil
 }
 
 func (p *chatGPTProvider) buildCodexBody(input Request, instructions string, rest []Message, useCache bool) map[string]any {
@@ -405,29 +416,46 @@ type chatGPTStatusError struct {
 	statusCode int
 	status     string
 	body       string
+	retryAfter string
 }
 
 func (e *chatGPTStatusError) Error() string {
 	return fmt.Sprintf("provider returned %s: %s", e.status, e.body)
 }
 
-func asChatGPTStatusError(err error) (chatGPTStatusError, bool) {
-	if err == nil {
-		return chatGPTStatusError{}, false
+// SIWC documents these pre-stream errors as temporary. Respect Retry-After
+// and surface the error when the requested wait exceeds the interactive budget.
+func (e *chatGPTStatusError) availabilityRetryDelay() (time.Duration, bool) {
+	if e.statusCode != http.StatusServiceUnavailable {
+		return 0, false
 	}
-	// errors.As via manual unwrap to avoid importing errors for one call site.
-	for cur := err; cur != nil; {
-		if v, ok := cur.(*chatGPTStatusError); ok {
-			return *v, true
-		}
-		type unwrapper interface{ Unwrap() error }
-		u, ok := cur.(unwrapper)
-		if !ok {
-			break
-		}
-		cur = u.Unwrap()
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
-	return chatGPTStatusError{}, false
+	if json.Unmarshal([]byte(e.body), &envelope) != nil {
+		return 0, false
+	}
+	switch envelope.Error.Code {
+	case "subscription_sharing_user_unavailable", "subscription_sharing_usage_unavailable":
+	default:
+		return 0, false
+	}
+	const maxWait = 5 * time.Second
+	if e.retryAfter == "" {
+		return time.Second, true
+	}
+	if seconds, err := strconv.ParseUint(e.retryAfter, 10, 32); err == nil {
+		delay := time.Duration(seconds) * time.Second
+		return delay, delay <= maxWait
+	}
+	when, err := http.ParseTime(e.retryAfter)
+	if err != nil {
+		return 0, false
+	}
+	delay := max(0, time.Until(when))
+	return delay, delay <= maxWait
 }
 
 func (p *chatGPTProvider) postCodexRaw(ctx context.Context, creds chatgptoauth.Tokens, payload []byte, onText StreamCallback) (Response, error) {
@@ -448,7 +476,7 @@ func (p *chatGPTProvider) postCodexRaw(ctx context.Context, creds chatgptoauth.T
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		body := strings.TrimSpace(string(data))
-		return Response{}, &chatGPTStatusError{statusCode: resp.StatusCode, status: resp.Status, body: body}
+		return Response{}, &chatGPTStatusError{statusCode: resp.StatusCode, status: resp.Status, body: body, retryAfter: resp.Header.Get("Retry-After")}
 	}
 	return parseResponsesStream(resp.Body, onText)
 }
@@ -466,12 +494,8 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 	if err == nil {
 		return resp, nil
 	}
-	var statusCode int
-	var bodyText string
-	if se, ok := asChatGPTStatusError(err); ok {
-		statusCode = se.statusCode
-		bodyText = se.body
-	} else {
+	var status *chatGPTStatusError
+	if !errors.As(err, &status) {
 		return resp, err
 	}
 	// Fall back once without the rejected prompt_cache_* field. A key
@@ -479,8 +503,8 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 	// the stable key so accounting separation survives. Stripping cannot
 	// double-bill (a 400 rejects before execution) and keeps the reusable
 	// prefix byte-identical.
-	if (usedCache || usedComparison) && isChatGPTCacheFieldRejection(statusCode, bodyText) {
-		lower := strings.ToLower(bodyText)
+	if (usedCache || usedComparison) && isChatGPTCacheFieldRejection(status.statusCode, status.body) {
+		lower := strings.ToLower(status.body)
 		mentionsKey := strings.Contains(lower, "prompt_cache_key")
 		mentionsComparison := strings.Contains(lower, "prompt_cache_options") || strings.Contains(lower, "comparison_response")
 		cleanInput := input
@@ -504,11 +528,8 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 }
 
 func isChatGPTUnauthorized(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, " 401") || strings.Contains(msg, "401 Unauthorized")
+	var status *chatGPTStatusError
+	return errors.As(err, &status) && status.statusCode == http.StatusUnauthorized
 }
 
 // annotateChatGPTAuthError adds recovery guidance to a final 401/403 after

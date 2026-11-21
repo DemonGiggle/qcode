@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -60,13 +61,13 @@ func TestUsageReportAllMissing(t *testing.T) {
 // Partially reported sums use the "reported for m/n" shape.
 func TestUsageReportPartialCoverage(t *testing.T) {
 	s := llm.SessionUsage{
-		Requests: 3,
+		Requests:    3,
 		InputTokens: 500, InputReported: 2,
 		OutputTokens: 300, OutputReported: 1,
-		TotalTokens: 800,
+		TotalTokens:     800,
 		CacheReadTokens: 400, CacheReadReported: 1,
 		CacheWriteTokens: 0, CacheWriteReported: 0,
-		Missing: 1,
+		Missing:               1,
 		CacheRatioInputTokens: 250, CacheRatioReadTokens: 200, CacheRatioRequests: 1,
 	}
 	report := formatUsageReport(s)
@@ -242,6 +243,31 @@ func TestUsageReportCachedShareRounding(t *testing.T) {
 	empty := formatUsageReport(llm.SessionUsage{Requests: 2})
 	if !strings.Contains(empty, "Cached input share (reported subset): unavailable") {
 		t.Fatalf("zero denominator:\n%s", empty)
+	}
+}
+
+type diagnosticRunner struct{ tokenRunner }
+
+func (diagnosticRunner) LastDiagnostics() *llm.ResponsesCacheDiagnostics {
+	return &llm.ResponsesCacheDiagnostics{Type: "cache_miss", Reason: "tools_changed"}
+}
+
+func TestUsageCommandShowsReportedShareAndOutcomes(t *testing.T) {
+	var s llm.SessionUsage
+	s.Add(llm.NewUsage(llm.IntPtr(10000), nil, llm.IntPtr(1), nil, nil, nil))
+	s.AddResult(nil, context.Canceled)
+	s.Add(nil)
+	var out bytes.Buffer
+	u := UI{display: newHistoryWriter(&out), runner: diagnosticRunner{tokenRunner{usage: s}}}
+	u.handleUsageCommand([]string{"/usage"})
+	for _, want := range []string{
+		"<0.1% (based on 1/3 requests), 1 of 10000 input tokens cached",
+		"Missing completions: 1", "Failed requests without usage: 1",
+		`Last cache comparison: "cache_miss" ("tools_changed")`,
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in report:\n%s", want, out.String())
+		}
 	}
 }
 

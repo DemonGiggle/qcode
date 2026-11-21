@@ -89,7 +89,7 @@ func TestFailedTurnDoesNotSeedBaseline(t *testing.T) {
 		ResponseID: "resp_ok", Usage: &llm.Usage{InputTokens: llm.IntPtr(100)},
 		CacheDiagnostics: &llm.ResponsesCacheDiagnostics{Type: "cache_hit"},
 	})
-	a.recordUsage(&llm.Usage{InputTokens: llm.IntPtr(50)})
+	a.recordUsage(&llm.Usage{InputTokens: llm.IntPtr(50)}, context.Canceled)
 	if got := a.LastResponseID(); got != "resp_ok" {
 		t.Fatalf("failed turn overwrote baseline, got %q", got)
 	}

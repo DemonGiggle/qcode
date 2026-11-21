@@ -20,9 +20,9 @@ import (
 func TestSessionUsageAggregationContract(t *testing.T) {
 	a := New(&usageProvider{}, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 3)
 
-	a.recordUsage(llm.NewUsage(llm.IntPtr(1000), llm.IntPtr(100), llm.IntPtr(800), nil, nil, nil))
-	a.recordUsage(llm.NewUsage(llm.IntPtr(500), nil, nil, nil, nil, nil))
-	a.recordUsage(nil)
+	a.recordUsage(llm.NewUsage(llm.IntPtr(1000), llm.IntPtr(100), llm.IntPtr(800), nil, nil, nil), nil)
+	a.recordUsage(llm.NewUsage(llm.IntPtr(500), nil, nil, nil, nil, nil), nil)
+	a.recordUsage(nil, nil)
 
 	got := a.SessionUsage()
 	if got.InputTokens != 1500 || got.OutputTokens != 100 || got.TotalTokens != 1600 {
@@ -53,7 +53,7 @@ func TestSessionUsageCacheReadOnlySkipsRatio(t *testing.T) {
 
 	// Cache-read-only: no usable input, so coverage grows but the ratio
 	// denominator must not.
-	a.recordUsage(llm.NewUsage(nil, nil, llm.IntPtr(50), nil, nil, nil))
+	a.recordUsage(llm.NewUsage(nil, nil, llm.IntPtr(50), nil, nil, nil), nil)
 	got := a.SessionUsage()
 	if got.Requests != 1 || got.CacheReadReported != 1 || got.CacheReadTokens != 50 {
 		t.Fatalf("cache-only = %+v", got)
@@ -84,15 +84,15 @@ func TestSessionUsageSingleAggregationPerComplete(t *testing.T) {
 	}
 }
 
-func TestSessionUsageFailedCallsCountMissing(t *testing.T) {
+func TestSessionUsageFailedCallsKeepPartialUsage(t *testing.T) {
 	a := New(&usageProvider{}, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 3)
 
 	// Failed call with no usable usage.
-	a.recordUsage(nil)
+	a.recordUsage(nil, context.Canceled)
 	// Failed call that still carried valid usage.
-	a.recordUsage(&llm.Usage{InputTokens: llm.IntPtr(20), OutputTokens: llm.IntPtr(5)})
+	a.recordUsage(&llm.Usage{InputTokens: llm.IntPtr(20), OutputTokens: llm.IntPtr(5)}, context.Canceled)
 	got := a.SessionUsage()
-	if got.Requests != 2 || got.Missing != 1 {
+	if got.Requests != 2 || got.Missing != 0 || got.FailedWithoutUsage != 1 {
 		t.Fatalf("failed calls = %+v", got)
 	}
 	if got.InputTokens != 20 || got.OutputTokens != 5 {
@@ -102,8 +102,9 @@ func TestSessionUsageFailedCallsCountMissing(t *testing.T) {
 
 func TestSessionUsageRoundTripPreservesVersionedState(t *testing.T) {
 	a := New(&usageProvider{}, "model", &managerToolset{}, trace.New(io.Discard, false), io.Discard, 4)
-	a.recordUsage(llm.NewUsage(llm.IntPtr(1000), llm.IntPtr(100), llm.IntPtr(800), nil, nil, nil))
-	a.recordUsage(nil)
+	a.recordUsage(llm.NewUsage(llm.IntPtr(1000), llm.IntPtr(100), llm.IntPtr(800), nil, nil, nil), nil)
+	a.recordUsage(nil, nil)
+	a.recordUsage(nil, context.Canceled)
 	before := a.SessionUsage()
 	data := *a.checkpoint.Load()
 
@@ -129,7 +130,7 @@ func TestSessionUsageRoundTripPreservesVersionedState(t *testing.T) {
 		t.Fatal("versioned restore must not mark uncertainty")
 	}
 	// Continue accumulating after a versioned restore.
-	restored.recordUsage(llm.NewUsage(llm.IntPtr(10), nil, nil, nil, nil, nil))
+	restored.recordUsage(llm.NewUsage(llm.IntPtr(10), nil, nil, nil, nil, nil), nil)
 	if got := restored.SessionUsage(); got.InputTokens != before.InputTokens+10 || got.Requests != before.Requests+1 {
 		t.Fatalf("post-restore accumulation = %+v", got)
 	}
@@ -174,7 +175,7 @@ func TestSessionUsageLegacyMigration(t *testing.T) {
 		t.Fatal("legacy context usage must be invalidated")
 	}
 	// New requests accumulate normally; uncertainty remains until /new.
-	a.recordUsage(llm.NewUsage(llm.IntPtr(10), llm.IntPtr(5), nil, nil, nil, nil))
+	a.recordUsage(llm.NewUsage(llm.IntPtr(10), llm.IntPtr(5), nil, nil, nil, nil), nil)
 	got = a.SessionUsage()
 	if got.InputTokens != 510 || got.TotalTokens != 595 || got.Requests != 1 {
 		t.Fatalf("legacy accumulation = %+v", got)
@@ -209,7 +210,7 @@ func TestSessionUsageLegacyMigration(t *testing.T) {
 func TestSessionUsageCompactionPreservesTotals(t *testing.T) {
 	p := &compactingProvider{}
 	a := NewWithSystem(p, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 3, "system instructions")
-	a.recordUsage(llm.NewUsage(llm.IntPtr(1000), llm.IntPtr(100), nil, nil, nil, nil))
+	a.recordUsage(llm.NewUsage(llm.IntPtr(1000), llm.IntPtr(100), nil, nil, nil, nil), nil)
 	before := a.SessionUsage()
 	a.messages = append(a.messages,
 		llm.Message{Role: "user", Content: "old decision"},
@@ -229,7 +230,7 @@ func TestSessionUsageCompactionPreservesTotals(t *testing.T) {
 
 func TestSessionUsageModelSwitchPreservesAndAgentsIsolated(t *testing.T) {
 	a := New(&usageProvider{}, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 3)
-	a.recordUsage(llm.NewUsage(llm.IntPtr(1000), llm.IntPtr(100), nil, nil, nil, nil))
+	a.recordUsage(llm.NewUsage(llm.IntPtr(1000), llm.IntPtr(100), nil, nil, nil, nil), nil)
 	before := a.SessionUsage()
 	a.SetModel("other")
 	if a.SessionUsage() != before {
@@ -246,7 +247,7 @@ func TestSessionUsageTraceKeepsProviderModelIdentity(t *testing.T) {
 	logger := trace.New(&out, true)
 	logger.SetVerbose(false)
 	a := New(&usageProvider{}, "trace-model", &skillToolset{}, logger, io.Discard, 3)
-	a.recordUsage(llm.NewUsage(llm.IntPtr(10), llm.IntPtr(5), nil, nil, nil, nil))
+	a.recordUsage(llm.NewUsage(llm.IntPtr(10), llm.IntPtr(5), nil, nil, nil, nil), nil)
 	line := strings.TrimSpace(out.String())
 	var event struct {
 		Event   string           `json:"event"`
@@ -270,7 +271,7 @@ func TestSessionUsageTraceKeepsProviderModelIdentity(t *testing.T) {
 
 func TestSessionUsageConcurrentReads(t *testing.T) {
 	a := New(&usageProvider{}, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 3)
-	a.recordUsage(llm.NewUsage(llm.IntPtr(100), llm.IntPtr(50), llm.IntPtr(20), nil, nil, nil))
+	a.recordUsage(llm.NewUsage(llm.IntPtr(100), llm.IntPtr(50), llm.IntPtr(20), nil, nil, nil), nil)
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
@@ -283,7 +284,7 @@ func TestSessionUsageConcurrentReads(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			a.recordUsage(llm.NewUsage(llm.IntPtr(1), llm.IntPtr(1), nil, nil, nil, nil))
+			a.recordUsage(llm.NewUsage(llm.IntPtr(1), llm.IntPtr(1), nil, nil, nil, nil), nil)
 		}()
 	}
 	wg.Wait()

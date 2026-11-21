@@ -842,7 +842,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			// Partial accounting survives, but a truncated/failed id must
 			// never become the diagnostics/continuation baseline: the doc
 			// requires a recent completed response.
-			a.recordUsage(response.Usage)
+			a.recordUsage(response.Usage, err)
 		}
 		span.End(err)
 		if ctxErr := ctx.Err(); ctxErr != nil {
