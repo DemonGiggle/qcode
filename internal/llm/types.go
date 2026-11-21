@@ -72,9 +72,12 @@ type Request struct {
 	// resend, no comparison, no structured-output overrides).
 	//
 	// PreviousResponseID requests stateful continuation
-	// (previous_response_id). When set, the provider sends only the new
-	// input delta with store:true; on 400/404 mentioning the field it
-	// falls back once to a full-history stateless retry.
+	// (previous_response_id). The provider forwards the id with store:true
+	// and sends whatever input items the caller supplied; callers wanting
+	// byte savings must supply only the new-turn delta (agent auto-chaining
+	// is deferred to avoid duplicating full history server-side). On
+	// 400/404 mentioning the field it falls back once to a full-history
+	// stateless retry.
 	PreviousResponseID string
 	// StoreResponses opts into store:true so the completed response id can
 	// seed a later PreviousResponseID or ComparisonResponseID. Default false
