@@ -31,7 +31,9 @@ func (a *Agent) recordUsage(usage *llm.Usage) {
 // recordResponsesResult records usage plus opt-in Responses observability
 // (issue #116): the completed response id for future previous_response_id /
 // comparison flows, and prompt_cache_diagnostics for the debug trace.
-// Diagnostics never affect billing; usage remains the source of truth.
+// Call only for completed responses; truncated/failed partials must not
+// seed the baseline. Diagnostics never affect billing; usage remains the
+// source of truth.
 func (a *Agent) recordResponsesResult(response llm.Response) {
 	a.recordUsage(response.Usage)
 	provider := ""
@@ -47,16 +49,17 @@ func (a *Agent) recordResponsesResult(response llm.Response) {
 	a.trace.CacheDiagnostics(provider, model, response.ResponseID, response.CacheDiagnostics)
 }
 
-// LastResponseID returns the most recent Responses id, or "" when the last
-// completion did not report one.
+// LastResponseID returns the most recent completed Responses id, or "" when
+// the last completed response did not report one. Truncated/failed partials
+// never update it.
 func (a *Agent) LastResponseID() string {
 	a.stateMu.RLock()
 	defer a.stateMu.RUnlock()
 	return a.lastResponseID
 }
 
-// LastDiagnostics returns the most recent prompt_cache_diagnostics, or nil
-// when the last completion did not report any.
+// LastDiagnostics returns the most recent completed prompt_cache_diagnostics,
+// or nil when the last completed response did not report any.
 func (a *Agent) LastDiagnostics() *llm.ResponsesCacheDiagnostics {
 	a.stateMu.RLock()
 	defer a.stateMu.RUnlock()

@@ -79,3 +79,13 @@ func TestPreparedRequestWiresResponsesOptInsBehindFlags(t *testing.T) {
 		t.Fatalf("agent must not auto-chain previous_response_id (delta deferred): %+v", prep.Request)
 	}
 }
+
+func TestFailedTurnDoesNotSeedBaseline(t *testing.T) {
+	// Simulates agent.go gating: usage counted, but truncated/failed ids
+	// never become the comparison baseline.
+	a := New(&usageProvider{}, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 3)
+	a.recordUsage(&llm.Usage{InputTokens: llm.IntPtr(100)})
+	if got := a.LastResponseID(); got != "" {
+		t.Fatalf("failed turn must not seed id, got %q", got)
+	}
+}

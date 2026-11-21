@@ -130,7 +130,23 @@ func (l *Logger) CacheDiagnostics(provider, model, responseID string, diag *llm.
 			"cache_missed_tokens":        diag.CacheMissedTokens,
 			"suggested_fix":              diag.SuggestedFix(),
 		})
+		return
 	}
+	l.mu.Lock()
+	verbose := l.verbose
+	out := l.out
+	l.mu.Unlock()
+	if !verbose || out == nil {
+		return
+	}
+	summary := "cache diagnostics: " + diag.Type
+	if diag.Reason != "" {
+		summary += " (" + diag.Reason + ")"
+		if fix := diag.SuggestedFix(); fix != "" {
+			summary += " - " + fix
+		}
+	}
+	fmt.Fprintln(transcript.NewGroup(out), summary)
 }
 
 func New(out io.Writer, jsonOutput bool) *Logger {

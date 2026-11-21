@@ -184,12 +184,14 @@ func shouldRetryResponsesWithoutOption(err error, input Request) bool {
 // forwards. Unknown types are dropped so a typo cannot silently change the
 // cached tool prefix.
 var allowedResponsesBuiltins = map[string]bool{
-	"web_search":       true,
-	"file_search":      true,
-	"code_interpreter": true,
-	"computer_use":     true,
-	"image_generation": true,
-	"mcp":              true,
+	"web_search":           true,
+	"web_search_preview":   true,
+	"file_search":          true,
+	"code_interpreter":     true,
+	"computer_use":         true,
+	"computer_use_preview": true,
+	"image_generation":     true,
+	"mcp":                  true,
 }
 
 // responsesBuiltinTools filters passthrough built-in tools to the known set.

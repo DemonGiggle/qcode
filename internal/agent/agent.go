@@ -836,7 +836,14 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		if rendersResponses {
 			lifecycle.EndResponse()
 		}
-		a.recordResponsesResult(response)
+		if err == nil {
+			a.recordResponsesResult(response)
+		} else {
+			// Partial accounting survives, but a truncated/failed id must
+			// never become the diagnostics/continuation baseline: the doc
+			// requires a recent completed response.
+			a.recordUsage(response.Usage)
+		}
 		span.End(err)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr

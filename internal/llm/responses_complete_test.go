@@ -335,8 +335,8 @@ func TestResponsesDiagnosticsFixTable(t *testing.T) {
 }
 
 func TestResponsesBuiltinUnknownDropped(t *testing.T) {
-	got := responsesBuiltinTools([]map[string]any{{"type": "web_search"}, {"type": "nope"}, nil})
-	if len(got) != 1 || got[0]["type"] != "web_search" {
+	got := responsesBuiltinTools([]map[string]any{{"type": "web_search"}, {"type": "web_search_preview"}, {"type": "computer_use_preview"}, {"type": "nope"}, nil})
+	if len(got) != 3 {
 		t.Fatalf("allowlist = %v", got)
 	}
 }

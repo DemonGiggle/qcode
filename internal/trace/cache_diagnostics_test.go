@@ -50,3 +50,22 @@ func TestCacheDiagnosticsNilEmitsNothing(t *testing.T) {
 		t.Fatalf("nil diagnostics must emit nothing: %q", output.String())
 	}
 }
+
+func TestCacheDiagnosticsVerboseLine(t *testing.T) {
+	var output bytes.Buffer
+	logger := New(&output, false)
+	logger.SetVerbose(true)
+	diag := &llm.ResponsesCacheDiagnostics{Type: "cache_miss", Reason: "tools_changed"}
+	logger.CacheDiagnostics("chatgpt", "gpt-6-astra", "resp_1", diag)
+	got := strings.TrimSpace(output.String())
+	if !strings.Contains(got, "cache_miss") || !strings.Contains(got, "tools_changed") {
+		t.Fatalf("verbose line missing: %q", got)
+	}
+	var quiet bytes.Buffer
+	quietLogger := New(&quiet, false)
+	quietLogger.SetVerbose(false)
+	quietLogger.CacheDiagnostics("chatgpt", "gpt-6-astra", "resp_1", diag)
+	if strings.TrimSpace(quiet.String()) != "" {
+		t.Fatalf("non-verbose must stay silent: %q", quiet.String())
+	}
+}

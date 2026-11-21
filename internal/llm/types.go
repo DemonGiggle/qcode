@@ -164,8 +164,9 @@ type ResponsesCacheDiagnostics struct {
 }
 
 // SuggestedFix returns the documented fix for the miss reason, or "" when
-// unknown. It mirrors the "Fix a cache miss" table so trace output can point
-// at the actionable change without re-reading docs.
+// unknown. It extends the "Fix a cache miss" table (with an extra
+// instructions_changed entry for 6.2+ top-level instructions) so trace
+// output can point at the actionable change without re-reading docs.
 func (d *ResponsesCacheDiagnostics) SuggestedFix() string {
 	if d == nil {
 		return ""
