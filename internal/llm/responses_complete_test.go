@@ -397,25 +397,30 @@ func TestResponsesStoreRejection(t *testing.T) {
 }
 
 func TestChatGPTCompletePreservesPartialOnIncomplete(t *testing.T) {
-	for _, stream := range []string{
-		strings.Join([]string{
+	for _, tc := range []struct {
+		name, stream   string
+		wantIncomplete bool
+	}{
+		{"completed incomplete", strings.Join([]string{
 			`data: {"type":"response.output_text.delta","delta":"hello"}`,
 			`data: {"type":"response.completed","response":{"id":"resp_inc","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"message","content":[{"type":"output_text","text":"hello"}]}],"usage":{"input_tokens":100,"output_tokens":5}}}`,
-		}, "\n") + "\n\n",
-		strings.Join([]string{
+		}, "\n") + "\n\n", true},
+		{"bare incomplete", strings.Join([]string{
 			`data: {"type":"response.output_text.delta","delta":"hello"}`,
 			`data: {"type":"response.incomplete","response":{"id":"resp_inc","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":100,"output_tokens":5}}}`,
-		}, "\n") + "\n\n",
-		strings.Join([]string{
+		}, "\n") + "\n\n", true},
+		{"bare failed", strings.Join([]string{
 			`data: {"type":"response.output_text.delta","delta":"hello"}`,
 			`data: {"type":"response.failed","response":{"id":"resp_inc","error":{"message":"boom"},"usage":{"input_tokens":100,"output_tokens":5}}}`,
-		}, "\n") + "\n\n",
+		}, "\n") + "\n\n", false},
 	} {
-		testChatGPTCompletePartial(t, stream)
+		t.Run(tc.name, func(t *testing.T) {
+			testChatGPTCompletePartial(t, tc.stream, tc.wantIncomplete)
+		})
 	}
 }
 
-func testChatGPTCompletePartial(t *testing.T, stream string) {
+func testChatGPTCompletePartial(t *testing.T, stream string, wantIncomplete bool) {
 	t.Helper()
 	path := writeChatGPTOAuth(t, chatgptoauth.Tokens{AccessToken: "test-access", RefreshToken: "test-refresh", AccountID: "acct-1"})
 	client := doerFunc(func(r *http.Request) (*http.Response, error) {
@@ -428,6 +433,17 @@ func testChatGPTCompletePartial(t *testing.T, stream string) {
 	resp, err := provider.Complete(context.Background(), Request{Model: "gpt-6.2-sol", Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
 	if err == nil {
 		t.Fatalf("expected terminal error for stream %q", stream)
+	}
+	if wantIncomplete {
+		var incErr *ResponsesIncompleteError
+		if !errors.As(err, &incErr) {
+			t.Fatalf("expected ResponsesIncompleteError, got %T: %v", err, err)
+		}
+	} else {
+		var failErr *ResponsesFailedError
+		if !errors.As(err, &failErr) {
+			t.Fatalf("expected ResponsesFailedError, got %T: %v", err, err)
+		}
 	}
 	if resp.Message.Content != "hello" || resp.ResponseID != "resp_inc" {
 		t.Fatalf("partial lost: %+v (stream %q)", resp, stream)

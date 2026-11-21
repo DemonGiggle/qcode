@@ -1052,10 +1052,12 @@ endpoint may send `prompt_cache_key`.
   `Background`, `Truncation`, `Include` (e.g.
   `reasoning.encrypted_content`) forwarded when set.
 - Stream: `refusal` deltas surfaced as output text (never an empty
-  completion without explanation); `response.completed` captures `id`, usage,
-  and diagnostics; `incomplete` (with `incomplete_details.reason`) and
-  `failed` return errors instead of being dropped; `output_item.done` /
-  `function_call_arguments.done` fill gaps the delta path missed.
+  completion without explanation); `response.completed` and bare terminal
+  `response.incomplete` / `response.failed` events capture `id`, output,
+  usage, and diagnostics; `incomplete` (with `incomplete_details.reason`)
+  and `failed` return errors instead of being dropped;
+  `output_item.done` / `function_call_arguments.done` fill gaps the delta
+  path missed.
 - Explicit cache controls (`ttl`/`retention`/explicit breakpoints) remain
   intentionally unsent (implicit-only, Codex parity). Server defaults apply
   (`30m` at 1.25x write, reads 0.1x, 0.05x on Astra/Sol/Terra).

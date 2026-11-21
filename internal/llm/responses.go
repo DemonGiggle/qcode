@@ -584,9 +584,10 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 			return partial, fmt.Errorf("Responses: %s", event.Message)
 		}
 		if event.Type == "response.failed" || event.Type == "response.incomplete" {
-			// Bare terminal events carry id/usage/diagnostics on the event
-			// itself (unlike response.completed). Merge them before
-			// finalizing so the partial preserves billed usage.
+			// Bare terminal events carry id/output/usage/diagnostics on the
+			// event itself (unlike response.completed). Merge them before
+			// finalizing so the partial preserves billed usage and any
+			// output the server attached to the terminal event.
 			if event.Response.ID != "" {
 				responseID = event.Response.ID
 			}
@@ -603,6 +604,9 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 						diagnostics = diag
 					}
 				}
+			}
+			if len(event.Response.Output) > 0 {
+				completedOutput = event.Response.Output
 			}
 		}
 		if event.Type == "response.failed" {
