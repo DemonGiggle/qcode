@@ -1013,13 +1013,13 @@ endpoint may send `prompt_cache_key`.
   `StoreResponses`/`ConversationID` -> `store:true`/`conversation`. A
   `previous_response_id` chain implies `store:true` even when only the id is
   set. Omit all three for the default stateless full resend.
-- Agent wiring (`QCODE_RESPONSES_DIAGNOSTICS=1`, no config migration): `prepareNormalRequest` reuses
-  `Agent.LastResponseID` only as `comparison_response_id` when
-  `QCODE_RESPONSES_DIAGNOSTICS=1`. Stateful auto-chaining is deferred:
-  sending full history alongside `previous_response_id` would duplicate
-  every prior turn server-side, so `PreviousResponseID` stays Request-layer
-  opt-in for callers that send a true delta. Default stays stateless +
-  implicit-cache-only.
+- Agent wiring (no config migration): `prepareNormalRequest` reuses
+  `Agent.LastResponseID` as `comparison_response_id` only when
+  `QCODE_RESPONSES_DIAGNOSTICS=1`. Default stays stateless +
+  implicit-cache-only. Stateful auto-chaining is deferred: sending full
+  history alongside `previous_response_id` would duplicate every prior
+  turn server-side, so `PreviousResponseID` stays Request-layer opt-in
+  for callers that send a true delta.
 - Chaining still bills all prior input tokens as input tokens. `store:false`
   (ZDR) stays available: preserve and replay returned reasoning items
   (including `encrypted_content`) manually.
@@ -1058,6 +1058,11 @@ endpoint may send `prompt_cache_key`.
 - Explicit cache controls (`ttl`/`retention`/explicit breakpoints) remain
   intentionally unsent (implicit-only, Codex parity). Server defaults apply
   (`30m` at 1.25x write, reads 0.1x, 0.05x on Astra/Sol/Terra).
+- Truncation/failure semantics: `incomplete` (for example
+  `max_output_tokens`, `content_filter`) and `failed` abort the turn with
+  a typed `ResponsesIncompleteError`/`ResponsesFailedError`, but the
+  partial content, usage, response id, and diagnostics are preserved for
+  accounting and surfaced to the caller.
 
 Built-in tools stay Request-layer opt-in (`Request.BuiltinTools` with
 provider-side known-type allowlist); the agent Toolset does not auto-map MCP
