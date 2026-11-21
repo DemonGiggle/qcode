@@ -583,6 +583,28 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 			}
 			return partial, fmt.Errorf("Responses: %s", event.Message)
 		}
+		if event.Type == "response.failed" || event.Type == "response.incomplete" {
+			// Bare terminal events carry id/usage/diagnostics on the event
+			// itself (unlike response.completed). Merge them before
+			// finalizing so the partial preserves billed usage.
+			if event.Response.ID != "" {
+				responseID = event.Response.ID
+			}
+			if len(event.Response.Usage) != 0 {
+				var wire responsesUsageWire
+				if err := json.Unmarshal(event.Response.Usage, &wire); err == nil {
+					wire.mergeInto(accumulated)
+				}
+			}
+			if len(event.Response.Diagnostics) != 0 && string(event.Response.Diagnostics) != "null" {
+				var wire responsesDiagnosticsWire
+				if err := json.Unmarshal(event.Response.Diagnostics, &wire); err == nil {
+					if diag := wire.toPublic(); diag != nil {
+						diagnostics = diag
+					}
+				}
+			}
+		}
 		if event.Type == "response.failed" {
 			msg := ""
 			if event.Response.Error != nil {

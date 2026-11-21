@@ -1006,6 +1006,10 @@ endpoint may send `prompt_cache_key`.
   retries once without the comparison id (safe: 400 rejects before execution).
   A comparison-only rejection keeps the stable `prompt_cache_key` so
   accounting separation survives.
+- Agent wiring (no config migration): `prepareNormalRequest` reuses
+  `Agent.LastResponseID` as `comparison_response_id` only when
+  `QCODE_RESPONSES_DIAGNOSTICS=1`. Default stays stateless +
+  implicit-cache-only.
 
 ### Phase 2 — Stateful continuation (Request-layer opt-in; agent delta deferred)
 
@@ -1013,13 +1017,10 @@ endpoint may send `prompt_cache_key`.
   `StoreResponses`/`ConversationID` -> `store:true`/`conversation`. A
   `previous_response_id` chain implies `store:true` even when only the id is
   set. Omit all three for the default stateless full resend.
-- Agent wiring (no config migration): `prepareNormalRequest` reuses
-  `Agent.LastResponseID` as `comparison_response_id` only when
-  `QCODE_RESPONSES_DIAGNOSTICS=1`. Default stays stateless +
-  implicit-cache-only. Stateful auto-chaining is deferred: sending full
-  history alongside `previous_response_id` would duplicate every prior
-  turn server-side, so `PreviousResponseID` stays Request-layer opt-in
-  for callers that send a true delta.
+- Stateful auto-chaining is deferred: sending full history alongside
+  `previous_response_id` would duplicate every prior turn server-side,
+  so `PreviousResponseID` stays Request-layer opt-in for callers that
+  send a true delta.
 - Chaining still bills all prior input tokens as input tokens. `store:false`
   (ZDR) stays available: preserve and replay returned reasoning items
   (including `encrypted_content`) manually.
