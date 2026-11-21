@@ -81,11 +81,19 @@ func TestPreparedRequestWiresResponsesOptInsBehindFlags(t *testing.T) {
 }
 
 func TestFailedTurnDoesNotSeedBaseline(t *testing.T) {
-	// Simulates agent.go gating: usage counted, but truncated/failed ids
-	// never become the comparison baseline.
+	// Mirrors agent.go gating: completed turns seed the baseline via
+	// recordResponsesResult, failed/truncated turns only count usage via
+	// recordUsage and must leave the completed baseline untouched.
 	a := New(&usageProvider{}, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 3)
-	a.recordUsage(&llm.Usage{InputTokens: llm.IntPtr(100)})
-	if got := a.LastResponseID(); got != "" {
-		t.Fatalf("failed turn must not seed id, got %q", got)
+	a.recordResponsesResult(llm.Response{
+		ResponseID: "resp_ok", Usage: &llm.Usage{InputTokens: llm.IntPtr(100)},
+		CacheDiagnostics: &llm.ResponsesCacheDiagnostics{Type: "cache_hit"},
+	})
+	a.recordUsage(&llm.Usage{InputTokens: llm.IntPtr(50)})
+	if got := a.LastResponseID(); got != "resp_ok" {
+		t.Fatalf("failed turn overwrote baseline, got %q", got)
+	}
+	if diag := a.LastDiagnostics(); diag == nil || diag.Type != "cache_hit" {
+		t.Fatalf("failed turn overwrote diagnostics: %+v", diag)
 	}
 }

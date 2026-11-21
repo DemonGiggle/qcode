@@ -133,10 +133,8 @@ func (l *Logger) CacheDiagnostics(provider, model, responseID string, diag *llm.
 		return
 	}
 	l.mu.Lock()
-	verbose := l.verbose
-	out := l.out
-	l.mu.Unlock()
-	if !verbose || out == nil {
+	defer l.mu.Unlock()
+	if !l.verbose || l.out == nil {
 		return
 	}
 	summary := "cache diagnostics: " + diag.Type
@@ -146,7 +144,10 @@ func (l *Logger) CacheDiagnostics(provider, model, responseID string, diag *llm.
 			summary += " - " + fix
 		}
 	}
-	fmt.Fprintln(transcript.NewGroup(out), summary)
+	// Clear any in-progress spinner frame so the line is not clobbered
+	// or erased by the next "\r\x1b[2K" animation tick.
+	fmt.Fprint(l.out, "\r\x1b[2K")
+	fmt.Fprintln(transcript.NewGroup(l.out), summary)
 }
 
 func New(out io.Writer, jsonOutput bool) *Logger {

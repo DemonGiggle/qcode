@@ -336,8 +336,19 @@ func TestResponsesDiagnosticsFixTable(t *testing.T) {
 
 func TestResponsesBuiltinUnknownDropped(t *testing.T) {
 	got := responsesBuiltinTools([]map[string]any{{"type": "web_search"}, {"type": "web_search_preview"}, {"type": "computer_use_preview"}, {"type": "nope"}, nil})
-	if len(got) != 3 {
+	want := map[string]bool{"web_search": true, "web_search_preview": true, "computer_use_preview": true}
+	if len(got) != len(want) {
 		t.Fatalf("allowlist = %v", got)
+	}
+	for _, tool := range got {
+		typ, _ := tool["type"].(string)
+		if !want[typ] {
+			t.Fatalf("unexpected surviving type: %v", tool)
+		}
+		delete(want, typ)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing types: %v", want)
 	}
 }
 
