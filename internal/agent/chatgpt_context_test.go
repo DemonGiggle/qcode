@@ -25,6 +25,9 @@ type chatGPTWireRequest struct {
 	Instructions json.RawMessage   `json:"instructions"`
 	Tools        json.RawMessage   `json:"tools"`
 	Key          string            `json:"prompt_cache_key"`
+	CacheOptions *struct {
+		ComparisonID string `json:"comparison_response_id"`
+	} `json:"prompt_cache_options"`
 }
 
 type chatGPTTestTransport struct {
@@ -41,16 +44,19 @@ func (p *chatGPTTestTransport) Do(r *http.Request) (*http.Response, error) {
 	if len(p.requests) == 1 {
 		output = `[{"type":"reasoning","encrypted_content":"opaque"},{"type":"function_call","call_id":"c1","name":"skill","arguments":"{}"}]`
 	}
-	var usage string
+	var usage, created string
 	switch len(p.requests) {
 	case 1:
+		created = "data: " + `{"type":"response.created","response":{"id":"resp_tool"}}` + "\n\n"
 		usage = `, "usage":{"input_tokens":2000,"input_tokens_details":{"cached_tokens":0}}`
 	case 2:
 		usage = `, "usage":{"input_tokens":2400,"input_tokens_details":{"cached_tokens":1800}}`
 	case 3:
+		created = "data: " + `{"type":"response.created","response":{"id":"resp_third"}}` + "\n\n"
 		usage = `, "usage":{"input_tokens":2500}`
 	case 4:
-		// A completed inference with missing usage.
+		// A returned diagnostic on a completed inference with missing usage.
+		usage = `, "id":"resp_fourth", "prompt_cache_diagnostics":{"type":"unavailable"}`
 	case 5, 6:
 		// Both the original request and the bounded retry fail before streaming.
 		return &http.Response{StatusCode: 503, Status: "503 Service Unavailable", Header: http.Header{"Retry-After": {"0"}},
@@ -58,11 +64,12 @@ func (p *chatGPTTestTransport) Do(r *http.Request) (*http.Response, error) {
 	default:
 		return nil, fmt.Errorf("unexpected request %d", len(p.requests))
 	}
-	body := `data: {"type":"response.completed","response":{"output":` + output + usage + "}}\n\n"
+	body := created + `data: {"type":"response.completed","response":{"output":` + output + usage + "}}\n\n"
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
 }
 
 func TestChatGPTWirePrefixAcrossToolAndUserTurns(t *testing.T) {
+	t.Setenv("QCODE_RESPONSES_DIAGNOSTICS", "1")
 	tokens := filepath.Join(t.TempDir(), "oauth.json")
 	if err := chatgptoauth.Save(tokens, chatgptoauth.Tokens{ClientID: "oaiapp_test", ExtAgentHostID: "urn:uuid:test", AccessToken: "test", RefreshToken: "test-refresh", ExpiresAt: time.Now().Add(time.Hour).Unix()}); err != nil {
 		t.Fatal(err)
@@ -87,9 +94,15 @@ func TestChatGPTWirePrefixAcrossToolAndUserTurns(t *testing.T) {
 	if err := a.Run(context.Background(), "first"); err != nil {
 		t.Fatal(err)
 	}
+	if status, diag := a.LastCacheComparison(); status != llm.CacheComparisonRequested || diag != nil {
+		t.Fatalf("tool continuation omitted its report: status=%q, diag=%+v", status, diag)
+	}
 	store.items = []learning.Learning{{Topic: "second", Content: "learning-two"}}
 	if err := a.Run(context.Background(), "second"); err != nil {
 		t.Fatal(err)
+	}
+	if status, diag := a.LastCacheComparison(); status != llm.CacheComparisonNoBaseline || diag != nil {
+		t.Fatalf("preceding response omitted its ID: status=%q, diag=%+v", status, diag)
 	}
 	toolset.work = ""
 	store.items = nil
@@ -99,7 +112,14 @@ func TestChatGPTWirePrefixAcrossToolAndUserTurns(t *testing.T) {
 	if len(transport.requests) != 4 {
 		t.Fatalf("got %d requests", len(transport.requests))
 	}
+	if status, diag := a.LastCacheComparison(); status != llm.CacheComparisonRequested || diag == nil || diag.Type != "unavailable" {
+		t.Fatalf("explicit provider result: status=%q, diag=%+v", status, diag)
+	}
 	for i, r := range transport.requests {
+		wantID := []string{"", "resp_tool", "", "resp_third"}[i]
+		if wantID == "" && r.CacheOptions != nil || wantID != "" && (r.CacheOptions == nil || r.CacheOptions.ComparisonID != wantID) {
+			t.Fatalf("request %d: got comparison options %+v, want ID %q", i+1, r.CacheOptions, wantID)
+		}
 		first := transport.requests[0]
 		if r.Key == "" || r.Key != first.Key || !bytes.Equal(r.Tools, first.Tools) {
 			t.Fatalf("request %d changed the cache key or tools", i)

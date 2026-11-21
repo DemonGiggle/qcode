@@ -169,12 +169,12 @@ func (u *UI) handleUsageCommand(fields []string) {
 		return
 	}
 	report := formatUsageReport(runner.SessionUsage())
-	if source, ok := u.runner.(interface{ LastDiagnostics() *llm.ResponsesCacheDiagnostics }); ok {
-		if diag := source.LastDiagnostics(); diag != nil {
-			report += fmt.Sprintf("\n  Last cache comparison: %q", diag.Type)
-			if diag.Reason != "" {
-				report += fmt.Sprintf(" (%q)", diag.Reason)
-			}
+	if source, ok := u.runner.(interface {
+		LastCacheComparison() (llm.CacheComparisonStatus, *llm.ResponsesCacheDiagnostics)
+	}); ok {
+		status, diag := source.LastCacheComparison()
+		if summary := status.Summary(diag); summary != "" {
+			report += "\n  Last cache comparison: " + summary
 		}
 	}
 	u.printSystemMessage(report)

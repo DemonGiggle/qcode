@@ -54,7 +54,7 @@ func TestPreparedRequestWiresResponsesOptInsBehindFlags(t *testing.T) {
 	a.recordResponsesResult(llm.Response{ResponseID: "resp_123", Usage: &llm.Usage{InputTokens: llm.IntPtr(10)}})
 	t.Setenv("QCODE_RESPONSES_DIAGNOSTICS", "")
 	prep := a.prepareNormalRequest(context.Background(), "")
-	if prep.Request.ComparisonResponseID != "" || prep.Request.PreviousResponseID != "" || prep.Request.StoreResponses {
+	if prep.Request.ReportCacheComparison || prep.Request.ComparisonResponseID != "" || prep.Request.PreviousResponseID != "" || prep.Request.StoreResponses {
 		t.Fatalf("default must stay stateless: %+v", prep.Request)
 	}
 	// Diagnostics flag reuses last id as comparison baseline.
@@ -62,7 +62,7 @@ func TestPreparedRequestWiresResponsesOptInsBehindFlags(t *testing.T) {
 	a.recordResponsesResult(llm.Response{ResponseID: "resp_123", Usage: &llm.Usage{InputTokens: llm.IntPtr(10)}})
 	t.Setenv("QCODE_RESPONSES_DIAGNOSTICS", "1")
 	prep = a.prepareNormalRequest(context.Background(), "")
-	if prep.Request.ComparisonResponseID != "resp_123" {
+	if !prep.Request.ReportCacheComparison || prep.Request.ComparisonResponseID != "resp_123" {
 		t.Fatalf("diagnostics flag must set comparison: %+v", prep.Request)
 	}
 	if prep.Request.PreviousResponseID != "" {

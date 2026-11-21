@@ -491,6 +491,7 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 		return Response{}, err
 	}
 	resp, err := p.postCodexRaw(ctx, creds, payload, onText)
+	resp.ComparisonStatus = input.comparisonStatus()
 	if err == nil {
 		return resp, nil
 	}
@@ -522,7 +523,12 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 		if err != nil {
 			return Response{}, err
 		}
-		return p.postCodexRaw(ctx, creds, cleanPayload, onText)
+		retry, err := p.postCodexRaw(ctx, creds, cleanPayload, onText)
+		retry.ComparisonStatus = resp.ComparisonStatus
+		if usedComparison {
+			retry.ComparisonStatus = CacheComparisonRetriedWithoutID
+		}
+		return retry, err
 	}
 	return resp, err
 }

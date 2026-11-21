@@ -82,6 +82,9 @@ type Request struct {
 	// report prompt_cache_diagnostics for this request. On a 400 mentioning
 	// prompt_cache_options/comparison the provider retries once without it.
 	ComparisonResponseID string
+	// ReportCacheComparison records the local diagnostic outcome even when
+	// there is no baseline ID. Only ComparisonResponseID affects the wire.
+	ReportCacheComparison bool
 	// ConversationID opts into the Conversations API container
 	// (conversation: "...") for persistent server-side history. Use it
 	// independently of PreviousResponseID on compatible Responses routes.
@@ -135,6 +138,54 @@ type Response struct {
 	// Diagnostic counts can differ from usage counts; billing always follows
 	// Usage, never diagnostics.
 	CacheDiagnostics *ResponsesCacheDiagnostics
+	// ComparisonStatus describes what the client sent on this Responses call.
+	ComparisonStatus CacheComparisonStatus
+}
+
+// CacheComparisonStatus records the request path independently of any
+// provider-reported diagnostics. Empty leaves ordinary requests quiet.
+type CacheComparisonStatus string
+
+const (
+	CacheComparisonNoBaseline       CacheComparisonStatus = "no_baseline"
+	CacheComparisonRequested        CacheComparisonStatus = "requested"
+	CacheComparisonRetriedWithoutID CacheComparisonStatus = "retried_without_comparison"
+)
+
+func (r Request) comparisonStatus() CacheComparisonStatus {
+	if r.ComparisonResponseID != "" {
+		return CacheComparisonRequested
+	}
+	if r.ReportCacheComparison {
+		return CacheComparisonNoBaseline
+	}
+	return ""
+}
+
+// Summary renders local observations separately from the server's type and reason.
+func (s CacheComparisonStatus) Summary(diag *ResponsesCacheDiagnostics) string {
+	var observation string
+	switch s {
+	case CacheComparisonNoBaseline:
+		observation = "skipped (no previous completed response ID)"
+	case CacheComparisonRetriedWithoutID:
+		observation = "retried without comparison after a cache-field rejection"
+	case CacheComparisonRequested:
+		if diag == nil {
+			return "requested, but the provider returned no usable diagnostics"
+		}
+	}
+	if diag == nil {
+		return observation
+	}
+	if observation != "" {
+		observation += ". Provider reported "
+	}
+	observation += fmt.Sprintf("%q", diag.Type)
+	if diag.Reason != "" {
+		observation += fmt.Sprintf(" (%q)", diag.Reason)
+	}
+	return observation
 }
 
 // ResponsesCacheDiagnostics is the parsed prompt_cache_diagnostics object

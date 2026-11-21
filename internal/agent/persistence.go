@@ -332,6 +332,7 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 	a.stateMu.Lock()
 	a.lastResponseID = ""
 	a.lastDiagnostics = nil
+	a.lastComparisonStatus = ""
 	a.sessionUsage, a.contextUsage = restoreSessionUsage(s.Usage, s.UsageVersion), restoreContextUsage(s.ContextUsage, s.UsageVersion)
 	a.stateMu.Unlock()
 	// Restored history is reference data with new provenance; any prior

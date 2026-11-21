@@ -116,20 +116,23 @@ func (l *Logger) Usage(provider, model string, usage *llm.Usage, session llm.Ses
 // so consumers must use usage.cached_tokens for reuse and billing. The event
 // carries only configuration metadata (type/reason/counts/fix); it never
 // includes prompt content, cache keys, or credentials.
-func (l *Logger) CacheDiagnostics(provider, model, responseID string, diag *llm.ResponsesCacheDiagnostics) {
-	if diag == nil {
+func (l *Logger) CacheDiagnostics(provider, model, responseID string, status llm.CacheComparisonStatus, diag *llm.ResponsesCacheDiagnostics) {
+	if status == "" && diag == nil {
 		return
 	}
 	if l.json {
-		l.writeJSON("cache_diagnostics", "llm", provider, time.Now(), 0, map[string]any{
-			"model":                      model,
-			"response_id":                responseID,
-			"type":                       diag.Type,
-			"reason":                     diag.Reason,
-			"comparison_reusable_tokens": diag.ComparisonReusableTokens,
-			"cache_missed_tokens":        diag.CacheMissedTokens,
-			"suggested_fix":              diag.SuggestedFix(),
-		})
+		fields := map[string]any{"model": model, "response_id": responseID}
+		if status != "" {
+			fields["request_status"] = status
+		}
+		if diag != nil {
+			fields["type"] = diag.Type
+			fields["reason"] = diag.Reason
+			fields["comparison_reusable_tokens"] = diag.ComparisonReusableTokens
+			fields["cache_missed_tokens"] = diag.CacheMissedTokens
+			fields["suggested_fix"] = diag.SuggestedFix()
+		}
+		l.writeJSON("cache_diagnostics", "llm", provider, time.Now(), 0, fields)
 		return
 	}
 	l.mu.Lock()
@@ -137,12 +140,9 @@ func (l *Logger) CacheDiagnostics(provider, model, responseID string, diag *llm.
 	if !l.verbose || l.out == nil {
 		return
 	}
-	summary := "cache diagnostics: " + diag.Type
-	if diag.Reason != "" {
-		summary += " (" + diag.Reason + ")"
-		if fix := diag.SuggestedFix(); fix != "" {
-			summary += " - " + fix
-		}
+	summary := "cache diagnostics: " + status.Summary(diag)
+	if fix := diag.SuggestedFix(); fix != "" {
+		summary += " - " + fix
 	}
 	// Clear any in-progress spinner frame so the line is not clobbered
 	// or erased by the next "\r\x1b[2K" animation tick.

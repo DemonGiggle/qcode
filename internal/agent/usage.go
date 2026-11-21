@@ -45,8 +45,9 @@ func (a *Agent) recordResponsesResult(response llm.Response) {
 	a.stateMu.Lock()
 	a.lastResponseID = response.ResponseID
 	a.lastDiagnostics = response.CacheDiagnostics
+	a.lastComparisonStatus = response.ComparisonStatus
 	a.stateMu.Unlock()
-	a.trace.CacheDiagnostics(provider, model, response.ResponseID, response.CacheDiagnostics)
+	a.trace.CacheDiagnostics(provider, model, response.ResponseID, response.ComparisonStatus, response.CacheDiagnostics)
 }
 
 // LastResponseID returns the most recent completed Responses id, or "" when
@@ -61,7 +62,14 @@ func (a *Agent) LastResponseID() string {
 // LastDiagnostics returns the most recent completed prompt_cache_diagnostics,
 // or nil when the last completed response did not report any.
 func (a *Agent) LastDiagnostics() *llm.ResponsesCacheDiagnostics {
+	_, diag := a.LastCacheComparison()
+	return diag
+}
+
+// LastCacheComparison returns the request path and server report from the
+// same completed turn, including when the server omitted its report.
+func (a *Agent) LastCacheComparison() (llm.CacheComparisonStatus, *llm.ResponsesCacheDiagnostics) {
 	a.stateMu.RLock()
 	defer a.stateMu.RUnlock()
-	return a.lastDiagnostics
+	return a.lastComparisonStatus, a.lastDiagnostics
 }

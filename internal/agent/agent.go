@@ -68,7 +68,9 @@ type Agent struct {
 	// lastDiagnostics is the most recent prompt_cache_diagnostics, if any.
 	// Diagnostic counts can differ from usage counts; billing always follows
 	// Usage, never diagnostics.
-	lastDiagnostics *llm.ResponsesCacheDiagnostics
+	lastDiagnostics      *llm.ResponsesCacheDiagnostics
+	lastComparisonStatus llm.CacheComparisonStatus
+
 	contextStatus   atomic.Pointer[contextStatus]
 	contextWindow   int
 	contextOverride int
@@ -474,6 +476,7 @@ func (a *Agent) resetSession() {
 	a.lastResponse = ""
 	a.lastResponseID = ""
 	a.lastDiagnostics = nil
+	a.lastComparisonStatus = ""
 	a.sessionUsage = llm.SessionUsage{}
 	a.stateMu.Unlock()
 	a.learningContext = ""

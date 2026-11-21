@@ -16,7 +16,7 @@ func TestCacheDiagnosticsEvent(t *testing.T) {
 		Type: "cache_miss", Reason: "tools_changed",
 		ComparisonReusableTokens: llm.IntPtr(5629), CacheMissedTokens: llm.IntPtr(5629),
 	}
-	logger.CacheDiagnostics("chatgpt", "gpt-6-astra", "resp_123", diag)
+	logger.CacheDiagnostics("chatgpt", "gpt-6-astra", "resp_123", llm.CacheComparisonRequested, diag)
 	raw := strings.TrimSpace(output.String())
 	if raw == "" {
 		t.Fatal("expected diagnostics event")
@@ -25,7 +25,7 @@ func TestCacheDiagnosticsEvent(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &event); err != nil {
 		t.Fatal(err)
 	}
-	if event["event"] != "cache_diagnostics" || event["type"] != "cache_miss" {
+	if event["event"] != "cache_diagnostics" || event["type"] != "cache_miss" || event["request_status"] != "requested" {
 		t.Fatalf("event = %#v", event)
 	}
 	if event["reason"] != "tools_changed" || event["response_id"] != "resp_123" {
@@ -45,9 +45,22 @@ func TestCacheDiagnosticsEvent(t *testing.T) {
 func TestCacheDiagnosticsNilEmitsNothing(t *testing.T) {
 	var output bytes.Buffer
 	logger := New(&output, true)
-	logger.CacheDiagnostics("chatgpt", "gpt-6-astra", "", nil)
+	logger.CacheDiagnostics("chatgpt", "gpt-6-astra", "", "", nil)
 	if strings.TrimSpace(output.String()) != "" {
 		t.Fatalf("nil diagnostics must emit nothing: %q", output.String())
+	}
+}
+
+func TestCacheDiagnosticsTraceWhenProviderOmitsReport(t *testing.T) {
+	var output bytes.Buffer
+	logger := New(&output, true)
+	logger.CacheDiagnostics("chatgpt", "model", "resp_1", llm.CacheComparisonRequested, nil)
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatal(err)
+	}
+	if event["request_status"] != "requested" || event["type"] != nil || event["reason"] != nil {
+		t.Fatalf("unexpected comparison metadata: %v", event)
 	}
 }
 
@@ -56,7 +69,7 @@ func TestCacheDiagnosticsVerboseLine(t *testing.T) {
 	logger := New(&output, false)
 	logger.SetVerbose(true)
 	diag := &llm.ResponsesCacheDiagnostics{Type: "cache_miss", Reason: "tools_changed"}
-	logger.CacheDiagnostics("chatgpt", "gpt-6-astra", "resp_1", diag)
+	logger.CacheDiagnostics("chatgpt", "gpt-6-astra", "resp_1", llm.CacheComparisonRequested, diag)
 	got := strings.TrimSpace(output.String())
 	if !strings.Contains(got, "cache_miss") || !strings.Contains(got, "tools_changed") {
 		t.Fatalf("verbose line missing: %q", got)
@@ -64,7 +77,7 @@ func TestCacheDiagnosticsVerboseLine(t *testing.T) {
 	var quiet bytes.Buffer
 	quietLogger := New(&quiet, false)
 	quietLogger.SetVerbose(false)
-	quietLogger.CacheDiagnostics("chatgpt", "gpt-6-astra", "resp_1", diag)
+	quietLogger.CacheDiagnostics("chatgpt", "gpt-6-astra", "resp_1", llm.CacheComparisonRequested, diag)
 	if strings.TrimSpace(quiet.String()) != "" {
 		t.Fatalf("non-verbose must stay silent: %q", quiet.String())
 	}

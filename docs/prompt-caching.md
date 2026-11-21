@@ -938,9 +938,11 @@ qcode reads `response.usage.input_tokens_details.cached_tokens` from the
 terminal Responses event. A reported zero contributes zero reads and the
 reported input to the share. An absent or invalid cache count leaves that
 request outside the share. Neither outcome identifies the cause of a miss.
-If the server supports cache comparisons, set
-`QCODE_RESPONSES_DIAGNOSTICS=1` before starting the session and inspect
-the comparison on a later turn in `/usage` or the debug trace. The share
+Set `QCODE_RESPONSES_DIAGNOSTICS=1` before starting the session. After
+each completed Responses turn, `/usage` explains whether qcode skipped
+the comparison for lack of a baseline ID, sent it and received no usable
+report, retried without it after a cache-field rejection, or received a
+provider result. A returned `unavailable` is an explicit provider result. The share
 always uses the reported token counts. OpenAI's SIWC guide gives no minimum
 cache share for subscription traffic. [SIWC models and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference) · [Prompt cache diagnostics](https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics)
 
@@ -994,7 +996,10 @@ endpoint may send `prompt_cache_key`.
   `llm.Response.CacheDiagnostics` (`type/reason/comparison_reusable_tokens/
   cache_missed_tokens`) and `Agent.LastDiagnostics`. Surfaced in the debug
   trace as `cache_diagnostics` (`internal/trace:CacheDiagnostics`). The active agent’s
-  `/usage` shows the latest completed comparison when present.
+  `/usage` shows the latest completed turn’s comparison status. With
+  diagnostics enabled, the JSON trace records `request_status` as
+  `no_baseline`, `requested`, or `retried_without_comparison`.
+  The `type` and `reason` fields describe a returned provider report.
 - Types: `cache_hit`, `cache_miss` (+`reason` + fix via
   `ResponsesDiagnosticsFix`), `comparison_response_not_found` (expired/missing
   record — pick another recent completed response from the same org),

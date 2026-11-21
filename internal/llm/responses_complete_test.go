@@ -104,6 +104,17 @@ func TestBuildResponsesBodyBuiltinAllowlist(t *testing.T) {
 	}
 }
 
+func TestResponsesCreatedIDRequiresCompletion(t *testing.T) {
+	const created = `data: {"type":"response.created","response":{"id":"created"}}` + "\n\n"
+	if resp, err := parseResponsesStream(strings.NewReader(created), nil); err == nil || resp.ResponseID != "" {
+		t.Fatalf("interrupted stream: id=%q err=%v", resp.ResponseID, err)
+	}
+	const completed = `data: {"type":"response.completed","response":{"id":"terminal"}}` + "\n\n"
+	if resp, err := parseResponsesStream(strings.NewReader(created+completed), nil); err != nil || resp.ResponseID != "terminal" {
+		t.Fatalf("terminal ID: got %q err=%v", resp.ResponseID, err)
+	}
+}
+
 func TestParseResponsesDiagnosticsHit(t *testing.T) {
 	stream := strings.Join([]string{
 		`data: {"type":"response.output_text.delta","delta":"ok"}`,
@@ -339,12 +350,12 @@ func TestChatGPTComparisonFallbackStripsOptionsKeepsKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = provider.Complete(context.Background(), Request{
+	resp, err := provider.Complete(context.Background(), Request{
 		Model: "gpt-6-astra", PromptCacheKey: "k", ComparisonResponseID: "resp_expired",
 		Messages: []Message{{Role: "user", Content: "hi"}},
 	}, nil)
-	if err != nil || calls != 2 {
-		t.Fatalf("err=%v calls=%d", err, calls)
+	if err != nil || calls != 2 || resp.ComparisonStatus != CacheComparisonRetriedWithoutID || resp.CacheDiagnostics != nil {
+		t.Fatalf("err=%v calls=%d comparison=%q diag=%+v", err, calls, resp.ComparisonStatus, resp.CacheDiagnostics)
 	}
 	if _, ok := bodies[0]["prompt_cache_options"]; !ok {
 		t.Fatalf("first attempt must carry comparison: %v", bodies[0])

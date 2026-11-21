@@ -246,10 +246,14 @@ func TestUsageReportCachedShareRounding(t *testing.T) {
 	}
 }
 
-type diagnosticRunner struct{ tokenRunner }
+type diagnosticRunner struct {
+	tokenRunner
+	status llm.CacheComparisonStatus
+	diag   *llm.ResponsesCacheDiagnostics
+}
 
-func (diagnosticRunner) LastDiagnostics() *llm.ResponsesCacheDiagnostics {
-	return &llm.ResponsesCacheDiagnostics{Type: "cache_miss", Reason: "tools_changed"}
+func (r diagnosticRunner) LastCacheComparison() (llm.CacheComparisonStatus, *llm.ResponsesCacheDiagnostics) {
+	return r.status, r.diag
 }
 
 func TestUsageCommandShowsReportedShareAndOutcomes(t *testing.T) {
@@ -258,7 +262,7 @@ func TestUsageCommandShowsReportedShareAndOutcomes(t *testing.T) {
 	s.AddResult(nil, context.Canceled)
 	s.Add(nil)
 	var out bytes.Buffer
-	u := UI{display: newHistoryWriter(&out), runner: diagnosticRunner{tokenRunner{usage: s}}}
+	u := UI{display: newHistoryWriter(&out), runner: diagnosticRunner{tokenRunner{usage: s}, llm.CacheComparisonRequested, &llm.ResponsesCacheDiagnostics{Type: "cache_miss", Reason: "tools_changed"}}}
 	u.handleUsageCommand([]string{"/usage"})
 	for _, want := range []string{
 		"<0.1% (based on 1/3 requests), 1 of 10000 input tokens cached",
@@ -267,6 +271,26 @@ func TestUsageCommandShowsReportedShareAndOutcomes(t *testing.T) {
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in report:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestUsageCommandComparisonWithNoProviderReport(t *testing.T) {
+	for _, tc := range []struct {
+		status llm.CacheComparisonStatus
+		want   string
+	}{
+		{"", ""},
+		{llm.CacheComparisonNoBaseline, "skipped (no previous completed response ID)"},
+		{llm.CacheComparisonRequested, "requested, but the provider returned no usable diagnostics"},
+		{llm.CacheComparisonRetriedWithoutID, "retried without comparison after a cache-field rejection"},
+	} {
+		var out bytes.Buffer
+		u := UI{display: newHistoryWriter(&out), runner: diagnosticRunner{status: tc.status}}
+		u.handleUsageCommand([]string{"/usage"})
+		_, line, found := strings.Cut(out.String(), "Last cache comparison: ")
+		if found != (tc.want != "") || !strings.HasPrefix(line, tc.want) {
+			t.Errorf("status %q: report=%s", tc.status, out.String())
 		}
 	}
 }

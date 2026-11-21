@@ -38,6 +38,7 @@ func (p *openAIProvider) completeResponses(ctx context.Context, input Request, o
 		return Response{}, err
 	}
 	resp, err := p.postResponses(ctx, payload, onText)
+	resp.ComparisonStatus = input.comparisonStatus()
 	var status *responsesStatusError
 	if input.ComparisonResponseID == "" || !errors.As(err, &status) ||
 		(status.statusCode != http.StatusBadRequest && status.statusCode != http.StatusNotFound) {
@@ -55,7 +56,9 @@ func (p *openAIProvider) completeResponses(ctx context.Context, input Request, o
 	if err != nil {
 		return resp, err
 	}
-	return p.postResponses(ctx, payload, onText)
+	retry, err := p.postResponses(ctx, payload, onText)
+	retry.ComparisonStatus = CacheComparisonRetriedWithoutID
+	return retry, err
 }
 
 func (p *openAIProvider) postResponses(ctx context.Context, payload []byte, onText StreamCallback) (Response, error) {
@@ -408,7 +411,7 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 	// erases earlier values.
 	accumulated := &Usage{}
 	var completedOutput []json.RawMessage
-	var responseID string
+	var responseID, createdID string
 	var diagnostics *ResponsesCacheDiagnostics
 	completed := false
 	partials := map[int]*responsesPartialCall{}
@@ -556,6 +559,10 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 			return partial, &ResponsesIncompleteError{Reason: reason, Response: partial}
 		}
 		switch event.Type {
+		case "response.created":
+			// Some streams identify the response only when it opens. The
+			// completed event must arrive before it can become a baseline.
+			createdID = event.Response.ID
 		case "response.output_text.delta":
 			result.Content += event.Delta
 			if onText != nil {
@@ -640,6 +647,8 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 			completedOutput = event.Response.Output
 			if event.Response.ID != "" {
 				responseID = event.Response.ID
+			} else if responseID == "" {
+				responseID = createdID
 			}
 			if len(event.Response.Usage) != 0 {
 				var wire responsesUsageWire
