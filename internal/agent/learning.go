@@ -110,7 +110,7 @@ func (a *Agent) Learn(ctx context.Context, arguments string, approve LearningApp
 				cancel()
 			}
 		})
-		a.recordUsage(response.Usage)
+		a.recordResponsesResult(response)
 		cancel()
 		if streamedBytes > learning.MaxProposalBytes {
 			requestErr = fmt.Errorf("learning proposal stream exceeds 64 KiB")

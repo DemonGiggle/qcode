@@ -963,3 +963,99 @@ Live matched-session hit-rate measurement (`sum(cached_tokens) /
 sum(input_tokens)`, cold vs repeated turns, latency retained) remains
 deferred by requester; fixture tests plus `go test ./...` are the
 acceptance basis for this issue.
+
+## Responses complete implementation (issue #116)
+
+Opt-in Responses coverage on top of the stateless implicit-cache-only
+default. Defaults are unchanged: `store:false`, full-history resend, function
+tools only, no comparison, no structured-output overrides. All new fields are
+omitted when zero so `TestBuildResponsesBodyDefaultsStayStateless`,
+`TestChatGPTCachePolicyRouting`, and Codex-parity tests keep passing.
+
+Shared core: `internal/llm/responses.go:buildResponsesBody` is used by both
+the `chatgpt` SIWC route and the `opencode-go` Responses route (issues
+#115/#116 converge here instead of two partial copies). `chatgpt` prepends
+durable instructions as the leading developer message and applies the 6.2+
+top-level `instructions` dual-track; other routes pass `responsesInput`
+directly. Cache-key policy (#81/Codex parity) is unchanged: only the official
+endpoint may send `prompt_cache_key`.
+
+### Phase 1 — Diagnostics (observability only)
+
+- Request: `llm.Request.ComparisonResponseID` ->
+  `prompt_cache_options.comparison_response_id`. Omit on the first turn; pass
+  the previous completed response `id` (`llm.Response.ResponseID`,
+  `Agent.LastResponseID`) on later turns. Testing a fix keeps the baseline id.
+- Response: `prompt_cache_diagnostics` parsed from
+  `response.completed:response.prompt_cache_diagnostics` into
+  `llm.Response.CacheDiagnostics` (`type/reason/comparison_reusable_tokens/
+  cache_missed_tokens`) and `Agent.LastDiagnostics`. Surfaced in the debug
+  trace as `cache_diagnostics` (`internal/trace:CacheDiagnostics`); `/usage`
+  is unchanged.
+- Types: `cache_hit`, `cache_miss` (+`reason` + fix via
+  `ResponsesDiagnosticsFix`), `comparison_response_not_found` (expired/missing
+  record — pick another recent completed response from the same org),
+  `unavailable` (model without support or inconclusive — use the response
+  normally). Expired-id and old-model paths never fail the completion.
+- Billing: diagnostics never changes matching, hit rate, or billing.
+  `cache_hit` can still bill new tokens; 6.2+ can report `cache_hit` while
+  billing top-level `instructions` uncached. Always measure reuse and billing
+  with `usage.input_tokens_details.cached_tokens`, never with diagnostic
+  counts. No extra cost or rate-limit for diagnostics itself.
+- Retry: a 400 mentioning `prompt_cache_options`/`comparison_response`
+  retries once without the comparison id (safe: 400 rejects before execution).
+  A comparison-only rejection keeps the stable `prompt_cache_key` so
+  accounting separation survives.
+
+### Phase 2 — Stateful continuation (opt-in)
+
+- Request: `PreviousResponseID` -> `previous_response_id`,
+  `StoreResponses`/`ConversationID` -> `store:true`/`conversation`. A
+  `previous_response_id` chain implies `store:true` even when only the id is
+  set. Omit all three for the default stateless full resend.
+- Chaining still bills all prior input tokens as input tokens. `store:false`
+  (ZDR) stays available: preserve and replay returned reasoning items
+  (including `encrypted_content`) manually.
+- Retry: 400/404 mentioning `previous_response_id`/`conversation` retries
+  once with the same full-history input and no continuation id (no
+  double-bill; the server never executed).
+- Agent default stays stateless; `Agent.LastResponseID` exposes the chaining
+  baseline for future opt-in wiring.
+
+### Phase 3 — Tools + structured output (opt-in)
+
+- `ResponseFormat` -> `text.format` (`json_schema`/`json_object`/`text` +
+  optional `verbosity` via `Verbosity`); `ToolChoice` -> `tool_choice`;
+  `ParallelToolCalls` -> `parallel_tool_calls`.
+- `BuiltinTools` passthrough for `web_search`/`file_search`/
+  `code_interpreter`/`computer_use`/`image_generation`/`mcp`. Callers must
+  enforce a config allowlist; the provider only validates the type against the
+  known set and drops unknown entries so a typo cannot poison the cached
+  tool prefix.
+- Keep tool definitions and ordering stable; prefer `tool_choice:none` or an
+  allowlist over rewriting the list (`tools_changed` is the most common
+  miss).
+
+### Phase 4 — Reasoning / lifecycle + stream robustness
+
+- `ReasoningSummary` overrides the summary detail (`auto`/`concise`/
+  `detailed`) while keeping the `thinkingFields` effort; empty preserves the
+  `auto`-when-enabled default. `MaxOutputTokens`, `ServiceTier`, `Metadata`,
+  `Background`, `Truncation`, `Include` (e.g.
+  `reasoning.encrypted_content`) forwarded when set.
+- Stream: `refusal` deltas surfaced as output text (never an empty
+  completion without explanation); `response.completed` captures `id`, usage,
+  and diagnostics; `incomplete` (with `incomplete_details.reason`) and
+  `failed` return errors instead of being dropped; `output_item.done` /
+  `function_call_arguments.done` fill gaps the delta path missed.
+- Explicit cache controls (`ttl`/`retention`/explicit breakpoints) remain
+  intentionally unsent (implicit-only, Codex parity). Server defaults apply
+  (`30m` at 1.25x write, reads 0.1x, 0.05x on Astra/Sol/Terra).
+
+Acceptance: diagnostics round trip (`comparison_response_id` ->
+`cache_hit/miss` + reason visible in trace), stateful chaining behind flag
+without full-history resend, no default-path regression in cached_tokens
+accounting or 6.2 billing, docs updated here, fixture tests
+(`internal/llm/responses_complete_test.go`,
+`internal/trace/cache_diagnostics_test.go`,
+`internal/agent/responses_result_test.go`) plus `go test ./...`.

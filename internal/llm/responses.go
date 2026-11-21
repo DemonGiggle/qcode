@@ -27,25 +27,57 @@ type responsesPartialCall struct{ id, name, arguments string }
 func (p *openAIProvider) completeResponses(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
 	// Reasoning Responses models reject temperature (Luna returns 400).
 	// Omit it and keep the provider default, as the Anthropic adapter does.
-	body := map[string]any{
-		"model":  input.Model,
-		"input":  responsesInput(input.Messages),
-		"stream": true,
-	}
-	for field, value := range thinkingFields(p.ThinkingCapability(input.Model), input.Thinking) {
-		body[field] = value
-	}
-	if len(input.Tools) > 0 {
-		tools := make([]map[string]any, 0, len(input.Tools))
-		for _, tool := range input.Tools {
-			tools = append(tools, map[string]any{"type": "function", "name": tool.Name, "description": tool.Description, "parameters": tool.Parameters})
-		}
-		body["tools"] = tools
-	}
+	inputItems := responsesInput(input.Messages)
+	body := buildResponsesBody(input.Model, p.ThinkingCapability(input.Model), input, inputItems, "", false)
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return Response{}, err
 	}
+	resp, err := p.postResponses(ctx, payload, onText)
+	if err == nil {
+		return resp, nil
+	}
+	// Opt-in fallback: a comparison or continuation rejection happens before
+	// execution, so retrying once without the rejected opt-in field cannot
+	// double-bill. Strip only the rejected dimension so the surviving opt-in
+	// (comparison vs continuation) is preserved.
+	if shouldRetryResponsesWithoutOption(err, input) {
+		se, _ := asResponsesStatusError(err)
+		lower := strings.ToLower(se.body)
+		clean := input
+		if clean.ComparisonResponseID != "" && (strings.Contains(lower, "prompt_cache_options") || strings.Contains(lower, "comparison_response")) {
+			clean.ComparisonResponseID = ""
+		}
+		if (clean.PreviousResponseID != "" || clean.ConversationID != "") && (strings.Contains(lower, "previous_response") || strings.Contains(lower, "conversation")) {
+			clean.PreviousResponseID = ""
+			clean.ConversationID = ""
+			// Stateful retry keeps store:true only when explicitly requested;
+			// a previous_response_id retry falls back to stateless full resend.
+			if !input.StoreResponses {
+				clean.StoreResponses = false
+			}
+		}
+		// If nothing was stripped (generic 400 without a field name), strip
+		// both opt-ins once rather than failing outright.
+		if clean.ComparisonResponseID == input.ComparisonResponseID && clean.PreviousResponseID == input.PreviousResponseID && clean.ConversationID == input.ConversationID {
+			clean.ComparisonResponseID = ""
+			clean.PreviousResponseID = ""
+			clean.ConversationID = ""
+			if !input.StoreResponses {
+				clean.StoreResponses = false
+			}
+		}
+		cleanBody := buildResponsesBody(clean.Model, p.ThinkingCapability(clean.Model), clean, inputItems, "", false)
+		cleanPayload, merr := json.Marshal(cleanBody)
+		if merr != nil {
+			return Response{}, merr
+		}
+		return p.postResponses(ctx, cleanPayload, onText)
+	}
+	return Response{}, err
+}
+
+func (p *openAIProvider) postResponses(ctx context.Context, payload []byte, onText StreamCallback) (Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/responses", bytes.NewReader(payload))
 	if err != nil {
 		return Response{}, err
@@ -67,9 +99,215 @@ func (p *openAIProvider) completeResponses(ctx context.Context, input Request, o
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return Response{}, fmt.Errorf("provider returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		return Response{}, &responsesStatusError{statusCode: resp.StatusCode, status: resp.Status, body: strings.TrimSpace(string(data))}
 	}
 	return parseResponsesStream(resp.Body, onText)
+}
+
+// responsesStatusError preserves the HTTP status for retry decisions while
+// keeping the user-facing "provider returned ..." message unchanged.
+type responsesStatusError struct {
+	statusCode int
+	status     string
+	body       string
+}
+
+func (e *responsesStatusError) Error() string {
+	return fmt.Sprintf("provider returned %s: %s", e.status, e.body)
+}
+
+func asResponsesStatusError(err error) (responsesStatusError, bool) {
+	if err == nil {
+		return responsesStatusError{}, false
+	}
+	for cur := err; cur != nil; {
+		if v, ok := cur.(*responsesStatusError); ok {
+			return *v, true
+		}
+		type unwrapper interface{ Unwrap() error }
+		u, ok := cur.(unwrapper)
+		if !ok {
+			break
+		}
+		cur = u.Unwrap()
+	}
+	// Also accept the chatgpt variant so shared helpers work across providers.
+	if se, ok := asChatGPTStatusError(err); ok {
+		return responsesStatusError{statusCode: se.statusCode, status: se.status, body: se.body}, true
+	}
+	return responsesStatusError{}, false
+}
+
+// shouldRetryResponsesWithoutOption reports whether err is a pre-execution
+// rejection of an opt-in Responses field, in which case stripping that field
+// and retrying once with the same history cannot double-bill.
+func shouldRetryResponsesWithoutOption(err error, input Request) bool {
+	se, ok := asResponsesStatusError(err)
+	if !ok {
+		return false
+	}
+	if se.statusCode != http.StatusBadRequest && se.statusCode != http.StatusNotFound {
+		return false
+	}
+	lower := strings.ToLower(se.body)
+	if input.ComparisonResponseID != "" && (strings.Contains(lower, "prompt_cache_options") || strings.Contains(lower, "comparison_response")) {
+		return true
+	}
+	if input.PreviousResponseID != "" && (strings.Contains(lower, "previous_response") || strings.Contains(lower, "conversation")) {
+		return true
+	}
+	if input.ConversationID != "" && strings.Contains(lower, "conversation") {
+		return true
+	}
+	return false
+}
+
+// allowedResponsesBuiltins is the closed set of server-side tool types qcode
+// forwards. Unknown types are dropped so a typo cannot silently change the
+// cached tool prefix.
+var allowedResponsesBuiltins = map[string]bool{
+	"web_search":       true,
+	"file_search":      true,
+	"code_interpreter": true,
+	"computer_use":     true,
+	"image_generation": true,
+	"mcp":              true,
+}
+
+// responsesBuiltinTools filters passthrough built-in tools to the known set.
+func responsesBuiltinTools(extra []map[string]any) []map[string]any {
+	var out []map[string]any
+	for _, tool := range extra {
+		if tool == nil {
+			continue
+		}
+		typ, _ := tool["type"].(string)
+		if !allowedResponsesBuiltins[typ] {
+			continue
+		}
+		out = append(out, tool)
+	}
+	return out
+}
+
+// buildResponsesBody is the shared Responses request builder used by the
+// openai/opencode-go and chatgpt providers (issues #115/#116). Zero-value
+// opt-ins are omitted so the default wire stays stateless +
+// implicit-cache-only: store:false, full history resend, function tools only,
+// no comparison, no structured-output overrides.
+//
+// inputItems is the already-encoded input array (chatgpt prepends durable
+// instructions; other routes pass responsesInput directly). cacheKey is the
+// session-stable prompt_cache_key; it is only emitted when official==true and
+// non-empty, preserving the #81/Codex-parity policy.
+func buildResponsesBody(model string, capability ThinkingCapability, input Request, inputItems []any, cacheKey string, official bool) map[string]any {
+	body := map[string]any{
+		"model":  model,
+		"input":  inputItems,
+		"stream": true,
+	}
+	// Stateful continuation is opt-in. A previous_response_id chain requires
+	// server-side storage, so requesting a continuation implies store:true
+	// even when the caller only set PreviousResponseID.
+	store := input.StoreResponses || input.PreviousResponseID != "" || input.ConversationID != ""
+	body["store"] = store
+	if input.PreviousResponseID != "" {
+		body["previous_response_id"] = input.PreviousResponseID
+	}
+	if input.ConversationID != "" {
+		body["conversation"] = input.ConversationID
+	}
+	fields := thinkingFields(capability, input.Thinking)
+	if input.ReasoningSummary != "" {
+		// Override the summary detail while keeping the effort from
+		// thinkingFields. When no effort is set, synthesize the minimal
+		// reasoning object so the summary override still has an effect.
+		var reasoning map[string]any
+		if raw, ok := fields["reasoning"].(map[string]any); ok {
+			reasoning = raw
+		} else {
+			reasoning = map[string]any{}
+			fields = map[string]any{"reasoning": reasoning}
+			if len(fields) == 1 && len(reasoning) == 0 {
+				// keep fields non-nil; reasoning effort omitted preserves default
+			}
+		}
+		reasoning["summary"] = input.ReasoningSummary
+	}
+	for field, value := range fields {
+		// Skip empty reasoning objects (no effort and no summary override).
+		if field == "reasoning" {
+			if m, ok := value.(map[string]any); ok && len(m) == 0 {
+				continue
+			}
+		}
+		body[field] = value
+	}
+	if official && cacheKey != "" {
+		body["prompt_cache_key"] = cacheKey
+	}
+	if input.ComparisonResponseID != "" {
+		body["prompt_cache_options"] = map[string]any{"comparison_response_id": input.ComparisonResponseID}
+	}
+	tools := make([]map[string]any, 0, len(input.Tools)+len(input.BuiltinTools))
+	for _, tool := range input.Tools {
+		item := map[string]any{"type": "function", "name": tool.Name}
+		if tool.Description != "" {
+			item["description"] = tool.Description
+		}
+		if tool.Parameters != nil {
+			item["parameters"] = tool.Parameters
+		}
+		tools = append(tools, item)
+	}
+	tools = append(tools, responsesBuiltinTools(input.BuiltinTools)...)
+	if len(tools) > 0 {
+		body["tools"] = tools
+	}
+	if input.ToolChoice != nil {
+		body["tool_choice"] = input.ToolChoice
+	}
+	if input.ParallelToolCalls != nil {
+		body["parallel_tool_calls"] = *input.ParallelToolCalls
+	}
+	if input.ResponseFormat != nil {
+		format := map[string]any{"type": input.ResponseFormat.Type}
+		if input.ResponseFormat.Name != "" {
+			format["name"] = input.ResponseFormat.Name
+		}
+		if input.ResponseFormat.Schema != nil {
+			format["schema"] = input.ResponseFormat.Schema
+		}
+		if input.ResponseFormat.Strict != nil {
+			format["strict"] = *input.ResponseFormat.Strict
+		}
+		text := map[string]any{"format": format}
+		if input.Verbosity != "" {
+			text["verbosity"] = input.Verbosity
+		}
+		body["text"] = text
+	} else if input.Verbosity != "" {
+		body["text"] = map[string]any{"verbosity": input.Verbosity}
+	}
+	if input.MaxOutputTokens != nil {
+		body["max_output_tokens"] = *input.MaxOutputTokens
+	}
+	if input.ServiceTier != "" {
+		body["service_tier"] = input.ServiceTier
+	}
+	if input.Metadata != nil {
+		body["metadata"] = input.Metadata
+	}
+	if input.Background != nil {
+		body["background"] = *input.Background
+	}
+	if input.Truncation != "" {
+		body["truncation"] = input.Truncation
+	}
+	if len(input.Include) > 0 {
+		body["include"] = input.Include
+	}
+	return body
 }
 
 func responsesInput(messages []Message) []any {
@@ -174,7 +412,32 @@ func (w *responsesUsageWire) mergeInto(acc *Usage) {
 	}
 }
 
+// responsesDiagnosticsWire is the private prompt_cache_diagnostics shape.
+// Pointer counts preserve presence; type/reason are plain strings.
+type responsesDiagnosticsWire struct {
+	Type                     string `json:"type"`
+	Reason                   string `json:"reason"`
+	ComparisonReusableTokens *int   `json:"comparison_reusable_tokens"`
+	CacheMissedTokens        *int   `json:"cache_missed_tokens"`
+}
+
+func (w *responsesDiagnosticsWire) toPublic() *ResponsesCacheDiagnostics {
+	if w == nil || w.Type == "" {
+		return nil
+	}
+	return &ResponsesCacheDiagnostics{
+		Type:                     w.Type,
+		Reason:                   w.Reason,
+		ComparisonReusableTokens: w.ComparisonReusableTokens,
+		CacheMissedTokens:        w.CacheMissedTokens,
+	}
+}
+
 func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, error) {
+	return parseResponsesStreamWithCallback(reader, onText)
+}
+
+func parseResponsesStreamWithCallback(reader io.Reader, onText StreamCallback) (Response, error) {
 	result := Message{Role: "assistant"}
 	// Usage snapshots are cumulative: each completed event carries the
 	// latest totals for the fields it reports. Merge by presence and
@@ -182,6 +445,8 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 	// erases earlier values.
 	accumulated := &Usage{}
 	var completedOutput []json.RawMessage
+	var responseID string
+	var diagnostics *ResponsesCacheDiagnostics
 	partials := map[int]*responsesPartialCall{}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -197,6 +462,7 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 		var event struct {
 			Type        string `json:"type"`
 			Delta       string `json:"delta"`
+			Text        string `json:"text"`
 			OutputIndex int    `json:"output_index"`
 			Item        struct {
 				Type      string `json:"type"`
@@ -205,16 +471,25 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 				Arguments string `json:"arguments"`
 			} `json:"item"`
 			Response struct {
+				ID   string `json:"id"`
 				Output []json.RawMessage `json:"output"`
 				// Captured raw so malformed usage metadata cannot break
 				// text generation; it is decoded leniently per snapshot.
 				// responsesUsageWire stays private: wire JSON is never
 				// decoded directly into the normalized Usage contract.
 				Usage json.RawMessage `json:"usage"`
+				Diagnostics json.RawMessage `json:"prompt_cache_diagnostics"`
+				Status string `json:"status"`
+				IncompleteDetails *struct {
+					Reason string `json:"reason"`
+				} `json:"incomplete_details"`
 				Error *struct {
 					Message string `json:"message"`
 				} `json:"error"`
 			} `json:"response"`
+			IncompleteDetails *struct {
+				Reason string `json:"reason"`
+			} `json:"incomplete_details"`
 			Message string `json:"message"`
 			Error   *struct {
 				Message string `json:"message"`
@@ -238,20 +513,77 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 			}
 			return Response{}, fmt.Errorf("Responses: response failed")
 		}
+		if event.Type == "response.incomplete" {
+			reason := ""
+			if event.Response.IncompleteDetails != nil {
+				reason = event.Response.IncompleteDetails.Reason
+			}
+			if reason == "" && event.IncompleteDetails != nil {
+				reason = event.IncompleteDetails.Reason
+			}
+			if reason != "" {
+				return Response{}, fmt.Errorf("Responses: response incomplete (%s)", reason)
+			}
+			return Response{}, fmt.Errorf("Responses: response incomplete")
+		}
 		switch event.Type {
 		case "response.output_text.delta":
 			result.Content += event.Delta
 			if onText != nil {
 				onText(StreamEvent{Kind: StreamOutput, Text: event.Delta})
 			}
+		case "response.output_text.done":
+			if event.Text != "" && !strings.Contains(result.Content, event.Text) {
+				// Done carries the full text; delta already streamed it, so
+				// only fill when delta path produced nothing (defensive).
+				if result.Content == "" {
+					result.Content = event.Text
+				}
+			}
+		case "response.refusal.delta":
+			// Refusals are terminal model text: surface them like output so
+			// callers never see an empty completion with no explanation.
+			result.Content += event.Delta
+			if onText != nil {
+				onText(StreamEvent{Kind: StreamOutput, Text: event.Delta})
+			}
+		case "response.refusal.done":
+			if event.Text != "" && result.Content == "" {
+				result.Content = event.Text
+				if onText != nil {
+					onText(StreamEvent{Kind: StreamOutput, Text: event.Text})
+				}
+			}
 		case "response.reasoning_summary_text.delta":
 			result.Thinking += event.Delta
 			if onText != nil {
 				onText(StreamEvent{Kind: StreamThinking, Text: event.Delta})
 			}
+		case "response.reasoning_summary_text.done":
+			if event.Text != "" && result.Thinking == "" {
+				result.Thinking = event.Text
+			}
 		case "response.output_item.added":
 			if event.Item.Type == "function_call" {
 				partials[event.OutputIndex] = &responsesPartialCall{id: event.Item.CallID, name: event.Item.Name, arguments: event.Item.Arguments}
+			}
+		case "response.output_item.done":
+			// Done repeats the completed item; fill any gaps the delta path missed.
+			if event.Item.Type == "function_call" {
+				part := partials[event.OutputIndex]
+				if part == nil {
+					part = &responsesPartialCall{}
+					partials[event.OutputIndex] = part
+				}
+				if part.id == "" {
+					part.id = event.Item.CallID
+				}
+				if part.name == "" {
+					part.name = event.Item.Name
+				}
+				if part.arguments == "" {
+					part.arguments = event.Item.Arguments
+				}
 			}
 		case "response.function_call_arguments.delta":
 			part := partials[event.OutputIndex]
@@ -260,13 +592,51 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 				partials[event.OutputIndex] = part
 			}
 			part.arguments += event.Delta
+		case "response.function_call_arguments.done":
+			if event.Text != "" {
+				part := partials[event.OutputIndex]
+				if part == nil {
+					part = &responsesPartialCall{}
+					partials[event.OutputIndex] = part
+				}
+				if part.arguments == "" {
+					part.arguments = event.Text
+				}
+			}
 		case "response.completed":
 			completedOutput = event.Response.Output
+			if event.Response.ID != "" {
+				responseID = event.Response.ID
+			}
 			if len(event.Response.Usage) != 0 {
 				var wire responsesUsageWire
 				if err := json.Unmarshal(event.Response.Usage, &wire); err == nil {
 					wire.mergeInto(accumulated)
 				}
+			}
+			if len(event.Response.Diagnostics) != 0 && string(event.Response.Diagnostics) != "null" {
+				var wire responsesDiagnosticsWire
+				if err := json.Unmarshal(event.Response.Diagnostics, &wire); err == nil {
+					if diag := wire.toPublic(); diag != nil {
+						diagnostics = diag
+					}
+				}
+			}
+			if event.Response.Status == "incomplete" {
+				reason := ""
+				if event.Response.IncompleteDetails != nil {
+					reason = event.Response.IncompleteDetails.Reason
+				}
+				if reason != "" {
+					return Response{}, fmt.Errorf("Responses: response incomplete (%s)", reason)
+				}
+				return Response{}, fmt.Errorf("Responses: response incomplete")
+			}
+			if event.Response.Status == "failed" {
+				if event.Response.Error != nil && event.Response.Error.Message != "" {
+					return Response{}, fmt.Errorf("Responses: %s", event.Response.Error.Message)
+				}
+				return Response{}, fmt.Errorf("Responses: response failed")
 			}
 		}
 	}
@@ -293,7 +663,7 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 		}
 		result.ToolCalls = append(result.ToolCalls, ToolCall{ID: part.id, Name: part.name, Arguments: arguments})
 	}
-	return Response{Message: result, Usage: NormalizeUsage(accumulated)}, nil
+	return Response{Message: result, Usage: NormalizeUsage(accumulated), ResponseID: responseID, CacheDiagnostics: diagnostics}, nil
 }
 
 func responsesCompletedOutput(result *Message, output []json.RawMessage, partials map[int]*responsesPartialCall) {
@@ -331,6 +701,9 @@ func responsesCompletedOutput(result *Message, output []json.RawMessage, partial
 		if item.Type == "message" && result.Content == "" {
 			for _, block := range item.Content {
 				if block.Type == "output_text" {
+					result.Content += block.Text
+				}
+				if block.Type == "refusal" {
 					result.Content += block.Text
 				}
 			}

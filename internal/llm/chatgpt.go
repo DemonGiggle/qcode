@@ -312,35 +312,30 @@ func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText St
 }
 
 func (p *chatGPTProvider) buildCodexBody(input Request, instructions string, rest []Message, useCache bool) map[string]any {
-	body := map[string]any{
-		"model":  input.Model,
-		"stream": true,
-		"store":  false,
-	}
-	for field, value := range thinkingFields(p.ThinkingCapability(input.Model), input.Thinking) {
-		body[field] = value
-	}
 	// Durable instructions lead the replayable history for implicit caching.
 	items := chatGPTCacheInput(instructions, rest)
+	topLevelInstructions := ""
 	if input.RequestOnlyInstructions != "" {
 		if IsOfficialOpenAIEndpoint(p.baseURL) && chatGPTInstructionsAfterInput(input.Model) {
-			body["instructions"] = input.RequestOnlyInstructions
+			topLevelInstructions = input.RequestOnlyInstructions
 		} else {
 			items = append(items, responsesMessage("developer", input.RequestOnlyInstructions, nil))
 		}
 	}
-	body["input"] = items
+	cacheKey := ""
 	if useCache && IsOfficialOpenAIEndpoint(p.baseURL) {
-		if input.PromptCacheKey != "" {
-			body["prompt_cache_key"] = input.PromptCacheKey
-		}
+		cacheKey = input.PromptCacheKey
 	}
-	if len(input.Tools) > 0 {
-		tools := make([]map[string]any, 0, len(input.Tools))
-		for _, tool := range input.Tools {
-			tools = append(tools, map[string]any{"type": "function", "name": tool.Name, "description": tool.Description, "parameters": tool.Parameters})
-		}
-		body["tools"] = tools
+	// Shared Responses core (issues #115/#116): store, previous_response_id,
+	// comparison, reasoning, tools, structured output, and lifecycle knobs.
+	// Zero-value opt-ins are omitted so the default wire stays
+	// stateless + implicit-cache-only.
+	body := buildResponsesBody(input.Model, p.ThinkingCapability(input.Model), input, items, cacheKey, useCache && IsOfficialOpenAIEndpoint(p.baseURL))
+	if topLevelInstructions != "" {
+		body["instructions"] = topLevelInstructions
+		// GPT-6.2+ renders top-level instructions after input (billed
+		// uncached). The shared builder already placed request-only
+		// guidance correctly; nothing else changes.
 	}
 	return body
 }
@@ -379,7 +374,7 @@ func isChatGPTCacheFieldRejection(statusCode int, body string) bool {
 		return false
 	}
 	lower := strings.ToLower(body)
-	if strings.Contains(lower, "prompt_cache") {
+	if strings.Contains(lower, "prompt_cache") || strings.Contains(lower, "comparison_response") {
 		return true
 	}
 	// Generic historical shape used in fixtures (no param name).
@@ -387,6 +382,18 @@ func isChatGPTCacheFieldRejection(statusCode int, body string) bool {
 		return true
 	}
 	return false
+}
+
+// isChatGPTContinuationRejection reports whether a non-2xx Responses body
+// rejects an opt-in stateful field (previous_response_id / conversation).
+// A 400/404 here happens before execution, so retrying once with the same
+// full-history input and no continuation id cannot double-bill.
+func isChatGPTContinuationRejection(statusCode int, body string) bool {
+	if statusCode != http.StatusBadRequest && statusCode != http.StatusNotFound {
+		return false
+	}
+	lower := strings.ToLower(body)
+	return strings.Contains(lower, "previous_response") || strings.Contains(lower, "conversation")
 }
 
 // chatGPTStatusError preserves the HTTP status for retry decisions while
@@ -446,10 +453,15 @@ func (p *chatGPTProvider) postCodexRaw(ctx context.Context, creds chatgptoauth.T
 func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chatgptoauth.Tokens, onText StreamCallback) (Response, error) {
 	instructions, rest := splitChatGPTMessages(input.Messages)
 	body := p.buildCodexBody(input, instructions, rest, true)
-	// The implicit-only wire sends no prompt_cache_options and no explicit
-	// breakpoints, so only the presence of the stable key can trigger the
-	// keyless retry below.
+	// The implicit-only default sends no prompt_cache_options and no explicit
+	// breakpoints, so only opt-in cache/continuation fields can trigger the
+	// safe keyless/delta-less retry below.
 	_, usedCache := body["prompt_cache_key"]
+	_, usedComparison := body["prompt_cache_options"]
+	_, usedContinuation := body["previous_response_id"]
+	if _, ok := body["conversation"]; ok {
+		usedContinuation = true
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return Response{}, err
@@ -457,9 +469,6 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 	resp, err := p.postCodexRaw(ctx, creds, payload, onText)
 	if err == nil {
 		return resp, nil
-	}
-	if !usedCache {
-		return Response{}, err
 	}
 	var statusCode int
 	var bodyText string
@@ -469,20 +478,43 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 	} else {
 		return Response{}, err
 	}
-	if !isChatGPTCacheFieldRejection(statusCode, bodyText) {
-		return Response{}, err
-	}
-	// Fall back once to the same developer-message shape without any
-	// prompt_cache_* fields. Codex parity sends only the stable key, so a
-	// rejection here means the key itself was rejected; stripping it cannot
+	// Fall back once without the rejected prompt_cache_* field. A key
+	// rejection strips all cache fields; a comparison-only rejection keeps
+	// the stable key so accounting separation survives. Stripping cannot
 	// double-bill (a 400 rejects before execution) and keeps the reusable
 	// prefix byte-identical.
-	clean := p.buildCodexBody(input, instructions, rest, false)
-	cleanPayload, err := json.Marshal(clean)
-	if err != nil {
-		return Response{}, err
+	if (usedCache || usedComparison) && isChatGPTCacheFieldRejection(statusCode, bodyText) {
+		lower := strings.ToLower(bodyText)
+		mentionsKey := strings.Contains(lower, "prompt_cache_key")
+		cleanInput := input
+		cleanInput.ComparisonResponseID = ""
+		useCache := true
+		if mentionsKey || !usedComparison {
+			cleanInput.PromptCacheKey = ""
+			useCache = false
+		}
+		clean := p.buildCodexBody(cleanInput, instructions, rest, useCache)
+		cleanPayload, err := json.Marshal(clean)
+		if err != nil {
+			return Response{}, err
+		}
+		return p.postCodexRaw(ctx, creds, cleanPayload, onText)
 	}
-	return p.postCodexRaw(ctx, creds, cleanPayload, onText)
+	// Continuation fallback: same full-history input without the
+	// previous_response_id/conversation delta. The server never executed,
+	// so resending the full history cannot double-bill.
+	if usedContinuation && isChatGPTContinuationRejection(statusCode, bodyText) {
+		cleanInput := input
+		cleanInput.PreviousResponseID = ""
+		cleanInput.ConversationID = ""
+		clean := p.buildCodexBody(cleanInput, instructions, rest, true)
+		cleanPayload, err := json.Marshal(clean)
+		if err != nil {
+			return Response{}, err
+		}
+		return p.postCodexRaw(ctx, creds, cleanPayload, onText)
+	}
+	return Response{}, err
 }
 
 func isChatGPTUnauthorized(err error) bool {

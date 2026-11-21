@@ -27,3 +27,38 @@ func (a *Agent) recordUsage(usage *llm.Usage) {
 	a.stateMu.Unlock()
 	a.trace.Usage(a.provider.Name(), a.model, llm.NormalizeUsage(usage), total)
 }
+
+// recordResponsesResult records usage plus opt-in Responses observability
+// (issue #116): the completed response id for future previous_response_id /
+// comparison flows, and prompt_cache_diagnostics for the debug trace.
+// Diagnostics never affect billing; usage remains the source of truth.
+func (a *Agent) recordResponsesResult(response llm.Response) {
+	a.recordUsage(response.Usage)
+	provider := ""
+	model := ""
+	if a.provider != nil {
+		provider = a.provider.Name()
+	}
+	model = a.model
+	a.stateMu.Lock()
+	a.lastResponseID = response.ResponseID
+	a.lastDiagnostics = response.CacheDiagnostics
+	a.stateMu.Unlock()
+	a.trace.CacheDiagnostics(provider, model, response.ResponseID, response.CacheDiagnostics)
+}
+
+// LastResponseID returns the most recent Responses id, or "" when the last
+// completion did not report one.
+func (a *Agent) LastResponseID() string {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	return a.lastResponseID
+}
+
+// LastDiagnostics returns the most recent prompt_cache_diagnostics, or nil
+// when the last completion did not report any.
+func (a *Agent) LastDiagnostics() *llm.ResponsesCacheDiagnostics {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	return a.lastDiagnostics
+}

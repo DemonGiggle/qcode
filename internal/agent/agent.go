@@ -60,6 +60,15 @@ type Agent struct {
 	taskContext              string
 	dynamicContext           string
 	lastResponse             string
+	// lastResponseID is the most recent Responses id (resp_...) when the
+	// provider reported one. It seeds opt-in PreviousResponseID /
+	// ComparisonResponseID flows (issue #116). Diagnostic ids expire
+	// quickly; a missing id simply means the next request omits the opt-in.
+	lastResponseID string
+	// lastDiagnostics is the most recent prompt_cache_diagnostics, if any.
+	// Diagnostic counts can differ from usage counts; billing always follows
+	// Usage, never diagnostics.
+	lastDiagnostics          *llm.ResponsesCacheDiagnostics
 	contextStatus            atomic.Pointer[contextStatus]
 	contextWindow            int
 	contextOverride          int
@@ -825,7 +834,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		if rendersResponses {
 			lifecycle.EndResponse()
 		}
-		a.recordUsage(response.Usage)
+		a.recordResponsesResult(response)
 		span.End(err)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
