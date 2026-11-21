@@ -480,7 +480,7 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 		statusCode = se.statusCode
 		bodyText = se.body
 	} else {
-		return Response{}, err
+		return resp, err
 	}
 	// Fall back once without the rejected prompt_cache_* field. A key
 	// rejection strips all cache fields; a comparison-only rejection keeps
@@ -518,11 +518,11 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 		clean := p.buildCodexBody(cleanInput, instructions, rest, true)
 		cleanPayload, err := json.Marshal(clean)
 		if err != nil {
-			return Response{}, err
+			return resp, err
 		}
 		return p.postCodexRaw(ctx, creds, cleanPayload, onText)
 	}
-	return Response{}, err
+	return resp, err
 }
 
 func isChatGPTUnauthorized(err error) bool {

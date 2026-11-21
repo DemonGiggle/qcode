@@ -70,19 +70,15 @@ func TestPreparedRequestWiresResponsesOptInsBehindFlags(t *testing.T) {
 	if prep.Request.PreviousResponseID != "" {
 		t.Fatalf("diagnostics must not imply continuation: %+v", prep.Request)
 	}
-	// Stateful flag chains with store:true; first turn (no id) omits.
+	// No stateful auto-wiring: full history + previous_response_id would
+	// duplicate every prior turn server-side, so delta sending is deferred
+	// and the agent stays diagnostics-only.
 	a = newAgent()
 	a.recordResponsesResult(llm.Response{ResponseID: "resp_456", Usage: &llm.Usage{InputTokens: llm.IntPtr(10)}})
 	t.Setenv("QCODE_RESPONSES_DIAGNOSTICS", "")
 	t.Setenv("QCODE_RESPONSES_STATEFUL", "1")
 	prep = a.prepareNormalRequest(context.Background(), "")
-	if prep.Request.PreviousResponseID != "resp_456" || !prep.Request.StoreResponses {
-		t.Fatalf("stateful flag must chain with store:true: %+v", prep.Request)
-	}
-	b := newAgent()
-	t.Setenv("QCODE_RESPONSES_STATEFUL", "1")
-	prep = b.prepareNormalRequest(context.Background(), "")
 	if prep.Request.PreviousResponseID != "" || prep.Request.StoreResponses {
-		t.Fatalf("first turn must omit continuation: %+v", prep.Request)
+		t.Fatalf("agent must not auto-chain previous_response_id (delta deferred): %+v", prep.Request)
 	}
 }

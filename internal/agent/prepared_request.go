@@ -315,10 +315,11 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 	if os.Getenv("QCODE_RESPONSES_DIAGNOSTICS") == "1" && lastID != "" {
 		request.ComparisonResponseID = lastID
 	}
-	if os.Getenv("QCODE_RESPONSES_STATEFUL") == "1" && lastID != "" {
-		request.PreviousResponseID = lastID
-		request.StoreResponses = true
-	}
+	// Stateful continuation (previous_response_id) stays Request-layer
+	// opt-in for callers that send a true delta. Agent auto-wiring is
+	// intentionally diagnostics-only: sending full history alongside
+	// previous_response_id would duplicate every prior turn server-side
+	// (~2x input tokens), so delta sending is deferred.
 	prep := preparedRequest{
 		Request:      request,
 		Estimate:     estimate,

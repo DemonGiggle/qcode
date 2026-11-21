@@ -76,7 +76,7 @@ func (a *Agent) Compact(ctx context.Context) (string, error) {
 			streamed = true
 			a.reportProgress("Compacting conversation... receiving summary")
 		})
-		a.recordResponsesResult(response)
+		a.recordUsage(response.Usage)
 		return response, err
 	}
 	response, err := completeSummary(summarize)

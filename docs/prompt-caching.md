@@ -1014,11 +1014,12 @@ endpoint may send `prompt_cache_key`.
   `previous_response_id` chain implies `store:true` even when only the id is
   set. Omit all three for the default stateless full resend.
 - Agent wiring (flagged, no config migration): `prepareNormalRequest` reuses
-  `Agent.LastResponseID` when `QCODE_RESPONSES_STATEFUL=1` (first turn omits;
-  later turns send full-history + `previous_response_id` + `store:true`, a
-  compatible extension — delta-only sending is future work). `QCODE_RESPONSES_DIAGNOSTICS=1`
-  reuses the same id as `comparison_response_id`. Both default off, so the
-  default path stays stateless + implicit-cache-only.
+  `Agent.LastResponseID` only as `comparison_response_id` when
+  `QCODE_RESPONSES_DIAGNOSTICS=1`. Stateful auto-chaining is deferred:
+  sending full history alongside `previous_response_id` would duplicate
+  every prior turn server-side, so `PreviousResponseID` stays Request-layer
+  opt-in for callers that send a true delta. Default stays stateless +
+  implicit-cache-only.
 - Chaining still bills all prior input tokens as input tokens. `store:false`
   (ZDR) stays available: preserve and replay returned reasoning items
   (including `encrypted_content`) manually.
@@ -1064,8 +1065,8 @@ tools to Responses built-ins — that allowlist lives in a future config change.
 
 Acceptance: diagnostics round trip (`QCODE_RESPONSES_DIAGNOSTICS=1` with
 `comparison_response_id` -> `cache_hit/miss` + reason visible in trace),
-stateful chaining behind flag (`QCODE_RESPONSES_STATEFUL=1`, full-history +
-`previous_response_id` compatible extension), no default-path regression in
+stateful substrate ready at Request/provider layer with agent delta sending
+deferred (no duplication), no default-path regression in
 cached_tokens accounting or 6.2 billing, docs updated here, fixture tests
 (`internal/llm/responses_complete_test.go`,
 `internal/trace/cache_diagnostics_test.go`,

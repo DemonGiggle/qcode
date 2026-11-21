@@ -37,6 +37,9 @@ func (p *openAIProvider) completeResponses(ctx context.Context, input Request, o
 	if err == nil {
 		return resp, nil
 	}
+	// Preserve partial accounting: postResponses returns the accumulated
+	// content/usage/id/diagnostics alongside terminal errors so
+	// recordResponsesResult still counts billed usage.
 	// Opt-in fallback: a comparison or continuation rejection happens before
 	// execution, so retrying once without the rejected opt-in field cannot
 	// double-bill. Strip only the rejected dimension so the surviving opt-in
@@ -51,13 +54,10 @@ func (p *openAIProvider) completeResponses(ctx context.Context, input Request, o
 		if (clean.PreviousResponseID != "" || clean.ConversationID != "") && (strings.Contains(lower, "previous_response") || strings.Contains(lower, "conversation")) {
 			clean.PreviousResponseID = ""
 			clean.ConversationID = ""
-			// Stateful retry keeps store:true only when explicitly requested;
-			// a previous_response_id retry falls back to stateless full resend.
-			if !input.StoreResponses {
-				clean.StoreResponses = false
-			}
+			// Builder derives store:true from continuation ids, so clearing
+			// the ids returns to stateless unless StoreResponses is set.
 		}
-		if strings.Contains(lower, "store") {
+		if responsesStoreRejection(lower) {
 			clean.StoreResponses = false
 			// If store itself was rejected, drop continuation as well since
 			// chaining implies store:true.
@@ -66,24 +66,16 @@ func (p *openAIProvider) completeResponses(ctx context.Context, input Request, o
 				clean.ConversationID = ""
 			}
 		}
-		// If nothing was stripped (generic 400 without a field name), strip
-		// both opt-ins once rather than failing outright.
-		if clean.ComparisonResponseID == input.ComparisonResponseID && clean.PreviousResponseID == input.PreviousResponseID && clean.ConversationID == input.ConversationID {
-			clean.ComparisonResponseID = ""
-			clean.PreviousResponseID = ""
-			clean.ConversationID = ""
-			if !input.StoreResponses {
-				clean.StoreResponses = false
-			}
-		}
+		// shouldRetry ensures at least one dimension matched, so clean
+		// differs from input here; no generic fallback needed.
 		cleanBody := buildResponsesBody(clean.Model, p.ThinkingCapability(clean.Model), clean, inputItems, "", false)
 		cleanPayload, merr := json.Marshal(cleanBody)
 		if merr != nil {
-			return Response{}, merr
+			return resp, merr
 		}
 		return p.postResponses(ctx, cleanPayload, onText)
 	}
-	return Response{}, err
+	return resp, err
 }
 
 func (p *openAIProvider) postResponses(ctx context.Context, payload []byte, onText StreamCallback) (Response, error) {
@@ -150,6 +142,20 @@ func asResponsesStatusError(err error) (responsesStatusError, bool) {
 // shouldRetryResponsesWithoutOption reports whether err is a pre-execution
 // rejection of an opt-in Responses field, in which case stripping that field
 // and retrying once with the same history cannot double-bill.
+// responsesStoreRejection requires a param-shaped store match so unrelated
+// 400s mentioning "restore"/"storefront" don't trigger a misleading retry.
+func responsesStoreRejection(lower string) bool {
+	if !strings.Contains(lower, "store") {
+		return false
+	}
+	// Explicit param shape ("store":, param":"store) always counts.
+	if strings.Contains(lower, "\"store\"") || strings.Contains(lower, "param\":\"store") || strings.Contains(lower, "'store'") {
+		return true
+	}
+	// Otherwise require error wording so "restore succeeded" doesn't match.
+	return strings.Contains(lower, "unsupported") || strings.Contains(lower, "not supported") || strings.Contains(lower, "invalid") || strings.Contains(lower, "unknown")
+}
+
 func shouldRetryResponsesWithoutOption(err error, input Request) bool {
 	se, ok := asResponsesStatusError(err)
 	if !ok {
@@ -168,7 +174,7 @@ func shouldRetryResponsesWithoutOption(err error, input Request) bool {
 	if input.ConversationID != "" && strings.Contains(lower, "conversation") {
 		return true
 	}
-	if (input.StoreResponses || input.PreviousResponseID != "" || input.ConversationID != "") && strings.Contains(lower, "store") {
+	if (input.StoreResponses || input.PreviousResponseID != "" || input.ConversationID != "") && responsesStoreRejection(lower) {
 		return true
 	}
 	return false
@@ -479,10 +485,6 @@ func (e *ResponsesFailedError) Error() string {
 }
 
 func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, error) {
-	return parseResponsesStreamWithCallback(reader, onText)
-}
-
-func parseResponsesStreamWithCallback(reader io.Reader, onText StreamCallback) (Response, error) {
 	result := Message{Role: "assistant"}
 	// Usage snapshots are cumulative: each completed event carries the
 	// latest totals for the fields it reports. Merge by presence and

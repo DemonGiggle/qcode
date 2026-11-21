@@ -366,3 +366,30 @@ func TestChatGPTWrapperPreservesStatelessStoreFalse(t *testing.T) {
 		t.Fatalf("chatgpt must preserve store:false contract: %v", body)
 	}
 }
+
+func TestParseResponsesIncompletePreservesPartial(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"hello"}`,
+		`data: {"type":"response.completed","response":{"id":"resp_inc","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"message","content":[{"type":"output_text","text":"hello"}]}],"usage":{"input_tokens":100,"output_tokens":5},"prompt_cache_diagnostics":{"type":"cache_hit"}}}`,
+	}, "\n") + "\n"
+	resp, err := parseResponsesStream(strings.NewReader(stream), nil)
+	if err == nil {
+		t.Fatal("expected incomplete error")
+	}
+	if resp.Message.Content != "hello" {
+		t.Fatalf("partial content lost: %q", resp.Message.Content)
+	}
+	if resp.ResponseID != "resp_inc" {
+		t.Fatalf("partial id lost: %q", resp.ResponseID)
+	}
+	if resp.CacheDiagnostics == nil || resp.CacheDiagnostics.Type != "cache_hit" {
+		t.Fatalf("partial diagnostics lost: %+v", resp.CacheDiagnostics)
+	}
+	if in, ok := resp.Usage.KnownInput(); !ok || in != 100 {
+		t.Fatalf("partial usage lost: %+v", resp.Usage)
+	}
+	var incErr *ResponsesIncompleteError
+	if !errorAs(err, &incErr) || incErr.Reason != "max_output_tokens" {
+		t.Fatalf("typed error wrong: %T %v", err, err)
+	}
+}
