@@ -236,11 +236,18 @@ func (u *UI) pickAutoreviewReviewer(ctx context.Context) bool {
 		u.printSystemMessage(yellow + "No providers are available." + reset)
 		return false
 	}
-	isAvailable := func(name string) bool { return u.isProviderSelectable(name, name) }
+	u.screenMu.Lock()
+	current := strings.TrimSpace(u.autoreviewProvider)
+	u.screenMu.Unlock()
+	isAvailable := func(name string) bool { return u.isProviderSelectable(name, current) }
 	labels, disabled := u.providerLabelsWithAvailability(names, isAvailable)
+	currentLabel := ""
+	if current != "" {
+		currentLabel = u.providerLabel(current)
+	}
 	u.input.setRaw(true)
 	u.beginRawSelector()
-	selectedDisplay, accepted, err := selectOptionWithDisabled(u.input, u.themedSelectorWriter(), labels, disabled, "", min(12, max(3, u.height-6)), u.width, ColorEnabled(u.out), "reviewer provider", false)
+	selectedDisplay, accepted, err := selectOptionWithDisabled(u.input, u.themedSelectorWriter(), labels, disabled, currentLabel, min(12, max(3, u.height-6)), u.width, ColorEnabled(u.out), "reviewer provider", false)
 	u.input.setRaw(false)
 	u.endRawSelector()
 	if err != nil {
