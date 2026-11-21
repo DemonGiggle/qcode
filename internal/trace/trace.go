@@ -111,6 +111,45 @@ func (l *Logger) Usage(provider, model string, usage *llm.Usage, session llm.Ses
 	}
 }
 
+// CacheDiagnostics emits opt-in prompt-cache diagnostics observability.
+// It never affects billing: diagnostic counts can differ from usage counts,
+// so consumers must use usage.cached_tokens for reuse and billing. The event
+// carries only configuration metadata (type/reason/counts/fix); it never
+// includes prompt content, cache keys, or credentials.
+func (l *Logger) CacheDiagnostics(provider, model, responseID string, diag *llm.ResponsesCacheDiagnostics) {
+	if diag == nil {
+		return
+	}
+	if l.json {
+		l.writeJSON("cache_diagnostics", "llm", provider, time.Now(), 0, map[string]any{
+			"model":                      model,
+			"response_id":                responseID,
+			"type":                       diag.Type,
+			"reason":                     diag.Reason,
+			"comparison_reusable_tokens": diag.ComparisonReusableTokens,
+			"cache_missed_tokens":        diag.CacheMissedTokens,
+			"suggested_fix":              diag.SuggestedFix(),
+		})
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.verbose || l.out == nil {
+		return
+	}
+	summary := "cache diagnostics: " + diag.Type
+	if diag.Reason != "" {
+		summary += " (" + diag.Reason + ")"
+		if fix := diag.SuggestedFix(); fix != "" {
+			summary += " - " + fix
+		}
+	}
+	// Clear any in-progress spinner frame so the line is not clobbered
+	// or erased by the next "\r\x1b[2K" animation tick.
+	fmt.Fprint(l.out, "\r\x1b[2K")
+	fmt.Fprintln(transcript.NewGroup(l.out), summary)
+}
+
 func New(out io.Writer, jsonOutput bool) *Logger {
 	return &Logger{out: out, json: jsonOutput, verbose: true, unicode: true, taskIndicator: true}
 }

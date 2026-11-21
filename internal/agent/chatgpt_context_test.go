@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -40,7 +41,24 @@ func (p *chatGPTTestTransport) Do(r *http.Request) (*http.Response, error) {
 	if len(p.requests) == 1 {
 		output = `[{"type":"reasoning","encrypted_content":"opaque"},{"type":"function_call","call_id":"c1","name":"skill","arguments":"{}"}]`
 	}
-	body := `data: {"type":"response.completed","response":{"output":` + output + "}}\n\n"
+	var usage string
+	switch len(p.requests) {
+	case 1:
+		usage = `, "usage":{"input_tokens":2000,"input_tokens_details":{"cached_tokens":0}}`
+	case 2:
+		usage = `, "usage":{"input_tokens":2400,"input_tokens_details":{"cached_tokens":1800}}`
+	case 3:
+		usage = `, "usage":{"input_tokens":2500}`
+	case 4:
+		// A completed inference with missing usage.
+	case 5, 6:
+		// Both the original request and the bounded retry fail before streaming.
+		return &http.Response{StatusCode: 503, Status: "503 Service Unavailable", Header: http.Header{"Retry-After": {"0"}},
+			Body: io.NopCloser(strings.NewReader(`{"error":{"code":"subscription_sharing_user_unavailable"}}`))}, nil
+	default:
+		return nil, fmt.Errorf("unexpected request %d", len(p.requests))
+	}
+	body := `data: {"type":"response.completed","response":{"output":` + output + usage + "}}\n\n"
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
 }
 
@@ -142,6 +160,14 @@ func TestChatGPTWirePrefixAcrossToolAndUserTurns(t *testing.T) {
 		if bytes.Contains(all, []byte(marker)) {
 			t.Fatalf("request-only text entered conversation history: %s", marker)
 		}
+	}
+	if err := a.Run(context.Background(), "fourth"); err == nil || !strings.Contains(err.Error(), "subscription_sharing_user_unavailable") {
+		t.Fatalf("expected SIWC availability error, got %v", err)
+	}
+	got := a.SessionUsage()
+	if len(transport.requests) != 6 || got.Requests != 5 || got.Missing != 1 || got.FailedWithoutUsage != 1 ||
+		got.CacheRatioRequests != 2 || got.CacheRatioReadTokens != 1800 || got.CacheRatioInputTokens != 4400 || got.InputTokens != 6900 {
+		t.Fatalf("after %d HTTP requests, session usage = %+v", len(transport.requests), got)
 	}
 }
 

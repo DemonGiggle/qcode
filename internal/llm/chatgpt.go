@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"qcode/internal/chatgptoauth"
 )
@@ -197,7 +199,7 @@ func (p *chatGPTProvider) fetchModels(ctx context.Context, creds chatgptoauth.To
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return nil, fmt.Errorf("provider returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		return nil, &chatGPTStatusError{statusCode: resp.StatusCode, status: resp.Status, body: strings.TrimSpace(string(data))}
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
@@ -285,6 +287,9 @@ func splitChatGPTMessages(messages []Message) (string, []Message) {
 // refreshing once on 401 before giving up. An explicit thinking level is sent
 // as the Responses reasoning object; empty preserves the provider default.
 func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
+	if input.StoreResponses || input.PreviousResponseID != "" || input.ConversationID != "" {
+		return Response{}, fmt.Errorf("Sign in with ChatGPT over HTTP requires full conversation history and store:false")
+	}
 	level := strings.ToLower(strings.TrimSpace(input.Thinking))
 	if level != "" && !validThinkingLevel(p.ThinkingCapability(input.Model), level) {
 		return Response{}, fmt.Errorf("thinking level %q is not supported by model %q", input.Thinking, input.Model)
@@ -293,54 +298,70 @@ func (p *chatGPTProvider) Complete(ctx context.Context, input Request, onText St
 	if err != nil {
 		return Response{}, err
 	}
-	resp, err := p.doCodex(ctx, input, creds, onText)
-	if err == nil {
-		return resp, nil
+	refreshed, retriedAvailability := false, false
+	for {
+		resp, err := p.doCodex(ctx, input, creds, onText)
+		var status *chatGPTStatusError
+		if !errors.As(err, &status) {
+			return resp, err
+		}
+		delay, retryAvailability := status.availabilityRetryDelay()
+		switch {
+		case status.statusCode == http.StatusUnauthorized && !refreshed:
+			creds, err = chatgptoauth.RefreshAndSaveWithStaleWithSecrets(ctx, p.client, p.tokensPath, creds.AccessToken, p.registerSecrets)
+			if err != nil {
+				return resp, err
+			}
+			refreshed = true
+		case retryAvailability && !retriedAvailability && IsOfficialOpenAIEndpoint(p.baseURL):
+			retriedAvailability = true
+			select {
+			case <-ctx.Done():
+				return resp, ctx.Err()
+			case <-time.After(delay):
+			}
+		default:
+			return resp, annotateChatGPTAuthError(err)
+		}
 	}
-	if !isChatGPTUnauthorized(err) {
-		return Response{}, err
-	}
-	fresh, err := chatgptoauth.RefreshAndSaveWithStaleWithSecrets(ctx, p.client, p.tokensPath, creds.AccessToken, p.registerSecrets)
-	if err != nil {
-		return Response{}, err
-	}
-	resp, err = p.doCodex(ctx, input, fresh, onText)
-	if err != nil {
-		return Response{}, annotateChatGPTAuthError(err)
-	}
-	return resp, nil
 }
 
 func (p *chatGPTProvider) buildCodexBody(input Request, instructions string, rest []Message, useCache bool) map[string]any {
-	body := map[string]any{
-		"model":  input.Model,
-		"stream": true,
-		"store":  false,
-	}
-	for field, value := range thinkingFields(p.ThinkingCapability(input.Model), input.Thinking) {
-		body[field] = value
-	}
 	// Durable instructions lead the replayable history for implicit caching.
 	items := chatGPTCacheInput(instructions, rest)
+	topLevelInstructions := ""
 	if input.RequestOnlyInstructions != "" {
 		if IsOfficialOpenAIEndpoint(p.baseURL) && chatGPTInstructionsAfterInput(input.Model) {
-			body["instructions"] = input.RequestOnlyInstructions
+			topLevelInstructions = input.RequestOnlyInstructions
 		} else {
 			items = append(items, responsesMessage("developer", input.RequestOnlyInstructions, nil))
 		}
 	}
-	body["input"] = items
+	cacheKey := ""
 	if useCache && IsOfficialOpenAIEndpoint(p.baseURL) {
-		if input.PromptCacheKey != "" {
-			body["prompt_cache_key"] = input.PromptCacheKey
+		cacheKey = input.PromptCacheKey
+	}
+	// The Sign in with ChatGPT HTTP route only supports web search among
+	// the hosted tools. Availability still depends on the model and account.
+	var hostedTools []map[string]any
+	for _, tool := range input.BuiltinTools {
+		switch tool["type"] {
+		case "web_search", "web_search_preview":
+			hostedTools = append(hostedTools, tool)
 		}
 	}
-	if len(input.Tools) > 0 {
-		tools := make([]map[string]any, 0, len(input.Tools))
-		for _, tool := range input.Tools {
-			tools = append(tools, map[string]any{"type": "function", "name": tool.Name, "description": tool.Description, "parameters": tool.Parameters})
-		}
-		body["tools"] = tools
+	input.BuiltinTools = hostedTools
+	input.Background = nil
+	input.MaxOutputTokens = nil
+	input.Metadata = nil
+	input.Truncation = ""
+
+	body := buildResponsesBody(input.Model, p.ThinkingCapability(input.Model), input, items, cacheKey, useCache && IsOfficialOpenAIEndpoint(p.baseURL))
+	body["store"] = false
+	delete(body, "previous_response_id")
+	delete(body, "conversation")
+	if topLevelInstructions != "" {
+		body["instructions"] = topLevelInstructions
 	}
 	return body
 }
@@ -379,7 +400,7 @@ func isChatGPTCacheFieldRejection(statusCode int, body string) bool {
 		return false
 	}
 	lower := strings.ToLower(body)
-	if strings.Contains(lower, "prompt_cache") {
+	if strings.Contains(lower, "prompt_cache") || strings.Contains(lower, "comparison_response") {
 		return true
 	}
 	// Generic historical shape used in fixtures (no param name).
@@ -395,29 +416,46 @@ type chatGPTStatusError struct {
 	statusCode int
 	status     string
 	body       string
+	retryAfter string
 }
 
 func (e *chatGPTStatusError) Error() string {
 	return fmt.Sprintf("provider returned %s: %s", e.status, e.body)
 }
 
-func asChatGPTStatusError(err error) (chatGPTStatusError, bool) {
-	if err == nil {
-		return chatGPTStatusError{}, false
+// SIWC documents these pre-stream errors as temporary. Respect Retry-After
+// and surface the error when the requested wait exceeds the interactive budget.
+func (e *chatGPTStatusError) availabilityRetryDelay() (time.Duration, bool) {
+	if e.statusCode != http.StatusServiceUnavailable {
+		return 0, false
 	}
-	// errors.As via manual unwrap to avoid importing errors for one call site.
-	for cur := err; cur != nil; {
-		if v, ok := cur.(*chatGPTStatusError); ok {
-			return *v, true
-		}
-		type unwrapper interface{ Unwrap() error }
-		u, ok := cur.(unwrapper)
-		if !ok {
-			break
-		}
-		cur = u.Unwrap()
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
-	return chatGPTStatusError{}, false
+	if json.Unmarshal([]byte(e.body), &envelope) != nil {
+		return 0, false
+	}
+	switch envelope.Error.Code {
+	case "subscription_sharing_user_unavailable", "subscription_sharing_usage_unavailable":
+	default:
+		return 0, false
+	}
+	const maxWait = 5 * time.Second
+	if e.retryAfter == "" {
+		return time.Second, true
+	}
+	if seconds, err := strconv.ParseUint(e.retryAfter, 10, 32); err == nil {
+		delay := time.Duration(seconds) * time.Second
+		return delay, delay <= maxWait
+	}
+	when, err := http.ParseTime(e.retryAfter)
+	if err != nil {
+		return 0, false
+	}
+	delay := max(0, time.Until(when))
+	return delay, delay <= maxWait
 }
 
 func (p *chatGPTProvider) postCodexRaw(ctx context.Context, creds chatgptoauth.Tokens, payload []byte, onText StreamCallback) (Response, error) {
@@ -438,7 +476,7 @@ func (p *chatGPTProvider) postCodexRaw(ctx context.Context, creds chatgptoauth.T
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		body := strings.TrimSpace(string(data))
-		return Response{}, &chatGPTStatusError{statusCode: resp.StatusCode, status: resp.Status, body: body}
+		return Response{}, &chatGPTStatusError{statusCode: resp.StatusCode, status: resp.Status, body: body, retryAfter: resp.Header.Get("Retry-After")}
 	}
 	return parseResponsesStream(resp.Body, onText)
 }
@@ -446,10 +484,8 @@ func (p *chatGPTProvider) postCodexRaw(ctx context.Context, creds chatgptoauth.T
 func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chatgptoauth.Tokens, onText StreamCallback) (Response, error) {
 	instructions, rest := splitChatGPTMessages(input.Messages)
 	body := p.buildCodexBody(input, instructions, rest, true)
-	// The implicit-only wire sends no prompt_cache_options and no explicit
-	// breakpoints, so only the presence of the stable key can trigger the
-	// keyless retry below.
 	_, usedCache := body["prompt_cache_key"]
+	_, usedComparison := body["prompt_cache_options"]
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return Response{}, err
@@ -458,39 +494,42 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 	if err == nil {
 		return resp, nil
 	}
-	if !usedCache {
-		return Response{}, err
+	var status *chatGPTStatusError
+	if !errors.As(err, &status) {
+		return resp, err
 	}
-	var statusCode int
-	var bodyText string
-	if se, ok := asChatGPTStatusError(err); ok {
-		statusCode = se.statusCode
-		bodyText = se.body
-	} else {
-		return Response{}, err
-	}
-	if !isChatGPTCacheFieldRejection(statusCode, bodyText) {
-		return Response{}, err
-	}
-	// Fall back once to the same developer-message shape without any
-	// prompt_cache_* fields. Codex parity sends only the stable key, so a
-	// rejection here means the key itself was rejected; stripping it cannot
+	// Fall back once without the rejected prompt_cache_* field. A key
+	// rejection strips all cache fields; a comparison-only rejection keeps
+	// the stable key so accounting separation survives. Stripping cannot
 	// double-bill (a 400 rejects before execution) and keeps the reusable
 	// prefix byte-identical.
-	clean := p.buildCodexBody(input, instructions, rest, false)
-	cleanPayload, err := json.Marshal(clean)
-	if err != nil {
-		return Response{}, err
+	if (usedCache || usedComparison) && isChatGPTCacheFieldRejection(status.statusCode, status.body) {
+		lower := strings.ToLower(status.body)
+		mentionsKey := strings.Contains(lower, "prompt_cache_key")
+		mentionsComparison := strings.Contains(lower, "prompt_cache_options") || strings.Contains(lower, "comparison_response")
+		cleanInput := input
+		cleanInput.ComparisonResponseID = ""
+		useCache := true
+		if mentionsKey || !mentionsComparison {
+			// Key rejection, or generic cache rejection without a field
+			// name: strip all cache fields to avoid looping into the same
+			// 400 (previously the keyless fallback always ran).
+			cleanInput.PromptCacheKey = ""
+			useCache = false
+		}
+		clean := p.buildCodexBody(cleanInput, instructions, rest, useCache)
+		cleanPayload, err := json.Marshal(clean)
+		if err != nil {
+			return Response{}, err
+		}
+		return p.postCodexRaw(ctx, creds, cleanPayload, onText)
 	}
-	return p.postCodexRaw(ctx, creds, cleanPayload, onText)
+	return resp, err
 }
 
 func isChatGPTUnauthorized(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, " 401") || strings.Contains(msg, "401 Unauthorized")
+	var status *chatGPTStatusError
+	return errors.As(err, &status) && status.statusCode == http.StatusUnauthorized
 }
 
 // annotateChatGPTAuthError adds recovery guidance to a final 401/403 after

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 )
 
 type responsesPartialCall struct{ id, name, arguments string }
+
+type responsesContentIndex struct{ output, content int }
 
 // completeResponses adapts qcode's normalized turn representation to the
 // OpenAI Responses protocol used by the OpenCode Go Muse, Luna, and Grok
@@ -25,27 +28,37 @@ type responsesPartialCall struct{ id, name, arguments string }
 // Request carries a key. Only the official OpenAI Chat Completions route may
 // transmit that field.
 func (p *openAIProvider) completeResponses(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
-	// Reasoning Responses models reject temperature (Luna returns 400).
-	// Omit it and keep the provider default, as the Anthropic adapter does.
-	body := map[string]any{
-		"model":  input.Model,
-		"input":  responsesInput(input.Messages),
-		"stream": true,
+	if input.PreviousResponseID != "" && input.ConversationID != "" {
+		return Response{}, errors.New("Responses: use either PreviousResponseID or ConversationID")
 	}
-	for field, value := range thinkingFields(p.ThinkingCapability(input.Model), input.Thinking) {
-		body[field] = value
-	}
-	if len(input.Tools) > 0 {
-		tools := make([]map[string]any, 0, len(input.Tools))
-		for _, tool := range input.Tools {
-			tools = append(tools, map[string]any{"type": "function", "name": tool.Name, "description": tool.Description, "parameters": tool.Parameters})
-		}
-		body["tools"] = tools
-	}
-	payload, err := json.Marshal(body)
+	inputItems := responsesInput(input.Messages)
+	capability := p.ThinkingCapability(input.Model)
+	payload, err := json.Marshal(buildResponsesBody(input.Model, capability, input, inputItems, "", false))
 	if err != nil {
 		return Response{}, err
 	}
+	resp, err := p.postResponses(ctx, payload, onText)
+	var status *responsesStatusError
+	if input.ComparisonResponseID == "" || !errors.As(err, &status) ||
+		(status.statusCode != http.StatusBadRequest && status.statusCode != http.StatusNotFound) {
+		return resp, err
+	}
+	lower := strings.ToLower(status.body)
+	if !strings.Contains(lower, "prompt_cache_options") && !strings.Contains(lower, "comparison_response") {
+		return resp, err
+	}
+
+	// Only diagnostics can be removed safely. A continuation payload may
+	// contain just the new items, so retrying it needs history from the caller.
+	input.ComparisonResponseID = ""
+	payload, err = json.Marshal(buildResponsesBody(input.Model, capability, input, inputItems, "", false))
+	if err != nil {
+		return resp, err
+	}
+	return p.postResponses(ctx, payload, onText)
+}
+
+func (p *openAIProvider) postResponses(ctx context.Context, payload []byte, onText StreamCallback) (Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/responses", bytes.NewReader(payload))
 	if err != nil {
 		return Response{}, err
@@ -67,9 +80,172 @@ func (p *openAIProvider) completeResponses(ctx context.Context, input Request, o
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return Response{}, fmt.Errorf("provider returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
+		return Response{}, &responsesStatusError{statusCode: resp.StatusCode, status: resp.Status, body: strings.TrimSpace(string(data))}
 	}
 	return parseResponsesStream(resp.Body, onText)
+}
+
+// responsesStatusError preserves the HTTP status for retry decisions while
+// keeping the user-facing "provider returned ..." message unchanged.
+type responsesStatusError struct {
+	statusCode int
+	status     string
+	body       string
+}
+
+func (e *responsesStatusError) Error() string {
+	return fmt.Sprintf("provider returned %s: %s", e.status, e.body)
+}
+
+// allowedResponsesBuiltins is the closed set of server-side tool types qcode
+// forwards. Unknown types are dropped so a typo cannot silently change the
+// cached tool prefix.
+var allowedResponsesBuiltins = map[string]bool{
+	"web_search":           true,
+	"web_search_preview":   true,
+	"file_search":          true,
+	"code_interpreter":     true,
+	"computer":             true,
+	"computer_use_preview": true,
+	"image_generation":     true,
+	"mcp":                  true,
+}
+
+// responsesBuiltinTools filters passthrough built-in tools to the known set.
+func responsesBuiltinTools(extra []map[string]any) []map[string]any {
+	var out []map[string]any
+	for _, tool := range extra {
+		if tool == nil {
+			continue
+		}
+		typ, _ := tool["type"].(string)
+		if !allowedResponsesBuiltins[typ] {
+			continue
+		}
+		out = append(out, tool)
+	}
+	return out
+}
+
+// buildResponsesBody is the shared Responses request builder used by the
+// openai/opencode-go and chatgpt providers (issues #115/#116). Zero-value
+// opt-ins are omitted so the default wire stays stateless +
+// implicit-cache-only: store:false, full history resend, function tools only,
+// no comparison, no structured-output overrides.
+//
+// inputItems is the already-encoded input array (chatgpt prepends durable
+// instructions; other routes pass responsesInput directly). cacheKey is the
+// session-stable prompt_cache_key; it is only emitted when official==true and
+// non-empty, preserving the #81/Codex-parity policy.
+func buildResponsesBody(model string, capability ThinkingCapability, input Request, inputItems []any, cacheKey string, official bool) map[string]any {
+	body := map[string]any{
+		"model":  model,
+		"input":  inputItems,
+		"stream": true,
+	}
+	// Stateful continuation is opt-in. A previous_response_id chain requires
+	// server-side storage, so requesting a continuation implies store:true
+	// even when the caller only set PreviousResponseID. Otherwise store is
+	// omitted so the opencode-go Responses route keeps its previous wire
+	// (no store key, server default); the chatgpt wrapper re-adds
+	// store:false to preserve the SIWC stateless contract.
+	if input.StoreResponses || input.PreviousResponseID != "" || input.ConversationID != "" {
+		body["store"] = true
+	}
+	if input.PreviousResponseID != "" {
+		body["previous_response_id"] = input.PreviousResponseID
+	}
+	if input.ConversationID != "" {
+		body["conversation"] = input.ConversationID
+	}
+	fields := thinkingFields(capability, input.Thinking)
+	if input.ReasoningSummary != "" {
+		// Override the summary detail while keeping the effort from
+		// thinkingFields. When no effort is set, synthesize the minimal
+		// reasoning object so the summary override still has an effect.
+		var reasoning map[string]any
+		if raw, ok := fields["reasoning"].(map[string]any); ok {
+			reasoning = raw
+		} else {
+			reasoning = map[string]any{}
+			fields = map[string]any{"reasoning": reasoning}
+		}
+		reasoning["summary"] = input.ReasoningSummary
+	}
+	for field, value := range fields {
+		// Skip empty reasoning objects (no effort and no summary override).
+		if field == "reasoning" {
+			if m, ok := value.(map[string]any); ok && len(m) == 0 {
+				continue
+			}
+		}
+		body[field] = value
+	}
+	if official && cacheKey != "" {
+		body["prompt_cache_key"] = cacheKey
+	}
+	if input.ComparisonResponseID != "" {
+		body["prompt_cache_options"] = map[string]any{"comparison_response_id": input.ComparisonResponseID}
+	}
+	tools := make([]map[string]any, 0, len(input.Tools)+len(input.BuiltinTools))
+	for _, tool := range input.Tools {
+		item := map[string]any{"type": "function", "name": tool.Name}
+		if tool.Description != "" {
+			item["description"] = tool.Description
+		}
+		if tool.Parameters != nil {
+			item["parameters"] = tool.Parameters
+		}
+		tools = append(tools, item)
+	}
+	tools = append(tools, responsesBuiltinTools(input.BuiltinTools)...)
+	if len(tools) > 0 {
+		body["tools"] = tools
+	}
+	if input.ToolChoice != nil {
+		body["tool_choice"] = input.ToolChoice
+	}
+	if input.ParallelToolCalls != nil {
+		body["parallel_tool_calls"] = *input.ParallelToolCalls
+	}
+	if input.ResponseFormat != nil {
+		format := map[string]any{"type": input.ResponseFormat.Type}
+		if input.ResponseFormat.Name != "" {
+			format["name"] = input.ResponseFormat.Name
+		}
+		if input.ResponseFormat.Schema != nil {
+			format["schema"] = input.ResponseFormat.Schema
+		}
+		if input.ResponseFormat.Strict != nil {
+			format["strict"] = *input.ResponseFormat.Strict
+		}
+		text := map[string]any{"format": format}
+		if input.Verbosity != "" {
+			text["verbosity"] = input.Verbosity
+		}
+		body["text"] = text
+	} else if input.Verbosity != "" {
+		body["text"] = map[string]any{"verbosity": input.Verbosity}
+	}
+	if input.MaxOutputTokens != nil {
+		body["max_output_tokens"] = *input.MaxOutputTokens
+	}
+	if input.ServiceTier != "" {
+		body["service_tier"] = input.ServiceTier
+	}
+	if input.Metadata != nil {
+		body["metadata"] = input.Metadata
+	}
+	if input.Background != nil {
+		body["background"] = *input.Background
+	}
+	if input.Truncation != "" {
+		body["truncation"] = input.Truncation
+	}
+	if len(input.Include) > 0 {
+		body["include"] = input.Include
+	}
+	return body
 }
 
 func responsesInput(messages []Message) []any {
@@ -174,6 +350,56 @@ func (w *responsesUsageWire) mergeInto(acc *Usage) {
 	}
 }
 
+// responsesDiagnosticsWire is the private prompt_cache_diagnostics shape.
+// Pointer counts preserve presence; type/reason are plain strings.
+type responsesDiagnosticsWire struct {
+	Type                     string `json:"type"`
+	Reason                   string `json:"reason"`
+	ComparisonReusableTokens *int   `json:"comparison_reusable_tokens"`
+	CacheMissedTokens        *int   `json:"cache_missed_tokens"`
+}
+
+func (w *responsesDiagnosticsWire) toPublic() *ResponsesCacheDiagnostics {
+	if w == nil || w.Type == "" {
+		return nil
+	}
+	return &ResponsesCacheDiagnostics{
+		Type:                     w.Type,
+		Reason:                   w.Reason,
+		ComparisonReusableTokens: w.ComparisonReusableTokens,
+		CacheMissedTokens:        w.CacheMissedTokens,
+	}
+}
+
+// ResponsesIncompleteError reports a terminal incomplete response while
+// preserving the partial completion for accounting. Reason is the server's
+// incomplete_details.reason (for example max_output_tokens, content_filter).
+type ResponsesIncompleteError struct {
+	Reason   string
+	Response Response
+}
+
+func (e *ResponsesIncompleteError) Error() string {
+	if e == nil || e.Reason == "" {
+		return "Responses: response incomplete"
+	}
+	return "Responses: response incomplete (" + e.Reason + ")"
+}
+
+// ResponsesFailedError reports a terminal failed response while preserving
+// the partial completion for accounting.
+type ResponsesFailedError struct {
+	Message  string
+	Response Response
+}
+
+func (e *ResponsesFailedError) Error() string {
+	if e == nil || e.Message == "" {
+		return "Responses: response failed"
+	}
+	return "Responses: " + e.Message
+}
+
 func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, error) {
 	result := Message{Role: "assistant"}
 	// Usage snapshots are cumulative: each completed event carries the
@@ -182,7 +408,41 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 	// erases earlier values.
 	accumulated := &Usage{}
 	var completedOutput []json.RawMessage
+	var responseID string
+	var diagnostics *ResponsesCacheDiagnostics
+	completed := false
 	partials := map[int]*responsesPartialCall{}
+	refusalBytes := map[responsesContentIndex]int{}
+	finalize := func() Response {
+		if len(completedOutput) > 0 {
+			// Preserve output items for replay; ignore marshal errors.
+			if details, err := json.Marshal(completedOutput); err == nil {
+				result.ReasoningDetails = details
+			}
+			streamed := len(result.Content)
+			responsesCompletedOutput(&result, completedOutput, partials, refusalBytes)
+			if onText != nil && len(result.Content) > streamed {
+				onText(StreamEvent{Kind: StreamOutput, Text: result.Content[streamed:]})
+			}
+		}
+		indexes := make([]int, 0, len(partials))
+		for index := range partials {
+			indexes = append(indexes, index)
+		}
+		sort.Ints(indexes)
+		for _, index := range indexes {
+			part := partials[index]
+			if part.name == "" {
+				continue
+			}
+			arguments := json.RawMessage(part.arguments)
+			if !json.Valid(arguments) {
+				arguments = json.RawMessage(`{}`)
+			}
+			result.ToolCalls = append(result.ToolCalls, ToolCall{ID: part.id, Name: part.name, Arguments: arguments})
+		}
+		return Response{Message: result, Usage: NormalizeUsage(accumulated), ResponseID: responseID, CacheDiagnostics: diagnostics}
+	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
@@ -191,52 +451,109 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 			continue
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "" || data == "[DONE]" {
+		if data == "" {
 			continue
 		}
+		if data == "[DONE]" {
+			break
+		}
 		var event struct {
-			Type        string `json:"type"`
-			Delta       string `json:"delta"`
-			OutputIndex int    `json:"output_index"`
-			Item        struct {
+			Type         string `json:"type"`
+			Delta        string `json:"delta"`
+			Text         string `json:"text"`
+			Refusal      string `json:"refusal"`
+			Arguments    string `json:"arguments"`
+			OutputIndex  int    `json:"output_index"`
+			ContentIndex int    `json:"content_index"`
+			Item         struct {
 				Type      string `json:"type"`
 				CallID    string `json:"call_id"`
 				Name      string `json:"name"`
 				Arguments string `json:"arguments"`
 			} `json:"item"`
 			Response struct {
+				ID     string            `json:"id"`
 				Output []json.RawMessage `json:"output"`
 				// Captured raw so malformed usage metadata cannot break
 				// text generation; it is decoded leniently per snapshot.
 				// responsesUsageWire stays private: wire JSON is never
 				// decoded directly into the normalized Usage contract.
-				Usage json.RawMessage `json:"usage"`
+				Usage             json.RawMessage `json:"usage"`
+				Diagnostics       json.RawMessage `json:"prompt_cache_diagnostics"`
+				Status            string          `json:"status"`
+				IncompleteDetails *struct {
+					Reason string `json:"reason"`
+				} `json:"incomplete_details"`
 				Error *struct {
 					Message string `json:"message"`
 				} `json:"error"`
 			} `json:"response"`
+			IncompleteDetails *struct {
+				Reason string `json:"reason"`
+			} `json:"incomplete_details"`
 			Message string `json:"message"`
 			Error   *struct {
 				Message string `json:"message"`
 			} `json:"error"`
 		}
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			return Response{}, fmt.Errorf("decode Responses stream: %w", err)
+			return finalize(), fmt.Errorf("decode Responses stream: %w", err)
 		}
 		if event.Error != nil {
-			return Response{}, fmt.Errorf("Responses: %s", event.Error.Message)
+			partial := finalize()
+			return partial, fmt.Errorf("Responses: %s", event.Error.Message)
 		}
 		if event.Type == "error" {
+			partial := finalize()
 			if event.Message == "" {
-				return Response{}, fmt.Errorf("Responses: stream error")
+				return partial, fmt.Errorf("Responses: stream error")
 			}
-			return Response{}, fmt.Errorf("Responses: %s", event.Message)
+			return partial, fmt.Errorf("Responses: %s", event.Message)
+		}
+		if event.Type == "response.failed" || event.Type == "response.incomplete" {
+			// Bare terminal events carry id/output/usage/diagnostics on the
+			// event itself (unlike response.completed). Merge them before
+			// finalizing so the partial preserves billed usage and any
+			// output the server attached to the terminal event.
+			if event.Response.ID != "" {
+				responseID = event.Response.ID
+			}
+			if len(event.Response.Usage) != 0 {
+				var wire responsesUsageWire
+				if err := json.Unmarshal(event.Response.Usage, &wire); err == nil {
+					wire.mergeInto(accumulated)
+				}
+			}
+			if len(event.Response.Diagnostics) != 0 && string(event.Response.Diagnostics) != "null" {
+				var wire responsesDiagnosticsWire
+				if err := json.Unmarshal(event.Response.Diagnostics, &wire); err == nil {
+					if diag := wire.toPublic(); diag != nil {
+						diagnostics = diag
+					}
+				}
+			}
+			if len(event.Response.Output) > 0 {
+				completedOutput = event.Response.Output
+			}
 		}
 		if event.Type == "response.failed" {
-			if event.Response.Error != nil && event.Response.Error.Message != "" {
-				return Response{}, fmt.Errorf("Responses: %s", event.Response.Error.Message)
+			msg := ""
+			if event.Response.Error != nil {
+				msg = event.Response.Error.Message
 			}
-			return Response{}, fmt.Errorf("Responses: response failed")
+			partial := finalize()
+			return partial, &ResponsesFailedError{Message: msg, Response: partial}
+		}
+		if event.Type == "response.incomplete" {
+			reason := ""
+			if event.Response.IncompleteDetails != nil {
+				reason = event.Response.IncompleteDetails.Reason
+			}
+			if reason == "" && event.IncompleteDetails != nil {
+				reason = event.IncompleteDetails.Reason
+			}
+			partial := finalize()
+			return partial, &ResponsesIncompleteError{Reason: reason, Response: partial}
 		}
 		switch event.Type {
 		case "response.output_text.delta":
@@ -244,14 +561,57 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 			if onText != nil {
 				onText(StreamEvent{Kind: StreamOutput, Text: event.Delta})
 			}
+		case "response.output_text.done":
+			if event.Text != "" && !strings.Contains(result.Content, event.Text) {
+				// Done carries the full text; delta already streamed it, so
+				// only fill when delta path produced nothing (defensive).
+				if result.Content == "" {
+					result.Content = event.Text
+				}
+			}
+		case "response.refusal.delta", "response.refusal.done":
+			index := responsesContentIndex{event.OutputIndex, event.ContentIndex}
+			text := event.Delta
+			if event.Type == "response.refusal.done" && len(event.Refusal) > refusalBytes[index] {
+				text = event.Refusal[refusalBytes[index]:]
+			}
+			if text != "" {
+				refusalBytes[index] += len(text)
+				result.Content += text
+				if onText != nil {
+					onText(StreamEvent{Kind: StreamOutput, Text: text})
+				}
+			}
 		case "response.reasoning_summary_text.delta":
 			result.Thinking += event.Delta
 			if onText != nil {
 				onText(StreamEvent{Kind: StreamThinking, Text: event.Delta})
 			}
+		case "response.reasoning_summary_text.done":
+			if event.Text != "" && result.Thinking == "" {
+				result.Thinking = event.Text
+			}
 		case "response.output_item.added":
 			if event.Item.Type == "function_call" {
 				partials[event.OutputIndex] = &responsesPartialCall{id: event.Item.CallID, name: event.Item.Name, arguments: event.Item.Arguments}
+			}
+		case "response.output_item.done":
+			// Done repeats the completed item; fill any gaps the delta path missed.
+			if event.Item.Type == "function_call" {
+				part := partials[event.OutputIndex]
+				if part == nil {
+					part = &responsesPartialCall{}
+					partials[event.OutputIndex] = part
+				}
+				if part.id == "" {
+					part.id = event.Item.CallID
+				}
+				if part.name == "" {
+					part.name = event.Item.Name
+				}
+				if part.arguments == "" {
+					part.arguments = event.Item.Arguments
+				}
 			}
 		case "response.function_call_arguments.delta":
 			part := partials[event.OutputIndex]
@@ -260,43 +620,71 @@ func parseResponsesStream(reader io.Reader, onText StreamCallback) (Response, er
 				partials[event.OutputIndex] = part
 			}
 			part.arguments += event.Delta
+		case "response.function_call_arguments.done":
+			doneArgs := event.Arguments
+			if doneArgs == "" {
+				doneArgs = event.Text
+			}
+			if doneArgs != "" {
+				part := partials[event.OutputIndex]
+				if part == nil {
+					part = &responsesPartialCall{}
+					partials[event.OutputIndex] = part
+				}
+				if part.arguments == "" {
+					part.arguments = doneArgs
+				}
+			}
 		case "response.completed":
+			completed = true
 			completedOutput = event.Response.Output
+			if event.Response.ID != "" {
+				responseID = event.Response.ID
+			}
 			if len(event.Response.Usage) != 0 {
 				var wire responsesUsageWire
 				if err := json.Unmarshal(event.Response.Usage, &wire); err == nil {
 					wire.mergeInto(accumulated)
 				}
 			}
+			if len(event.Response.Diagnostics) != 0 && string(event.Response.Diagnostics) != "null" {
+				var wire responsesDiagnosticsWire
+				if err := json.Unmarshal(event.Response.Diagnostics, &wire); err == nil {
+					if diag := wire.toPublic(); diag != nil {
+						diagnostics = diag
+					}
+				}
+			}
+			if event.Response.Status == "incomplete" {
+				reason := ""
+				if event.Response.IncompleteDetails != nil {
+					reason = event.Response.IncompleteDetails.Reason
+				}
+				partial := finalize()
+				return partial, &ResponsesIncompleteError{Reason: reason, Response: partial}
+			}
+			if event.Response.Status == "failed" {
+				msg := ""
+				if event.Response.Error != nil {
+					msg = event.Response.Error.Message
+				}
+				partial := finalize()
+				return partial, &ResponsesFailedError{Message: msg, Response: partial}
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return Response{}, err
+		partial := finalize()
+		return partial, err
 	}
-	if len(completedOutput) > 0 {
-		result.ReasoningDetails, _ = json.Marshal(completedOutput)
-		responsesCompletedOutput(&result, completedOutput, partials)
+	if !completed {
+		return finalize(), fmt.Errorf("Responses stream ended before completion: %w", io.ErrUnexpectedEOF)
 	}
-	indexes := make([]int, 0, len(partials))
-	for index := range partials {
-		indexes = append(indexes, index)
-	}
-	sort.Ints(indexes)
-	for _, index := range indexes {
-		part := partials[index]
-		if part.name == "" {
-			continue
-		}
-		arguments := json.RawMessage(part.arguments)
-		if !json.Valid(arguments) {
-			arguments = json.RawMessage(`{}`)
-		}
-		result.ToolCalls = append(result.ToolCalls, ToolCall{ID: part.id, Name: part.name, Arguments: arguments})
-	}
-	return Response{Message: result, Usage: NormalizeUsage(accumulated)}, nil
+	return finalize(), nil
 }
 
-func responsesCompletedOutput(result *Message, output []json.RawMessage, partials map[int]*responsesPartialCall) {
+func responsesCompletedOutput(result *Message, output []json.RawMessage, partials map[int]*responsesPartialCall, refusalBytes map[responsesContentIndex]int) {
+	fillText := result.Content == ""
 	for index, raw := range output {
 		var item struct {
 			Type      string `json:"type"`
@@ -304,8 +692,9 @@ func responsesCompletedOutput(result *Message, output []json.RawMessage, partial
 			Name      string `json:"name"`
 			Arguments string `json:"arguments"`
 			Content   []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
+				Type    string `json:"type"`
+				Text    string `json:"text"`
+				Refusal string `json:"refusal"`
 			} `json:"content"`
 		}
 		if json.Unmarshal(raw, &item) != nil {
@@ -328,10 +717,19 @@ func responsesCompletedOutput(result *Message, output []json.RawMessage, partial
 			}
 			continue
 		}
-		if item.Type == "message" && result.Content == "" {
-			for _, block := range item.Content {
-				if block.Type == "output_text" {
+		if item.Type != "message" {
+			continue
+		}
+		for contentIndex, block := range item.Content {
+			switch block.Type {
+			case "output_text":
+				if fillText {
 					result.Content += block.Text
+				}
+			case "refusal":
+				streamed := refusalBytes[responsesContentIndex{index, contentIndex}]
+				if len(block.Refusal) > streamed {
+					result.Content += block.Refusal[streamed:]
 				}
 			}
 		}

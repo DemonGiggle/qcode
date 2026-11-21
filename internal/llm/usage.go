@@ -33,15 +33,16 @@ type Usage struct {
 }
 
 // SessionUsage accumulates reported counts plus coverage bookkeeping.
-// Missing retains its historical meaning: completions with no usable usage
-// fields. Coverage counters count requests, never token quantities.
+// Coverage counters count provider calls, including failures, once each.
 type SessionUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 	TotalTokens  int `json:"total_tokens"`
-	Missing      int `json:"missing_completions"`
+	// Older checkpoints also include failed calls without usage in Missing.
+	Missing            int `json:"missing_completions"`
+	FailedWithoutUsage int `json:"failed_without_usage"`
 
-	// Requests counts every recorded completion, including missing ones.
+	// Requests counts calls to Complete, including unsuccessful calls.
 	Requests int `json:"requests"`
 	// Per-field request coverage: how many completions reported each field.
 	InputReported     int `json:"input_reported"`
@@ -261,10 +262,19 @@ func NewUsage(input, output, cacheRead, cacheWrite, uncached, reasoning *int) *U
 // first; absent usage increments Missing. Totals are sums of known components
 // only, so TotalTokens is a partial subtotal when either side is missing.
 func (s *SessionUsage) Add(u *Usage) {
+	s.AddResult(u, nil)
+}
+
+// AddResult records one call. A failure may still carry usable partial usage.
+func (s *SessionUsage) AddResult(u *Usage, err error) {
 	s.Requests++
 	n := NormalizeUsage(u)
 	if n == nil {
-		s.Missing++
+		if err != nil {
+			s.FailedWithoutUsage++
+		} else {
+			s.Missing++
+		}
 		return
 	}
 	if v, ok := n.KnownInput(); ok {
@@ -299,7 +309,7 @@ func (s *SessionUsage) Add(u *Usage) {
 // is unavailable (no eligible requests or zero denominator). The result can
 // never be negative or exceed 1 for normalized data.
 func (s SessionUsage) CacheHitRatio() (float64, bool) {
-	if s.CacheRatioRequests == 0 || s.CacheRatioInputTokens <= 0 || s.CacheRatioReadTokens < 0 {
+	if s.CacheRatioRequests <= 0 || s.CacheRatioInputTokens <= 0 || s.CacheRatioReadTokens < 0 {
 		return 0, false
 	}
 	if s.CacheRatioReadTokens > s.CacheRatioInputTokens {
