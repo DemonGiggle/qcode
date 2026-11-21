@@ -202,7 +202,7 @@ func ResponsesDiagnosticsFix(reason string) string {
 // ResponsesTextFormat carries a structured-output text.format override.
 type ResponsesTextFormat struct {
 	// Type is "json_schema", "json_object", or "text".
-	Type string
+	Type   string
 	Name   string
 	Schema map[string]any
 	Strict *bool

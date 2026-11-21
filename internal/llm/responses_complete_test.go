@@ -16,8 +16,8 @@ func TestBuildResponsesBodyDefaultsStayStateless(t *testing.T) {
 		Model:    "gpt-6.2-sol",
 		Messages: []Message{{Role: "user", Content: "hi"}},
 	}, responsesInput([]Message{{Role: "user", Content: "hi"}}), "", false)
-	if body["store"] != false {
-		t.Fatalf("default store must be false: %v", body)
+	if _, ok := body["store"]; ok {
+		t.Fatalf("default store must be omitted (opencode-go keeps previous wire): %v", body)
 	}
 	for _, key := range []string{"previous_response_id", "conversation", "prompt_cache_options", "prompt_cache_key", "text", "tool_choice", "parallel_tool_calls", "max_output_tokens", "service_tier", "metadata", "background", "truncation", "include"} {
 		if _, ok := body[key]; ok {
@@ -188,9 +188,25 @@ func TestParseResponsesIncompleteFailed(t *testing.T) {
 		{"completed failed", `data: {"type":"response.completed","response":{"status":"failed","error":{"message":"bad"}}}` + "\n", "bad"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := parseResponsesStream(strings.NewReader(tc.stream), nil)
+			resp, err := parseResponsesStream(strings.NewReader(tc.stream), nil)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+			// Partial must survive for accounting: usage stays nil only
+			// when unreported, never fabricated, and typed errors allow
+			// callers to distinguish truncation from failure.
+			_ = resp
+			var incErr *ResponsesIncompleteError
+			var failErr *ResponsesFailedError
+			isInc := strings.Contains(tc.name, "incomplete")
+			if isInc {
+				if !errorAs(err, &incErr) {
+					t.Fatalf("expected ResponsesIncompleteError, got %T: %v", err, err)
+				}
+			} else {
+				if !errorAs(err, &failErr) {
+					t.Fatalf("expected ResponsesFailedError, got %T: %v", err, err)
+				}
 			}
 		})
 	}
@@ -321,5 +337,32 @@ func TestResponsesBuiltinUnknownDropped(t *testing.T) {
 	got := responsesBuiltinTools([]map[string]any{{"type": "web_search"}, {"type": "nope"}, nil})
 	if len(got) != 1 || got[0]["type"] != "web_search" {
 		t.Fatalf("allowlist = %v", got)
+	}
+}
+
+func errorAs(err error, target any) bool {
+	type causer interface{ As(any) bool }
+	// Minimal errors.As without importing errors in test file header churn.
+	// Use type switches for our two terminal types.
+	switch v := target.(type) {
+	case **ResponsesIncompleteError:
+		if e, ok := err.(*ResponsesIncompleteError); ok {
+			*v = e
+			return true
+		}
+	case **ResponsesFailedError:
+		if e, ok := err.(*ResponsesFailedError); ok {
+			*v = e
+			return true
+		}
+	}
+	return false
+}
+
+func TestChatGPTWrapperPreservesStatelessStoreFalse(t *testing.T) {
+	p := &chatGPTProvider{baseURL: "https://api.openai.com/v1"}
+	body := p.buildCodexBody(Request{Model: "gpt-6.2-sol", Messages: []Message{{Role: "user", Content: "hi"}}}, "durable", []Message{{Role: "user", Content: "hi"}}, true)
+	if body["store"] != false {
+		t.Fatalf("chatgpt must preserve store:false contract: %v", body)
 	}
 }

@@ -1007,12 +1007,18 @@ endpoint may send `prompt_cache_key`.
   A comparison-only rejection keeps the stable `prompt_cache_key` so
   accounting separation survives.
 
-### Phase 2 — Stateful continuation (opt-in)
+### Phase 2 — Stateful continuation (opt-in, flagged)
 
 - Request: `PreviousResponseID` -> `previous_response_id`,
   `StoreResponses`/`ConversationID` -> `store:true`/`conversation`. A
   `previous_response_id` chain implies `store:true` even when only the id is
   set. Omit all three for the default stateless full resend.
+- Agent wiring (flagged, no config migration): `prepareNormalRequest` reuses
+  `Agent.LastResponseID` when `QCODE_RESPONSES_STATEFUL=1` (first turn omits;
+  later turns send full-history + `previous_response_id` + `store:true`, a
+  compatible extension — delta-only sending is future work). `QCODE_RESPONSES_DIAGNOSTICS=1`
+  reuses the same id as `comparison_response_id`. Both default off, so the
+  default path stays stateless + implicit-cache-only.
 - Chaining still bills all prior input tokens as input tokens. `store:false`
   (ZDR) stays available: preserve and replay returned reasoning items
   (including `encrypted_content`) manually.
@@ -1052,10 +1058,15 @@ endpoint may send `prompt_cache_key`.
   intentionally unsent (implicit-only, Codex parity). Server defaults apply
   (`30m` at 1.25x write, reads 0.1x, 0.05x on Astra/Sol/Terra).
 
-Acceptance: diagnostics round trip (`comparison_response_id` ->
-`cache_hit/miss` + reason visible in trace), stateful chaining behind flag
-without full-history resend, no default-path regression in cached_tokens
-accounting or 6.2 billing, docs updated here, fixture tests
+Built-in tools stay Request-layer opt-in (`Request.BuiltinTools` with
+provider-side known-type allowlist); the agent Toolset does not auto-map MCP
+tools to Responses built-ins — that allowlist lives in a future config change.
+
+Acceptance: diagnostics round trip (`QCODE_RESPONSES_DIAGNOSTICS=1` with
+`comparison_response_id` -> `cache_hit/miss` + reason visible in trace),
+stateful chaining behind flag (`QCODE_RESPONSES_STATEFUL=1`, full-history +
+`previous_response_id` compatible extension), no default-path regression in
+cached_tokens accounting or 6.2 billing, docs updated here, fixture tests
 (`internal/llm/responses_complete_test.go`,
 `internal/trace/cache_diagnostics_test.go`,
 `internal/agent/responses_result_test.go`) plus `go test ./...`.

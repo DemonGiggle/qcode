@@ -328,9 +328,13 @@ func (p *chatGPTProvider) buildCodexBody(input Request, instructions string, res
 	}
 	// Shared Responses core (issues #115/#116): store, previous_response_id,
 	// comparison, reasoning, tools, structured output, and lifecycle knobs.
-	// Zero-value opt-ins are omitted so the default wire stays
-	// stateless + implicit-cache-only.
+	// Zero-value opt-ins are omitted in the shared builder so the opencode-go
+	// route keeps its previous wire; the SIWC contract below re-adds
+	// store:false to stay stateless.
 	body := buildResponsesBody(input.Model, p.ThinkingCapability(input.Model), input, items, cacheKey, useCache && IsOfficialOpenAIEndpoint(p.baseURL))
+	if _, ok := body["store"]; !ok {
+		body["store"] = false
+	}
 	if topLevelInstructions != "" {
 		body["instructions"] = topLevelInstructions
 		// GPT-6.2+ renders top-level instructions after input (billed
@@ -486,10 +490,14 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 	if (usedCache || usedComparison) && isChatGPTCacheFieldRejection(statusCode, bodyText) {
 		lower := strings.ToLower(bodyText)
 		mentionsKey := strings.Contains(lower, "prompt_cache_key")
+		mentionsComparison := strings.Contains(lower, "prompt_cache_options") || strings.Contains(lower, "comparison_response")
 		cleanInput := input
 		cleanInput.ComparisonResponseID = ""
 		useCache := true
-		if mentionsKey || !usedComparison {
+		if mentionsKey || !mentionsComparison {
+			// Key rejection, or generic cache rejection without a field
+			// name: strip all cache fields to avoid looping into the same
+			// 400 (previously the keyless fallback always ran).
 			cleanInput.PromptCacheKey = ""
 			useCache = false
 		}

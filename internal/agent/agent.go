@@ -34,32 +34,32 @@ const repeatedToolRecoveryTemplate = `Recovery notice: the tool %q has been requ
 const DefaultAutoCompactThreshold = 80
 
 type Agent struct {
-	redaction                *redaction.Policy
-	learningStore            learning.Store
-	learningBudget           int
-	learningContext          string
-	learningSessionID        string
+	redaction         *redaction.Policy
+	learningStore     learning.Store
+	learningBudget    int
+	learningContext   string
+	learningSessionID string
 	// cacheSessionID is the agent-owned random session identity for
 	// prompt_cache_key namespacing (#81). It is independent of
 	// provider-instance routing IDs and persists as SavedState.CacheSessionID.
-	cacheSessionID           string
-	configurationRevision    atomic.Uint64
-	backendSnapshot          atomic.Pointer[backendSnapshot]
-	provider                 llm.Provider
-	model                    string
-	thinking                 string
-	tools                    Toolset
-	trace                    *trace.Logger
-	out                      io.Writer
-	maxSteps                 atomic.Int64
-	currentStep              atomic.Int64
-	messages                 []llm.Message
-	chatGPTContext           chatGPTContextHistory
-	stateMu                  sync.RWMutex
-	requestContext           func() string
-	taskContext              string
-	dynamicContext           string
-	lastResponse             string
+	cacheSessionID        string
+	configurationRevision atomic.Uint64
+	backendSnapshot       atomic.Pointer[backendSnapshot]
+	provider              llm.Provider
+	model                 string
+	thinking              string
+	tools                 Toolset
+	trace                 *trace.Logger
+	out                   io.Writer
+	maxSteps              atomic.Int64
+	currentStep           atomic.Int64
+	messages              []llm.Message
+	chatGPTContext        chatGPTContextHistory
+	stateMu               sync.RWMutex
+	requestContext        func() string
+	taskContext           string
+	dynamicContext        string
+	lastResponse          string
 	// lastResponseID is the most recent Responses id (resp_...) when the
 	// provider reported one. It seeds opt-in PreviousResponseID /
 	// ComparisonResponseID flows (issue #116). Diagnostic ids expire
@@ -68,19 +68,19 @@ type Agent struct {
 	// lastDiagnostics is the most recent prompt_cache_diagnostics, if any.
 	// Diagnostic counts can differ from usage counts; billing always follows
 	// Usage, never diagnostics.
-	lastDiagnostics          *llm.ResponsesCacheDiagnostics
-	contextStatus            atomic.Pointer[contextStatus]
-	contextWindow            int
-	contextOverride          int
-	contextUsage             *llm.Usage
-	sessionUsage             llm.SessionUsage
-	contextMessages          int
+	lastDiagnostics *llm.ResponsesCacheDiagnostics
+	contextStatus   atomic.Pointer[contextStatus]
+	contextWindow   int
+	contextOverride int
+	contextUsage    *llm.Usage
+	sessionUsage    llm.SessionUsage
+	contextMessages int
 	// Prepared-request estimate cache (#79). publishContext reads only these
 	// immutable snapshots; it never resolves learning or requestContext.
-	prepared         preparedSnapshot
-	calibration      requestCalibration
-	learningResolves int
-	contextResolves  int
+	prepared                 preparedSnapshot
+	calibration              requestCalibration
+	learningResolves         int
+	contextResolves          int
 	autoCompact              bool
 	autoCompactThreshold     int
 	system                   string
@@ -472,6 +472,8 @@ func (a *Agent) resetSession() {
 	a.pendingImages = nil
 	a.stateMu.Lock()
 	a.lastResponse = ""
+	a.lastResponseID = ""
+	a.lastDiagnostics = nil
 	a.sessionUsage = llm.SessionUsage{}
 	a.stateMu.Unlock()
 	a.learningContext = ""
@@ -703,8 +705,8 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			a.taskContext = contextual.TaskContext(item.Text)
 		}
 		a.contextUsage = nil
-			a.invalidatePreparedCache()
-			replanning = append(replanning, item)
+		a.invalidatePreparedCache()
+		replanning = append(replanning, item)
 		a.publishContext()
 	}
 	for step := 0; step < a.MaxSteps(); step++ {
@@ -722,28 +724,28 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 			a.currentStep.Store(1)
 		}
 		// Prepared-request path (#79): resolve learning/requestContext once,
-			// apply every request-only addition in order, capture tools once,
-			// and estimate the exact Messages+Tools Complete will receive.
-			// The recovery notice stays ephemeral: it helps the next model
-			// turn without becoming durable history or disturbing
-			// provider-specific assistant/tool pairing.
-			pendingRecovery := recoveryInstruction
-			prep := a.prepareNormalRequest(ctx, pendingRecovery)
-			if trust.Suspicious(a.learningContext) {
-				warnInjection("learning context", a.learningContext)
-			}
-			if trust.Suspicious(a.dynamicContext) {
-				warnInjection("additional context", a.dynamicContext)
-			}
-			// Validate auto-compaction against the prepared estimate before
-			// sending. Rebuild once when compaction rewrites history so the
-			// request matches the compacted conversation; never loop and
-			// never drop the pending one-shot recovery notice.
-			if a.maybeAutoCompactForPrepared(ctx, prep.Estimate) {
-				prep = a.prepareNormalRequest(ctx, pendingRecovery)
-			}
-			recoveryInstruction = ""
-			a.publishContext()
+		// apply every request-only addition in order, capture tools once,
+		// and estimate the exact Messages+Tools Complete will receive.
+		// The recovery notice stays ephemeral: it helps the next model
+		// turn without becoming durable history or disturbing
+		// provider-specific assistant/tool pairing.
+		pendingRecovery := recoveryInstruction
+		prep := a.prepareNormalRequest(ctx, pendingRecovery)
+		if trust.Suspicious(a.learningContext) {
+			warnInjection("learning context", a.learningContext)
+		}
+		if trust.Suspicious(a.dynamicContext) {
+			warnInjection("additional context", a.dynamicContext)
+		}
+		// Validate auto-compaction against the prepared estimate before
+		// sending. Rebuild once when compaction rewrites history so the
+		// request matches the compacted conversation; never loop and
+		// never drop the pending one-shot recovery notice.
+		if a.maybeAutoCompactForPrepared(ctx, prep.Estimate) {
+			prep = a.prepareNormalRequest(ctx, pendingRecovery)
+		}
+		recoveryInstruction = ""
+		a.publishContext()
 		span := a.trace.Start("llm", a.provider.Name(), map[string]any{"model": a.model, "step": step + 1})
 		wroteText := false
 		visibleText := false

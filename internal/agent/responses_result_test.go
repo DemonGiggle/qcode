@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"io"
 	"testing"
 
@@ -39,5 +40,49 @@ func TestRecordResponsesResultStoresIDAndDiagnostics(t *testing.T) {
 	}
 	if got := a.LastDiagnostics(); got != nil {
 		t.Fatalf("empty result must clear diagnostics, got %+v", got)
+	}
+}
+
+func TestPreparedRequestWiresResponsesOptInsBehindFlags(t *testing.T) {
+	newAgent := func() *Agent {
+		a := New(&usageProvider{}, "test", &skillToolset{}, trace.New(io.Discard, false), io.Discard, 3)
+		a.messages = []llm.Message{{Role: "user", Content: "hi"}}
+		return a
+	}
+	// Default: no opt-ins even with a last id.
+	a := newAgent()
+	a.recordResponsesResult(llm.Response{ResponseID: "resp_123", Usage: &llm.Usage{InputTokens: llm.IntPtr(10)}})
+	t.Setenv("QCODE_RESPONSES_DIAGNOSTICS", "")
+	t.Setenv("QCODE_RESPONSES_STATEFUL", "")
+	prep := a.prepareNormalRequest(context.Background(), "")
+	if prep.Request.ComparisonResponseID != "" || prep.Request.PreviousResponseID != "" || prep.Request.StoreResponses {
+		t.Fatalf("default must stay stateless: %+v", prep.Request)
+	}
+	// Diagnostics flag reuses last id as comparison baseline.
+	a = newAgent()
+	a.recordResponsesResult(llm.Response{ResponseID: "resp_123", Usage: &llm.Usage{InputTokens: llm.IntPtr(10)}})
+	t.Setenv("QCODE_RESPONSES_DIAGNOSTICS", "1")
+	t.Setenv("QCODE_RESPONSES_STATEFUL", "")
+	prep = a.prepareNormalRequest(context.Background(), "")
+	if prep.Request.ComparisonResponseID != "resp_123" {
+		t.Fatalf("diagnostics flag must set comparison: %+v", prep.Request)
+	}
+	if prep.Request.PreviousResponseID != "" {
+		t.Fatalf("diagnostics must not imply continuation: %+v", prep.Request)
+	}
+	// Stateful flag chains with store:true; first turn (no id) omits.
+	a = newAgent()
+	a.recordResponsesResult(llm.Response{ResponseID: "resp_456", Usage: &llm.Usage{InputTokens: llm.IntPtr(10)}})
+	t.Setenv("QCODE_RESPONSES_DIAGNOSTICS", "")
+	t.Setenv("QCODE_RESPONSES_STATEFUL", "1")
+	prep = a.prepareNormalRequest(context.Background(), "")
+	if prep.Request.PreviousResponseID != "resp_456" || !prep.Request.StoreResponses {
+		t.Fatalf("stateful flag must chain with store:true: %+v", prep.Request)
+	}
+	b := newAgent()
+	t.Setenv("QCODE_RESPONSES_STATEFUL", "1")
+	prep = b.prepareNormalRequest(context.Background(), "")
+	if prep.Request.PreviousResponseID != "" || prep.Request.StoreResponses {
+		t.Fatalf("first turn must omit continuation: %+v", prep.Request)
 	}
 }
