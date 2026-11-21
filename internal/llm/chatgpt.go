@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -319,13 +320,16 @@ func (p *chatGPTProvider) buildCodexBody(input Request, instructions string, res
 	for field, value := range thinkingFields(p.ThinkingCapability(input.Model), input.Thinking) {
 		body[field] = value
 	}
-	// Codex parity (implicit caching only): durable instructions always travel
-	// as the leading developer message in input, never as top-level
-	// instructions. Top-level instructions cannot carry a breakpoint and, on
-	// GPT-6.2+, are appended after input and billed uncached. Codex sends no
-	// prompt_cache_options and no explicit prompt_cache_breakpoint markers;
-	// cache reuse comes from a stable key plus an exact reusable prefix.
-	body["input"] = chatGPTCacheInput(instructions, rest)
+	// Durable instructions lead the replayable history for implicit caching.
+	items := chatGPTCacheInput(instructions, rest)
+	if input.RequestOnlyInstructions != "" {
+		if IsOfficialOpenAIEndpoint(p.baseURL) && chatGPTInstructionsAfterInput(input.Model) {
+			body["instructions"] = input.RequestOnlyInstructions
+		} else {
+			items = append(items, responsesMessage("developer", input.RequestOnlyInstructions, nil))
+		}
+	}
+	body["input"] = items
 	if useCache && IsOfficialOpenAIEndpoint(p.baseURL) {
 		if input.PromptCacheKey != "" {
 			body["prompt_cache_key"] = input.PromptCacheKey
@@ -339,6 +343,30 @@ func (p *chatGPTProvider) buildCodexBody(input Request, instructions string, res
 		body["tools"] = tools
 	}
 	return body
+}
+
+// Starting with GPT-6.2, OpenAI renders top-level instructions after input,
+// beyond eligible cache breakpoints. Preserve the trailing position for
+// other models by encoding the guidance as the last input item.
+func chatGPTInstructionsAfterInput(model string) bool {
+	version, ok := strings.CutPrefix(model, "gpt-")
+	if !ok {
+		return false
+	}
+	version, _, _ = strings.Cut(version, "-")
+	majorText, minorText, hasMinor := strings.Cut(version, ".")
+	major, err := strconv.ParseUint(majorText, 10, 32)
+	if err != nil {
+		return false
+	}
+	minor := uint64(0)
+	if hasMinor {
+		minor, err = strconv.ParseUint(minorText, 10, 32)
+		if err != nil {
+			return false
+		}
+	}
+	return major > 6 || major == 6 && minor >= 2
 }
 
 // isChatGPTCacheFieldRejection reports whether a non-2xx Responses body is a

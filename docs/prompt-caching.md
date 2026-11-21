@@ -781,18 +781,18 @@ session-stable, provider/model/purpose-namespaced `prompt_cache_key` when
 present. Session resume, reset, compaction and learning retain their
 existing identity lifecycle.
 
-Codex parity (implicit caching only, all models): durable instructions
-travel as a leading developer input message (never top-level
-`instructions`, which on GPT-6.2+ is appended after input and billed
-uncached). No `prompt_cache_options` and no explicit
-`prompt_cache_breakpoint` markers are sent; the server selects implicit
-writes and lookup boundaries. Assistant output and reasoning items are
-replayed in their original order. This matches Codex, which sends a stable key, a leading
-developer prefix, and no explicit cache fields by default.
+Durable instructions lead the input as a developer message for all ChatGPT
+models. Environment updates are inserted where they first apply, and later
+requests preserve them in place alongside assistant output and reasoning
+items. Current learning references and request-only notices follow the
+replayable history. On official GPT-6.2+ requests they use top-level
+`instructions`, which OpenAI renders after input and bills uncached. Older
+models, unknown model names, and custom endpoints use a trailing developer
+message for that guidance.
 
-Custom endpoints and legacy backend-api routes receive none of these
-changes (no key). OpenAI, OpenCode Go, Anthropic and Ollama adapters are
-unchanged. Retention remains the server default, `store:false` and
+The server selects implicit cache writes and lookup boundaries. Custom and
+legacy endpoints omit the cache key. Retention uses the server default, and
+`store:false` and
 `stream:true` remain required. A 400 cache-field rejection
 (`prompt_cache_* is not supported on this model`) is retried once without
 any `prompt_cache_*` fields, keeping the developer-message shape so the
@@ -817,7 +817,8 @@ different model/workload is not a directly comparable target. See
 
 Snapshot: `openai/codex @ 583ec34` (Nov 2026), surveyed via sparse checkout
 (`codex-rs/core`, `codex-rs/codex-api`, `codex-rs/protocol`).
-qcode baseline: `internal/llm/chatgpt.go` (`buildCodexBody`, `doCodex`),
+qcode baseline at the time of the comparison: `internal/llm/chatgpt.go`
+(`buildCodexBody`, `doCodex`),
 `internal/llm/chatgpt_cache.go` (`chatGPTCacheInput`), `internal/llm/responses.go`
 (`responsesInput`, `responsesUsageWire`, `parseResponsesStream`),
 `internal/llm/cachekey.go`, `internal/agent/prepared_request.go`

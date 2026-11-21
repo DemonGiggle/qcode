@@ -19,9 +19,8 @@ type contextInsertion struct {
 }
 
 type chatGPTContextHistory struct {
-	last     chatGPTContextFields
-	updates  []contextInsertion
-	learning contextInsertion // only the currently retrieved learning may be sent
+	last    chatGPTContextFields
+	updates []contextInsertion
 }
 
 func changedContext(previous, current, cleared string) string {
@@ -37,7 +36,7 @@ func changedContext(previous, current, cleared string) string {
 // prepare returns a candidate history. The caller commits it only when it
 // accepts the assistant response, so failed requests and pre-compaction
 // estimates never introduce context that the assistant didn't see.
-func (h chatGPTContextHistory) prepare(messages []llm.Message, fields chatGPTContextFields, learning string) ([]llm.Message, chatGPTContextHistory) {
+func (h chatGPTContextHistory) prepare(messages []llm.Message, fields chatGPTContextFields) ([]llm.Message, chatGPTContextHistory) {
 	before := len(messages)
 	last := messages[before-1]
 	if last.Role == "user" && !last.Untrusted {
@@ -50,22 +49,16 @@ func (h chatGPTContextHistory) prepare(messages []llm.Message, fields chatGPTCon
 		h.updates = append(slices.Clip(h.updates), contextInsertion{before: before, text: delta})
 		h.last = fields
 	}
-	if h.learning.text != learning {
-		h.learning = contextInsertion{before: before, text: learning}
-	}
-	if len(h.updates) == 0 && learning == "" {
+	if len(h.updates) == 0 {
 		return messages, h
 	}
 
-	withContext := make([]llm.Message, 0, len(messages)+len(h.updates)+1)
+	withContext := make([]llm.Message, 0, len(messages)+len(h.updates))
 	update := 0
 	for i := 0; i <= len(messages); i++ {
 		if update < len(h.updates) && h.updates[update].before == i {
 			withContext = append(withContext, llm.Message{Role: "developer", Content: h.updates[update].text})
 			update++
-		}
-		if learning != "" && h.learning.before == i {
-			withContext = append(withContext, llm.Message{Role: "developer", Content: learning})
 		}
 		if i < len(messages) {
 			withContext = append(withContext, messages[i])

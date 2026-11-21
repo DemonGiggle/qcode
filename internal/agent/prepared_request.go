@@ -25,8 +25,8 @@ import (
 // (learning search and requestContext) exactly once, applies every
 // request-only addition to a byte-for-byte copy of the durable history in the
 // long-standing order, captures the enabled tool schemas once, and estimates
-// the exact Messages+Tools that Complete will receive with the existing
-// approximate estimator (estimateTokens).
+// the context that Complete will receive with the existing approximate
+// estimator (estimateTokens).
 //
 // Approximation limitations (documented for the meter and auto-compaction):
 //   - Images are estimated from their serialized envelope, not from
@@ -268,14 +268,13 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 		kind = llm.Kind(a.provider)
 	}
 	var chatGPTContext chatGPTContextHistory
+	requestOnlyInstructions := ""
 	if kind == "chatgpt" {
 		// The restored positions describe the durable transcript. Insertions
 		// start with fresh input after the restored messages.
 		messages[0].Content += restored
-		messages, chatGPTContext = a.chatGPTContext.prepare(messages, fields, extra)
-		if transient != "" {
-			messages = append(messages, llm.Message{Role: "developer", Content: transient})
-		}
+		messages, chatGPTContext = a.chatGPTContext.prepare(messages, fields)
+		requestOnlyInstructions = extra + transient
 	} else if len(messages) > 0 {
 		suffix := fields.cwd + restored + extra + fields.dynamic + fields.work + transient
 		if kind == "gemini" || kind == "openai" {
@@ -287,6 +286,9 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 		}
 	}
 	estimate := estimateTokens(messages) + estimateTokens(toolsCopy)
+	if requestOnlyInstructions != "" {
+		estimate += estimateTokens(llm.Message{Role: "developer", Content: requestOnlyInstructions})
+	}
 	backend := ""
 	if a.provider != nil {
 		backend = a.provider.Name()
@@ -299,7 +301,11 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 	}
 	prefixHash := hashRequestPrefix(systemContent, toolsHash, backend, a.model, a.thinking, mode, cwd, extra, dynamic, a.taskContext, notice, recovery)
 	prep := preparedRequest{
-		Request:      llm.Request{Model: a.model, Thinking: a.thinking, Messages: messages, Tools: toolsCopy, PromptCacheKey: a.chatCacheKey(backend, a.model)},
+		Request: llm.Request{
+			Model: a.model, Thinking: a.thinking, Messages: messages, Tools: toolsCopy,
+			RequestOnlyInstructions: requestOnlyInstructions,
+			PromptCacheKey:          a.chatCacheKey(backend, a.model),
+		},
 		Estimate:     estimate,
 		ToolsHash:    toolsHash,
 		PrefixHash:   prefixHash,

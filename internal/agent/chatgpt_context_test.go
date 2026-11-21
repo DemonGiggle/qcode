@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"qcode/internal/chatgptoauth"
+	"qcode/internal/learning"
 	"qcode/internal/llm"
 	"qcode/internal/trace"
 	"qcode/internal/trust"
@@ -55,6 +56,10 @@ func TestChatGPTWirePrefixAcrossToolAndUserTurns(t *testing.T) {
 	}
 	toolset := &context79Toolset{cwd: "/project", work: "work-1"}
 	a := NewWithSystem(p, "gpt-6.2-sol", toolset, trace.New(io.Discard, false), io.Discard, 4, "durable instructions")
+	store := &counting79Store{items: []learning.Learning{{Topic: "first", Content: "learning-one"}}}
+	a.SetLearning(store, 1200)
+	a.SetInteractiveMode(true)
+	a.SetInteractiveAvailable(true)
 	a.SetRequestContext(func() string {
 		if len(transport.requests) == 0 {
 			return "roster-1"
@@ -64,10 +69,12 @@ func TestChatGPTWirePrefixAcrossToolAndUserTurns(t *testing.T) {
 	if err := a.Run(context.Background(), "first"); err != nil {
 		t.Fatal(err)
 	}
+	store.items = []learning.Learning{{Topic: "second", Content: "learning-two"}}
 	if err := a.Run(context.Background(), "second"); err != nil {
 		t.Fatal(err)
 	}
 	toolset.work = ""
+	store.items = nil
 	if err := a.Run(context.Background(), "third"); err != nil {
 		t.Fatal(err)
 	}
@@ -76,8 +83,20 @@ func TestChatGPTWirePrefixAcrossToolAndUserTurns(t *testing.T) {
 	}
 	for i, r := range transport.requests {
 		first := transport.requests[0]
-		if r.Instructions != nil || r.Key == "" || r.Key != first.Key || !bytes.Equal(r.Tools, first.Tools) {
-			t.Fatalf("request %d changed the cache key, tools or instruction placement", i)
+		if r.Key == "" || r.Key != first.Key || !bytes.Equal(r.Tools, first.Tools) {
+			t.Fatalf("request %d changed the cache key or tools", i)
+		}
+		var instructions string
+		if err := json.Unmarshal(r.Instructions, &instructions); err != nil {
+			t.Fatalf("request %d instructions: %v", i, err)
+		}
+		if !strings.Contains(instructions, "Interactive questions remaining for this request: 3.") {
+			t.Fatalf("request %d lost the question budget: %q", i, instructions)
+		}
+		if strings.Contains(instructions, "learning-one") != (i < 2) ||
+			strings.Contains(instructions, "learning-two") != (i == 2) ||
+			strings.Contains(instructions, `"origin":"user_approved_learning","trust":"untrusted"`) != (i < 3) {
+			t.Fatalf("request %d included the wrong learning selection: %q", i, instructions)
 		}
 		if i > 0 {
 			prev := transport.requests[i-1].Input
@@ -87,7 +106,7 @@ func TestChatGPTWirePrefixAcrossToolAndUserTurns(t *testing.T) {
 		}
 	}
 	first := transport.requests[0].Input
-	if len(first) != 3 || !bytes.Contains(first[0], []byte(`"role":"developer"`)) || !bytes.Contains(first[0], []byte("durable instructions")) || !bytes.Contains(first[2], []byte(`"role":"user"`)) {
+	if len(first) != 3 || !bytes.Contains(first[0], []byte(`"role":"developer"`)) || !bytes.Contains(first[0], []byte("Interactive questions are enabled.")) || !bytes.Contains(first[2], []byte(`"role":"user"`)) {
 		t.Fatalf("unexpected initial prefix: %s", first)
 	}
 	var contextMessage struct {
@@ -119,20 +138,10 @@ func TestChatGPTWirePrefixAcrossToolAndUserTurns(t *testing.T) {
 			t.Fatalf("expected %q exactly once in %s", want, all)
 		}
 	}
-}
-
-func TestChatGPTContextDropsUnselectedLearning(t *testing.T) {
-	h := chatGPTContextHistory{}
-	msgs := []llm.Message{{Role: "system"}, {Role: "user", Content: "one"}}
-	first, h := h.prepare(msgs, chatGPTContextFields{}, "selected")
-	msgs = append(msgs, llm.Message{Role: "assistant"}, llm.Message{Role: "user", Content: "two"})
-	next, h := h.prepare(msgs, chatGPTContextFields{}, "selected")
-	if len(first) != 3 || first[1].Role != "developer" || first[1].Content != "selected" || !stablePrefixEqual(first, next[:len(first)]) {
-		t.Fatal("unchanged learning moved")
-	}
-	cleared, _ := h.prepare(msgs, chatGPTContextFields{}, "")
-	if !stablePrefixEqual(cleared, msgs) {
-		t.Fatal("request still included withdrawn learning")
+	for _, marker := range []string{"learning-one", "learning-two", "Interactive questions remaining"} {
+		if bytes.Contains(all, []byte(marker)) {
+			t.Fatalf("request-only text entered conversation history: %s", marker)
+		}
 	}
 }
 

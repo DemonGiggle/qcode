@@ -52,6 +52,9 @@ type Request struct {
 	Thinking string
 	Messages []Message
 	Tools    []Tool
+	// RequestOnlyInstructions carries current-request guidance outside the
+	// replayable conversation. The ChatGPT adapter encodes it after history.
+	RequestOnlyInstructions string
 	// Temperature is optional: nil preserves the provider's model default.
 	// A non-nil value, including zero, is sent only by adapters that support it.
 	Temperature *float64

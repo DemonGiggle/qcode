@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -33,9 +34,9 @@ func TestChatGPTCodexParityBaselineWire(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = p.(*chatGPTProvider).doCodex(context.Background(), Request{
-		Model:           "gpt-6.1-sol",
-		PromptCacheKey:  "session-key",
-		Messages:        []Message{{Role: "system", Content: "durable"}, {Role: "user", Content: "question"}},
+		Model:          "gpt-6.1-sol",
+		PromptCacheKey: "session-key",
+		Messages:       []Message{{Role: "system", Content: "durable"}, {Role: "user", Content: "question"}},
 	}, chatgptoauth.Tokens{AccessToken: "test"}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -60,6 +61,45 @@ func TestChatGPTCodexParityBaselineWire(t *testing.T) {
 	}
 	if !strings.Contains(string(encoded), "durable") {
 		t.Fatalf("leading developer instructions missing: %s", encoded)
+	}
+}
+
+func TestChatGPTRequestOnlyInstructionsFollowReplayableInput(t *testing.T) {
+	for _, tc := range []struct {
+		model, baseURL string
+		topLevel       bool
+	}{
+		{model: "gpt-6.2-sol", topLevel: true},
+		{model: "gpt-6.2-astra", topLevel: true},
+		{model: "gpt-6.10-test", topLevel: true},
+		{model: "gpt-7", topLevel: true},
+		{model: "gpt-6.1-sol"},
+		{model: "gpt-5.6"},
+		{model: "unknown"},
+		{model: "gpt-6.2-sol", baseURL: "https://proxy.example/v1"},
+	} {
+		t.Run(tc.model+"/"+tc.baseURL, func(t *testing.T) {
+			provider := &chatGPTProvider{baseURL: tc.baseURL}
+			rest := []Message{{Role: "user", Content: "question"}, {Role: "tool", ToolCallID: "call_1", Content: "result"}}
+			baseline := provider.buildCodexBody(Request{Model: tc.model}, "durable", rest, true)
+			baseItems := baseline["input"].([]any)
+			for _, guidance := range []string{"retry only the failed action", "another notice", ""} {
+				body := provider.buildCodexBody(Request{Model: tc.model, RequestOnlyInstructions: guidance}, "durable", rest, true)
+				items := body["input"].([]any)
+				wantItems := baseItems
+				var wantInstructions any
+				if guidance != "" {
+					if tc.topLevel {
+						wantInstructions = guidance
+					} else {
+						wantItems = append(append([]any(nil), baseItems...), responsesMessage("developer", guidance, nil))
+					}
+				}
+				if body["instructions"] != wantInstructions || !reflect.DeepEqual(items, wantItems) {
+					t.Fatalf("guidance %q produced input %v and instructions %v", guidance, items, body["instructions"])
+				}
+			}
+		})
 	}
 }
 
