@@ -342,6 +342,10 @@ type Config struct {
 	// provider; other providers ignore it.
 	ChatGPTOAuthPath   string
 	InsecureSkipVerify bool
+	// WireAPI selects the wire protocol for providers that speak more than
+	// one. Empty selects the provider's default. The openai provider honors
+	// "responses" (POST /responses); anything else keeps Chat Completions.
+	WireAPI string
 	// ModelMeta supplies exact-model reasoning choices from Models.dev. Request
 	// and replay formats remain in qcode's provider adapters.
 	ModelMeta *ProviderModelMeta

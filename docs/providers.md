@@ -149,11 +149,35 @@ export OPENAI_API_KEY=...
 qcode --provider openai --model gpt-5
 ```
 
+The `openai` provider speaks Chat Completions by default. Set
+`wire_api = "responses"` in `[providers.openai]` (or in a named instance with
+`type = "openai"`) to speak the OpenAI Responses API instead:
+
+```toml
+[providers.openai]
+wire_api = "responses"
+```
+
+With `wire_api = "responses"`, requests go to `POST /responses` with the same
+API-key auth, full conversation history resend (`store: false`), and the same
+prompt-cache policy as Chat Completions: `prompt_cache_key` is sent only on
+the official `https://api.openai.com/v1` endpoint (and is withheld for custom
+`base_url` gateways), a 400 that rejects a cache field retries once without
+it, and durable system content leads the input as a developer message while
+request-only guidance uses top-level `instructions` on GPT-6.2 and later
+(otherwise a trailing developer message). `CacheReadTokens`/`CacheWriteTokens`
+are reported under `/usage` exactly as on the Chat route. Set
+`wire_api = "chat_completions"` (the default) to roll back. Scope:
+`wire_api` is honored only by the `openai` provider kind; unknown values are
+a config error and it is rejected for other providers.
+
 ### Thinking levels
 
 For the official OpenAI endpoint, qcode reads the exact model's reasoning
 effort choices from the public [Models.dev catalog](https://models.dev/api.json)
-and sends a selected value through Chat Completions' `reasoning_effort` field.
+and sends a selected value through Chat Completions' `reasoning_effort` field
+(or the Responses API's `reasoning: {effort, summary}` object when
+`wire_api = "responses"`; encrypted reasoning is replayed across tool turns).
 On first use, qcode caches this metadata at
 `qcode/openai-model-meta-v1.json` in the user's cache directory. Refresh it with:
 

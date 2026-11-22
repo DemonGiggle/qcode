@@ -31,14 +31,15 @@ qcode registers exactly four providers (`internal/llm/types.go` registry via
 
 | Registered name | Default endpoint | Wire protocols used by `Complete` |
 | --- | --- | --- |
-| `openai` | `https://api.openai.com/v1` | OpenAI Chat Completions only |
+| `openai` | `https://api.openai.com/v1` | Chat Completions (default); Responses with `wire_api = "responses"` (opt-in) |
 | `chatgpt` | `https://api.openai.com/v1` (SIWC Responses contract) | Shared Responses only |
 | `opencode-go` | `https://opencode.ai/zen/go/v1` | Chat Completions (default), shared Responses (selected models), Anthropic Messages (selected models) |
 | `ollama` | `http://127.0.0.1:11434` | Ollama `/api/chat` only |
 
 Anthropic Messages and OpenAI Responses are **protocols**, not separately
-registered providers. They are reachable only through the `opencode-go`
-route map (Section 3) and through `chatgpt` (Responses only). Do not describe
+registered providers. Responses is reachable three ways: through the
+`opencode-go` route map (Section 3), through `chatgpt` (Responses only), and
+through `openai` when `wire_api = "responses"` is configured. Do not describe
 them as providers in user-facing text, flags, or accounting labels.
 
 Related protocol-sharing facts (verified gateway):
@@ -66,7 +67,8 @@ this order (verified gateway, `internal/llm/openai.go`,
 
 | # | Condition | Request path | Parser |
 | --- | --- | --- | --- |
-| 1 | provider `openai` (any model, any `base_url`) | `POST {base}/chat/completions` | `parseOpenAIStream` |
+| 1 | provider `openai`, `wire_api` unset or `chat_completions` (default; any model, any `base_url`) | `POST {base}/chat/completions` | `parseOpenAIStream` |
+| 1a | provider `openai`, `wire_api = "responses"` (any model, any `base_url`) | `POST {base}/responses` | `parseResponsesStream` |
 | 2 | provider `opencode-go`, model in Responses route map | `POST {base}/responses` | `parseResponsesStream` |
 | 3 | provider `opencode-go`, model in Messages route map | `POST {base}/messages` | `parseAnthropicStream` |
 | 4 | provider `opencode-go`, any other model (including unknown IDs) | `POST {base}/chat/completions` | `parseOpenAIStream` |
@@ -150,6 +152,46 @@ change and needs its own reviewed route/model evidence.
   documented upstream and varies by model. qcode token counts are not costs:
   there is no pricing table in the client, and counts must never be
   presented as billing.
+
+### 3.1a OpenAI Responses route (opt-in: `wire_api = "responses"`)
+
+- **Endpoint / override handling (verified gateway):** `POST
+  {base}/responses` with `base` defaulting to `https://api.openai.com/v1`.
+  Opt-in per provider profile via `wire_api` in `[providers.openai]` (or a
+  named instance with `type = "openai"`); unset or `chat_completions` keeps
+  3.1. Custom `base_url` keeps the same Responses route; it only changes
+  the host. Streaming, usage accounting and cache accounting reuse the
+  shared Responses core (`parseResponsesStream`, `responsesUsageWire`,
+  `buildResponsesBody` in `internal/llm/responses.go`).
+- **Stateless resend (verified gateway):** the route defaults `store:
+  false`; qcode resends the full conversation each turn. `store` is only
+  enabled when the caller opts into `StoreResponses`,
+  `PreviousResponseID`, or `ConversationID`. Full history is resent in all
+  cases.
+- **Durable instructions (verified gateway):** leading system messages are
+  lifted into a leading `developer` input message, matching the ChatGPT SIWC
+  policy. Request-only guidance goes to top-level `instructions` for
+  GPT-6.2+ on the official endpoint (billed uncached, keeps the input prefix
+  stable); on older models or custom endpoints it is appended as a trailing
+  developer message.
+- **Cache control (verified gateway):** `prompt_cache_key` is sent only on
+  the official endpoint and only when the caller supplies one (the agent
+  derives it per session, provider, model and purpose). A 400 that rejects
+  cache fields is retried once with them removed; a rejection naming only
+  `prompt_cache_options`/`comparison_response` keeps the stable
+  `prompt_cache_key`. Other 400s are not retried. Cache-write tokens are
+  mapped from `input_tokens_details.cache_write_tokens` when reported.
+- **Thinking (verified gateway):** Models.dev reasoning efforts are sent as
+  the Responses `reasoning: {effort, summary:"auto"}` object (not Chat's
+  `reasoning_effort`); GPT-6.2+ `none` support follows the catalog entry.
+  Encrypted reasoning items in the response output are replayed on
+  subsequent turns.
+- **Temperature:** omitted for reasoning-capable models, sent otherwise,
+  mirroring the Chat route.
+- **Failure semantics (verified gateway):** terminal `response.failed` /
+  `response.incomplete` surface as `ResponsesFailedError` /
+  `ResponsesIncompleteError` carrying partial usage. Rejected cache fields
+  are the only automatically retried failure.
 
 ### 3.2 OpenAI-compatible custom endpoints (same Chat path, unofficial host)
 

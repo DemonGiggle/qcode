@@ -57,7 +57,7 @@ func (b *providerBuilder) connection(name string, endpoint *string) llm.Config {
 	}
 	return llm.Config{InstanceName: name, BaseURL: base, APIKey: key, HTTP: b.launch.HTTP,
 		InsecureSkipVerify: b.launch.InsecureSkipVerify, ChatGPTOAuthPath: b.config.ChatGPT.OAuthPath,
-		RegisterSecrets: b.policy.RegisterSecrets}
+		RegisterSecrets: b.policy.RegisterSecrets, WireAPI: b.config.ProviderWireAPI(name)}
 }
 
 // availability reports whether name can be selected without additional setup.

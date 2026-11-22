@@ -66,6 +66,9 @@ func inheritInstances(cfg *Config, keyDirs map[string]string) error {
 		if p.Thinking == nil {
 			p.Thinking = base.Thinking
 		}
+		if p.WireAPI == nil {
+			p.WireAPI = base.WireAPI
+		}
 		if p.APIKey == nil && p.APIKeyPath == nil {
 			p.APIKey, p.APIKeyPath = base.APIKey, base.APIKeyPath
 			keyDirs[name] = keyDirs[kind]

@@ -26,6 +26,11 @@ type openAIProvider struct {
 	userAgent    string
 	sessionID    string
 	modelMeta    *ProviderModelMeta
+	// wireAPI selects the protocol for the openai provider kind: "" or
+	// "chat_completions" (default) posts to /chat/completions; "responses"
+	// posts to /responses. Honored only when name == "openai"; gemini and
+	// opencode-go keep their existing routes.
+	wireAPI string
 }
 
 // SessionIdentity preserves the non-secret routing identity used by OpenCode Go.
@@ -67,7 +72,13 @@ func newOpenAICompatible(config Config, defaultBaseURL, name, userAgent, session
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
-	return &openAIProvider{instanceName: config.InstanceName, baseURL: baseURL, apiKey: config.APIKey, client: httpClient(config), name: name, userAgent: userAgent, sessionID: sessionID}, nil
+	wireAPI := ""
+	if name == "openai" {
+		// Normalized at config load; anything unrecognized stays on Chat
+		// Completions rather than failing provider construction.
+		wireAPI = strings.ToLower(strings.TrimSpace(config.WireAPI))
+	}
+	return &openAIProvider{instanceName: config.InstanceName, baseURL: baseURL, apiKey: config.APIKey, client: httpClient(config), name: name, userAgent: userAgent, sessionID: sessionID, wireAPI: wireAPI}, nil
 }
 
 func (p *openAIProvider) Name() string {
@@ -197,6 +208,9 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 	}
 	if p.name == "opencode-go" && openCodeGoModelRoutes[input.Model] == openCodeGoMessagesRoute {
 		return p.completeAnthropicMessages(ctx, input, onText)
+	}
+	if p.name == "openai" && p.wireAPI == "responses" {
+		return p.completeOpenAIResponses(ctx, input, onText)
 	}
 	capability := p.ThinkingCapability(input.Model)
 	messages := make([]openAIMessage, 0, len(input.Messages))

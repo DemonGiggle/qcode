@@ -249,7 +249,10 @@ Worker-tab edits remain session-only; persistence failures are reported.
 
 Each provider can have its own optional `[providers.<name>]` table containing
 `base_url`, `api_key_path` (preferred), `api_key` (deprecated inline),
-`model`, and `thinking`. Built-in profiles are `ollama`, `ollama-cloud`, `openai`, `gemini`,
+`model`, and `thinking`. The `openai` profile additionally accepts
+`wire_api`: `chat_completions` (the default) or `responses` to opt into the
+OpenAI Responses API (`POST /responses`); it is rejected for other provider
+kinds. Built-in profiles are `ollama`, `ollama-cloud`, `openai`, `gemini`,
 `opencode-go`, and `chatgpt`. Named instances add a `type` field identifying one
 of these kinds; see [named instances](#named-provider-instances). Profiles do not
 change the active provider by themselves; the root `provider` selects the
@@ -262,6 +265,7 @@ provider = "openai"
 api_key_path = "~/.config/qcode/openai.key"
 model = "gpt-5"
 thinking = "high"
+# wire_api = "responses" # opt into the Responses API; chat_completions is the default
 
 [providers.ollama]
 base_url = "http://127.0.0.1:11434"
