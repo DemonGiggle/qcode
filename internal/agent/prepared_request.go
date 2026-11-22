@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -300,12 +301,22 @@ func (a *Agent) prepareNormalRequest(ctx context.Context, recoveryInstruction st
 		systemContent = messages[0].Content
 	}
 	prefixHash := hashRequestPrefix(systemContent, toolsHash, backend, a.model, a.thinking, mode, cwd, extra, dynamic, a.taskContext, notice, recovery)
+	request := llm.Request{
+		Model: a.model, Thinking: a.thinking, Messages: messages, Tools: toolsCopy,
+		RequestOnlyInstructions: requestOnlyInstructions,
+		PromptCacheKey:          a.chatCacheKey(backend, a.model),
+	}
+	if os.Getenv("QCODE_RESPONSES_DIAGNOSTICS") == "1" {
+		request.ReportCacheComparison = true
+		request.ComparisonResponseID = a.LastResponseID()
+	}
+	// Stateful continuation (previous_response_id) stays Request-layer
+	// opt-in for callers that send a true delta. Agent auto-wiring is
+	// intentionally diagnostics-only: sending full history alongside
+	// previous_response_id would duplicate every prior turn server-side
+	// (~2x input tokens), so delta sending is deferred.
 	prep := preparedRequest{
-		Request: llm.Request{
-			Model: a.model, Thinking: a.thinking, Messages: messages, Tools: toolsCopy,
-			RequestOnlyInstructions: requestOnlyInstructions,
-			PromptCacheKey:          a.chatCacheKey(backend, a.model),
-		},
+		Request:      request,
 		Estimate:     estimate,
 		ToolsHash:    toolsHash,
 		PrefixHash:   prefixHash,

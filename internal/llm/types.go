@@ -67,11 +67,193 @@ type Request struct {
 	// cache-field rejection (safe: a 400 rejects before execution); no adapter
 	// may replay a potentially billable completion.
 	PromptCacheKey string
+	// Responses opt-ins (issue #116).
+	//
+	// PreviousResponseID opts into stored history. Supply only new items in
+	// Messages when using this field. If the server rejects the ID, retry
+	// with full history and no ID. Sign in with ChatGPT HTTP rejects this option.
+	PreviousResponseID string
+	// StoreResponses opts into storage on compatible Responses routes.
+	// Cache diagnostics can use a completed response ID with storage disabled.
+	StoreResponses bool
+	// ComparisonResponseID opts into prompt-cache diagnostics
+	// (prompt_cache_options.comparison_response_id). It never changes
+	// prefix matching, hit rate, or billing; it only asks the server to
+	// report prompt_cache_diagnostics for this request. On a 400 mentioning
+	// prompt_cache_options/comparison the provider retries once without it.
+	ComparisonResponseID string
+	// ReportCacheComparison records the local diagnostic outcome even when
+	// there is no baseline ID. Only ComparisonResponseID affects the wire.
+	ReportCacheComparison bool
+	// ConversationID opts into the Conversations API container
+	// (conversation: "...") for persistent server-side history. Use it
+	// independently of PreviousResponseID on compatible Responses routes.
+	ConversationID string
+	// ResponseFormat opts into structured output (text.format). Nil preserves
+	// the default free-text wire.
+	ResponseFormat *ResponsesTextFormat
+	// ToolChoice forwards Responses tool_choice (for example "auto",
+	// "required", or {"type":"function","name":"..."}). Nil omits it.
+	ToolChoice any
+	// ParallelToolCalls forwards parallel_tool_calls when non-nil.
+	ParallelToolCalls *bool
+	// MaxOutputTokens forwards max_output_tokens when non-nil.
+	MaxOutputTokens *int
+	// ServiceTier forwards service_tier (for example "auto", "default",
+	// "flex", "priority") when non-empty.
+	ServiceTier string
+	// Metadata forwards provider metadata when non-nil.
+	Metadata map[string]any
+	// Background forwards background:true for async handling when non-nil.
+	Background *bool
+	// Truncation forwards truncation ("auto"/"disabled") when non-empty.
+	Truncation string
+	// Include forwards Responses include (for example
+	// ["reasoning.encrypted_content"]) when non-empty.
+	Include []string
+	// ReasoningSummary overrides the reasoning summary detail
+	// ("auto"/"concise"/"detailed") when non-empty. Empty preserves the
+	// thinkingFields default (auto when effort is enabled).
+	ReasoningSummary string
+	// Verbosity forwards text.verbosity when non-empty.
+	Verbosity string
+	// BuiltinTools carries passthrough Responses built-in tools
+	// (for example {"type":"web_search"}). Callers must enforce a config
+	// allowlist before setting; the provider only validates the type is a
+	// known built-in and drops unknown entries. Empty preserves the
+	// function-only wire.
+	BuiltinTools []map[string]any
 }
 
 type Response struct {
 	Message Message
 	Usage   *Usage
+	// ResponseID is the completed Responses id (resp_...) when reported.
+	// It seeds the next PreviousResponseID or ComparisonResponseID for
+	// opt-in stateful or diagnostics flows. Empty when unreported.
+	ResponseID string
+	// CacheDiagnostics is the parsed prompt_cache_diagnostics for this
+	// completion, if the server reported it. Nil means unreported
+	// (diagnostics not requested, model without support, or no record).
+	// Diagnostic counts can differ from usage counts; billing always follows
+	// Usage, never diagnostics.
+	CacheDiagnostics *ResponsesCacheDiagnostics
+	// ComparisonStatus describes what the client sent on this Responses call.
+	ComparisonStatus CacheComparisonStatus
+}
+
+// CacheComparisonStatus records the request path independently of any
+// provider-reported diagnostics. Empty leaves ordinary requests quiet.
+type CacheComparisonStatus string
+
+const (
+	CacheComparisonNoBaseline       CacheComparisonStatus = "no_baseline"
+	CacheComparisonRequested        CacheComparisonStatus = "requested"
+	CacheComparisonRetriedWithoutID CacheComparisonStatus = "retried_without_comparison"
+)
+
+func (r Request) comparisonStatus() CacheComparisonStatus {
+	if r.ComparisonResponseID != "" {
+		return CacheComparisonRequested
+	}
+	if r.ReportCacheComparison {
+		return CacheComparisonNoBaseline
+	}
+	return ""
+}
+
+// Summary renders local observations separately from the server's type and reason.
+func (s CacheComparisonStatus) Summary(diag *ResponsesCacheDiagnostics) string {
+	var observation string
+	switch s {
+	case CacheComparisonNoBaseline:
+		observation = "skipped (no previous completed response ID)"
+	case CacheComparisonRetriedWithoutID:
+		observation = "retried without comparison after a cache-field rejection"
+	case CacheComparisonRequested:
+		if diag == nil {
+			return "requested, but the provider returned no usable diagnostics"
+		}
+	}
+	if diag == nil {
+		return observation
+	}
+	if observation != "" {
+		observation += ". Provider reported "
+	}
+	observation += fmt.Sprintf("%q", diag.Type)
+	if diag.Reason != "" {
+		observation += fmt.Sprintf(" (%q)", diag.Reason)
+	}
+	return observation
+}
+
+// ResponsesCacheDiagnostics is the parsed prompt_cache_diagnostics object
+// (Responses API, GPT-5.6+). See
+// https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics
+type ResponsesCacheDiagnostics struct {
+	// Type is cache_hit, cache_miss, comparison_response_not_found, or
+	// unavailable.
+	Type string `json:"type"`
+	// Reason is the miss classifier (for example tools_changed,
+	// instructions_changed, model_changed). Empty for hits and for
+	// not_found/unavailable results.
+	Reason string `json:"reason,omitempty"`
+	// ComparisonReusableTokens is the raw token count of the comparison
+	// response's reusable prefix, when reported. Nil means unreported.
+	ComparisonReusableTokens *int `json:"comparison_reusable_tokens,omitempty"`
+	// CacheMissedTokens estimates how many reusable tokens were not reused.
+	// Nil means unreported.
+	CacheMissedTokens *int `json:"cache_missed_tokens,omitempty"`
+}
+
+// SuggestedFix returns the documented fix for the miss reason, or "" when
+// unknown. It extends the "Fix a cache miss" table (with an extra
+// instructions_changed entry for 6.2+ top-level instructions) so trace
+// output can point at the actionable change without re-reading docs.
+func (d *ResponsesCacheDiagnostics) SuggestedFix() string {
+	if d == nil {
+		return ""
+	}
+	return ResponsesDiagnosticsFix(d.Reason)
+}
+
+// ResponsesDiagnosticsFix maps a prompt_cache_diagnostics reason to its
+// documented fix. Unknown reasons return "".
+func ResponsesDiagnosticsFix(reason string) string {
+	switch reason {
+	case "model_changed":
+		return "Use the same model for requests intended to share a cached prefix."
+	case "prompt_cache_key_changed":
+		return "Keep a stable prompt_cache_key within each accounting group; omit the key unless separate cache accounting is needed."
+	case "service_tier_changed":
+		return "Keep the service tier consistent for requests expected to share a prefix."
+	case "tools_changed":
+		return "Keep tool definitions and ordering stable; use tool_choice:none or allowed_tools instead of rewriting the tool list."
+	case "text_format_changed":
+		return "Keep top-level text.format stable; append a format update mid-conversation on supported GPT-6+ models."
+	case "reasoning_effort_changed":
+		return "On supported GPT-6+ models append a configuration_update input item to change effort mid-conversation; otherwise keep reasoning.effort consistent."
+	case "verbosity_changed":
+		return "Keep text.verbosity consistent across requests intended to share a prefix."
+	case "context_compacted":
+		return "Preserve stable instructions and let later turns build on the compacted context; fewer input tokens can still save money despite lower reuse."
+	case "input_changed":
+		return "Preserve earlier messages and tool results and append new turns; keep changing content after the reusable prefix."
+	case "instructions_changed":
+		return "Keep durable instructions byte-identical at the start of input; send per-request guidance via top-level instructions (6.2+) so it does not poison the prefix."
+	default:
+		return ""
+	}
+}
+
+// ResponsesTextFormat carries a structured-output text.format override.
+type ResponsesTextFormat struct {
+	// Type is "json_schema", "json_object", or "text".
+	Type   string
+	Name   string
+	Schema map[string]any
+	Strict *bool
 }
 
 // ToolResult is the normalized output returned by a tool implementation.

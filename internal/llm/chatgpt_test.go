@@ -146,6 +146,34 @@ func TestChatGPTCompleteRefreshesOnceOn401(t *testing.T) {
 	}
 }
 
+func TestChatGPTTemporaryFailureRetriesSameRequest(t *testing.T) {
+	path := writeChatGPTOAuth(t, chatgptoauth.Tokens{AccessToken: "test-access", RefreshToken: "test-refresh"})
+	var bodies []string
+	client := doerFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != chatGPTBaseURL+"/responses" || r.Header.Get("Authorization") != "Bearer test-access" {
+			t.Fatal("availability retry changed the route or credentials")
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return nil, err
+		}
+		bodies = append(bodies, string(body))
+		if len(bodies) == 1 {
+			return &http.Response{StatusCode: 503, Header: http.Header{"Retry-After": {"0"}},
+				Body: io.NopCloser(strings.NewReader(`{"error":{"code":"subscription_sharing_usage_unavailable"}}`))}, nil
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(responsesStream("ok")))}, nil
+	})
+	p, err := newChatGPT(Config{ChatGPTOAuthPath: path, HTTP: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := p.Complete(context.Background(), Request{Model: "gpt-6.2-sol", PromptCacheKey: "stable", Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
+	if err != nil || resp.Message.Content != "ok" || len(bodies) != 2 || bodies[0] != bodies[1] {
+		t.Fatalf("unexpected retry: calls=%d, response=%q, err=%v", len(bodies), resp.Message.Content, err)
+	}
+}
+
 func TestChatGPTModelsDecodesCodexCatalog(t *testing.T) {
 	path := writeChatGPTOAuth(t, chatgptoauth.Tokens{AccessToken: "a", RefreshToken: "r", AccountID: "acct-1"})
 	client := doerFunc(func(r *http.Request) (*http.Response, error) {

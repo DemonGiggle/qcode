@@ -329,7 +329,12 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 		}
 	}
 	a.contextWindow, a.contextOverride, a.contextMessages = s.ContextWindow, s.ContextOverride, s.ContextMessages
+	a.stateMu.Lock()
+	a.lastResponseID = ""
+	a.lastDiagnostics = nil
+	a.lastComparisonStatus = ""
 	a.sessionUsage, a.contextUsage = restoreSessionUsage(s.Usage, s.UsageVersion), restoreContextUsage(s.ContextUsage, s.UsageVersion)
+	a.stateMu.Unlock()
 	// Restored history is reference data with new provenance; any prior
 	// request-prefix calibration is invalid. The saved meter snapshot is
 	// preserved until the next preparation republishes it.

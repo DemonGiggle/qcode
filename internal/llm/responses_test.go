@@ -159,7 +159,7 @@ func TestOpenCodeGoResponsesSendsModelValidReasoningEffort(t *testing.T) {
 				if _, ok := body["temperature"]; ok {
 					t.Errorf("Responses request contains temperature")
 				}
-				return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader("data: [DONE]\n\n"))}, nil
+				return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(responsesStream("ok")))}, nil
 			})
 			provider, err := newOpenCodeGo(Config{HTTP: client})
 			if err != nil {

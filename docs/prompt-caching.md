@@ -684,8 +684,10 @@ UI, no costs, no provider capability switches.
 - Existing integer sums and JSON names are kept: `input_tokens`,
   `output_tokens`, `total_tokens`, `missing_completions`. `TotalTokens` is
   the sum of the known input and known output components (partial subtotal
-  when either side is missing). `Missing` keeps its meaning: completions
-  with no usable usage fields.
+  when either side is missing). Successful calls with no usable usage add
+  to `missing_completions`. Failed calls with no usable usage add to
+  `failed_without_usage`. Older saved totals can include failures in
+  `missing_completions`.
 - Added coverage bookkeeping (all `snake_case`): `requests`,
   `input_reported`, `output_reported`, `cache_read_reported`,
   `cache_write_reported`, `cache_read_tokens`, `cache_write_tokens`,
@@ -930,22 +932,27 @@ qcode baseline at the time of the comparison: `internal/llm/chatgpt.go`
   `configuration_update` for mid-session effort changes (no live
   measurement yet).
 
-### Why `/usage` shows missing cache-read fields
+### Interpreting zero and unavailable cache reads on SIWC
 
-`responsesUsageWire` already maps the documented Responses shape
-(`input_tokens_details.cached_tokens`, `cache_write_tokens`,
-`output_tokens_details.reasoning_tokens`) and `NormalizeUsage` keeps
-explicit zeros distinct from unknown. So a missing field in `/usage`/trace
-means the SIWC `response.completed` event carried no usable cache detail
-for that completion (omitted object, `null`, or only totals), or the
-request fell back to the no-cache baseline after a 400, or the reusable
-prefix was below the model minimum (1024 visible input tokens for
-GPT-5.6+), or the entry expired/evicted before reuse. `cache_write_tokens`
-without a top-level total, or `cache_write_tokens_details` TTL splits
-(`ttl_30m_tokens`/`ttl_12h_tokens`), are not separately parsed; the TTL
-itself is never sent by qcode (server default `30m` at 1.25x write,
-reads 0.1x, 0.05x on Astra/Sol/Terra). Presence-aware reporting is
-working as designed: unknown must not be displayed or billed as zero.
+qcode reads `response.usage.input_tokens_details.cached_tokens` from the
+terminal Responses event. A reported zero contributes zero reads and the
+reported input to the share. An absent or invalid cache count leaves that
+request outside the share. Neither outcome identifies the cause of a miss.
+Set `QCODE_RESPONSES_DIAGNOSTICS=1` before starting the session. After
+each completed Responses turn, `/usage` explains whether qcode skipped
+the comparison for lack of a baseline ID, sent it and received no usable
+report, retried without it after a cache-field rejection, or received a
+provider result. A returned `unavailable` is an explicit provider result. The share
+always uses the reported token counts. OpenAI's SIWC guide gives no minimum
+cache share for subscription traffic. [SIWC models and inference](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference) · [Prompt cache diagnostics](https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics)
+
+An HTTP rejection before streaming counts as a failed request without
+usage. On the official endpoint qcode retries a pre-stream HTTP 503 with
+`subscription_sharing_user_unavailable` or
+`subscription_sharing_usage_unavailable` once with the same credentials.
+It waits one second by default and honors a valid `Retry-After` of up to
+five seconds. For longer waits it surfaces the error immediately. A failure
+after streaming starts returns any reported partial usage. [SIWC errors and recovery](https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery)
 
 ### Remaining work (deferred, out of scope here)
 
@@ -963,3 +970,114 @@ Live matched-session hit-rate measurement (`sum(cached_tokens) /
 sum(input_tokens)`, cold vs repeated turns, latency retained) remains
 deferred by requester; fixture tests plus `go test ./...` are the
 acceptance basis for this issue.
+
+## Responses coverage for issue #116
+
+The default ChatGPT request uses `store:false`, sends the full history,
+and uses implicit caching and function tools. Cache comparisons and
+structured output are opt-in.
+
+Shared core: `internal/llm/responses.go:buildResponsesBody` is used by both
+the `chatgpt` and `opencode-go` Responses routes. The API-key `openai`
+provider still uses Chat Completions pending #115. `chatgpt` prepends
+durable instructions as the leading developer message and applies the 6.2+
+top-level `instructions` dual-track; other routes pass `responsesInput`
+directly. Cache-key policy (#81/Codex parity) is unchanged: only the official
+endpoint may send `prompt_cache_key`.
+
+### Phase 1 — Diagnostics (observability only)
+
+- Request: `llm.Request.ComparisonResponseID` ->
+  `prompt_cache_options.comparison_response_id`. Omit on the first turn; pass
+  the previous completed response `id` (`llm.Response.ResponseID`,
+  `Agent.LastResponseID`) on later turns. Testing a fix keeps the baseline id.
+- Response: `prompt_cache_diagnostics` parsed from
+  `response.completed:response.prompt_cache_diagnostics` into
+  `llm.Response.CacheDiagnostics` (`type/reason/comparison_reusable_tokens/
+  cache_missed_tokens`) and `Agent.LastDiagnostics`. Surfaced in the debug
+  trace as `cache_diagnostics` (`internal/trace:CacheDiagnostics`). The active agent’s
+  `/usage` shows the latest completed turn’s comparison status. With
+  diagnostics enabled, the JSON trace records `request_status` as
+  `no_baseline`, `requested`, or `retried_without_comparison`.
+  The `type` and `reason` fields describe a returned provider report.
+- Types: `cache_hit`, `cache_miss` (+`reason` + fix via
+  `ResponsesDiagnosticsFix`), `comparison_response_not_found` (expired/missing
+  record — pick another recent completed response from the same org),
+  `unavailable` (model without support or inconclusive — use the response
+  normally). Expired-id and old-model paths never fail the completion.
+- Billing: diagnostics never changes matching, hit rate, or billing.
+  `cache_hit` can still bill new tokens; 6.2+ can report `cache_hit` while
+  billing top-level `instructions` uncached. Always measure reuse and billing
+  with `usage.input_tokens_details.cached_tokens`, never with diagnostic
+  counts. SIWC uses ChatGPT plan access. API-key prices do not establish
+  plan charges.
+- Retry: a 400 mentioning `prompt_cache_options`/`comparison_response`
+  retries once without the comparison id (safe: 400 rejects before execution).
+  A comparison-only rejection keeps the stable `prompt_cache_key` so
+  accounting separation survives.
+- Agent wiring (no config migration): `prepareNormalRequest` reuses
+  `Agent.LastResponseID` as `comparison_response_id` only when
+  `QCODE_RESPONSES_DIAGNOSTICS=1`. Default stays stateless +
+  implicit-cache-only.
+
+### Phase 2 — Stateful continuation
+
+- [Sign in with ChatGPT over HTTP](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations#responses-api-requirements)
+  requires `store:false` and full input history. qcode rejects storage and
+  continuation options for this route before sending a request. OpenAI also
+  documents connection-local continuation for WebSocket clients.
+- On compatible `opencode-go` routes, callers can opt into storage and use
+  either `PreviousResponseID` or `ConversationID`. Send only the new items
+  when continuing. If the server rejects the ID, the caller can start a new
+  request with the full history. qcode returns the error so a delta never
+  gets sent as a standalone conversation.
+- Automatic continuation in the agent remains open. With
+  `previous_response_id`, prior input tokens still count toward billing.
+  The 40–80% cache-utilization improvement OpenAI reported was from
+  internal tests comparing Responses with Chat Completions. Measure any
+  continuation benefit on qcode's workload. [OpenAI migration guide](https://developers.openai.com/api/docs/guides/migrate-to-responses)
+
+### Phase 3 — Tools + structured output (opt-in)
+
+- `ResponseFormat` -> `text.format` (`json_schema`/`json_object`/`text` +
+  optional `verbosity` via `Verbosity`); `ToolChoice` -> `tool_choice`;
+  `ParallelToolCalls` -> `parallel_tool_calls`.
+- `BuiltinTools` passthrough for `web_search`/`file_search`/
+  `code_interpreter`/`computer`/`image_generation`/`mcp` on compatible
+  Responses routes. Sign in with ChatGPT HTTP forwards web search only,
+  subject to model and account support. A user-configurable allowlist
+  remains open.
+- Keep tool definitions and ordering stable; prefer `tool_choice:none` or an
+  allowlist over rewriting the list (`tools_changed` is the most common
+  miss).
+
+### Phase 4 — Reasoning / lifecycle + stream robustness
+
+- `ReasoningSummary` overrides the summary detail (`auto`/`concise`/
+  `detailed`) while keeping the `thinkingFields` effort; empty preserves the
+  `auto`-when-enabled default. `MaxOutputTokens`, `ServiceTier`, `Metadata`,
+  `Background`, `Truncation`, and `Include` (e.g.
+  `reasoning.encrypted_content`) are available on compatible routes.
+  Sign in with ChatGPT HTTP omits `Background`, `MaxOutputTokens`,
+  `Metadata`, and `Truncation`.
+- Stream: refusal text can come from a delta, `response.refusal.done`,
+  or the final output. A stream that ends before a terminal response
+  returns an error with the partial output. Terminal events also
+  capture the response ID, usage, and diagnostics when present.
+  `output_item.done` and `function_call_arguments.done` can fill gaps
+  in the streamed tool call.
+- Explicit cache controls (`ttl`/`retention`/explicit breakpoints) remain
+  unsent. The SIWC preview explicitly excludes `prompt_cache_retention`.
+- Truncation/failure semantics: `incomplete` (for example
+  `max_output_tokens`, `content_filter`) and `failed` abort the turn with
+  a typed `ResponsesIncompleteError`/`ResponsesFailedError`, but the
+  partial content, usage, response id, and diagnostics are preserved for
+  accounting and surfaced to the caller.
+
+Built-in tools stay Request-layer opt-in (`Request.BuiltinTools` with
+provider-side known-type allowlist); the agent Toolset does not auto-map MCP
+tools to Responses built-ins — that allowlist lives in a future config change.
+
+Fixtures cover cache diagnostics, cache accounting, and stream handling.
+Live GPT-5.6+ diagnostics and a multi-turn tool chain using server-side
+continuation are still unverified.

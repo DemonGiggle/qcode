@@ -110,14 +110,16 @@ func formatTotalTokens(s llm.SessionUsage) string {
 // input and known cache-read counts) and keeps the reported-subset wording.
 // Zero eligible input or zero eligible requests prints as "unavailable".
 func formatCachedShare(s llm.SessionUsage) string {
-	if s.CacheRatioRequests <= 0 || s.CacheRatioInputTokens <= 0 {
+	ratio, ok := s.CacheHitRatio()
+	if !ok {
 		return "unavailable"
 	}
-	if s.CacheRatioReadTokens < 0 || s.CacheRatioReadTokens > s.CacheRatioInputTokens {
-		return "unavailable"
+	percent := fmt.Sprintf("%.1f%%", ratio*100)
+	if s.CacheRatioReadTokens > 0 && percent == "0.0%" {
+		percent = "<0.1%"
 	}
-	ratio := float64(s.CacheRatioReadTokens) / float64(s.CacheRatioInputTokens)
-	return fmt.Sprintf("%.1f%% (based on %d/%d requests)", ratio*100, s.CacheRatioRequests, s.Requests)
+	return fmt.Sprintf("%s (based on %d/%d requests), %d of %d input tokens cached",
+		percent, s.CacheRatioRequests, s.Requests, s.CacheRatioReadTokens, s.CacheRatioInputTokens)
 }
 
 // formatUsageReport renders the read-only detailed view for /usage. It is a
@@ -145,6 +147,7 @@ func formatUsageReport(s llm.SessionUsage) string {
 		"  Cache-write tokens: " + formatReportedSum(s.CacheWriteTokens, s.CacheWriteReported, s.Requests),
 		"  Cached input share (reported subset): " + formatCachedShare(s),
 		fmt.Sprintf("  Missing completions: %d", s.Missing),
+		fmt.Sprintf("  Failed requests without usage: %d", s.FailedWithoutUsage),
 		"  Legacy uncertain totals: " + legacy,
 		"  Notes: Cached tokens occupy context and are included in input totals.",
 		"  Unknown means unreported, not zero. Partial subtotals are not bills. Mixed-provider totals are token sums only.",
@@ -165,7 +168,16 @@ func (u *UI) handleUsageCommand(fields []string) {
 		u.printSystemMessage(yellow + "Usage is unavailable." + reset)
 		return
 	}
-	u.printSystemMessage(formatUsageReport(runner.SessionUsage()))
+	report := formatUsageReport(runner.SessionUsage())
+	if source, ok := u.runner.(interface {
+		LastCacheComparison() (llm.CacheComparisonStatus, *llm.ResponsesCacheDiagnostics)
+	}); ok {
+		status, diag := source.LastCacheComparison()
+		if summary := status.Summary(diag); summary != "" {
+			report += "\n  Last cache comparison: " + summary
+		}
+	}
+	u.printSystemMessage(report)
 }
 
 func compactTokenUnit(tokens, unit int, suffix string) string {

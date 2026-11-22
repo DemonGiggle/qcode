@@ -31,13 +31,13 @@ func TestSessionUsageAccumulationIsolationAndReset(t *testing.T) {
 	if b.SessionUsage() != (llm.SessionUsage{}) {
 		t.Fatal("new agent inherited usage")
 	}
-	a.recordUsage(nil)
+	a.recordUsage(nil, nil)
 	want.Missing = 1
 	want.Requests = 3
 	if a.SessionUsage() != want {
 		t.Fatal("missing completion lost known totals")
 	}
-	a.recordUsage(&llm.Usage{InputTokens: llm.IntPtr(10), OutputTokens: llm.IntPtr(5)})
+	a.recordUsage(&llm.Usage{InputTokens: llm.IntPtr(10), OutputTokens: llm.IntPtr(5)}, nil)
 	if got := a.SessionUsage(); got.Missing != 1 || got.TotalTokens != 1515 {
 		t.Fatal(got)
 	}
@@ -56,7 +56,7 @@ func TestSessionUsageJSONAndCompaction(t *testing.T) {
 	if _, err := a.Compact(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	a.recordUsage(nil)
+	a.recordUsage(nil, nil)
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	if len(lines) != 2 {
 		t.Fatal(out.String())
