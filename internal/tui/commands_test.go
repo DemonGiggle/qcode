@@ -394,8 +394,10 @@ func TestFormatCompletedMessage(t *testing.T) {
 		tokens   *int
 		want     string
 	}{
-		{1250 * time.Millisecond, llm.IntPtr(103), "Completed in 1s (09/27 10:15) · 82.4 tokens/s"},
-		{500 * time.Millisecond, llm.IntPtr(0), "Completed in 500ms (09/27 10:15) · 0.0 tokens/s"},
+		{1250 * time.Millisecond, llm.IntPtr(103), "Completed in 1s (09/27 10:15) · 82 tokens/s"},
+		{500 * time.Millisecond, llm.IntPtr(0), "Completed in 500ms (09/27 10:15) · 0 tokens/s"},
+		{time.Second, llm.IntPtr(1500), "Completed in 1s (09/27 10:15) · 1.5K tokens/s"},
+		{time.Second, llm.IntPtr(2_500_000), "Completed in 1s (09/27 10:15) · 2.5M tokens/s"},
 		{time.Second, nil, "Completed in 1s (09/27 10:15)"},
 		{0, llm.IntPtr(103), "Completed in <1ms (09/27 10:15)"},
 	} {

@@ -132,7 +132,7 @@ Interactive `write` and `edit` tool calls display numbered, 10-line Codex-style 
 
 ## Run completion notice
 
-Successful interactive runs end with a distinct colored notice, for example `Completed in 12s (09/27 10:15) · 125.0 tokens/s`. The rate is the total input and output tokens reported for that run divided by its full elapsed time, including tool calls. It is omitted if any model call in the run did not report both counts.
+Successful interactive runs end with a distinct colored notice, for example `Completed in 12s (09/27 10:15) · 1.5K tokens/s`. The rate is the total input and output tokens reported for that run divided by its full elapsed time, including tool calls. Rates are compacted with `K`/`M` suffixes once they reach a thousand. It is omitted if any model call in the run did not report both counts.
 
 ## HTML exports
 

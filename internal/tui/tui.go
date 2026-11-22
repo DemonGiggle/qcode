@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -2071,7 +2072,8 @@ func formatRunDuration(duration time.Duration) string {
 func formatCompletedMessage(duration time.Duration, completedAt time.Time, totalTokens *int) string {
 	message := "Completed in " + formatRunDuration(duration) + " (" + completedAt.Format("01/02 15:04") + ")"
 	if totalTokens != nil && duration > 0 {
-		message += fmt.Sprintf(" · %.1f tokens/s", float64(*totalTokens)/duration.Seconds())
+		rate := int(math.Round(float64(*totalTokens) / duration.Seconds()))
+		message += " · " + compactTokenCount(rate) + " tokens/s"
 	}
 	return message
 }
