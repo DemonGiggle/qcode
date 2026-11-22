@@ -165,8 +165,9 @@ the official `https://api.openai.com/v1` endpoint (and is withheld for custom
 `base_url` gateways), a 400 that rejects a cache field retries once without
 it, and durable system content leads the input as a developer message while
 request-only guidance uses top-level `instructions` on GPT-6.2 and later
-(otherwise a trailing developer message). `CacheReadTokens`/`CacheWriteTokens`
-are reported under `/usage` exactly as on the Chat route. Set
+(otherwise a trailing developer message). `/usage` reports cache reads
+exactly as on the Chat route; the Responses route additionally maps
+`input_tokens_details.cache_write_tokens` to `CacheWriteTokens`. Set
 `wire_api = "chat_completions"` (the default) to roll back. Scope:
 `wire_api` is honored only by the `openai` provider kind; unknown values are
 a config error and it is rejected for other providers.

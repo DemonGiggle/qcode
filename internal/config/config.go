@@ -610,7 +610,7 @@ func validateConfig(path string, cfg Config, partial bool) error {
 			switch wire {
 			case "", WireAPIChatCompletions, WireAPIResponses:
 			default:
-				return fmt.Errorf("parse config %s: providers.%s.wire_api must be %q or %q, got %q", path, name, WireAPIChatCompletions, WireAPIResponses, *profile.WireAPI)
+				return fmt.Errorf("parse config %s: providers.%s.wire_api must be %q, %q, or empty, got %q", path, name, WireAPIChatCompletions, WireAPIResponses, *profile.WireAPI)
 			}
 			if wire != "" && kind != "" && kind != "openai" {
 				return fmt.Errorf("parse config %s: providers.%s.wire_api is only supported by the openai provider kind", path, name)

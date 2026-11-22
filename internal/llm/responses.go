@@ -128,6 +128,8 @@ func (p *openAIProvider) completeOpenAIResponses(ctx context.Context, input Requ
 	if official {
 		cacheKey = input.PromptCacheKey
 	}
+	usedCache := cacheKey != ""
+	usedComparison := input.ComparisonResponseID != ""
 	responsesCapability := responsesReasoningCapability(capability)
 	build := func(in Request, key string) map[string]any {
 		body := buildResponsesBody(in.Model, responsesCapability, in, items, key, official && key != "")
@@ -154,9 +156,10 @@ func (p *openAIProvider) completeOpenAIResponses(ctx context.Context, input Requ
 	}
 	var status *responsesStatusError
 	// Only a cache-field rejection is safe to retry: the request was rejected
-	// before execution, so no completion is replayed. Any other failure is
-	// returned unchanged.
-	if !errors.As(err, &status) || !isResponsesCacheFieldRejection(status.statusCode, status.body) {
+	// before execution, so no completion is replayed. Nothing to strip means
+	// no retry — sending the identical payload again cannot help. Any other
+	// failure is returned unchanged.
+	if !errors.As(err, &status) || !isResponsesCacheFieldRejection(status.statusCode, status.body) || (!usedCache && !usedComparison) {
 		return resp, err
 	}
 	// A key rejection strips all cache fields; a comparison-only rejection
@@ -176,7 +179,7 @@ func (p *openAIProvider) completeOpenAIResponses(ctx context.Context, input Requ
 	}
 	retry, retryErr := p.postResponses(ctx, cleanPayload, onText)
 	retry.ComparisonStatus = resp.ComparisonStatus
-	if input.ComparisonResponseID != "" {
+	if usedComparison {
 		retry.ComparisonStatus = CacheComparisonRetriedWithoutID
 	}
 	return retry, retryErr

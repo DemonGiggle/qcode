@@ -260,6 +260,28 @@ func TestOpenAIResponsesCacheKeyRejectionRetriesWithoutCacheFields(t *testing.T)
 	}
 }
 
+func TestOpenAIResponsesCacheWording400WithoutCacheFieldsIsNotRetried(t *testing.T) {
+	// Custom base URL: no prompt_cache_key is sent and no comparison is set,
+	// so a 400 that merely mentions cache fields must not trigger a retry.
+	var captured []capturedRequest
+	client := recordingClient(t, []*http.Response{errResponse("prompt caching is not supported on this model")}, &captured)
+	p := newWireAPIProvider(t, "responses", "http://gateway.test/v1", nil, client)
+	_, err := p.Complete(context.Background(), Request{
+		Model:          "gpt-6.2-sol",
+		Messages:       []Message{{Role: "user", Content: "hi"}},
+		PromptCacheKey: "cache-session", // must be withheld on a custom base URL
+	}, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if len(captured) != 1 {
+		t.Fatalf("requests = %d, want 1 (no cache fields sent, nothing to retry without)", len(captured))
+	}
+	if _, ok := captured[0].body["prompt_cache_key"]; ok {
+		t.Fatalf("custom base URL must not send prompt_cache_key: %s", captured[0].rawBody)
+	}
+}
+
 func TestOpenAIResponsesComparisonRejectionKeepsCacheKey(t *testing.T) {
 	var captured []capturedRequest
 	client := recordingClient(t, []*http.Response{
