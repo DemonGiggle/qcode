@@ -1060,7 +1060,14 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		taskCtx, cancel := context.WithCancel(ctx)
 		u.input.setCancel(cancel)
-		err = u.runActiveTask(taskCtx, fullLine)
+		var totalTokens *int
+		if runner, ok := u.runner.(interface {
+			RunWithUsage(context.Context, string) (*int, error)
+		}); ok {
+			totalTokens, err = runner.RunWithUsage(taskCtx, fullLine)
+		} else {
+			err = u.runActiveTask(taskCtx, fullLine)
+		}
 		u.input.setCancel(nil)
 		cancel()
 		u.drawStatusBar()
@@ -1070,7 +1077,7 @@ func (u *UI) Run(ctx context.Context) error {
 			u.printSystemMessage(yellow + formatAgentError(err.Error()) + reset)
 		} else {
 			completedAt := time.Now()
-			u.printSystemMessage(fmt.Sprintf("%s%s%s%s", magenta, bold, formatCompletedMessage(completedAt.Sub(started), completedAt), reset))
+			u.printSystemMessage(fmt.Sprintf("%s%s%s%s", magenta, bold, formatCompletedMessage(completedAt.Sub(started), completedAt, totalTokens), reset))
 		}
 	}
 }
@@ -2061,10 +2068,12 @@ func formatRunDuration(duration time.Duration) string {
 	return duration.Round(time.Millisecond).String()
 }
 
-// formatCompletedMessage renders the task completion notice as
-// "Completed in xxx (MM/DD HH:mm)".
-func formatCompletedMessage(duration time.Duration, completedAt time.Time) string {
-	return "Completed in " + formatRunDuration(duration) + " (" + completedAt.Format("01/02 15:04") + ")"
+func formatCompletedMessage(duration time.Duration, completedAt time.Time, totalTokens *int) string {
+	message := "Completed in " + formatRunDuration(duration) + " (" + completedAt.Format("01/02 15:04") + ")"
+	if totalTokens != nil && duration > 0 {
+		message += fmt.Sprintf(" · %.1f tokens/s", float64(*totalTokens)/duration.Seconds())
+	}
+	return message
 }
 
 func (u *UI) completeSlashCommand(line string, pos int, key rune) (string, int, bool) {

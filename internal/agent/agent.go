@@ -768,7 +768,7 @@ func (a *Agent) runWithInput(ctx context.Context, userText string, input *taskIn
 		a.reportProgress("Waiting for model response")
 		task.Resume()
 		streamPhase := ""
-		response, err := a.provider.Complete(ctx, prep.Request, func(event llm.StreamEvent) {
+		response, err := a.completeWithRunUsage(ctx, prep.Request, func(event llm.StreamEvent) {
 			if ctx.Err() != nil {
 				return
 			}

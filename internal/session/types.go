@@ -138,6 +138,8 @@ type Event struct {
 	DirectoryChanged bool
 	Agent            Summary
 	Duration         time.Duration
+	// TotalTokens is the finished prompt's input plus output usage, if known.
+	TotalTokens *int
 	// Consultation wakes consumers to read the durable consultation event log.
 	Consultation bool
 	// Delegation wakes consumers to read the durable delegation event log.

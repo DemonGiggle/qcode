@@ -141,6 +141,86 @@ func TestAgentManagerLifecycleAndReuse(t *testing.T) {
 	}
 }
 
+type promptUsageProvider struct{ release chan struct{} }
+
+func (*promptUsageProvider) Name() string { return "prompt-usage" }
+
+func (p *promptUsageProvider) Complete(ctx context.Context, request llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	last := request.Messages[len(request.Messages)-1]
+	response := llm.Response{Message: llm.Message{Role: "assistant", Content: "done"}}
+	switch {
+	case last.Role == "tool":
+		response.Usage = llm.NewUsage(llm.IntPtr(60), llm.IntPtr(20), llm.IntPtr(30), nil, nil, llm.IntPtr(5))
+	case last.Content == "use a tool":
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+			return llm.Response{}, ctx.Err()
+		}
+		response.Message = llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "tool-1", Name: "list_agents", Arguments: json.RawMessage(`{}`)}}}
+		response.Usage = llm.NewUsage(llm.IntPtr(30), llm.IntPtr(10), nil, nil, nil, nil)
+	case last.Content == "partial usage":
+		response.Usage = llm.NewUsage(llm.IntPtr(100), nil, nil, nil, nil, nil)
+	default:
+		response.Usage = llm.NewUsage(llm.IntPtr(20), llm.IntPtr(5), nil, nil, nil, nil)
+	}
+	return response, nil
+}
+
+func TestManagerCompletionUsageIsPerPrompt(t *testing.T) {
+	provider := &promptUsageProvider{release: make(chan struct{})}
+	manager := NewAgentManager(context.Background(), 1)
+	t.Cleanup(manager.Shutdown)
+	manager.SetFactory(func(id, name, model string, main bool) (*Agent, error) {
+		tools := manager.WrapToolset(id, &managerToolset{}, main)
+		return New(provider, model, tools, trace.New(io.Discard, false), io.Discard, 4), nil
+	})
+	if _, err := manager.CreateMain("test"); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		prompt string
+		tokens *int
+	}{
+		{"use a tool", llm.IntPtr(120)},
+		{"partial usage", nil},
+		{"next prompt", llm.IntPtr(25)},
+	}
+	for i, test := range tests {
+		submission, err := manager.Submit("main", test.prompt)
+		if err != nil || submission.QueuePosition != i {
+			t.Fatalf("submit %q: %+v, %v", test.prompt, submission, err)
+		}
+	}
+	close(provider.release)
+
+	deadline := time.After(2 * time.Second)
+	for _, test := range tests {
+		for {
+			select {
+			case event := <-manager.Events():
+				if event.Agent.Status != StatusCompleted {
+					continue
+				}
+				if event.Agent.CurrentTask != test.prompt || event.Duration <= 0 {
+					t.Fatalf("unexpected completion event: %+v", event)
+				}
+				if test.tokens == nil {
+					if event.TotalTokens != nil {
+						t.Fatalf("partial usage reported as total: %d", *event.TotalTokens)
+					}
+				} else if event.TotalTokens == nil || *event.TotalTokens != *test.tokens {
+					t.Fatalf("completion for %q: want %d tokens, got %+v", test.prompt, *test.tokens, event)
+				}
+			case <-deadline:
+				t.Fatalf("no completion event for %q", test.prompt)
+			}
+			break
+		}
+	}
+}
+
 type pausedCompactProvider struct {
 	started  chan struct{}
 	release  chan struct{}

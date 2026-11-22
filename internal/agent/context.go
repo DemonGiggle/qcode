@@ -69,7 +69,7 @@ func (a *Agent) Compact(ctx context.Context) (string, error) {
 		}
 		request := llm.Request{Model: a.model, Thinking: "", Messages: append([]llm.Message{{Role: "system", Content: prompt.ConversationCompact}}, msgs...), PromptCacheKey: a.compactCacheKey(backend, a.model)}
 		streamed := false
-		response, err := a.provider.Complete(ctx, request, func(event llm.StreamEvent) {
+		response, err := a.completeWithRunUsage(ctx, request, func(event llm.StreamEvent) {
 			if ctx.Err() != nil || event.Text == "" || streamed {
 				return
 			}

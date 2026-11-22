@@ -648,21 +648,22 @@ func (m *AgentManager) startRequestLocked(id string, s *managedSession, req *pro
 		defer m.wg.Done()
 		var outcome string
 		var err error
+		var totalTokens *int
 		if req.compact {
 			outcome, err = runner.Compact(runCtx)
 		} else {
-			err = runner.runWithInput(runCtx, req.prompt, req.input)
+			totalTokens, err = runner.runWithUsage(runCtx, req.prompt, req.input)
 			outcome = runner.LastResponse()
 		}
 		if runCtx.Err() != nil {
 			err = runCtx.Err()
 		}
 		cancel()
-		m.finish(id, req, err, outcome)
+		m.finish(id, req, err, outcome, totalTokens)
 	}()
 }
 
-func (m *AgentManager) finish(id string, req *promptRequest, err error, outcome string) {
+func (m *AgentManager) finish(id string, req *promptRequest, err error, outcome string, totalTokens *int) {
 	m.mu.Lock()
 	s := m.sessions[id]
 	if s == nil || s.active != req {
@@ -721,7 +722,10 @@ func (m *AgentManager) finish(id string, req *promptRequest, err error, outcome 
 		s.summary.Error = truncateUTF8(err.Error(), 1024)
 	}
 	s.summary.QueueDepth = len(s.queue)
-	m.emitLocked(s.summary, duration)
+	if err != nil {
+		totalTokens = nil
+	}
+	m.emitEventLocked(ManagerEvent{Agent: s.summary, Duration: duration, TotalTokens: totalTokens})
 	// Notify main about delegated sub-agent completion (success or fail) so it
 	// can gather details and decide next steps. Idle main starts the callback
 	// immediately; busy main queues it behind current work.
@@ -966,8 +970,13 @@ func (m *AgentManager) WrapToolset(id string, base Toolset, main bool) Toolset {
 }
 
 func (m *AgentManager) emitLocked(summary AgentSummary, duration time.Duration) {
+	m.emitEventLocked(ManagerEvent{Agent: summary, Duration: duration})
+}
+
+func (m *AgentManager) emitEventLocked(event ManagerEvent) {
+	event.Agent = cloneSummary(event.Agent)
 	select {
-	case m.events <- ManagerEvent{Agent: cloneSummary(summary), Duration: duration}:
+	case m.events <- event:
 	default:
 	}
 }

@@ -1,6 +1,37 @@
 package agent
 
-import "qcode/internal/llm"
+import (
+	"context"
+
+	"qcode/internal/llm"
+)
+
+type runUsageKey struct{}
+
+// RunWithUsage is Run with the prompt's total input and output tokens. The
+// total is nil if the run fails or any provider call omits either count.
+func (a *Agent) RunWithUsage(ctx context.Context, userText string) (*int, error) {
+	return a.runWithUsage(ctx, userText, nil)
+}
+
+func (a *Agent) runWithUsage(ctx context.Context, userText string, input *taskInput) (*int, error) {
+	var usage llm.SessionUsage
+	err := a.runWithInput(context.WithValue(ctx, runUsageKey{}, &usage), userText, input)
+	if err != nil || usage.Requests == 0 || usage.InputReported != usage.Requests || usage.OutputReported != usage.Requests {
+		return nil, err
+	}
+	return llm.IntPtr(usage.TotalTokens), nil
+}
+
+// completeWithRunUsage collects only calls made with this prompt's context,
+// including automatic compaction. Session-wide accounting is unchanged.
+func (a *Agent) completeWithRunUsage(ctx context.Context, request llm.Request, stream llm.StreamCallback) (llm.Response, error) {
+	response, err := a.provider.Complete(ctx, request, stream)
+	if usage, ok := ctx.Value(runUsageKey{}).(*llm.SessionUsage); ok {
+		usage.AddResult(response.Usage, err)
+	}
+	return response, err
+}
 
 // SessionUsage is safe to read while this agent is running in another tab.
 func (a *Agent) SessionUsage() llm.SessionUsage {

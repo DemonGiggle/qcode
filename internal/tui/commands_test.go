@@ -14,6 +14,7 @@ import (
 	term "qcode/internal/lineedit"
 
 	"qcode/internal/config"
+	"qcode/internal/llm"
 	"qcode/internal/session"
 )
 
@@ -382,6 +383,24 @@ func TestFormatRunDuration(t *testing.T) {
 	} {
 		if got := formatRunDuration(test.duration); got != test.want {
 			t.Errorf("formatRunDuration(%s) = %q, want %q", test.duration, got, test.want)
+		}
+	}
+}
+
+func TestFormatCompletedMessage(t *testing.T) {
+	completedAt := time.Date(2026, 9, 27, 10, 15, 0, 0, time.UTC)
+	for _, test := range []struct {
+		duration time.Duration
+		tokens   *int
+		want     string
+	}{
+		{1250 * time.Millisecond, llm.IntPtr(103), "Completed in 1s (09/27 10:15) · 82.4 tokens/s"},
+		{500 * time.Millisecond, llm.IntPtr(0), "Completed in 500ms (09/27 10:15) · 0.0 tokens/s"},
+		{time.Second, nil, "Completed in 1s (09/27 10:15)"},
+		{0, llm.IntPtr(103), "Completed in <1ms (09/27 10:15)"},
+	} {
+		if got := formatCompletedMessage(test.duration, completedAt, test.tokens); got != test.want {
+			t.Errorf("completion notice = %q, want %q", got, test.want)
 		}
 	}
 }

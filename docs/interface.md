@@ -132,7 +132,7 @@ Interactive `write` and `edit` tool calls display numbered, 10-line Codex-style 
 
 ## Run completion notice
 
-Successful interactive runs end with a distinct colored `Completed in ... (MM/DD HH:mm)` notice measuring the complete run across every model turn and tool call.
+Successful interactive runs end with a distinct colored notice, for example `Completed in 12s (09/27 10:15) · 125.0 tokens/s`. The rate is the total input and output tokens reported for that run divided by its full elapsed time, including tool calls. It is omitted if any model call in the run did not report both counts.
 
 ## HTML exports
 
