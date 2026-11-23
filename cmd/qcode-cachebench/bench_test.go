@@ -17,8 +17,8 @@ import (
 	"qcode/internal/llm"
 )
 
-// openAISSEServer returns an httptest server speaking OpenAI Chat Completions
-// SSE. Each response carries the next usage fixture in rotation.
+// openAISSEServer returns an httptest server speaking the OpenAI Responses
+// SSE protocol. Each response carries the next usage fixture in rotation.
 func openAISSEServer(t *testing.T, usages []string, onRequest func(r *http.Request, body []byte)) (*httptest.Server, *int) {
 	t.Helper()
 	calls := 0
@@ -29,9 +29,8 @@ func openAISSEServer(t *testing.T, usages []string, onRequest func(r *http.Reque
 			onRequest(r, raw)
 		}
 		usage := usages[(calls-1)%len(usages)]
-		stream := "data: {\"choices\":[{\"delta\":{\"content\":\"synthetic reply\"}}]}\n" +
-			"data: {\"choices\":[],\"usage\":" + usage + "}\n" +
-			"data: [DONE]\n\n"
+		stream := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"synthetic reply\"}\n" +
+			"data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"synthetic reply\"}]}],\"usage\":" + usage + "}}\n\n"
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, stream)
 	}))
@@ -40,15 +39,15 @@ func openAISSEServer(t *testing.T, usages []string, onRequest func(r *http.Reque
 }
 
 func fullUsage(input, output, cached int) string {
-	return fmt.Sprintf(`{"prompt_tokens":%d,"completion_tokens":%d,"prompt_tokens_details":{"cached_tokens":%d}}`, input, output, cached)
+	return fmt.Sprintf(`{"input_tokens":%d,"output_tokens":%d,"input_tokens_details":{"cached_tokens":%d}}`, input, output, cached)
 }
 
 func TestEveryScenarioRunsOffline(t *testing.T) {
 	fixtures := []string{
-		fullUsage(1000, 50, 800),                        // read
-		fullUsage(1200, 60, 0),                          // write-ish/zero-read explicit
-		`{"prompt_tokens":900,"completion_tokens":40}`,  // partial (no cache detail)
-		`{"prompt_tokens":1100,"completion_tokens":55}`, // no usage detail at all
+		fullUsage(1000, 50, 800),                   // read
+		fullUsage(1200, 60, 0),                     // write-ish/zero-read explicit
+		`{"input_tokens":900,"output_tokens":40}`,  // partial (no cache detail)
+		`{"input_tokens":1100,"output_tokens":55}`, // no usage detail at all
 	}
 	srv, calls := openAISSEServer(t, fixtures, nil)
 	scens := allScenarios()
@@ -148,7 +147,7 @@ func TestCachedShareWeightedByInput(t *testing.T) {
 func TestCompareRejectsMismatchedModelAndSettings(t *testing.T) {
 	base := sample{
 		SchemaVersion: 1, Scenario: "stable-long-prefix", Variant: "a",
-		Provider: "openai", Model: "m1", Protocol: "chat_completions",
+		Provider: "openai", Model: "m1", Protocol: "responses",
 		Status: "ok", Turn: 1, ElapsedMs: 10,
 		Usage: &llm.Usage{InputTokens: llm.IntPtr(100), OutputTokens: llm.IntPtr(5), CacheReadTokens: llm.IntPtr(50)},
 	}
@@ -173,7 +172,7 @@ func TestCompareFlagsIncompleteSamples(t *testing.T) {
 	ok := func(turn int) sample {
 		return sample{
 			SchemaVersion: 1, Scenario: "stable-long-prefix", Variant: "a",
-			Provider: "openai", Model: "m1", Protocol: "chat_completions",
+			Provider: "openai", Model: "m1", Protocol: "responses",
 			Status: "ok", Turn: turn, ElapsedMs: 10,
 			Usage: &llm.Usage{InputTokens: llm.IntPtr(100), OutputTokens: llm.IntPtr(5), CacheReadTokens: llm.IntPtr(50)},
 		}
@@ -341,7 +340,7 @@ func TestCompareEndToEnd(t *testing.T) {
 		return sample{
 			SchemaVersion: 1, Scenario: "stable-long-prefix", Variant: variant,
 			Repetition: 0, Turn: 1, TurnLabel: "warm",
-			Provider: "openai", Model: "m", Protocol: "chat_completions",
+			Provider: "openai", Model: "m", Protocol: "responses",
 			ElapsedMs: 20, Status: "ok",
 			Usage: &llm.Usage{InputTokens: llm.IntPtr(1000), OutputTokens: llm.IntPtr(50), CacheReadTokens: llm.IntPtr(read)},
 		}

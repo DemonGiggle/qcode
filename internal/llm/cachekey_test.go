@@ -83,10 +83,7 @@ func TestOfficialOpenAIEmitsStableKey(t *testing.T) {
 			t.Fatal(err)
 		}
 		bodies = append(bodies, body)
-		stream := cacheChatStream(
-			`data: {"choices":[{"delta":{"content":"hi"}}]}`,
-			`data: [DONE]`,
-		)
+		stream := responsesCompletedStream
 		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(stream))}, nil
 	})
 	// Empty BaseURL selects the official endpoint.
@@ -124,7 +121,7 @@ func TestOfficialOpenAIOmitsEmptyKey(t *testing.T) {
 		if _, ok := body["prompt_cache_key"]; ok {
 			t.Fatal("empty key must be omitted")
 		}
-		stream := cacheChatStream(`data: {"choices":[{"delta":{"content":"hi"}}]}`, `data: [DONE]`)
+		stream := responsesCompletedStream
 		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(stream))}, nil
 	})
 	provider, err := newOpenAI(Config{HTTP: client})
@@ -145,7 +142,7 @@ func TestCustomOpenAIBaseURLOmitsKey(t *testing.T) {
 		if _, ok := body["prompt_cache_key"]; ok {
 			t.Error("custom endpoint must not receive prompt_cache_key")
 		}
-		io.WriteString(w, cacheChatStream(`data: {"choices":[{"delta":{"content":"hi"}}]}`, `data: [DONE]`))
+		io.WriteString(w, responsesCompletedStream)
 	}))
 	defer server.Close()
 	provider, err := newOpenAI(Config{BaseURL: server.URL, HTTP: server.Client()})
@@ -173,7 +170,7 @@ func TestOpenCodeGoChatRouteOmitsKeyKeepsHeader(t *testing.T) {
 			t.Error("opencode-go chat route must not receive prompt_cache_key")
 		}
 		headers = append(headers, r.Header.Clone())
-		io.WriteString(w, cacheChatStream(`data: {"choices":[{"delta":{"content":"hi"}}]}`, `data: [DONE]`))
+		io.WriteString(w, responsesCompletedStream)
 	}))
 	defer server.Close()
 	provider, err := newOpenCodeGo(Config{BaseURL: server.URL, HTTP: server.Client()})

@@ -149,11 +149,23 @@ export OPENAI_API_KEY=...
 qcode --provider openai --model gpt-5
 ```
 
+The `openai` provider speaks the OpenAI Responses API (`POST /responses`)
+with API-key auth, full conversation history resend (`store: false`), and the
+same prompt-cache policy as the rest of qcode: `prompt_cache_key` is sent
+only on the official `https://api.openai.com/v1` endpoint (and is withheld
+for custom `base_url` gateways), a 400 that rejects a cache field retries
+once without it, and durable system content leads the input as a developer
+message while request-only guidance uses top-level `instructions` on GPT-6.2
+and later (otherwise a trailing developer message). `/usage` reports cache
+reads like the other routes; the Responses route additionally maps
+`input_tokens_details.cache_write_tokens` to `CacheWriteTokens`.
+
 ### Thinking levels
 
 For the official OpenAI endpoint, qcode reads the exact model's reasoning
 effort choices from the public [Models.dev catalog](https://models.dev/api.json)
-and sends a selected value through Chat Completions' `reasoning_effort` field.
+and sends a selected value as the Responses API's `reasoning: {effort,
+summary}` object; encrypted reasoning is replayed across tool turns.
 On first use, qcode caches this metadata at
 `qcode/openai-model-meta-v1.json` in the user's cache directory. Refresh it with:
 

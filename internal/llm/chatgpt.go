@@ -390,12 +390,12 @@ func chatGPTInstructionsAfterInput(model string) bool {
 	return major > 6 || major == 6 && minor >= 2
 }
 
-// isChatGPTCacheFieldRejection reports whether a non-2xx Responses body is a
+// isResponsesCacheFieldRejection reports whether a non-2xx Responses body is a
 // cache-control rejection (for example, "prompt_cache_key is not supported
 // on this model"). A 400 means the request was rejected before execution,
 // so retrying once without any prompt_cache_* fields is safe and cannot
 // double-bill.
-func isChatGPTCacheFieldRejection(statusCode int, body string) bool {
+func isResponsesCacheFieldRejection(statusCode int, body string) bool {
 	if statusCode != http.StatusBadRequest {
 		return false
 	}
@@ -504,7 +504,7 @@ func (p *chatGPTProvider) doCodex(ctx context.Context, input Request, creds chat
 	// the stable key so accounting separation survives. Stripping cannot
 	// double-bill (a 400 rejects before execution) and keeps the reusable
 	// prefix byte-identical.
-	if (usedCache || usedComparison) && isChatGPTCacheFieldRejection(status.statusCode, status.body) {
+	if (usedCache || usedComparison) && isResponsesCacheFieldRejection(status.statusCode, status.body) {
 		lower := strings.ToLower(status.body)
 		mentionsKey := strings.Contains(lower, "prompt_cache_key")
 		mentionsComparison := strings.Contains(lower, "prompt_cache_options") || strings.Contains(lower, "comparison_response")

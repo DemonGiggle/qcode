@@ -31,15 +31,16 @@ qcode registers exactly four providers (`internal/llm/types.go` registry via
 
 | Registered name | Default endpoint | Wire protocols used by `Complete` |
 | --- | --- | --- |
-| `openai` | `https://api.openai.com/v1` | OpenAI Chat Completions only |
+| `openai` | `https://api.openai.com/v1` | Shared Responses only |
 | `chatgpt` | `https://api.openai.com/v1` (SIWC Responses contract) | Shared Responses only |
 | `opencode-go` | `https://opencode.ai/zen/go/v1` | Chat Completions (default), shared Responses (selected models), Anthropic Messages (selected models) |
 | `ollama` | `http://127.0.0.1:11434` | Ollama `/api/chat` only |
 
 Anthropic Messages and OpenAI Responses are **protocols**, not separately
-registered providers. They are reachable only through the `opencode-go`
-route map (Section 3) and through `chatgpt` (Responses only). Do not describe
-them as providers in user-facing text, flags, or accounting labels.
+registered providers. Responses is reachable three ways: through the
+`opencode-go` route map (Section 3), through `chatgpt` (Responses only), and
+through `openai` (Responses only). Do not describe them as providers in
+user-facing text, flags, or accounting labels.
 
 Related protocol-sharing facts (verified gateway):
 
@@ -66,7 +67,7 @@ this order (verified gateway, `internal/llm/openai.go`,
 
 | # | Condition | Request path | Parser |
 | --- | --- | --- | --- |
-| 1 | provider `openai` (any model, any `base_url`) | `POST {base}/chat/completions` | `parseOpenAIStream` |
+| 1 | provider `openai` (any model, any `base_url`) | `POST {base}/responses` | `parseResponsesStream` |
 | 2 | provider `opencode-go`, model in Responses route map | `POST {base}/responses` | `parseResponsesStream` |
 | 3 | provider `opencode-go`, model in Messages route map | `POST {base}/messages` | `parseAnthropicStream` |
 | 4 | provider `opencode-go`, any other model (including unknown IDs) | `POST {base}/chat/completions` | `parseOpenAIStream` |
@@ -100,21 +101,24 @@ change and needs its own reviewed route/model evidence.
 
 ## 3. Per-route reference
 
-### 3.1 OpenAI Chat Completions on the official endpoint
+### 3.1 OpenAI-compatible Chat Completions (opencode-go default route and Gemini proxies; not the `openai` provider)
+
+The `openai` provider no longer speaks Chat Completions; see 3.1a. This
+section still describes the shared Chat route used by `opencode-go` (its
+default) and by Gemini's OpenAI-compatible proxy.
 
 - **Endpoint / override handling (verified gateway):** `POST
-  {base}/chat/completions` with `base` defaulting to
-  `https://api.openai.com/v1`. `IsOfficialOpenAIEndpoint` is true only for
-  the empty/`base_url`-unset case and the exact default URL
-  (`internal/llm/openai.go`). A custom `base_url` keeps the same Chat
+  {base}/chat/completions` with `base` defaulting per provider
+  (`internal/llm/openai.go`). For `opencode-go` the default base is
+  `https://opencode.ai/zen/go/v1`; for Gemini proxies the compatibility
+  shim `/chat/completions` is used. A custom `base_url` keeps the same Chat
   Completions path and request shape; it only changes the host. Custom
   endpoints do not load Models.dev thinking metadata
   (documented in `docs/providers.md`).
 - **Routing headers (verified gateway):** `Content-Type: application/json`;
   `Authorization: Bearer <key>` when a key is set; `User-Agent` and
-  `x-opencode-session` are sent only when non-empty, and the `openai`
-  provider constructs both as empty, so official OpenAI requests carry
-  neither header.
+  `x-opencode-session` are sent only when non-empty; the chat-route
+  providers send no extra identification headers beyond those.
 - **Usage fields (verified gateway):** `stream_options: {include_usage:
   true}` is always sent; usage arrives as a top-level `usage` object on any
   SSE `data:` line and is decoded into `llm.Usage` (`prompt_tokens`,
@@ -142,7 +146,7 @@ change and needs its own reviewed route/model evidence.
   presence (nil = unreported, explicit 0 = zero); `cache_write_tokens` is not
   mapped on Chat Completions and surfaces as unavailable rather than 0.
 - **Available controls (verified gateway):** `temperature` (sent only when
-  non-nil, and for `openai` only when the model's thinking capability is
+  non-nil, and only when the model's thinking capability is
   unsupported); `reasoning_effort` thinking level for exact catalog models;
   tool definitions; tool-call/reasoning replay fields. No cache control is
   sent at baseline.
@@ -151,23 +155,70 @@ change and needs its own reviewed route/model evidence.
   there is no pricing table in the client, and counts must never be
   presented as billing.
 
-### 3.2 OpenAI-compatible custom endpoints (same Chat path, unofficial host)
+### 3.1a OpenAI Responses route (the `openai` provider)
 
-Same request shape and parser as Section 3.1 (verified gateway, branch 1
-covers any `base_url`). Differences:
+- **Endpoint / override handling (verified gateway):** `POST
+  {base}/responses` with `base` defaulting to `https://api.openai.com/v1`.
+  `IsOfficialOpenAIEndpoint` is true only for the empty/`base_url`-unset
+  case and the exact default URL; a custom `base_url` keeps the same
+  Responses route and only changes the host. Streaming, usage accounting
+  and cache accounting reuse the shared Responses core
+  (`parseResponsesStream`, `responsesUsageWire`, `buildResponsesBody` in
+  `internal/llm/responses.go`).
+- **Stateless resend (verified gateway):** the route defaults `store:
+  false`; qcode resends the full conversation each turn. `store` is only
+  enabled when the caller opts into `StoreResponses`,
+  `PreviousResponseID`, or `ConversationID`. Full history is resent in all
+  cases.
+- **Durable instructions (verified gateway):** leading system messages are
+  lifted into a leading `developer` input message, matching the ChatGPT SIWC
+  policy. Request-only guidance goes to top-level `instructions` for
+  GPT-6.2+ on the official endpoint (billed uncached, keeps the input prefix
+  stable); on older models or custom endpoints it is appended as a trailing
+  developer message.
+- **Cache control (verified gateway):** `prompt_cache_key` is sent only on
+  the official endpoint and only when the caller supplies one (the agent
+  derives it per session, provider, model and purpose). A 400 that rejects
+  cache fields is retried once with them removed; a rejection naming only
+  `prompt_cache_options`/`comparison_response` keeps the stable
+  `prompt_cache_key`. Other 400s are not retried. Cache-write tokens are
+  mapped from `input_tokens_details.cache_write_tokens` when reported.
+- **Thinking (verified gateway):** Models.dev reasoning efforts are sent as
+  the Responses `reasoning: {effort, summary:"auto"}` object (not Chat's
+  `reasoning_effort`); GPT-6.2+ `none` support follows the catalog entry.
+  Encrypted reasoning items in the response output are replayed on
+  subsequent turns.
+- **Temperature:** omitted for reasoning-capable models, sent otherwise,
+  mirroring the Chat route.
+- **Failure semantics (verified gateway):** terminal `response.failed` /
+  `response.incomplete` surface as `ResponsesFailedError` /
+  `ResponsesIncompleteError` carrying partial usage. Rejected cache fields
+  are the only automatically retried failure.
 
-- **Endpoint (verified gateway):** `IsOfficialOpenAIEndpoint` is false; the
-  path stays `/chat/completions` under the custom host.
+### 3.2 Custom `base_url` (unofficial hosts)
+
+Two cases, both host-only changes:
+
+- **`openai` provider on a custom `base_url`** (branch 1): the request goes
+  to `{base}/responses`, same wire shape as 3.1a. Differences from the
+  official endpoint: no Models.dev metadata is loaded (no exact-model
+  thinking choices), `prompt_cache_key` is never sent, and request-only
+  guidance uses a trailing developer message rather than top-level
+  `instructions`. Usage decoding is identical to 3.1a.
+- **`opencode-go` / Gemini proxies on the Chat path** (branch 4): same
+  request shape and parser as Section 3.1, with the path preserved under
+  the custom host (`/chat/completions`).
+
+Common to both:
+
 - **Usage (unknown):** custom servers may omit `usage`, use a different
   schema, or report non-billable proxy counts. Missing `usage` is handled as
-  nil (Section 3.1); malformed shapes surface as stream/decode errors.
+  nil (Sections 3.1 / 3.1a); malformed shapes surface as stream/decode
+  errors.
 - **Cache capability (unknown):** nothing about the custom server's cache
-  behavior follows from speaking the Chat Completions shape. Do not infer
-  `prompt_cache_key` support, breakpoint support, or Claude-style billing
-  from protocol shape.
-- **Controls (verified gateway):** no Models.dev metadata is loaded, so no
-  exact-model thinking choices; otherwise the same fields as Section 3.1. No
-  new cache fields under the frozen policy (Section 8).
+  behavior follows from the protocol shape. `prompt_cache_key` is sent only
+  on the official `openai` host; do not infer cache-breakpoint or billing
+  behavior from protocol shape.
 - **Billing limitations:** pricing is unknown and may not exist (self-hosted
   proxy). Counts are informational only.
 
@@ -551,8 +602,9 @@ Explicit zero (presence-gated: decodes to `Usage{0, 0}`, non-nil):
 Until separately reviewed route/model evidence lands, the only new cache
 control permitted is:
 
-- Official OpenAI Chat Completions (`IsOfficialOpenAIEndpoint` true) **may**
-  receive a stable `prompt_cache_key`. Key choice and rotation policy belong
+- Official OpenAI Responses route (`IsOfficialOpenAIEndpoint` true,
+  `p.name == "openai"`) **may** receive a stable `prompt_cache_key`.
+  Key choice and rotation policy belong
   to the implementing issue, with the constraint that keys separate
   accounting groups and never carry secrets.
 
@@ -708,13 +760,13 @@ UI, no costs, no provider capability switches.
   build on this contract; this issue only keeps those call sites compiling
   with minimal presence-safe behavior.
 
-## 13. Session-stable cache keys for official OpenAI Chat Completions (#81)
+## 13. Session-stable cache keys for the official OpenAI Responses route (#81)
 
 Implemented control under the frozen policy (Section 7). Upstream contract:
 `prompt_cache_key` is a documented OpenAI field (prompt-caching guide,
 `prompt_cache_key` examples for Responses and Chat Completions; SIWC key
 examples in the multi-turn agent guide). The client sends it only on the
-official OpenAI Chat Completions route
+official OpenAI Responses route
 (`p.name == "openai"` and `IsOfficialOpenAIEndpoint` true). All other
 routes omit it even when `Request` carries a key.
 
@@ -921,9 +973,9 @@ qcode baseline at the time of the comparison: `internal/llm/chatgpt.go`
 - ChatGPT wire is now implicit-only for all models: stable key only, no
   `prompt_cache_options`, no explicit breakpoints, always leading
   developer instructions. Only `internal/llm/chatgpt.go` and
-  `internal/llm/chatgpt_cache.go` changed; OpenAI Chat Completions,
-  OpenCode Go, Anthropic, Ollama, Gemini, agent prefix, and usage
-  accounting are untouched.
+  `internal/llm/chatgpt_cache.go` changed; OpenCode Go, Anthropic,
+  Ollama, Gemini, agent prefix, and usage accounting are untouched.
+  (The `openai` provider later migrated to Responses under #115.)
 - Remaining deltas vs Codex (not changed here by scope): raw thread-ID key
   vs hashed namespaced digest (accounting-only on GPT-5.6+, no routing
   effect); always-explicit reasoning/verbosity/text controls vs omit-when-
@@ -978,8 +1030,8 @@ and uses implicit caching and function tools. Cache comparisons and
 structured output are opt-in.
 
 Shared core: `internal/llm/responses.go:buildResponsesBody` is used by both
-the `chatgpt` and `opencode-go` Responses routes. The API-key `openai`
-provider still uses Chat Completions pending #115. `chatgpt` prepends
+the `chatgpt` and `opencode-go` Responses routes, and by the API-key
+`openai` provider (#115). `chatgpt` prepends
 durable instructions as the leading developer message and applies the 6.2+
 top-level `instructions` dual-track; other routes pass `responsesInput`
 directly. Cache-key policy (#81/Codex parity) is unchanged: only the official

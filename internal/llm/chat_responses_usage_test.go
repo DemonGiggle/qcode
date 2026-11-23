@@ -591,11 +591,6 @@ func TestResponsesUsagePreservesToolAndReasoningReplay(t *testing.T) {
 // and without a text callback. Both are streaming paths: the request bodies
 // must keep stream enabled and carry no new cache-control fields.
 func TestChatResponsesUsageRouteDispatch(t *testing.T) {
-	chatBody := chatStream(
-		`data: {"choices":[{"delta":{"content":"hello "}}]}`,
-		`data: {"usage":{"prompt_tokens":1000,"completion_tokens":100,"prompt_tokens_details":{"cached_tokens":800},"completion_tokens_details":{"reasoning_tokens":20}}}`,
-		`data: [DONE]`,
-	)
 	responsesBody := chatStream(
 		`data: {"type":"response.output_text.delta","delta":"hello "}`,
 		`data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"hello "}]}],"usage":{"input_tokens":1000,"output_tokens":100,"input_tokens_details":{"cached_tokens":200,"cache_write_tokens":300}}}}`,
@@ -616,13 +611,13 @@ func TestChatResponsesUsageRouteDispatch(t *testing.T) {
 		}
 	}
 
-	t.Run("openai chat route", func(t *testing.T) {
+	t.Run("openai responses route", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/chat/completions" {
+			if r.URL.Path != "/responses" {
 				t.Errorf("path = %q", r.URL.Path)
 			}
 			checkNoCacheControl(t, r)
-			io.WriteString(w, chatBody)
+			io.WriteString(w, responsesBody)
 		}))
 		defer server.Close()
 		provider, err := newOpenAI(Config{BaseURL: server.URL, APIKey: "secret", HTTP: server.Client()})
@@ -654,9 +649,9 @@ func TestChatResponsesUsageRouteDispatch(t *testing.T) {
 			in, ok := resp.Usage.KnownInput()
 			mustKnown(t, "input", in, ok, 1000)
 			cached, ok := resp.Usage.KnownCacheRead()
-			mustKnown(t, "cache read", cached, ok, 800)
+			mustKnown(t, "cache read", cached, ok, 200)
 			write, ok := resp.Usage.KnownCacheWrite()
-			mustUnknown(t, "cache write", write, ok)
+			mustKnown(t, "cache write", write, ok, 300)
 		}
 	})
 

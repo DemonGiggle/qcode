@@ -198,6 +198,9 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 	if p.name == "opencode-go" && openCodeGoModelRoutes[input.Model] == openCodeGoMessagesRoute {
 		return p.completeAnthropicMessages(ctx, input, onText)
 	}
+	if p.name == "openai" {
+		return p.completeOpenAIResponses(ctx, input, onText)
+	}
 	capability := p.ThinkingCapability(input.Model)
 	messages := make([]openAIMessage, 0, len(input.Messages))
 	for _, message := range input.Messages {
@@ -249,7 +252,7 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 	// Gemini uses fixed sampling defaults (temperature 1.0, topP 0.95, topK 64);
 	// custom values are ignored and strict validation can reject them, so omit
 	// temperature on the Gemini route even when Request carries one.
-	if input.Temperature != nil && p.name != "gemini" && (p.name != "openai" || !capability.Supported) {
+	if input.Temperature != nil && p.name != "gemini" {
 		body["temperature"] = *input.Temperature
 	}
 	if len(tools) > 0 {
@@ -258,15 +261,12 @@ func (p *openAIProvider) Complete(ctx context.Context, input Request, onText Str
 	for field, value := range thinkingFields(capability, input.Thinking) {
 		body[field] = value
 	}
-	// Session-stable cache control (#81): emit prompt_cache_key only on the
-	// official OpenAI Chat Completions route. Custom base URLs, opencode-go
-	// (all three routes share this adapter when name != "openai"), chatgpt,
-	// and ollama must omit the field even when Request carries a key. The
-	// existing x-opencode-session header behavior is unchanged. Never retry
-	// after a cache-field rejection; surface the provider error normally.
-	if p.name == "openai" && IsOfficialOpenAIEndpoint(p.baseURL) && input.PromptCacheKey != "" {
-		body["prompt_cache_key"] = input.PromptCacheKey
-	}
+	// prompt_cache_key is deliberately never sent on this Chat Completions
+	// route. It is emitted only by the Responses route (see
+	// completeOpenAIResponses); opencode-go, chatgpt, and ollama must omit
+	// it even when Request carries a key. The existing x-opencode-session
+	// header behavior is unchanged. Never retry after a cache-field
+	// rejection; surface the provider error normally.
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return Response{}, err

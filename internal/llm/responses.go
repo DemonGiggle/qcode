@@ -25,8 +25,8 @@ type responsesContentIndex struct{ output, content int }
 // Thinking levels are sent as the Responses reasoning object when the model
 // advertises them.
 // Cache policy (#81): this route never emits prompt_cache_key, even when
-// Request carries a key. Only the official OpenAI Chat Completions route may
-// transmit that field.
+// Request carries a key. Only the official OpenAI Responses route (the
+// openai provider) may transmit that field.
 func (p *openAIProvider) completeResponses(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
 	if input.PreviousResponseID != "" && input.ConversationID != "" {
 		return Response{}, errors.New("Responses: use either PreviousResponseID or ConversationID")
@@ -86,6 +86,89 @@ func (p *openAIProvider) postResponses(ctx context.Context, payload []byte, onTe
 		return Response{}, &responsesStatusError{statusCode: resp.StatusCode, status: resp.Status, body: strings.TrimSpace(string(data))}
 	}
 	return parseResponsesStream(resp.Body, onText)
+}
+
+// completeOpenAIResponses speaks the OpenAI Responses API with API-key auth —
+// the only wire protocol the openai provider speaks. It shares the wire
+// builder, stream parser and cache-field fallbacks with the ChatGPT (SIWC)
+// and OpenCode Go routes, but keeps the official OpenAI contract:
+// prompt_cache_key only against the official endpoint, and store:false
+// unless the caller opts into stored state or continuation, because qcode
+// resends the full history every turn.
+func (p *openAIProvider) completeOpenAIResponses(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
+	if input.PreviousResponseID != "" && input.ConversationID != "" {
+		return Response{}, errors.New("Responses: use either PreviousResponseID or ConversationID")
+	}
+	capability := p.ThinkingCapability(input.Model)
+	official := IsOfficialOpenAIEndpoint(p.baseURL)
+	// Durable system content leads the input as a developer message, matching
+	// the cache policy shared with the ChatGPT route. Request-only guidance is
+	// either top-level instructions (GPT-6.2+ official endpoint, billed
+	// uncached) or a trailing developer message everywhere else.
+	instructions, rest := splitChatGPTMessages(input.Messages)
+	items := chatGPTCacheInput(instructions, rest)
+	afterInput := official && input.RequestOnlyInstructions != "" && chatGPTInstructionsAfterInput(input.Model)
+	if input.RequestOnlyInstructions != "" && !afterInput {
+		items = append(items, responsesMessage("developer", input.RequestOnlyInstructions, nil))
+	}
+	cacheKey := ""
+	if official {
+		cacheKey = input.PromptCacheKey
+	}
+	usedCache := cacheKey != ""
+	usedComparison := input.ComparisonResponseID != ""
+	build := func(in Request, key string) map[string]any {
+		body := buildResponsesBody(in.Model, capability, in, items, key, official && key != "")
+		if !in.StoreResponses && in.PreviousResponseID == "" && in.ConversationID == "" {
+			body["store"] = false
+		}
+		// Reasoning models reject temperature, mirroring the Chat path.
+		if in.Temperature != nil && !capability.Supported {
+			body["temperature"] = *in.Temperature
+		}
+		if afterInput {
+			body["instructions"] = in.RequestOnlyInstructions
+		}
+		return body
+	}
+	payload, err := json.Marshal(build(input, cacheKey))
+	if err != nil {
+		return Response{}, err
+	}
+	resp, err := p.postResponses(ctx, payload, onText)
+	resp.ComparisonStatus = input.comparisonStatus()
+	if err == nil {
+		return resp, nil
+	}
+	var status *responsesStatusError
+	// Only a cache-field rejection is safe to retry: the request was rejected
+	// before execution, so no completion is replayed. Nothing to strip means
+	// no retry — sending the identical payload again cannot help. Any other
+	// failure is returned unchanged.
+	if !errors.As(err, &status) || !isResponsesCacheFieldRejection(status.statusCode, status.body) || (!usedCache && !usedComparison) {
+		return resp, err
+	}
+	// A key rejection strips all cache fields; a comparison-only rejection
+	// keeps the stable key so accounting separation survives.
+	lower := strings.ToLower(status.body)
+	mentionsKey := strings.Contains(lower, "prompt_cache_key")
+	mentionsComparison := strings.Contains(lower, "prompt_cache_options") || strings.Contains(lower, "comparison_response")
+	cleanInput := input
+	cleanInput.ComparisonResponseID = ""
+	cleanKey := cacheKey
+	if mentionsKey || !mentionsComparison {
+		cleanKey = ""
+	}
+	cleanPayload, err := json.Marshal(build(cleanInput, cleanKey))
+	if err != nil {
+		return resp, err
+	}
+	retry, retryErr := p.postResponses(ctx, cleanPayload, onText)
+	retry.ComparisonStatus = resp.ComparisonStatus
+	if usedComparison {
+		retry.ComparisonStatus = CacheComparisonRetriedWithoutID
+	}
+	return retry, retryErr
 }
 
 // responsesStatusError preserves the HTTP status for retry decisions while
