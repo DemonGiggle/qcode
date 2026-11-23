@@ -1,5 +1,10 @@
 # Cache benchmark rollout report — epic #70, issue #82
 
+> Historical measurement artifact (predates #115): the recorded
+> `chat_completions` protocol for `openai` no longer exists; the
+> provider speaks Responses. Numbers below were gathered with the
+> Chat Completions route and are kept for the record.
+
 Date: 2026-11-05. Candidate revision: `89bcfc2` (feat branch tip,
 includes #81). Baseline emulation: same binary with
 `Request.PromptCacheKey` stripped before the provider, which is
