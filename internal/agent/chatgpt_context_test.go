@@ -125,11 +125,13 @@ func TestChatGPTWirePrefixAcrossToolAndUserTurns(t *testing.T) {
 			t.Fatalf("request %d changed the cache key or tools", i)
 		}
 		var instructions string
-		if err := json.Unmarshal(r.Instructions, &instructions); err != nil {
-			t.Fatalf("request %d instructions: %v", i, err)
+		if len(r.Instructions) > 0 {
+			if err := json.Unmarshal(r.Instructions, &instructions); err != nil {
+				t.Fatalf("request %d instructions: %v", i, err)
+			}
 		}
-		if !strings.Contains(instructions, "Interactive questions remaining for this request: 3.") {
-			t.Fatalf("request %d lost the question budget: %q", i, instructions)
+		if strings.Contains(instructions, "Interactive questions remaining for this request:") {
+			t.Fatalf("request %d sent redundant question budget notice before any question was asked: %q", i, instructions)
 		}
 		if strings.Contains(instructions, "learning-one") != (i < 2) ||
 			strings.Contains(instructions, "learning-two") != (i == 2) ||

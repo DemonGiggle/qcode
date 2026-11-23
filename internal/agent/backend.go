@@ -124,6 +124,14 @@ func (m *AgentManager) SwitchBackend(id string, expectedRevision uint64, next Ba
 			return fmt.Errorf("thinking level %q is not supported by model %q", level, next.Model)
 		}
 	}
+	oldBackend := ""
+	if a.provider != nil {
+		oldBackend = a.provider.Name()
+	}
+	backendChanged := oldBackend != next.Provider.Name() || a.endpoint != next.Endpoint
+	if backendChanged {
+		stripOpaqueHistoryReplay(a.messages)
+	}
 	a.stateMu.Lock()
 	a.lastResponseID = ""
 	a.lastDiagnostics = nil
@@ -169,4 +177,19 @@ func (m *AgentManager) SetProviderResolver(resolve ProviderResolver) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.providerResolver = resolve
+}
+
+// stripOpaqueHistoryReplay removes provider- and credential-bound opaque
+// reasoning items (such as encrypted_content from Responses) and tool-call
+// signatures when switching backends or endpoints. Visible assistant text and
+// normalized ToolCalls/tool results remain intact so responsesInput and other
+// adapters reconstruct the conversation cleanly without triggering
+// invalid_encrypted_content errors under the new credentials.
+func stripOpaqueHistoryReplay(messages []llm.Message) {
+	for i := range messages {
+		messages[i].ReasoningDetails = nil
+		for j := range messages[i].ToolCalls {
+			messages[i].ToolCalls[j].ThoughtSignature = ""
+		}
+	}
 }

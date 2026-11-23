@@ -163,6 +163,9 @@ func (t *managedToolset) TaskContext(query string) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	indices := m.matchWorkLocked(query, "")
+	if len(indices) == 0 {
+		return ""
+	}
 	seen := map[string]bool{}
 	matches := []WorkMatch{}
 	for _, index := range indices {

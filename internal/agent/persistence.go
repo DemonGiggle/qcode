@@ -365,7 +365,7 @@ func (a *Agent) RestoreState(data json.RawMessage) error {
 	// initialize once; malformed stored values regenerate safely instead of
 	// failing the resume.
 	if llm.IsValidCacheSessionID(s.CacheSessionID) {
-		a.cacheSessionID = s.CacheSessionID
+		a.setCacheSessionID(s.CacheSessionID)
 	} else {
 		a.rotateCacheSessionID()
 	}

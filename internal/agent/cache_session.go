@@ -35,6 +35,8 @@ import (
 // randomness; it never derives from prompt content, credentials, cwd, or
 // personal identifiers.
 func (a *Agent) ensureCacheSessionID() string {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
 	if llm.IsValidCacheSessionID(a.cacheSessionID) {
 		return a.cacheSessionID
 	}
@@ -46,6 +48,15 @@ func (a *Agent) ensureCacheSessionID() string {
 	// request data or replaying a malformed value.
 	a.cacheSessionID = ""
 	return ""
+}
+
+func (a *Agent) setCacheSessionID(id string) {
+	if !llm.IsValidCacheSessionID(id) {
+		return
+	}
+	a.stateMu.Lock()
+	a.cacheSessionID = id
+	a.stateMu.Unlock()
 }
 
 // chatCacheKey returns the transmitted key for normal/tool turns.
@@ -66,9 +77,11 @@ func (a *Agent) learnCacheKey(provider, model string) string {
 // rotateCacheSessionID mints a fresh identity for /new. Failures leave the
 // identity empty (key omitted) rather than reusing the old session.
 func (a *Agent) rotateCacheSessionID() {
+	var next string
 	if id, err := llm.NewCacheSessionID(); err == nil {
-		a.cacheSessionID = id
-		return
+		next = id
 	}
-	a.cacheSessionID = ""
+	a.stateMu.Lock()
+	a.cacheSessionID = next
+	a.stateMu.Unlock()
 }

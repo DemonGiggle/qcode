@@ -302,3 +302,44 @@ func TestNamedInstanceCreationSwitchAndResume(t *testing.T) {
 		t.Fatal("child switch changed parent")
 	}
 }
+
+func TestSwitchBackendStripsOpaqueReasoningWhilePreservingTextAndToolCalls(t *testing.T) {
+	m := newTestManager(t, 2)
+	a, _ := m.Agent("main")
+	a.messages = append(a.messages,
+		llm.Message{Role: "user", Content: "inspect file"},
+		llm.Message{
+			Role:             "assistant",
+			Content:          "reading file",
+			Thinking:         "visible summary",
+			ReasoningDetails: json.RawMessage(`[{"type":"reasoning","encrypted_content":"secret-cipher"},{"type":"function_call","call_id":"call_1","name":"read","arguments":"{\"path\":\"a.go\"}"}]`),
+			ToolCalls:        []llm.ToolCall{{ID: "call_1", Name: "read", Arguments: json.RawMessage(`{"path":"a.go"}`), ThoughtSignature: "sig_1"}},
+		},
+		llm.Message{Role: "tool", ToolCallID: "call_1", Name: "read", Content: "package main"},
+	)
+	rev, _ := m.ConfigurationRevision("main")
+	// Switching to a different backend/endpoint strips encrypted reasoning
+	// and tool signatures while preserving assistant text and tool-call pairs.
+	if err := m.SwitchBackend("main", rev, BackendSwitch{Provider: &switchProvider{}, Model: "gpt-6.2-sol", Endpoint: "https://new.example", Thinking: "high"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.messages) != 4 {
+		t.Fatalf("messages length = %d, want 4", len(a.messages))
+	}
+	assistant := a.messages[2]
+	if len(assistant.ReasoningDetails) != 0 {
+		t.Fatalf("opaque ReasoningDetails retained across backend switch: %s", assistant.ReasoningDetails)
+	}
+	if assistant.Content != "reading file" || assistant.Thinking != "visible summary" {
+		t.Fatalf("assistant text/thinking lost: %+v", assistant)
+	}
+	if len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].ID != "call_1" || assistant.ToolCalls[0].Name != "read" || string(assistant.ToolCalls[0].Arguments) != `{"path":"a.go"}` {
+		t.Fatalf("tool call lost: %+v", assistant.ToolCalls)
+	}
+	if assistant.ToolCalls[0].ThoughtSignature != "" {
+		t.Fatalf("thought signature retained across backend switch: %q", assistant.ToolCalls[0].ThoughtSignature)
+	}
+	if a.messages[3].Role != "tool" || a.messages[3].ToolCallID != "call_1" || a.messages[3].Content != "package main" {
+		t.Fatalf("tool result lost: %+v", a.messages[3])
+	}
+}

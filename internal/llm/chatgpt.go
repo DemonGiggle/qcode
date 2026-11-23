@@ -356,7 +356,11 @@ func (p *chatGPTProvider) buildCodexBody(input Request, instructions string, res
 	input.Metadata = nil
 	input.Truncation = ""
 
-	body := buildResponsesBody(input.Model, p.ThinkingCapability(input.Model), input, items, cacheKey, useCache && IsOfficialOpenAIEndpoint(p.baseURL))
+	capability := p.ThinkingCapability(input.Model)
+	if capability.Supported && strings.ToLower(strings.TrimSpace(input.Thinking)) != "none" {
+		input.Include = appendUnique(append([]string(nil), input.Include...), "reasoning.encrypted_content")
+	}
+	body := buildResponsesBody(input.Model, capability, input, items, cacheKey, useCache && IsOfficialOpenAIEndpoint(p.baseURL))
 	body["store"] = false
 	delete(body, "previous_response_id")
 	delete(body, "conversation")

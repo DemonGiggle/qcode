@@ -144,9 +144,12 @@ func hashRequestPrefix(systemContent, toolsHash, backend, model, thinking, mode,
 }
 
 // questionBudgetNotice returns the ephemeral interactive notice for the
-// current turn, or "" when inapplicable. It is part of the prepared prefix.
+// current turn, or "" when inapplicable. Before any question is asked, the
+// durable system prompt already states the 3-question budget, so omitting the
+// redundant notice avoids sending uncached request-only instructions or a
+// moving trailing developer message on ordinary tool turns.
 func (a *Agent) questionBudgetNotice() string {
-	if a.InteractiveMode() && a.interactiveAvailable.Load() && !a.PlanMode() && !a.SkillPlanMode() {
+	if a.questionsAsked > 0 && a.InteractiveMode() && a.interactiveAvailable.Load() && !a.PlanMode() && !a.SkillPlanMode() {
 		return fmt.Sprintf("\n\nInteractive questions remaining for this request: %d.", max(0, 3-a.questionsAsked))
 	}
 	return ""

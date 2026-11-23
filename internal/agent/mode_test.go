@@ -97,8 +97,8 @@ func TestInteractiveQuestionsGateBudgetAndUserAnswer(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if hasTool(a.enabledSchemas(), "ask_questions") {
-		t.Fatal("question tool remained visible after budget exhausted")
+	if !hasTool(a.enabledSchemas(), "ask_questions") {
+		t.Fatal("question tool should remain in schemas after budget exhausted to preserve cache prefix")
 	}
 	if _, err := a.executeDetailed(context.Background(), llm.ToolCall{Name: "ask_questions", Arguments: json.RawMessage(`{"questions":[{"question":"One more?"}]}`)}); err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("budget boundary error = %v", err)

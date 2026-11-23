@@ -118,6 +118,9 @@ func (p *openAIProvider) completeOpenAIResponses(ctx context.Context, input Requ
 	usedCache := cacheKey != ""
 	usedComparison := input.ComparisonResponseID != ""
 	build := func(in Request, key string) map[string]any {
+		if capability.Supported && !in.StoreResponses && in.PreviousResponseID == "" && in.ConversationID == "" && strings.ToLower(strings.TrimSpace(in.Thinking)) != "none" {
+			in.Include = appendUnique(append([]string(nil), in.Include...), "reasoning.encrypted_content")
+		}
 		body := buildResponsesBody(in.Model, capability, in, items, key, official && key != "")
 		if !in.StoreResponses && in.PreviousResponseID == "" && in.ConversationID == "" {
 			body["store"] = false

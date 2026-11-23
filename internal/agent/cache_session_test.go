@@ -86,6 +86,14 @@ func TestCacheSessionDistinctPerAgentAndNew(t *testing.T) {
 	if after == "" || after == before {
 		t.Fatalf("/new did not rotate identity: %q vs %q", before, after)
 	}
+	// Inherited child agents keep their own cache session identity.
+	child := newCacheTestAgent(provider)
+	if err := child.InheritCapabilitiesFrom(a); err != nil {
+		t.Fatal(err)
+	}
+	if childKey := child.prepareNormalRequest(context.Background(), "").Request.PromptCacheKey; childKey == "" || childKey == after {
+		t.Fatalf("inherited child shared parent cache key: %q", childKey)
+	}
 }
 
 func TestCachePurposeNamespaceDiffers(t *testing.T) {

@@ -119,6 +119,9 @@ func TestOpenAIResponsesWireRoundTrip(t *testing.T) {
 	if reasoning["effort"] != "high" || reasoning["summary"] != "auto" {
 		t.Errorf("reasoning = %v", reasoning)
 	}
+	if inc, ok := body["include"].([]any); !ok || len(inc) != 1 || inc[0] != "reasoning.encrypted_content" {
+		t.Errorf("include = %v, want [reasoning.encrypted_content]", body["include"])
+	}
 	if _, ok := body["reasoning_effort"]; ok {
 		t.Errorf("reasoning_effort must not be sent on the Responses route")
 	}

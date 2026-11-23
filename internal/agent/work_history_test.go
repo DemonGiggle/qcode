@@ -321,3 +321,31 @@ func TestHistoryExcerptsContributeToCompactionThreshold(t *testing.T) {
 		t.Fatal("large historical context did not trigger compaction")
 	}
 }
+
+func TestTaskContextOmittedWhenNoMatchesExist(t *testing.T) {
+	m := newTestManager(t, 2)
+	main, ok := m.Agent("main")
+	if !ok {
+		t.Fatal("missing main agent")
+	}
+	contextual, ok := main.tools.(interface{ TaskContext(string) string })
+	if !ok {
+		t.Fatal("main toolset does not implement TaskContext")
+	}
+	if got := contextual.TaskContext("investigate cache hit rate"); got != "" {
+		t.Fatalf("TaskContext with no work records = %q, want empty", got)
+	}
+	worker, err := m.Create("model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SubmitAndWait(context.Background(), worker.ID, "unrelated css styling"); err != nil {
+		t.Fatal(err)
+	}
+	if got := contextual.TaskContext("investigate cache hit rate"); got != "" {
+		t.Fatalf("TaskContext with zero matching records = %q, want empty", got)
+	}
+	if got := contextual.TaskContext("css styling"); got == "" {
+		t.Fatal("TaskContext with matching work record returned empty")
+	}
+}

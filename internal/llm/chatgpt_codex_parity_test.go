@@ -196,4 +196,8 @@ func TestChatGPTCodexParityReasoningOmittedByDefault(t *testing.T) {
 	if _, ok := body["reasoning"]; ok {
 		t.Fatalf("empty thinking must omit reasoning (preserve server default): %v", body)
 	}
+	inc, ok := body["include"].([]any)
+	if !ok || len(inc) != 1 || inc[0] != "reasoning.encrypted_content" {
+		t.Fatalf("reasoning-capable model must request reasoning.encrypted_content in include: %v", body["include"])
+	}
 }

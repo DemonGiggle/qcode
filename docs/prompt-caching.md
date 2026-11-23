@@ -1149,3 +1149,98 @@ tools to Responses built-ins — that allowlist lives in a future config change.
 Fixtures cover cache diagnostics, cache accounting, and stream handling.
 Live GPT-5.6+ diagnostics and a multi-turn tool chain using server-side
 continuation are still unverified.
+
+## ChatGPT SIWC quota & prefix-stability investigation (2026-11-23)
+
+This section records findings from investigating why `qcode`'s `chatgpt` (SIWC)
+provider can experience lower prompt-cache hit rates and faster token-quota
+burn than the official Codex app, along with the fixes landed and the tool-list
+stability audit.
+
+### Structural gaps vs. Codex app (outside `qcode` HTTP SIWC)
+
+- **Transport and backend:** Codex can use persistent WebSocket connections
+  with connection-local `previous_response_id` delta continuation (and
+  first-party backend routing). `qcode` uses the public SIWC HTTP contract
+  (`POST https://api.openai.com/v1/responses`, `store: false`, full history
+  resend on every turn).
+- **Prefix and reasoning overhead:** On stateless HTTP turns, any avoidable
+  prefix mutation (`tools_changed`, moving per-turn instructions) or missing
+  reasoning replay directly increases uncached input and output reasoning
+  tokens.
+
+### Fixes landed
+
+1. **Encrypted reasoning continuity on stateless Responses calls**
+   (`internal/llm/chatgpt.go`, `internal/llm/responses.go`)
+   - Eligible stateless `chatgpt` and `openai` Responses requests automatically
+     include `"reasoning.encrypted_content"` in `include` when the model
+     supports reasoning and `thinking != "none"` (and for `openai`, when
+     `!StoreResponses && PreviousResponseID == "" && ConversationID == ""`).
+   - Replaying opaque reasoning items across tool continuations avoids forcing
+     the model to re-derive reasoning from scratch.
+   - **Trade-off:** Requests, responses, and persisted histories are larger and
+     may reach context compaction earlier.
+2. **Strip opaque reasoning on backend or endpoint switches**
+   (`internal/agent/backend.go`)
+   - `SwitchBackend` preserves conversation history, so switching credentials
+     or providers with replayed encrypted reasoning items can trigger
+     `invalid_encrypted_content`.
+   - When the provider name or endpoint changes, `stripOpaqueHistoryReplay`
+     clears `ReasoningDetails` and `ToolCalls[j].ThoughtSignature` while
+     preserving assistant text, visible `Thinking`, and tool-call/result pairs.
+3. **Omit redundant interactive question-budget notice**
+   (`internal/agent/prepared_request.go`)
+   - `questionBudgetNotice()` previously injected
+     `"Interactive questions remaining for this request: 3."` on every turn in
+     interactive mode, even though `InteractiveModeSuffix` in the durable
+     system prompt already states the 3-question limit.
+   - It now emits the notice only when `questionsAsked > 0`, eliminating
+     unnecessary request-only instructions / moving trailing developer messages
+     on ordinary tool turns.
+4. **Omit empty work-history `TaskContext` payload**
+   (`internal/agent/work_history.go`)
+   - `managedToolset.TaskContext` now returns `""` when no prior agent work
+     matches, instead of injecting `AgentHistoryReference` plus an empty
+     `{"matches":[],"related_agents":0}` payload on every main prompt.
+   - Matching work-history results still appear, and `search_agent_work`
+     remains available.
+5. **Keep `ask_questions` in `tools` for the full request**
+   (`internal/agent/mode.go`)
+   - Previously, `Agent.enabledSchemas()` dropped `ask_questions` once
+     `questionsAsked == 3`, mutating `tools` mid-run and causing a
+     `tools_changed` cache miss.
+   - `ask_questions` now stays in the tool array for the entire request; the
+     handler (`askQuestions`) still enforces the 3-question limit and returns
+     an error on a 4th call without prompting the user.
+6. **Thread-safe `cacheSessionID` and distinct child cache keys**
+   (`internal/agent/cache_session.go`, `internal/agent/persistence.go`)
+   - Access to `Agent.cacheSessionID` is synchronized under `stateMu`.
+   - Child agents intentionally keep their own distinct `cacheSessionID` rather
+     than cloning the parent's, because child agents may run on different
+     providers or models.
+
+### Tool-array stability audit
+
+Every site that assembles or mutates the `tools` array was audited for dynamic
+changes that could trigger `tools_changed` cache misses:
+
+- **Deterministic and static across turns:**
+  - Core registry (`internal/tools/tools.go`): fixed registration slice
+    (`r.schemas`), filtered only by `r.disabled`.
+  - Manager tools (`internal/agent/manager.go`): static `managerSchemas()`
+    appended in fixed order for `main`.
+  - Todo and mode tools (`internal/agent/mode.go`, `internal/agent/todo.go`):
+    static per execution mode (`act` / `plan` / `skillplan`).
+  - MCP tool ordering (`internal/mcpclient/client.go`): `Manager.Schemas()`
+    sorts by tool name, avoiding Go map-iteration nondeterminism.
+  - Wire serialization (`internal/llm/responses.go`): preserves tool slice
+    order and serializes parameter maps deterministically via `encoding/json`.
+- **Remaining causes of mid-session `tools` changes:**
+  - **MCP `notifications/tools/list_changed`** (`internal/mcpclient/client.go`):
+    if a connected MCP server pushes a tool-list change notification,
+    `Manager.refresh()` immediately replaces that server's entries in
+    `m.entries`, changing `tools` on the next turn.
+  - **Explicit user actions (expected):** `/tool` enable/disable, `/plan`,
+    `/skillplan`, `/interactive`, and one-time tool restriction when spawning
+    an autoreview reviewer (`internal/tui/autoreview.go`).

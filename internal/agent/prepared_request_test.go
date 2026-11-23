@@ -73,6 +73,7 @@ func TestPreparedEstimateIncludesRequestOnlyOnce(t *testing.T) {
 	a.SetRequestContext(func() string { dynamics++; return "DYN-CONTEXT" })
 	a.SetInteractiveAvailable(true)
 	a.SetInteractiveMode(true)
+	a.questionsAsked = 1
 	a.taskContext = "WORK-HISTORY"
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: "hello"})
 	durableBefore := append([]llm.Message(nil), a.messages...)
@@ -169,6 +170,7 @@ func TestCalibrationInvalidatedByDynamicAndNotice(t *testing.T) {
 	_ = prep
 	// Notice removal with identical history length invalidates.
 	dynamic = "A"
+	a.questionsAsked = 1
 	a.prepareNormalRequest(context.Background(), "")
 	// Re-baseline on the restored prefix.
 	a.updateCalibration(a.prepareNormalRequest(context.Background(), ""), &llm.Usage{InputTokens: llm.IntPtr(900)})

@@ -266,7 +266,11 @@ func (a *Agent) enabledSchemas() []llm.Tool {
 	if !a.PlanMode() && !a.SkillPlanMode() {
 		base := a.tools.EnabledSchemas()
 		base = append(base, todoAddSchema(), todoUpdateSchema(), todoDoneSchema())
-		if a.InteractiveMode() && a.interactiveAvailable.Load() && a.questionsAsked < 3 {
+		// Keep ask_questions in the tool list for the entire request even after
+		// the 3-question budget is exhausted so the tool prefix never mutates
+		// mid-run (avoiding a tools_changed prompt-cache miss). The execution
+		// handler still enforces the 3-question limit.
+		if a.InteractiveMode() && a.interactiveAvailable.Load() {
 			return append(base, askQuestionsSchema(1))
 		}
 		return base
