@@ -26,7 +26,7 @@ harness documented in `docs/cachebench.md`
 
 ## 1. Registered providers versus wire protocols
 
-qcode registers exactly four providers (`internal/llm/types.go` registry via
+qcode registers six providers (`internal/llm/types.go` registry via
 `Register`, listed by `qcode --list-providers`):
 
 | Registered name | Default endpoint | Wire protocols used by `Complete` |
@@ -35,6 +35,8 @@ qcode registers exactly four providers (`internal/llm/types.go` registry via
 | `chatgpt` | `https://api.openai.com/v1` (SIWC Responses contract) | Shared Responses only |
 | `opencode-go` | `https://opencode.ai/zen/go/v1` | Chat Completions (default), shared Responses (selected models), Anthropic Messages (selected models) |
 | `ollama` | `http://127.0.0.1:11434` | Ollama `/api/chat` only |
+| `ollama-cloud` | `https://ollama.com` | Ollama `/api/chat` only |
+| `gemini` | `https://generativelanguage.googleapis.com/v1beta` | Native `streamGenerateContent` for the official endpoint; OpenAI-compatible Chat Completions for proxies |
 
 Anthropic Messages and OpenAI Responses are **protocols**, not separately
 registered providers. Responses is reachable three ways: through the
@@ -86,7 +88,7 @@ models:
 
 Responses route (`openCodeGoResponsesRoute`):
 
-- `gpt-6.1-sol`, `gpt-5.6-luna`, `grok-4.6`
+- `gpt-6.1-sol`, `gpt-6.2-sol`, `gpt-5.6-luna`, `grok-4.6`
 - `muse-spark-1.2-contributor`, `muse-spark-1.3-contributor`
 
 Messages route (`openCodeGoMessagesRoute`):
@@ -246,11 +248,13 @@ Common to both:
 - **Usage fields (verified gateway):** shared `parseResponsesStream`: usage
   arrives only in the `response.completed` event as
   `response.usage{input_tokens, output_tokens}` mapped to `llm.Usage`.
+  The shared parser also reads `input_tokens_details.cached_tokens` →
+  `Usage.CacheReadTokens` and `cache_write_tokens` → `Usage.CacheWriteTokens`.
   Partial deltas carry no usage.
 - **Inclusive versus separate input semantics (documented upstream):** same
   Responses accounting as Section 3.1: `input_tokens` is inclusive;
-  `cached_tokens` / `cache_write_tokens` are subset details. Not parsed at
-  baseline.
+  `cached_tokens` / `cache_write_tokens` are subset details. Both are parsed
+  by the shared Responses parser (see above).
 - **Streaming event locations (verified gateway):**
   `response.output_text.delta` (text),
   `response.reasoning_summary_text.delta` (thinking),
@@ -258,10 +262,12 @@ Common to both:
   (tool calls), `response.completed` (output items + usage).
 - **Missing-field semantics (verified gateway):** no `response.completed`
   usage object means nil `Usage`, counted as missing (Section 3.1).
-- **Cache read/write reporting (verified gateway):** none parsed at
-  baseline.
+- **Cache read/write reporting (verified gateway):** parsed by the shared
+  Responses parser: `input_tokens_details.cached_tokens` →
+  `Usage.CacheReadTokens`, `cache_write_tokens` → `Usage.CacheWriteTokens`.
 - **Available controls (verified gateway):** `reasoning` effort
-  (`minimal/low/medium/high/xhigh`), tools, `instructions`. `temperature` is
+  (model-specific; typically `low/medium/high/xhigh`, GPT-6-class models also
+  `max`/`ultra`), tools, `instructions`. `temperature` is
   never sent. No cache control is sent at baseline.
 - **Billing limitations:** ChatGPT plan usage is subscription-based, not
   per-token. Reported tokens are informational and must not be costed.
@@ -278,8 +284,9 @@ Common to both:
   `x-opencode-session: <provider UUIDv4>` (always, Section 6),
   `Authorization: Bearer <key>` when set, `Content-Type: application/json`.
 - **Usage fields (verified gateway):** same shared Responses parser as
-  Section 3.3: only `response.completed` → `response.usage{input_tokens,
-  output_tokens}`.
+  Section 3.3: `response.completed` → `response.usage{input_tokens,
+  output_tokens}`, with `input_tokens_details.cached_tokens` →
+  `Usage.CacheReadTokens` and `cache_write_tokens` → `Usage.CacheWriteTokens`.
 - **Inclusive versus separate input semantics:** **unknown** for this
   gateway. The shape is Responses-compatible, but whether `input_tokens` is
   inclusive of cached tokens and whether detail subfields exist on this
@@ -289,8 +296,9 @@ Common to both:
   Section 3.3.
 - **Missing-field semantics (verified gateway):** nil `Usage` when the
   terminal event carries no usage; counted as missing.
-- **Cache read/write reporting (verified gateway):** none parsed at
-  baseline.
+- **Cache read/write reporting (verified gateway):** parsed by the shared
+  Responses parser: `input_tokens_details.cached_tokens` →
+  `Usage.CacheReadTokens`, `cache_write_tokens` → `Usage.CacheWriteTokens`.
 - **Available controls (verified gateway):** `reasoning` effort object for
   adapted models; tools; reasoning-replay via saved `ReasoningDetails`
   output items. No `temperature`. No cache control is sent at baseline.
@@ -314,7 +322,10 @@ Common to both:
   `message_delta.usage.output_tokens` fills `OutputTokens`. Either half may
   be absent, leaving a partially populated `Usage` (the other field stays
   zero). Upstream Claude fields `cache_read_input_tokens` and
-  `cache_creation_input_tokens` are **not** read by `parseAnthropicStream`.
+  `cache_creation_input_tokens` **are** read into `Usage.CacheReadTokens` and
+  `Usage.CacheWriteTokens` (the TTL subcounts are ignored); when uncached,
+  read, and write counts are all known, the complete input token count is
+  derived as their sum (`anthropicFinalizeUsage`).
 - **Inclusive versus separate input semantics:** **unknown** for this
   gateway. Anthropic protocol compatibility does not prove the gateway
   accepts `cache_control` breakpoints, attributes cache reads/writes, or
@@ -426,7 +437,7 @@ Common to both:
 | `chatgpt` cache controls | Not in first release (Section 8) | Whether SIWC honors them at all |
 | OpenCode Go Responses cache accounting | Not in first release | Whether counts are inclusive; whether detail fields exist |
 | OpenCode Go Messages `cache_control` / Claude billing | — | Yes — protocol shape proves nothing |
-| Official OpenAI Chat cache detail fields | Parse-only in a later issue | Exact detail availability per model |
+| `openai` (Responses) cache detail fields | Parser reads `cached_tokens` / `cache_write_tokens` when present | Whether every model returns them |
 
 ## 4. Sample payloads (absent versus explicit-zero)
 
@@ -727,9 +738,13 @@ UI, no costs, no provider capability switches.
   `KnownUncached`, `KnownReasoning`, `Total`, `IsAbsent`, `NewUsage`,
   `IntPtr`). Consumers must never dereference unknown fields or display
   them as a reported zero.
-- `llm.Request` carries an inert `PromptCacheKey string` transport hint for
-  later benchmark/control issues. Adapters must not emit it until a control
-  policy is implemented.
+- `llm.Request` carries `PromptCacheKey string`, a session-stable namespaced
+  cache identity (provider/model/purpose; `internal/llm/cachekey.go`). The
+  shared Responses builder emits it as `prompt_cache_key` only when the
+  target is the official OpenAI endpoint (`IsOfficialOpenAIEndpoint`) and a
+  cache session exists; custom base URLs (including OpenCode Go) never
+  receive it. The ChatGPT route uses the same official-endpoint gate.
+  Cache-key emission is still independent of any cache-control policy.
 
 ### Session `llm.SessionUsage`
 
@@ -883,10 +898,11 @@ qcode baseline at the time of the comparison: `internal/llm/chatgpt.go`
 - SIWC contract: `POST {base}/responses` on `https://api.openai.com/v1`,
   `store: false`, `stream: true`, Bearer OAuth, no `ChatGPT-Account-Id`.
 - Durable system content always becomes a leading developer message in
-  `input`; no top-level `instructions` is ever sent. This matches Codex
-  (first developer message in `input`, never top-level) and the GPT-6.2+
-  rule (top-level instructions are appended after input and billed
-  uncached). Verified by `TestChatGPTCachePolicyRouting` and
+  `input`. Request-only guidance rides a trailing developer message on older
+  models and custom endpoints; on official GPT-6.2+ endpoints it is sent as
+  top-level `instructions` (appended after input, billed uncached, excluded
+  from the cacheable prefix). The durable prefix itself never uses top-level
+  `instructions`. Verified by `TestChatGPTCachePolicyRouting` and
   `TestChatGPTCodexParityBaselineWire`.
 - Cache controls on official endpoint only
   (`IsOfficialOpenAIEndpoint`): session-stable hashed `prompt_cache_key`
@@ -960,7 +976,7 @@ qcode baseline at the time of the comparison: `internal/llm/chatgpt.go`
 | `prompt_cache_options` | never sent (implicit default, like Codex) | omitted unless a TTL override is set (server implicit default) | Parity: both rely on the server implicit default; no explicit-send vs omit mismatch. |
 | Breakpoints | none explicit (implicit only) | none explicit (implicit only) | Parity. Previously qcode marked every user/tool-result ending, consuming up to 4 write slots and risking implicit-write misses when modes mixed; removed to match Codex. |
 | `gpt-6.1-terra` | key only, no options/breakpoints, so no 400 path in practice; key rejection (if ever) falls back to keyless same-shape retry | sends no cache fields, so no 400 path | Parity. Version-compare explicit gating removed with the implicit-only wire. |
-| Instructions | always leading developer message in `input`, never top-level (all models) | first developer message in `input`, never top-level `instructions` (asserted `body["instructions"] is none`) | Full parity, including the GPT-6.2+ rule (top-level instructions billed uncached and excluded from cacheable prefix). |
+| Instructions | durable content always leading developer message in `input`; request-only guidance: trailing developer message, or top-level `instructions` on official GPT-6.2+ | first developer message in `input`, never top-level `instructions` (asserted `body["instructions"] is none`) | Durable-prefix parity; request-only tail differs by route (GPT-6.2+ official uses top-level `instructions`), never part of the cached prefix |
 | Reasoning | omitted when thinking is empty | always explicit (default resolved), plus summary/context/verbosity controls | Both stable if unchanged; mid-session thinking changes break the prefix on qcode (top-level change) where Codex uses `configuration_update` on supported GPT-6+. qcode has no verbosity/text control. |
 | Tools | full list resent each turn, stable order, no `allowed_tools`/`defer_loading` | stable list plus `allowed_tools`, `defer_loading: true`, incremental `AdditionalTools` | Same prefix when stable; Codex avoids rewriting the tool prefix when the callable set changes. |
 | Tail at the comparison snapshot | request-only developer message moved after new history on each turn | permissions and environment updates appended to prior history | The moving message shortened the matching prefix. The current ChatGPT request builder keeps reusable context at its original position. |

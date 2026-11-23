@@ -270,7 +270,8 @@ base_url = "http://127.0.0.1:11434"
 api_key_path = "~/.config/qcode/gemini.key"
 model = "gemini-3-flash-preview"
 thinking = "high"
-# Optional; Google's OpenAI-compatible endpoint is the default.
+# Optional; the official endpoint uses the native GenerateContent API by
+# default. Set base_url only to route through an OpenAI-compatible proxy.
 # base_url = "https://generativelanguage.googleapis.com/v1beta"
 ```
 
@@ -355,8 +356,10 @@ key path (for example `providers.opencode-go.api_key`), what is wrong, and how
 to fix it by hand. Human output is the default; `--json` emits
 `{"files": [...], "issues": [...]}`.
 
-Startup runs the same check before a real session (`--demo`, `--version`,
-`--list-providers`, `login`, and `config` itself are exempt). No issues stays
+Startup runs the same check before a real session. Commands that return before
+the check are `--demo`, `--version`, `--list-providers`, `config`, `setup`, and
+`update`. `qcode sessions` opens its picker before the check, but a session it
+launches re-enters startup with `--cwd …` and is then checked normally. No issues stays
 silent. Errors print the same report plus a `qcode config check` tip and fail.
 Warnings print the same report plus the tip, then wait for Enter in an
 interactive terminal so the problem is seen; piped / `--json-events` runs only
@@ -395,7 +398,7 @@ Explicit command-line flags take precedence over environment variables, which ta
 
 When a flag or environment variable selects a provider different from the configured provider, the configured `model`, `thinking`, and `context_window` are not inherited; set them explicitly if they should apply to the selected provider. The provider's `[providers.<name>]` model/thinking (then deprecated `[provider_models]` / `[provider_thinking]` memory, then root `model`/`thinking`) still applies when no explicit `--model` / `--thinking` override is given. The selected provider's own connection profile is used; legacy credentials owned by another provider are not inherited. A configured `context_window` also applies only when the configured model is unset or matches the selected model.
 
-API keys can be set with `[providers.<name>].api_key_path` (preferred file, `0600`/`0400`) or deprecated inline `[providers.<name>].api_key` (or legacy root `api_key`), though `QCODE_API_KEY` or the provider-specific environment key (`OLLAMA_API_KEY` for Ollama Cloud; `OPENAI_API_KEY` for OpenAI; `GEMINI_API_KEY` or `GOOGLE_API_KEY` for Gemini) is preferable on shared systems. `--api-key` takes precedence over both environment variables and the configuration file. Keep key files and any config containing an inline key private. The `chatgpt` provider uses OAuth. Configure ChatGPT credentials in `qcode setup` and optionally set the OAuth file with `[chatgpt] oauth_path` (default `~/.config/qcode/chatgpt-oauth.json`).
+API keys can be set with `[providers.<name>].api_key_path` (preferred file, `0600`/`0400`) or deprecated inline `[providers.<name>].api_key` (or legacy root `api_key`), though `QCODE_API_KEY` or the provider-specific environment key (`OLLAMA_API_KEY` for Ollama Cloud; `OPENAI_API_KEY` for OpenAI; `GEMINI_API_KEY` or `GOOGLE_API_KEY` for Gemini) is preferable on shared systems. Setting both `api_key` and `api_key_path` in the same profile is a configuration error, not a fallback — `qcode config check` fails it. `--api-key` takes precedence over both environment variables and the configuration file. Keep key files and any config containing an inline key private. The `chatgpt` provider uses OAuth. Configure ChatGPT credentials in `qcode setup` and optionally set the OAuth file with `[chatgpt] oauth_path` (default `~/.config/qcode/chatgpt-oauth.json`).
 
 `thinking` (or `--thinking` / `QCODE_THINKING`) is an optional level such as
 `off`, `low`, `high`, or `max`. It is validated against the selected provider

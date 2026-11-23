@@ -41,7 +41,7 @@ Results (`docs/cachebench-offline-compare.json`):
 | Scenario | Samples/var | Failed | Cached share before → after | Coverage | Output Δ | Latency p50 Δ |
 | --- | --- | --- | --- | --- | --- | --- |
 | stable-long-prefix | 15 | 0 | 0.364 → 0.364 | 0.67 | 0 | −0.02 ms |
-| dynamic-early-context | 15 | 0 | 0.364 → 0.364 | 0.67 | 0 | +0.01 ms |
+| dynamic-early-context | 15 | 0 | 0.364 → 0.364 | 0.67 | 0 | −0.04 ms |
 | changed-tool-schema | 15 | 0 | 0.800 → 0.800 | 0.33 | 0 | −0.01 ms |
 | compacted-history | 15 | 0 | 0.000 → 0.000 | 0.33 | 0 | −0.02 ms |
 
@@ -63,7 +63,7 @@ keys x 12 turns). Official-route emission itself is covered by
 committed unit tests with injected transports, no live calls
 (`TestOfficialOpenAIEmitsStableKey`,
 `TestCustomOpenAIBaseURLOmitsKey`, `TestOpenCodeGo*OmitsKey`,
-`TestOllamaOmitsKey`, `TestChatGPTRouteOmitsKey`).
+`TestOllamaOmitsKey`, `TestChatGPTRouteEmitsKey`).
 
 ## 2. Coverage gaps (untested routes)
 

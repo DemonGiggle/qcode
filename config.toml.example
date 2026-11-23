@@ -119,6 +119,9 @@ model = "qwen2.5-coder:7b"
 # api_key_path = "~/.config/qcode/gemini.key"
 # model = "gemini-3-flash-preview"
 # thinking = "high" # see docs/providers.md for model-specific choices
+# Optional; the official endpoint uses the native GenerateContent API by
+# default (v1beta + x-goog-api-key). Set base_url only for a custom
+# OpenAI-compatible proxy.
 # base_url = "https://generativelanguage.googleapis.com/v1beta"
 
 [providers.chatgpt]

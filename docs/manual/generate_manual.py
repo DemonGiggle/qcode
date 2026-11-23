@@ -208,7 +208,7 @@ def make_screenshots() -> dict[str, Path]:
             ("[main ○]    Ctrl+PgUp/PgDn · Alt+,/.", CYAN, None, True),
             ("✦ refactor the login handler", MAGENTA, PROMPT_BG, True),
             ("> refactor the login handler", DIM, None, False),
-            ("Completed in 00:42 (09/27 10:15)", GREEN, None, False),
+            ("Completed in 00:42 (09/27 10:15) · 1.8K tokens/s", GREEN, None, False),
             ("", FG, None, False),
             ("/agent [new [model]|list|switch <id>|rename <id> <name>|...]", CYAN, None, True),
             ("/bash <cmd>  Run a shell command", FG, None, False),
@@ -330,7 +330,7 @@ def make_screenshots() -> dict[str, Path]:
             ("-   login_once(context)", RED, None, False),
             ("+   login_with_retry(context, attempts=3)", GREEN, None, False),
             ("", FG, None, False),
-            ("/diff expands latest; /diff 3 expands saved diff 3 (to 200)", DIM, None, False),
+            ("/diff expands latest; /diff 3 expands saved diff 3", DIM, None, False),
             ("", FG, None, False),
             ("> /export pretty", DIM, None, False),
             ("Exported session to qcode-session-pretty-20260927-101500-", GREEN, None, False),
@@ -401,7 +401,7 @@ def make_screenshots() -> dict[str, Path]:
             ("── Preview ──────────────────────────────────────────────", DIM, None, False),
             ("> Run the login tests after the fix.", MAGENTA, None, False),
             ("The login tests pass. The handler retries transient failures once.", FG, None, False),
-            ("Completed in 00:18 (10/09 10:15)", GREEN, None, False),
+            ("Completed in 00:18 (10/09 10:15) · 2.1K tokens/s", GREEN, None, False),
             ("─────────────────────────────────────────────────────────", DIM, None, False),
             ("", FG, None, False),
             ("Up/Down | Enter | Tab actions | Ctrl+D delete all | Esc/Ctrl+C", DIM, None, False),
@@ -723,7 +723,7 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             "--cwd DIRECTORY selects the workspace for tools, skills, and saved-session lookup without changing your shell directory (default `.`).",
-            "--provider, --model, --thinking, --base-url, and --api-key select the assistant (a built-in kind or a named instance such as --provider ollama-lab). Flags beat QCODE_PROVIDER, QCODE_MODEL, QCODE_THINKING, QCODE_BASE_URL, QCODE_API_KEY (or OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY fallbacks), which beat config.toml, which beats built-ins. There is no --interactive or --theme flag: set interactive and theme in config.toml or use /interactive and /theme.",
+            "--provider, --model, --thinking, --base-url, and --api-key select the assistant (a built-in kind or a named instance such as --provider ollama-lab). Flags beat QCODE_PROVIDER, QCODE_MODEL, QCODE_THINKING, QCODE_BASE_URL, QCODE_API_KEY (or OLLAMA_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY fallbacks), which beat config.toml, which beats built-ins. There is no --interactive or --theme flag: set interactive and theme in config.toml or use /interactive and /theme.",
             "--max-steps N sets the per-request model-turn limit (default 32); /maxsteps shows or changes it later. --agent-timeout DURATION sets how long main waits for a batch of agent consultations including queue time (default 5m, for example 90s).",
             "--context-window N overrides terminal-agent context accounting for an unlisted model (0 means automatic); switching models clears it. --disable-auto-compact disables automatic summaries in terminal sessions; /compact stays available. One-shot runs use provider capacity and the built-in 80% threshold.",
             "--sandbox requests Linux bubblewrap isolation; --sandbox=false overrides config. Repeat --sandbox-command-path for each trusted executable directory (it replaces sandbox_command_paths). Check the startup notice to confirm isolation is active.",
@@ -925,7 +925,7 @@ def build_pdf(images: dict[str, Path]):
     h2(pdf, "Compacted context inspector")
     body(pdf, "After a manual or automatic compaction, the terminal hints `Type /compact show to inspect the compacted context.` Use `/compact show` to open a history-style debug view with the compacted conversation (system prompt + summary + recent tail). It is read-only and helps you check what was kept before continuing.")
     h2(pdf, "Diff previews")
-    body(pdf, "When qcode writes or edits a file you see a short numbered 10-line preview with added and removed lines. Use `/diff` to expand the latest saved diff or `/diff N` to expand saved diff N, up to the 200-line safety limit. The model still receives plain text.")
+    body(pdf, "When qcode writes or edits a file you see a short numbered 10-line preview with added and removed lines. Use `/diff` to expand the latest saved diff or `/diff N` to expand saved diff N in full. The model still receives plain text.")
     figure(pdf, images["diff"], "Figure 4: Numbered change preview plus /export pretty saving a readable HTML copy.")
     h2(pdf, "Exports")
     bullets(
@@ -945,7 +945,7 @@ def build_pdf(images: dict[str, Path]):
         [
             "After main goes fully idle with an empty queue, a reusable `review` tab runs only when main actually changed files, including delegated edits attributed to main. Read-only answers never trigger a review.",
             "The reviewer is read-only plus shell for diffs: it self-serves `git diff` when available, otherwise it uses main's summary plus the changed files. Main judges the free-form verdict, applies a fix, then one final review confirms it.",
-            "To skip one answer, start the final response with `[skip review]` (also `no review needed`, `no review required`, or `no code review needed`). Configure defaults with `autoreview`, `autoreview_provider`, and `autoreview_model` in config.toml.",
+            "To skip one answer, start the final response with `[skip review]` (also `[no review]`, `no review needed`, `no review required`, or `no code review needed`). Configure defaults with `autoreview`, `autoreview_provider`, and `autoreview_model` in config.toml.",
         ],
     )
 
@@ -958,13 +958,14 @@ def build_pdf(images: dict[str, Path]):
         pdf,
         [
             "Ollama (local default): pull a model first, then `qcode --model qwen2.5-coder:7b`. Thinking uses the model's native think setting.",
+            "Ollama Cloud (hosted, no local daemon): `export OLLAMA_API_KEY=...` then `qcode --provider ollama-cloud --model <model>`. A model is required — there is no default.",
             "OpenAI-compatible: `export OPENAI_API_KEY=...` then `qcode --provider openai --model gpt-5`. Thinking uses reasoning effort where the model offers it.",
-            "Gemini (Google OpenAI-compatible API): `export GEMINI_API_KEY=...` then `qcode --provider gemini --model gemini-3-flash-preview`. `GOOGLE_API_KEY` also works as a fallback. Thinking levels are exact-model specific (for example minimal/low/medium/high); the status bar shows the effective level.",
+            "Gemini (Google's native Gemini API by default; an OpenAI-compatible proxy uses the chat-completions wire): `export GEMINI_API_KEY=...` then `qcode --provider gemini --model gemini-3-flash-preview`. `GOOGLE_API_KEY` also works as a fallback. Thinking levels are exact-model specific (for example low/medium/high); the status bar shows the effective level.",
             "Named instances for extra endpoints: add `[providers.ollama-lab]` with `type = \"ollama\"` plus its own `base_url` (and credentials when it is a different service), then select it with `qcode --provider ollama-lab` or `/provider ollama-lab`. Omitted fields inherit the built-in profile; `qcode --list-providers` shows instance names, kinds, and setup status.",
             "OpenCode Go: `export QCODE_API_KEY=...` then `qcode --provider opencode-go --model kimi-k3`. Options vary per model. Known models may offer off, on, none, minimal, low, medium, high, xhigh, or max; the set is model-specific. With no setting, qcode preserves the provider default and omits optional thinking fields.",
 
-            "ChatGPT subscription: In qcode setup, open Providers & Models -> chatgpt -> Configure credentials & endpoint. Approve in the browser to save the OAuth file (0600), then run `qcode --provider chatgpt --model gpt-5.6-codex`. Requests use the SIWC Responses endpoint with store:false; thinking levels minimal/low/medium/high/xhigh map to Responses reasoning effort.",
-            "Use `/provider` (or `/provider openai`, `/provider gemini`, `/provider ollama-lab`) to switch an idle tab without restarting; unconfigured providers are dimmed and cannot be chosen. Main-tab switches save the default; workers stay local. History is kept with a `/new` warning; browser provider commands are rejected. Keep separate endpoints/keys with [providers.<name>] connection profiles or named instances with a `type` field.",            "Flags can also come from QCODE_PROVIDER, QCODE_MODEL, QCODE_THINKING, QCODE_BASE_URL, QCODE_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY.",
+            "ChatGPT subscription: In qcode setup, open Providers & Models -> chatgpt -> Configure credentials & endpoint. Approve in the browser to save the OAuth file (0600), then run `qcode --provider chatgpt --model gpt-5.6-codex`. Requests use the SIWC Responses endpoint with store:false; thinking levels are model-specific (typically low/medium/high/xhigh; GPT-6-class models also offer max and ultra) and map to Responses reasoning effort.",
+            "Use `/provider` (or `/provider openai`, `/provider gemini`, `/provider ollama-lab`) to switch an idle tab without restarting; unconfigured providers are dimmed and cannot be chosen. Main-tab switches save the default; workers stay local. History is kept with a `/new` warning; browser provider commands are rejected. Keep separate endpoints/keys with [providers.<name>] connection profiles or named instances with a `type` field.",            "Flags can also come from QCODE_PROVIDER, QCODE_MODEL, QCODE_THINKING, QCODE_BASE_URL, QCODE_API_KEY, OLLAMA_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY.",
         ],
     )
     code(pdf, "qcode --provider ollama --model qwen3:8b --thinking high prompt \"reply with OK\"\nqcode --provider gemini --model gemini-3-flash-preview --thinking high prompt \"reply with OK\"\nqcode --provider ollama-lab --model qwen2.5-coder:32b prompt \"reply with OK\"\nqcode --provider opencode-go --model deepseek-v4-flash --thinking high prompt \"reply with OK\"\nqcode setup\nqcode --provider chatgpt --model gpt-5.6-codex prompt \"explain this repository\"")
@@ -1028,7 +1029,7 @@ def build_pdf(images: dict[str, Path]):
             "Type `/plan` to enter. The status bar shows PLAN.",
             "Describe the task. Expect question rounds until the spec is clear: goals and scope, what is out of scope, affected files, visible behavior or API changes, data and compatibility, edge cases, validation, and rollout. Each round offers concrete choices where alternatives exist; type a custom answer any time, and expect follow-ups when an answer leaves an important ambiguity.",
             "Type `/plan show` to re-read the latest plan any time; request revisions if it still feels vague.",
-            "Type `/plan act` to build the latest plan, or `/plan off` to leave without building. The model holds the plan until scope, behavior, edge cases, and validation are clear; open questions list only items you deferred or could not answer.",
+            "Type `/plan act` to build the latest plan, or `/plan off` to leave without building. `/plan act` first asks how to proceed: start with the current provider/model, pick a provider, model, and thinking level for the implementation run, or stay in Plan mode; cancelling keeps you in Plan mode. The model holds the plan until scope, behavior, edge cases, and validation are clear; open questions list only items you deferred or could not answer.",
         ],
     )
     bullets(
@@ -1157,7 +1158,7 @@ def build_pdf(images: dict[str, Path]):
             "Resume restores tabs, models, the pinned latest prompt, conversation and styled output (including blank lines in the preview), diffs and expandable diff data, drafts, reading positions, tool and skill settings, context accounting, and token totals. Provider credentials come from current configuration. Existing directory grants are restored when paths remain valid; discarded grants produce a notice.",
             "Sessions containing only slash commands, unsent drafts, settings, or idle agent tabs are not saved; saving starts with user conversation or recorded agent work, including queued prompts. Previously saved empty sessions stay available for manual deletion. Demo and one-shot runs are never saved. `/new` resets only the current tab inside its session.",
             "After a crash, start qcode in the same folder and use /resume. The last good checkpoint marks unfinished work interrupted; pending tasks and steering are never resubmitted automatically. Inspect current files before continuing, since completed tool changes are not rolled back.",
-            "Sessions live outside your project: ~/.local/state/qcode/sessions on Linux (or $XDG_STATE_HOME), ~/Library/Application Support on macOS, %AppData% on Windows. They keep private file permissions.",
+            "Sessions live outside your project: ~/.local/state/qcode/sessions on Linux (or $XDG_STATE_HOME), ~/Library/Application Support on macOS, %AppData% on Windows. They keep private file permissions. From the shell, `qcode sessions` opens a manager for saved sessions across all workspaces; picking one starts qcode in that workspace with the session selected.",
         ],
     )
     h2(pdf, "Local privacy and redaction")
@@ -1223,7 +1224,7 @@ def build_pdf(images: dict[str, Path]):
     code(pdf, "qcode --sandbox --sandbox-command-path ~/.local/bin\n\n# Persistent defaults in config.toml:\nsandbox = true\nsandbox_command_paths = [\"~/.local/bin\", \"~/go/bin\"]")
     body(pdf, "Configured sandbox = true and --sandbox use the same defaults; --sandbox=false overrides configuration, including web-tool defaults. Trusted command directories are mounted read-only at their original paths (only empty ancestors are created under the hidden home) and kept across /new, never read/write, and never prompt. Missing, invalid, duplicate, root, or protected directories produce warnings. Additional writable directories require your approval and are cleared by /new. Temporary shell files do not survive separate sandbox calls; use workspace files for results you need later.")
     h2(pdf, "TLS, keys, and provider routing")
-    body(pdf, "Prefer QCODE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY/GOOGLE_API_KEY for credentials; --api-key beats both environment variables and the config file. danger_skip_tls_verify = true (or --danger-skip-tls-verify) disables certificate and hostname verification for provider and native web requests and supplies insecure-TLS settings to Git, Node.js, npm, and compatible Python shell clients; other shell programs may need their own insecure-TLS flag. When a flag or environment variable selects a different provider than the configured one, the configured model, thinking, base_url, api_key, and context_window are not inherited. Named instances such as ollama-lab resolve their own profile plus the kind's environment key; use qcode --list-providers to confirm kind and setup status.")
+    body(pdf, "Prefer QCODE_API_KEY, OLLAMA_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY/GOOGLE_API_KEY for credentials; --api-key beats both environment variables and the config file. danger_skip_tls_verify = true (or --danger-skip-tls-verify) disables certificate and hostname verification for provider and native web requests and supplies insecure-TLS settings to Git, Node.js, npm, and compatible Python shell clients; other shell programs may need their own insecure-TLS flag. When a flag or environment variable selects a different provider than the configured one, the configured model, thinking, base_url, api_key, and context_window are not inherited. Named instances such as ollama-lab resolve their own profile plus the kind's environment key; use qcode --list-providers to confirm kind and setup status.")
     h2(pdf, "Context capacity")
     body(pdf, "CTX shows remaining capacity, with ~ for an estimate or unknown when no limit is available. Use --context-window 32768 or context_window = 32768 for an unlisted model; this sets terminal-agent accounting and compaction capacity without changing the provider's allocation. Switching models clears the override. --disable-auto-compact disables automatic summaries in terminal sessions; /compact remains available. One-shot runs use provider capacity and the built-in 80% threshold.")
 
@@ -1261,6 +1262,7 @@ def build_pdf(images: dict[str, Path]):
             ("/help", "Help for all or one command."),
             ("/bash <cmd>", "Run a shell command."),
             ("/model [id] [thinking]", "Switch model by name only (+ thinking)."),
+            ("/provider [name]", "Switch provider for this tab."),
             ("/agent ...", "Create, list, switch, rename, cancel, close."),
             ("/autoreview ...", "Auto-review file changes (on/off/picker)."),
             ("/plan ...", "Plan, show, act, off."),
@@ -1273,7 +1275,7 @@ def build_pdf(images: dict[str, Path]):
             ("/usage", "Detailed token usage for the active agent."),
             ("/resume, /new", "Reopen session / reset tab."),
             ("/history", "Find and re-read answers."),
-            ("/diff [N]", "Expand saved diff N (to 200 lines)."),
+            ("/diff [N]", "Expand saved diff N (full diff)."),
             ("/compact [show]", "Summarize context; show inspects it."),
             ("/verbose", "Show/hide detailed traces."),
             ("/export", "Save pretty or raw HTML."),
@@ -1291,7 +1293,8 @@ def build_pdf(images: dict[str, Path]):
         "qcode --model qwen2.5-coder:7b prompt \"explain this repository\"\n"
         "qcode --provider openai --model gpt-5 prompt \"summarize the diff\"\n"
         "qcode --provider gemini --model gemini-3-flash-preview prompt \"summarize the diff\"\n"
-        "qcode --demo prompt \"show me how qcode works\"",
+        "qcode --demo prompt \"show me how qcode works\"\n"
+        "qcode sessions",
     )
 
     # Back cover note

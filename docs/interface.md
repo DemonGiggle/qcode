@@ -128,7 +128,7 @@ Provider-delimited model thinking streams in subtle gray, while the final answer
 
 ## Diff previews
 
-Interactive `write` and `edit` tool calls display numbered, 10-line Codex-style diff previews with a file summary, change counts, guided body, and colored additions, removals, and hunk headers. Use `/diff` or `/diff N` to expand a preview up to the 200-line safety limit; tool results sent back to the model remain plain text.
+Interactive `write` and `edit` tool calls display numbered, 10-line Codex-style diff previews with a file summary, change counts, guided body, and colored additions, removals, and hunk headers. Use `/diff` or `/diff N` to expand the full stored diff; tool results sent back to the model remain plain text.
 
 ## Run completion notice
 

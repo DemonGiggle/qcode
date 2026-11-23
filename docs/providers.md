@@ -358,7 +358,9 @@ qcode --provider ollama --model gemma3 prompt "describe assets/screenshot.png"
 ```
 
 Images are limited to 20 MiB each. Ollama receives native `images` data; OpenAI
-uses Chat Completions image content parts. OpenCode Go encodes images for the
+sends Responses `input_image` parts (the `image_url` wire shape is used only by
+the OpenAI-compatible Chat Completions routes, e.g. Gemini proxies and
+OpenCode Go). OpenCode Go encodes images for the
 selected model's route: Chat Completions image parts, Messages base64 image
 blocks, or Responses `input_image` parts. The selected model and endpoint must
 support image input.

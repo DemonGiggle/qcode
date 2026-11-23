@@ -48,11 +48,11 @@ in-app `/resume` picker continues to show sessions in the current workspace.
 
 Run `qcode setup` once instead of hand-editing `config.toml`. It is a
 menuconfig-style wizard (requires an interactive terminal) that writes your
-user config, backs up the previous file to `config.toml.bak`, and runs
+user config, backs up the previous user config to `<config path>.bak` (e.g.
+`~/.config/qcode/config.toml.bak`), and runs
 `qcode config check` on save. It covers active provider, credentials in
 `0600` key files, live model verification, theme, sandbox, interactive
-questions, and MCP servers. See the [README](../README.md#first-time-setup-recommended)
-for a menu walkthrough.
+questions, and MCP servers. See the [README](../README.md) for the overview.
 
 ```sh
 qcode setup

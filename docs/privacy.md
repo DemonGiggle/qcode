@@ -27,8 +27,8 @@ nonempty supported credential environment values are also masked wherever they
 appear, including their JSON-escaped form. Registered values and matched text
 are never included in redaction diagnostics.
 
-Supported environment sources are `QCODE_API_KEY`, `OPENAI_API_KEY`,
-`ANTHROPIC_API_KEY`, `OPENCODE_API_KEY`, `OPENCODE_GO_API_KEY`, `GITHUB_TOKEN`,
+Supported environment sources are `QCODE_API_KEY`, `OLLAMA_API_KEY`,
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY`, `OPENCODE_GO_API_KEY`, `GITHUB_TOKEN`,
 `GH_TOKEN`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
 `GOOGLE_API_KEY`, `GEMINI_API_KEY`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, and
 `SERPER_API_KEY`. Custom rules and sink switches are described in

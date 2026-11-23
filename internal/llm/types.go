@@ -59,7 +59,7 @@ type Request struct {
 	// A non-nil value, including zero, is sent only by adapters that support it.
 	Temperature *float64
 	// PromptCacheKey carries a session-stable namespaced cache identity for
-	// the official OpenAI Chat Completions and ChatGPT SIWC routes (see cachekey.go).
+	// the official OpenAI Responses and ChatGPT SIWC routes (see cachekey.go).
 	// The agent sets it for normal, compaction, and learning requests with
 	// purpose namespacing; only OpenAI and ChatGPT adapters with an official endpoint
 	// emits it as prompt_cache_key. All other adapters must omit it even
