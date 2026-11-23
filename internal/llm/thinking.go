@@ -137,8 +137,8 @@ func (p *openAIProvider) ThinkingCapability(model string) ThinkingCapability {
 			Adjustable:    len(levels) > 1,
 			AlwaysOn:      len(levels) == 1,
 			Levels:        levels,
-			RequestFormat: ThinkingRequestReasoningEffort,
-			ReplayFormat:  ThinkingReplayNone,
+			RequestFormat: ThinkingRequestResponsesReasoning,
+			ReplayFormat:  ThinkingReplayReasoningDetails,
 		}
 		if capability.AlwaysOn {
 			capability.Default = levels[0]

@@ -73,7 +73,7 @@ func turnLabel(turn int) string {
 func protocolFor(provider, model string) string {
 	switch provider {
 	case "openai":
-		return "chat_completions"
+		return "responses"
 	case "chatgpt":
 		return "responses"
 	case "ollama":

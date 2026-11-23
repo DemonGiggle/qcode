@@ -21,12 +21,20 @@ func TestProviderUsage(t *testing.T) {
 					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 						t.Fatal(err)
 					}
-					options, ok := request["stream_options"].(map[string]any)
-					if !ok || options["include_usage"] != true {
-						t.Fatal("missing stream usage request")
+					if name == "openai" {
+						if stream, ok := request["stream"].(bool); !ok || !stream {
+							t.Fatal("missing stream flag")
+						}
+						body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n" +
+							"data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}],\"usage\":{\"input_tokens\":750,\"output_tokens\":50}}}\n\n"
+					} else {
+						options, ok := request["stream_options"].(map[string]any)
+						if !ok || options["include_usage"] != true {
+							t.Fatal("missing stream usage request")
+						}
+						body = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":null}\n\n" +
+							"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":750,\"completion_tokens\":50}}\n\ndata: [DONE]\n"
 					}
-					body = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":null}\n\n" +
-						"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":750,\"completion_tokens\":50}}\n\ndata: [DONE]\n"
 				}
 				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
 			})

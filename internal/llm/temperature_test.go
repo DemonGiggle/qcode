@@ -21,10 +21,10 @@ func TestProviderTemperature(t *testing.T) {
 		metadata *ProviderModelMeta
 	}{
 		{name: "ollama", factory: newOllama, model: "qwen3.8:27b", path: "/api/chat", nested: true},
-		{name: "openai-chat", factory: newOpenAI, model: "test", path: "/chat/completions"},
+		{name: "openai-responses", factory: newOpenAI, model: "test", path: "/responses"},
 		{name: "opencode-go-chat", factory: newOpenCodeGo, model: "deepseek-v4-flash", path: "/chat/completions"},
 		{
-			name: "openai-reasoning", factory: newOpenAI, model: "test-reasoner", path: "/chat/completions", omit: true,
+			name: "openai-reasoning", factory: newOpenAI, model: "test-reasoner", path: "/responses", omit: true,
 			metadata: &ProviderModelMeta{
 				Provider: "openai",
 				Models: map[string]ProviderModelOptions{

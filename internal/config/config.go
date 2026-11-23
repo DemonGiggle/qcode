@@ -216,11 +216,6 @@ type ProviderProfile struct {
 	APIKeyPath *string `toml:"api_key_path"`
 	Model      *string `toml:"model"`
 	Thinking   *string `toml:"thinking"`
-	// WireAPI selects the wire protocol for providers that support more
-	// than one. Empty or "chat_completions" keeps the Chat Completions
-	// default; "responses" opts the openai provider into the OpenAI
-	// Responses API. Honored only by the openai provider kind.
-	WireAPI *string `toml:"wire_api"`
 }
 
 // AllowedAgentModel is one human-curated entry in the [[agents.allow_models]]
@@ -573,7 +568,6 @@ func load(paths []string) (Config, []string, []error) {
 			APIKeyPath: profile.APIKeyPath,
 			Model:      profile.Model,
 			Thinking:   profile.Thinking,
-			WireAPI:    profile.WireAPI,
 		}
 	}
 	return merged, inspected, diagnostics
@@ -604,17 +598,6 @@ func validateConfig(path string, cfg Config, partial bool) error {
 		}
 		if profile.Thinking != nil && !utf8.ValidString(*profile.Thinking) {
 			return fmt.Errorf("parse config %s: providers.%s.thinking contains invalid UTF-8", path, name)
-		}
-		if profile.WireAPI != nil {
-			wire := strings.ToLower(strings.TrimSpace(*profile.WireAPI))
-			switch wire {
-			case "", WireAPIChatCompletions, WireAPIResponses:
-			default:
-				return fmt.Errorf("parse config %s: providers.%s.wire_api must be %q, %q, or empty, got %q", path, name, WireAPIChatCompletions, WireAPIResponses, *profile.WireAPI)
-			}
-			if wire != "" && kind != "" && kind != "openai" {
-				return fmt.Errorf("parse config %s: providers.%s.wire_api is only supported by the openai provider kind", path, name)
-			}
 		}
 	}
 	if cfg.Provider == "chatgpt" && cfg.APIKey != "" {
@@ -747,10 +730,6 @@ func merge(dst *Config, incoming Config) {
 		if profile.Thinking != nil {
 			value := *profile.Thinking
 			current.Thinking = &value
-		}
-		if profile.WireAPI != nil {
-			value := *profile.WireAPI
-			current.WireAPI = &value
 		}
 		dst.Providers[name] = current
 	}
@@ -1006,24 +985,6 @@ func (c Config) ProviderConnection(name string) (baseURL, apiKey string) {
 		apiKey = *p.APIKey
 	}
 	return
-}
-
-// Wire API values accepted in providers.<name>.wire_api. The empty value
-// selects the provider's default (chat_completions for openai).
-const (
-	WireAPIChatCompletions = "chat_completions"
-	WireAPIResponses       = "responses"
-)
-
-// ProviderWireAPI reports the configured wire protocol for name, normalized
-// to lower case. The empty string selects the provider default. Validation
-// of the value happens at load time; this accessor is forgiving.
-func (c Config) ProviderWireAPI(name string) string {
-	p := c.Providers[name]
-	if p.WireAPI == nil {
-		return ""
-	}
-	return strings.ToLower(strings.TrimSpace(*p.WireAPI))
 }
 
 // Secrets returns all configured nonempty API keys, including inactive profiles,

@@ -110,7 +110,6 @@ model = "qwen2.5-coder:7b"
 # api_key_path = "~/.config/qcode/openai.key"
 # model = "my-model"
 # thinking = "high"
-# wire_api = "chat_completions" # default; "responses" opts into the Responses API (POST /responses)
 
 [providers.opencode-go]
 # api_key_path = "~/.config/qcode/opencode-go.key"

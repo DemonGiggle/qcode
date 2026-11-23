@@ -58,9 +58,9 @@ func errResponse(message string) *http.Response {
 	return &http.Response{StatusCode: http.StatusBadRequest, Status: "400 Bad Request", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 }
 
-func newWireAPIProvider(t *testing.T, wireAPI, baseURL string, meta *ProviderModelMeta, client HTTPDoer) *openAIProvider {
+func newResponsesProvider(t *testing.T, baseURL string, meta *ProviderModelMeta, client HTTPDoer) *openAIProvider {
 	t.Helper()
-	provider, err := newOpenAI(Config{BaseURL: baseURL, APIKey: "sk-test", HTTP: client, WireAPI: wireAPI, ModelMeta: meta})
+	provider, err := newOpenAI(Config{BaseURL: baseURL, APIKey: "sk-test", HTTP: client, ModelMeta: meta})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func newWireAPIProvider(t *testing.T, wireAPI, baseURL string, meta *ProviderMod
 func TestOpenAIResponsesWireRoundTrip(t *testing.T) {
 	var captured []capturedRequest
 	client := recordingClient(t, []*http.Response{okResponse(responsesCompletedStream)}, &captured)
-	p := newWireAPIProvider(t, "responses", "", responsesMeta("gpt-6.2-sol"), client)
+	p := newResponsesProvider(t, "", responsesMeta("gpt-6.2-sol"), client)
 
 	response, err := p.Complete(context.Background(), Request{
 		Model:          "gpt-6.2-sol",
@@ -143,26 +143,23 @@ func TestOpenAIResponsesWireRoundTrip(t *testing.T) {
 	}
 }
 
-func TestOpenAIResponsesOmittedFlagKeepsChatCompletions(t *testing.T) {
-	for _, wireAPI := range []string{"", "chat_completions"} {
-		stream := "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"
-		var captured []capturedRequest
-		client := recordingClient(t, []*http.Response{okResponse(stream)}, &captured)
-		p := newWireAPIProvider(t, wireAPI, "", nil, client)
-		_, err := p.Complete(context.Background(), Request{Model: "gpt-6.2-sol", Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if captured[0].path != "/v1/chat/completions" {
-			t.Errorf("wire_api %q routed to %q", wireAPI, captured[0].path)
-		}
+func TestOpenAIRoutesToResponsesByDefault(t *testing.T) {
+	var captured []capturedRequest
+	client := recordingClient(t, []*http.Response{okResponse(responsesCompletedStream)}, &captured)
+	p := newResponsesProvider(t, "", nil, client)
+	_, err := p.Complete(context.Background(), Request{Model: "gpt-6.2-sol", Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if captured[0].path != "/v1/responses" {
+		t.Fatalf("path = %q, want /v1/responses", captured[0].path)
 	}
 }
 
 func TestOpenAIResponsesCustomBaseURLOmitsCacheKey(t *testing.T) {
 	var captured []capturedRequest
 	client := recordingClient(t, []*http.Response{okResponse(responsesCompletedStream)}, &captured)
-	p := newWireAPIProvider(t, "responses", "http://gateway.test/v1", nil, client)
+	p := newResponsesProvider(t, "http://gateway.test/v1", nil, client)
 	_, err := p.Complete(context.Background(), Request{
 		Model:          "gpt-6.2-sol",
 		Messages:       []Message{{Role: "user", Content: "hi"}},
@@ -180,7 +177,7 @@ func TestOpenAIResponsesRequestOnlyInstructionsDualTrack(t *testing.T) {
 	t.Run("gpt-6.2-sol routes to top-level instructions", func(t *testing.T) {
 		var captured []capturedRequest
 		client := recordingClient(t, []*http.Response{okResponse(responsesCompletedStream)}, &captured)
-		p := newWireAPIProvider(t, "responses", "", responsesMeta("gpt-6.2-sol"), client)
+		p := newResponsesProvider(t, "", responsesMeta("gpt-6.2-sol"), client)
 		_, err := p.Complete(context.Background(), Request{
 			Model:                   "gpt-6.2-sol",
 			Messages:                []Message{{Role: "system", Content: "durable rules"}, {Role: "user", Content: "hi"}},
@@ -206,7 +203,7 @@ func TestOpenAIResponsesRequestOnlyInstructionsDualTrack(t *testing.T) {
 	t.Run("older model gets trailing developer message", func(t *testing.T) {
 		var captured []capturedRequest
 		client := recordingClient(t, []*http.Response{okResponse(responsesCompletedStream)}, &captured)
-		p := newWireAPIProvider(t, "responses", "", nil, client)
+		p := newResponsesProvider(t, "", nil, client)
 		_, err := p.Complete(context.Background(), Request{
 			Model:                   "gpt-5.4",
 			Messages:                []Message{{Role: "system", Content: "durable rules"}, {Role: "user", Content: "hi"}},
@@ -237,7 +234,7 @@ func TestOpenAIResponsesCacheKeyRejectionRetriesWithoutCacheFields(t *testing.T)
 		errResponse("prompt_cache_key is not supported on this model"),
 		okResponse(responsesCompletedStream),
 	}, &captured)
-	p := newWireAPIProvider(t, "responses", "", nil, client)
+	p := newResponsesProvider(t, "", nil, client)
 	response, err := p.Complete(context.Background(), Request{
 		Model:          "gpt-6.2-sol",
 		Messages:       []Message{{Role: "user", Content: "hi"}},
@@ -265,7 +262,7 @@ func TestOpenAIResponsesCacheWording400WithoutCacheFieldsIsNotRetried(t *testing
 	// so a 400 that merely mentions cache fields must not trigger a retry.
 	var captured []capturedRequest
 	client := recordingClient(t, []*http.Response{errResponse("prompt caching is not supported on this model")}, &captured)
-	p := newWireAPIProvider(t, "responses", "http://gateway.test/v1", nil, client)
+	p := newResponsesProvider(t, "http://gateway.test/v1", nil, client)
 	_, err := p.Complete(context.Background(), Request{
 		Model:          "gpt-6.2-sol",
 		Messages:       []Message{{Role: "user", Content: "hi"}},
@@ -288,7 +285,7 @@ func TestOpenAIResponsesComparisonRejectionKeepsCacheKey(t *testing.T) {
 		errResponse("comparison_response_id is not supported on this model"),
 		okResponse(responsesCompletedStream),
 	}, &captured)
-	p := newWireAPIProvider(t, "responses", "", nil, client)
+	p := newResponsesProvider(t, "", nil, client)
 	response, err := p.Complete(context.Background(), Request{
 		Model:                "gpt-6.2-sol",
 		Messages:             []Message{{Role: "user", Content: "hi"}},
@@ -315,7 +312,7 @@ func TestOpenAIResponsesComparisonRejectionKeepsCacheKey(t *testing.T) {
 func TestOpenAIResponsesOther400IsNotRetried(t *testing.T) {
 	var captured []capturedRequest
 	client := recordingClient(t, []*http.Response{errResponse("model not found")}, &captured)
-	p := newWireAPIProvider(t, "responses", "", nil, client)
+	p := newResponsesProvider(t, "", nil, client)
 	_, err := p.Complete(context.Background(), Request{
 		Model:          "gpt-6.2-sol",
 		Messages:       []Message{{Role: "user", Content: "hi"}},
@@ -333,7 +330,7 @@ func TestOpenAIResponsesStoreOptIn(t *testing.T) {
 	t.Run("store responses", func(t *testing.T) {
 		var captured []capturedRequest
 		client := recordingClient(t, []*http.Response{okResponse(responsesCompletedStream)}, &captured)
-		p := newWireAPIProvider(t, "responses", "", nil, client)
+		p := newResponsesProvider(t, "", nil, client)
 		_, err := p.Complete(context.Background(), Request{
 			Model:          "gpt-6.2-sol",
 			Messages:       []Message{{Role: "user", Content: "hi"}},
@@ -349,7 +346,7 @@ func TestOpenAIResponsesStoreOptIn(t *testing.T) {
 	t.Run("previous response id implies store", func(t *testing.T) {
 		var captured []capturedRequest
 		client := recordingClient(t, []*http.Response{okResponse(responsesCompletedStream)}, &captured)
-		p := newWireAPIProvider(t, "responses", "", nil, client)
+		p := newResponsesProvider(t, "", nil, client)
 		_, err := p.Complete(context.Background(), Request{
 			Model:              "gpt-6.2-sol",
 			Messages:           []Message{{Role: "user", Content: "hi"}},
@@ -369,7 +366,7 @@ func TestOpenAIResponsesTemperatureOmittedForReasoningModels(t *testing.T) {
 	t.Run("reasoning model omits temperature", func(t *testing.T) {
 		var captured []capturedRequest
 		client := recordingClient(t, []*http.Response{okResponse(responsesCompletedStream)}, &captured)
-		p := newWireAPIProvider(t, "responses", "", responsesMeta("gpt-6.2-sol"), client)
+		p := newResponsesProvider(t, "", responsesMeta("gpt-6.2-sol"), client)
 		_, err := p.Complete(context.Background(), Request{
 			Model:       "gpt-6.2-sol",
 			Thinking:    "low",
@@ -386,7 +383,7 @@ func TestOpenAIResponsesTemperatureOmittedForReasoningModels(t *testing.T) {
 	t.Run("non-reasoning model keeps temperature", func(t *testing.T) {
 		var captured []capturedRequest
 		client := recordingClient(t, []*http.Response{okResponse(responsesCompletedStream)}, &captured)
-		p := newWireAPIProvider(t, "responses", "", nil, client)
+		p := newResponsesProvider(t, "", nil, client)
 		_, err := p.Complete(context.Background(), Request{
 			Model:       "gpt-6.2-sol",
 			Temperature: &temp,
@@ -404,7 +401,7 @@ func TestOpenAIResponsesTemperatureOmittedForReasoningModels(t *testing.T) {
 func TestOpenAIResponsesReplaysToolRoundTrip(t *testing.T) {
 	var captured []capturedRequest
 	client := recordingClient(t, []*http.Response{okResponse(responsesCompletedStream)}, &captured)
-	p := newWireAPIProvider(t, "responses", "", nil, client)
+	p := newResponsesProvider(t, "", nil, client)
 	_, err := p.Complete(context.Background(), Request{
 		Model: "gpt-6.2-sol",
 		Messages: []Message{

@@ -25,8 +25,8 @@ type responsesContentIndex struct{ output, content int }
 // Thinking levels are sent as the Responses reasoning object when the model
 // advertises them.
 // Cache policy (#81): this route never emits prompt_cache_key, even when
-// Request carries a key. Only the official OpenAI Chat Completions route may
-// transmit that field.
+// Request carries a key. Only the official OpenAI Responses route (the
+// openai provider) may transmit that field.
 func (p *openAIProvider) completeResponses(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
 	if input.PreviousResponseID != "" && input.ConversationID != "" {
 		return Response{}, errors.New("Responses: use either PreviousResponseID or ConversationID")
@@ -88,26 +88,13 @@ func (p *openAIProvider) postResponses(ctx context.Context, payload []byte, onTe
 	return parseResponsesStream(resp.Body, onText)
 }
 
-// responsesReasoningCapability maps the capability used by the Chat
-// Completions path (top-level reasoning_effort from the Models.dev catalog)
-// onto the Responses wire shape (a reasoning object with effort). Levels and
-// defaults are unchanged; only the encoding differs. Capabilities that are
-// already Responses-shaped (or absent) pass through.
-func responsesReasoningCapability(capability ThinkingCapability) ThinkingCapability {
-	if capability.RequestFormat == ThinkingRequestReasoningEffort {
-		capability.RequestFormat = ThinkingRequestResponsesReasoning
-	}
-	return capability
-}
-
-// completeOpenAIResponses speaks the OpenAI Responses API with API-key auth.
-// It shares the wire builder, stream parser and cache-field fallbacks with the
-// ChatGPT (SIWC) and OpenCode Go routes, but keeps the official OpenAI
-// contract: prompt_cache_key only against the official endpoint, and
-// store:false unless the caller opts into stored state or continuation,
-// because qcode resends the full history every turn. Gated behind
-// providers.openai wire_api = "responses" (#115); the default stays on Chat
-// Completions.
+// completeOpenAIResponses speaks the OpenAI Responses API with API-key auth —
+// the only wire protocol the openai provider speaks. It shares the wire
+// builder, stream parser and cache-field fallbacks with the ChatGPT (SIWC)
+// and OpenCode Go routes, but keeps the official OpenAI contract:
+// prompt_cache_key only against the official endpoint, and store:false
+// unless the caller opts into stored state or continuation, because qcode
+// resends the full history every turn.
 func (p *openAIProvider) completeOpenAIResponses(ctx context.Context, input Request, onText StreamCallback) (Response, error) {
 	if input.PreviousResponseID != "" && input.ConversationID != "" {
 		return Response{}, errors.New("Responses: use either PreviousResponseID or ConversationID")
@@ -130,9 +117,8 @@ func (p *openAIProvider) completeOpenAIResponses(ctx context.Context, input Requ
 	}
 	usedCache := cacheKey != ""
 	usedComparison := input.ComparisonResponseID != ""
-	responsesCapability := responsesReasoningCapability(capability)
 	build := func(in Request, key string) map[string]any {
-		body := buildResponsesBody(in.Model, responsesCapability, in, items, key, official && key != "")
+		body := buildResponsesBody(in.Model, capability, in, items, key, official && key != "")
 		if !in.StoreResponses && in.PreviousResponseID == "" && in.ConversationID == "" {
 			body["store"] = false
 		}

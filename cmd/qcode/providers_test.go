@@ -508,7 +508,7 @@ func TestCLISelectsAndListsNamedInstance(t *testing.T) {
 		t.Setenv(key, "")
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat/completions" {
+		if r.URL.Path != "/responses" {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
 		body, _ := io.ReadAll(r.Body)
@@ -519,7 +519,7 @@ func TestCLISelectsAndListsNamedInstance(t *testing.T) {
 			t.Error("instance credentials not selected")
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"instance answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+		io.WriteString(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"instance answer\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"instance answer\"}]}]}}\n\n")
 	}))
 	defer server.Close()
 	dir := filepath.Join(home, ".local", "etc", "qcode")

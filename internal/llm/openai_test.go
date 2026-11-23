@@ -14,7 +14,7 @@ type doerFunc func(*http.Request) (*http.Response, error)
 
 func (f doerFunc) Do(request *http.Request) (*http.Response, error) { return f(request) }
 
-func TestOpenAIStreamsTextAndToolCall(t *testing.T) {
+func TestOpenCodeGoChatRouteStreamsTextAndToolCall(t *testing.T) {
 	var gotAuthorization string
 	client := doerFunc(func(r *http.Request) (*http.Response, error) {
 		gotAuthorization = r.Header.Get("Authorization")
@@ -38,12 +38,12 @@ func TestOpenAIStreamsTextAndToolCall(t *testing.T) {
 		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(streamBody))}, nil
 	})
 
-	provider, err := newOpenAI(Config{BaseURL: "http://provider.test/v1", APIKey: "secret", HTTP: client})
+	provider, err := newOpenCodeGo(Config{BaseURL: "http://provider.test/v1", APIKey: "secret", HTTP: client})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var streamed strings.Builder
-	response, err := provider.Complete(context.Background(), Request{Model: "test", Messages: []Message{{Role: "user", Content: "hi"}}}, func(event StreamEvent) {
+	response, err := provider.Complete(context.Background(), Request{Model: "test-model", Messages: []Message{{Role: "user", Content: "hi"}}}, func(event StreamEvent) {
 		fmt.Fprintf(&streamed, "%d:%s", event.Kind, event.Text)
 	})
 	if err != nil {
@@ -64,7 +64,7 @@ func TestOpenAIStreamsTextAndToolCall(t *testing.T) {
 	}
 }
 
-func TestOpenAISendsImageContentParts(t *testing.T) {
+func TestOpenCodeGoChatRouteSendsImageContentParts(t *testing.T) {
 	client := doerFunc(func(r *http.Request) (*http.Response, error) {
 		var payload struct {
 			Messages []struct {
@@ -93,7 +93,7 @@ func TestOpenAISendsImageContentParts(t *testing.T) {
 		streamBody := "data: {\"choices\":[{\"delta\":{\"content\":\"seen\"}}]}\n\ndata: [DONE]\n\n"
 		return &http.Response{StatusCode: 200, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(streamBody))}, nil
 	})
-	provider, err := newOpenAI(Config{BaseURL: "http://provider.test/v1", HTTP: client})
+	provider, err := newOpenCodeGo(Config{BaseURL: "http://provider.test/v1", APIKey: "secret", HTTP: client})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestOpenAIStreamSparseIndexesAreNotDropped(t *testing.T) {
 	}
 }
 
-func TestOpenAIWireEncodePreservesMessageOrder(t *testing.T) {
+func TestOpenCodeGoChatRouteWireEncodePreservesMessageOrder(t *testing.T) {
 	var sentMessages []struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -241,7 +241,7 @@ func TestOpenAIWireEncodePreservesMessageOrder(t *testing.T) {
 			Body:       io.NopCloser(strings.NewReader("data: [DONE]\n\n")),
 		}, nil
 	})
-	provider, err := newOpenAI(Config{BaseURL: "http://provider.test/v1", APIKey: "secret", HTTP: client})
+	provider, err := newOpenCodeGo(Config{BaseURL: "http://provider.test/v1", APIKey: "secret", HTTP: client})
 	if err != nil {
 		t.Fatal(err)
 	}
