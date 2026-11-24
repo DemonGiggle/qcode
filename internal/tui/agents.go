@@ -588,7 +588,7 @@ func (u *UI) handleAgentEvent(event session.Event) {
 				message = event.Agent.LastOutcome
 				compactHint = true
 			} else if event.Agent.Status == session.StatusCompleted {
-				message = formatCompletedMessage(event.Duration, time.Now(), event.TotalTokens)
+				message = formatCompletedMessage(event.Duration, time.Now(), event.OutputTokens, event.ModelDuration)
 			} else if event.Agent.Status == session.StatusCancelled {
 				message = "Cancelled"
 			}

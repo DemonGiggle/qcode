@@ -390,18 +390,24 @@ func TestFormatRunDuration(t *testing.T) {
 func TestFormatCompletedMessage(t *testing.T) {
 	completedAt := time.Date(2026, 9, 27, 10, 15, 0, 0, time.UTC)
 	for _, test := range []struct {
-		duration time.Duration
-		tokens   *int
-		want     string
+		duration      time.Duration
+		tokens        *int
+		modelDuration time.Duration
+		want          string
 	}{
-		{1250 * time.Millisecond, llm.IntPtr(103), "Completed in 1s (09/27 10:15) · 82 tokens/s"},
-		{500 * time.Millisecond, llm.IntPtr(0), "Completed in 500ms (09/27 10:15) · 0 tokens/s"},
-		{time.Second, llm.IntPtr(1500), "Completed in 1s (09/27 10:15) · 1.5K tokens/s"},
-		{time.Second, llm.IntPtr(2_500_000), "Completed in 1s (09/27 10:15) · 2.5M tokens/s"},
-		{time.Second, nil, "Completed in 1s (09/27 10:15)"},
-		{0, llm.IntPtr(103), "Completed in <1ms (09/27 10:15)"},
+		{1250 * time.Millisecond, llm.IntPtr(103), 1250 * time.Millisecond, "Completed in 1s (09/27 10:15) · 82 tokens/s"},
+		{10 * time.Second, llm.IntPtr(100), 2 * time.Second, "Completed in 10s (09/27 10:15) · 50 tokens/s"},
+		{2 * time.Second, llm.IntPtr(7), 2 * time.Second, "Completed in 2s (09/27 10:15) · 3.5 tokens/s"},
+		{2 * time.Second, llm.IntPtr(4), 2 * time.Second, "Completed in 2s (09/27 10:15) · 2 tokens/s"},
+		{30 * time.Second, llm.IntPtr(1), 30 * time.Second, "Completed in 30s (09/27 10:15) · <0.1 tokens/s"},
+		{500 * time.Millisecond, llm.IntPtr(0), 500 * time.Millisecond, "Completed in 500ms (09/27 10:15) · 0 tokens/s"},
+		{time.Second, llm.IntPtr(1500), time.Second, "Completed in 1s (09/27 10:15) · 1.5K tokens/s"},
+		{time.Second, llm.IntPtr(2_500_000), time.Second, "Completed in 1s (09/27 10:15) · 2.5M tokens/s"},
+		{time.Second, nil, time.Second, "Completed in 1s (09/27 10:15)"},
+		{time.Second, llm.IntPtr(103), 0, "Completed in 1s (09/27 10:15)"},
+		{0, llm.IntPtr(103), 0, "Completed in <1ms (09/27 10:15)"},
 	} {
-		if got := formatCompletedMessage(test.duration, completedAt, test.tokens); got != test.want {
+		if got := formatCompletedMessage(test.duration, completedAt, test.tokens, test.modelDuration); got != test.want {
 			t.Errorf("completion notice = %q, want %q", got, test.want)
 		}
 	}

@@ -2,33 +2,43 @@ package agent
 
 import (
 	"context"
+	"time"
 
 	"qcode/internal/llm"
 )
 
 type runUsageKey struct{}
 
-// RunWithUsage is Run with the prompt's total input and output tokens. The
-// total is nil if the run fails or any provider call omits either count.
-func (a *Agent) RunWithUsage(ctx context.Context, userText string) (*int, error) {
+type runUsage struct {
+	usage         llm.SessionUsage
+	modelDuration time.Duration
+}
+
+// RunWithUsage is Run with the prompt's output token count and cumulative
+// model call duration. Output tokens are nil if the run fails, makes no model
+// calls, or any provider call omits its output count.
+func (a *Agent) RunWithUsage(ctx context.Context, userText string) (*int, time.Duration, error) {
 	return a.runWithUsage(ctx, userText, nil)
 }
 
-func (a *Agent) runWithUsage(ctx context.Context, userText string, input *taskInput) (*int, error) {
-	var usage llm.SessionUsage
-	err := a.runWithInput(context.WithValue(ctx, runUsageKey{}, &usage), userText, input)
-	if err != nil || usage.Requests == 0 || usage.InputReported != usage.Requests || usage.OutputReported != usage.Requests {
-		return nil, err
+func (a *Agent) runWithUsage(ctx context.Context, userText string, input *taskInput) (*int, time.Duration, error) {
+	var run runUsage
+	err := a.runWithInput(context.WithValue(ctx, runUsageKey{}, &run), userText, input)
+	if err != nil || run.usage.Requests == 0 || run.usage.OutputReported != run.usage.Requests || run.modelDuration <= 0 {
+		return nil, 0, err
 	}
-	return llm.IntPtr(usage.TotalTokens), nil
+	return llm.IntPtr(run.usage.OutputTokens), run.modelDuration, nil
 }
 
 // completeWithRunUsage collects only calls made with this prompt's context,
 // including automatic compaction. Session-wide accounting is unchanged.
 func (a *Agent) completeWithRunUsage(ctx context.Context, request llm.Request, stream llm.StreamCallback) (llm.Response, error) {
+	started := time.Now()
 	response, err := a.provider.Complete(ctx, request, stream)
-	if usage, ok := ctx.Value(runUsageKey{}).(*llm.SessionUsage); ok {
-		usage.AddResult(response.Usage, err)
+	elapsed := time.Since(started)
+	if run, ok := ctx.Value(runUsageKey{}).(*runUsage); ok {
+		run.usage.AddResult(response.Usage, err)
+		run.modelDuration += elapsed
 	}
 	return response, err
 }

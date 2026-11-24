@@ -183,9 +183,9 @@ func TestManagerCompletionUsageIsPerPrompt(t *testing.T) {
 		prompt string
 		tokens *int
 	}{
-		{"use a tool", llm.IntPtr(120)},
+		{"use a tool", llm.IntPtr(30)},
 		{"partial usage", nil},
-		{"next prompt", llm.IntPtr(25)},
+		{"next prompt", llm.IntPtr(5)},
 	}
 	for i, test := range tests {
 		submission, err := manager.Submit("main", test.prompt)
@@ -207,11 +207,11 @@ func TestManagerCompletionUsageIsPerPrompt(t *testing.T) {
 					t.Fatalf("unexpected completion event: %+v", event)
 				}
 				if test.tokens == nil {
-					if event.TotalTokens != nil {
-						t.Fatalf("partial usage reported as total: %d", *event.TotalTokens)
+					if event.OutputTokens != nil || event.ModelDuration != 0 {
+						t.Fatalf("partial usage reported as output tokens: %+v", event)
 					}
-				} else if event.TotalTokens == nil || *event.TotalTokens != *test.tokens {
-					t.Fatalf("completion for %q: want %d tokens, got %+v", test.prompt, *test.tokens, event)
+				} else if event.OutputTokens == nil || *event.OutputTokens != *test.tokens || event.ModelDuration <= 0 {
+					t.Fatalf("completion for %q: want %d output tokens and positive model duration, got %+v", test.prompt, *test.tokens, event)
 				}
 			case <-deadline:
 				t.Fatalf("no completion event for %q", test.prompt)

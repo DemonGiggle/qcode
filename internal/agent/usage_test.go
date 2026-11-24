@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"qcode/internal/llm"
 	"qcode/internal/trace"
@@ -76,5 +77,66 @@ func TestSessionUsageJSONAndCompaction(t *testing.T) {
 		if (event.Usage == nil) != (i == 1) {
 			t.Fatal(line)
 		}
+	}
+}
+
+type slowToolToolset struct {
+	delay time.Duration
+}
+
+func (*slowToolToolset) Schemas() []llm.Tool        { return nil }
+func (*slowToolToolset) EnabledSchemas() []llm.Tool { return nil }
+
+func (s *slowToolToolset) ExecuteDetailed(ctx context.Context, _ llm.ToolCall) (llm.ToolResult, error) {
+	select {
+	case <-time.After(s.delay):
+		return llm.ToolResult{Output: "ok"}, nil
+	case <-ctx.Done():
+		return llm.ToolResult{}, ctx.Err()
+	}
+}
+
+type outputRateProvider struct {
+	calls int
+}
+
+func (*outputRateProvider) Name() string { return "output-rate" }
+
+func (p *outputRateProvider) Complete(_ context.Context, _ llm.Request, _ llm.StreamCallback) (llm.Response, error) {
+	p.calls++
+	time.Sleep(5 * time.Millisecond)
+	if p.calls == 1 {
+		return llm.Response{
+			Message: llm.Message{
+				Role:      "assistant",
+				ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "slow_tool", Arguments: json.RawMessage(`{}`)}},
+			},
+			Usage: llm.NewUsage(llm.IntPtr(100_000), llm.IntPtr(40), llm.IntPtr(95_000), nil, nil, llm.IntPtr(15)),
+		}, nil
+	}
+	return llm.Response{
+		Message: llm.Message{Role: "assistant", Content: "done"},
+		Usage:   llm.NewUsage(nil, llm.IntPtr(60), nil, nil, nil, nil),
+	}, nil
+}
+
+func TestRunWithUsageCountsOutputTokensAndExcludesToolTime(t *testing.T) {
+	toolDelay := 80 * time.Millisecond
+	a := New(&outputRateProvider{}, "test", &slowToolToolset{delay: toolDelay}, trace.New(io.Discard, false), io.Discard, 4)
+
+	started := time.Now()
+	outputTokens, modelDuration, err := a.RunWithUsage(context.Background(), "run slow tool")
+	totalElapsed := time.Since(started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outputTokens == nil || *outputTokens != 100 {
+		t.Fatalf("outputTokens = %v, want 100", outputTokens)
+	}
+	if modelDuration <= 0 {
+		t.Fatalf("modelDuration = %v, want > 0", modelDuration)
+	}
+	if modelDuration >= totalElapsed-toolDelay/2 {
+		t.Fatalf("modelDuration (%v) appears to include tool execution time (total=%v, toolDelay=%v)", modelDuration, totalElapsed, toolDelay)
 	}
 }

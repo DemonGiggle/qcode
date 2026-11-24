@@ -137,9 +137,11 @@ type Event struct {
 	// DirectoryChanged refreshes presentation without reporting task completion.
 	DirectoryChanged bool
 	Agent            Summary
-	Duration         time.Duration
-	// TotalTokens is the finished prompt's input plus output usage, if known.
-	TotalTokens *int
+	Duration time.Duration
+	// OutputTokens is the finished prompt's output token usage, if known.
+	OutputTokens *int
+	// ModelDuration is the cumulative time spent in model calls during the run.
+	ModelDuration time.Duration
 	// Consultation wakes consumers to read the durable consultation event log.
 	Consultation bool
 	// Delegation wakes consumers to read the durable delegation event log.

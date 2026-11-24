@@ -1061,11 +1061,12 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		taskCtx, cancel := context.WithCancel(ctx)
 		u.input.setCancel(cancel)
-		var totalTokens *int
+		var outputTokens *int
+		var modelDuration time.Duration
 		if runner, ok := u.runner.(interface {
-			RunWithUsage(context.Context, string) (*int, error)
+			RunWithUsage(context.Context, string) (*int, time.Duration, error)
 		}); ok {
-			totalTokens, err = runner.RunWithUsage(taskCtx, fullLine)
+			outputTokens, modelDuration, err = runner.RunWithUsage(taskCtx, fullLine)
 		} else {
 			err = u.runActiveTask(taskCtx, fullLine)
 		}
@@ -1078,7 +1079,7 @@ func (u *UI) Run(ctx context.Context) error {
 			u.printSystemMessage(yellow + formatAgentError(err.Error()) + reset)
 		} else {
 			completedAt := time.Now()
-			u.printSystemMessage(fmt.Sprintf("%s%s%s%s", magenta, bold, formatCompletedMessage(completedAt.Sub(started), completedAt, totalTokens), reset))
+			u.printSystemMessage(fmt.Sprintf("%s%s%s%s", magenta, bold, formatCompletedMessage(completedAt.Sub(started), completedAt, outputTokens, modelDuration), reset))
 		}
 	}
 }
@@ -2069,11 +2070,31 @@ func formatRunDuration(duration time.Duration) string {
 	return duration.Round(time.Millisecond).String()
 }
 
-func formatCompletedMessage(duration time.Duration, completedAt time.Time, totalTokens *int) string {
+func formatTokenRate(rate float64) string {
+	if rate <= 0 {
+		return "0"
+	}
+	if rate < 10 {
+		rounded := math.Round(rate*10) / 10
+		if rounded >= 10 {
+			return "10"
+		}
+		if rounded == 0 {
+			return "<0.1"
+		}
+		if rounded == math.Trunc(rounded) {
+			return fmt.Sprintf("%.0f", rounded)
+		}
+		return fmt.Sprintf("%.1f", rounded)
+	}
+	return compactTokenCount(int(math.Round(rate)))
+}
+
+func formatCompletedMessage(duration time.Duration, completedAt time.Time, outputTokens *int, modelDuration time.Duration) string {
 	message := "Completed in " + formatRunDuration(duration) + " (" + completedAt.Format("01/02 15:04") + ")"
-	if totalTokens != nil && duration > 0 {
-		rate := int(math.Round(float64(*totalTokens) / duration.Seconds()))
-		message += " · " + compactTokenCount(rate) + " tokens/s"
+	if outputTokens != nil && modelDuration > 0 {
+		rate := float64(*outputTokens) / modelDuration.Seconds()
+		message += " · " + formatTokenRate(rate) + " tokens/s"
 	}
 	return message
 }
