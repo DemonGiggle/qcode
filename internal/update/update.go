@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	latestReleaseURL   = "https://api.github.com/repos/DemonGiggle/qcode/releases/latest"
-	releasesURL        = "https://api.github.com/repos/DemonGiggle/qcode/releases"
+	latestReleaseURL   = "https://api.github.com/repos/demongiggle/qcode/releases/latest"
+	releasesURL        = "https://api.github.com/repos/demongiggle/qcode/releases"
 	replacementCommand = "--qcode-update-replace"
 	maxReleaseMetadata = 1 << 20
 	maxUpdateSize      = 128 << 20
@@ -374,7 +374,7 @@ func validateDownloadURL(raw string) error {
 	if parsed.Scheme != "https" || parsed.Host != "github.com" || parsed.User != nil {
 		return errors.New("release downloads must use https://github.com")
 	}
-	if !strings.HasPrefix(parsed.Path, "/DemonGiggle/qcode/releases/download/") {
+	if !strings.HasPrefix(parsed.Path, "/demongiggle/qcode/releases/download/") {
 		return errors.New("URL is not a qcode GitHub release download")
 	}
 	return nil
