@@ -160,8 +160,9 @@ func (p *queuePanel) page(rows []queuedDisplayRow, size, direction int) []queued
 func (u *UI) handlePendingPanelKey(key rune) bool {
 	u.screenMu.Lock()
 	if u.questionnaireActive {
+		handled := u.questionNavKeyLocked(key)
 		u.screenMu.Unlock()
-		return false
+		return handled
 	}
 	panel := u.activeQueueLocked()
 	if !panel.expanded {

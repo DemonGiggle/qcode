@@ -289,6 +289,66 @@ func (u *UI) runQuestionnaireWithFooter(ctx context.Context, questions []questio
 	return answers, err
 }
 
+const questionNavHint = "Use /back, /next (Alt+Left/Right), or /1-N to revisit; /done submits."
+
+type questionCommand int
+
+const (
+	questionCmdNone questionCommand = iota
+	questionCmdBack
+	questionCmdNext
+	questionCmdDone
+	questionCmdJump
+)
+
+// parseQuestionCommand recognizes navigation typed at an answer prompt. These
+// words are reserved only while a multi-question questionnaire is open; typed
+// answers still accept any other text, including paths starting with a slash.
+func parseQuestionCommand(answer string, total int) (questionCommand, int) {
+	switch strings.ToLower(answer) {
+	case "/back", "/prev":
+		return questionCmdBack, 0
+	case "/next":
+		return questionCmdNext, 0
+	case "/done", "/submit":
+		return questionCmdDone, 0
+	}
+	if strings.HasPrefix(answer, "/") {
+		if number, err := strconv.Atoi(answer[1:]); err == nil && number >= 1 && number <= total {
+			return questionCmdJump, number - 1
+		}
+	}
+	return questionCmdNone, 0
+}
+
+func firstUnanswered(answers []string) int {
+	for i, answer := range answers {
+		if answer == "" {
+			return i
+		}
+	}
+	return -1
+}
+
+// nextQuestionIndex moves to the closest unanswered question, wrapping around.
+// When every answer is present it returns total, the review step.
+func nextQuestionIndex(answers []string, from int) int {
+	total := len(answers)
+	for step := 1; step <= total; step++ {
+		index := (from + step) % total
+		if answers[index] == "" {
+			return index
+		}
+	}
+	return total
+}
+
+// runQuestionnaireProgress answers every question before returning. With more
+// than one question the user can revisit and re-answer earlier questions, then
+// review the whole set before submitting it to the agent. `previous` holds the
+// answers collected so far ("" means unanswered) and `start` is the question
+// being shown, or len(questions) for the review step. Both are returned on
+// Esc/tab deferral so the same state can be restored later.
 func (u *UI) runQuestionnaireProgress(ctx context.Context, questions []question.Question, start int, previous []string, footer string, allowTabSwitch bool) ([]string, int, error) {
 	if len(questions) == 0 {
 		return nil, start, fmt.Errorf("questionnaire has no questions")
@@ -323,66 +383,162 @@ func (u *UI) runQuestionnaireProgress(ctx context.Context, questions []question.
 	u.screenMu.Lock()
 	savedBrowsing := u.activeViewportLocked().browsing
 	savedAnchor := u.activeViewportLocked().anchor
+	savedPanel := u.questionPanel
 	u.activeViewportLocked().browsing = false
 	u.questionnaireActive = true
 	u.screenMu.Unlock()
 	defer func() {
 		u.screenMu.Lock()
 		u.questionnaireActive = false
+		u.questionPanel = savedPanel
+		u.questionNav = 0
 		u.activeViewportLocked().browsing = savedBrowsing
 		u.activeViewportLocked().anchor = savedAnchor
 		u.screenMu.Unlock()
 		u.restorePlanPrompt()
 	}()
 
-	answers := append([]string(nil), previous...)
-	for i := start; i < len(questions); i++ {
-		question := questions[i]
-		displayed := redaction.Copy(u.redaction, redaction.Terminal, question)
-		width := u.width
-		// Retain logical lines in history so resizing does not wrap old breaks again.
-		if u.fixedInput {
-			width = 0
-		}
-		u.printSystemMessage(formatQuestionWithFooter(displayed, i, len(questions), width, footer))
-		for {
-			if err := questionCtx.Err(); err != nil {
-				return nil, i, err
-			}
-			prompt := fmt.Sprintf("Answer %d/%d> ", i+1, len(questions))
-			u.terminal.SetPrompt(prompt)
-			u.renderInput(prompt, "", 0)
-			answer, err := u.readLine()
-			if u.terminal.SubmissionKey == 27 && allowTabSwitch {
-				return answers, i, errQuestionDeferred
-			}
-			if err != nil {
-				return nil, i, err
-			}
-			if err := questionCtx.Err(); err != nil {
-				return nil, i, err
-			}
-			u.tabMu.Lock()
-			switching := u.pendingTab != 0
-			u.tabMu.Unlock()
-			if switching && allowTabSwitch {
-				return answers, i, errQuestionDeferred
-			}
-			answer = strings.TrimSpace(answer)
-			if answer == "" {
-				u.printSystemMessage(yellow + "Please enter an answer, or press Ctrl+C to cancel." + reset)
-				continue
-			}
-			answer, valid := normalizeQuestionAnswerWithCustom(answer, question.Options, question.AllowCustom)
-			if !valid {
-				u.printSystemMessage(yellow + "Choose one of the listed options." + reset)
-				continue
-			}
-			answers = append(answers, answer)
-			break
-		}
+	total := len(questions)
+	navigable := total > 1
+	answers := make([]string, total)
+	copy(answers, previous)
+	index := max(0, min(start, total))
+	displayed := make([]question.Question, total)
+	for i, item := range questions {
+		displayed[i] = redaction.Copy(u.redaction, redaction.Terminal, item)
 	}
-	return answers, len(questions), nil
+	questionFooter := footer
+	if navigable {
+		questionFooter += " " + questionNavHint
+	}
+	width := u.width
+	// Retain logical lines in history so resizing does not wrap old breaks again.
+	if u.fixedInput {
+		width = 0
+	}
+	printedIndex := -1
+	for {
+		if err := questionCtx.Err(); err != nil {
+			return nil, index, err
+		}
+		if !navigable && index >= total {
+			return answers, total, nil
+		}
+		if navigable {
+			u.setQuestionPanel(index, displayed, u.displayQuestionAnswers(answers))
+		}
+		if index != printedIndex {
+			if index == total {
+				u.printSystemMessage(formatQuestionReview(displayed, u.displayQuestionAnswers(answers), width, footer))
+			} else {
+				u.printSystemMessage(formatQuestionWithAnswer(displayed[index], index, total, width, questionFooter, u.displayQuestionAnswer(answers[index])))
+			}
+			printedIndex = index
+		}
+		prompt := fmt.Sprintf("Answer %d/%d> ", index+1, total)
+		if index == total {
+			prompt = fmt.Sprintf("Submit %d/%d> ", total, total)
+		}
+		u.terminal.SetPrompt(prompt)
+		u.renderInput(prompt, "", 0)
+		answer, err := u.readLine()
+		if u.terminal.SubmissionKey == 27 && allowTabSwitch {
+			return answers, index, errQuestionDeferred
+		}
+		if err != nil {
+			return nil, index, err
+		}
+		if err := questionCtx.Err(); err != nil {
+			return nil, index, err
+		}
+		u.tabMu.Lock()
+		switching := u.pendingTab != 0
+		u.tabMu.Unlock()
+		if switching && allowTabSwitch {
+			return answers, index, errQuestionDeferred
+		}
+		// Alt+Left/Right submit the uncommitted line (asynchronously injected
+		// Enter), so consume that request before the line is treated as an
+		// answer.
+		if direction := u.takeQuestionNav(); direction != 0 && navigable {
+			switch {
+			case direction < 0 && index > 0:
+				index--
+			case direction > 0 && index < total:
+				index++
+			case direction < 0:
+				u.printSystemMessage(yellow + "Already at the first question." + reset)
+			default:
+				u.printSystemMessage(yellow + "Already at the last question; press Enter to submit." + reset)
+			}
+			continue
+		}
+		answer = strings.TrimSpace(answer)
+		if navigable {
+			command, target := parseQuestionCommand(answer, total)
+			switch command {
+			case questionCmdBack:
+				if index == 0 {
+					u.printSystemMessage(yellow + "Already at the first question." + reset)
+				} else {
+					index--
+				}
+				continue
+			case questionCmdNext:
+				if index < total {
+					index++
+				} else {
+					u.printSystemMessage(yellow + "Already at the last question; press Enter to submit." + reset)
+				}
+				continue
+			case questionCmdJump:
+				index = target
+				continue
+			case questionCmdDone:
+				if missing := firstUnanswered(answers); missing >= 0 {
+					u.printSystemMessage(yellow + fmt.Sprintf("Question %d still needs an answer.", missing+1) + reset)
+					index = missing
+				} else {
+					return answers, total, nil
+				}
+				continue
+			}
+		}
+		if index == total {
+			if answer != "" {
+				u.printSystemMessage(yellow + "Press Enter to submit, or /back (or /1-" + strconv.Itoa(total) + ") to revise an answer." + reset)
+				continue
+			}
+			if missing := firstUnanswered(answers); missing >= 0 {
+				u.printSystemMessage(yellow + fmt.Sprintf("Question %d still needs an answer.", missing+1) + reset)
+				index = missing
+				continue
+			}
+			return answers, total, nil
+		}
+		if answer == "" {
+			if answers[index] != "" {
+				index = nextQuestionIndex(answers, index)
+				continue
+			}
+			feedback := "Please enter an answer, or press Ctrl+C to cancel."
+			if navigable {
+				feedback = "Please enter an answer, use /next to skip, or press Ctrl+C to cancel."
+			}
+			u.printSystemMessage(yellow + feedback + reset)
+			continue
+		}
+		answer, valid := normalizeQuestionAnswerWithCustom(answer, questions[index].Options, questions[index].AllowCustom)
+		if !valid {
+			u.printSystemMessage(yellow + "Choose one of the listed options." + reset)
+			continue
+		}
+		answers[index] = answer
+		if !navigable {
+			return answers, total, nil
+		}
+		index = nextQuestionIndex(answers, index)
+	}
 }
 
 func (u *UI) restorePlanPrompt() {
@@ -401,6 +557,13 @@ func formatQuestion(item question.Question, index, total, width int) string {
 }
 
 func formatQuestionWithFooter(item question.Question, index, total, width int, footer string) string {
+	return formatQuestionWithAnswer(item, index, total, width, footer, "")
+}
+
+// formatQuestionWithAnswer keeps the original inline question layout. When a
+// previously answered question is revisited, `current` shows the answer that
+// Enter will keep, so it can be replaced without retyping the whole choice.
+func formatQuestionWithAnswer(item question.Question, index, total, width int, footer, current string) string {
 	var output strings.Builder
 	fmt.Fprintf(&output, "Question %d/%d:\n", index+1, total)
 	lines := strings.Split(strings.TrimSpace(item.Text), "\n")
@@ -419,6 +582,9 @@ func formatQuestionWithFooter(item question.Question, index, total, width int, f
 		prefix := fmt.Sprintf("   %d) ", optionIndex+1)
 		fmt.Fprintln(&output, wrapANSIWithPrefix(prefix, option, width))
 	}
+	if current != "" {
+		fmt.Fprintln(&output, wrapANSI("Current answer: "+sanitizeDiffLine(current, "<ESC>"), width, "   "))
+	}
 	var hint string
 	if len(item.Options) == 0 || item.AllowCustom {
 		hint = "Choose an option or type your own answer. "
@@ -427,6 +593,25 @@ func formatQuestionWithFooter(item question.Question, index, total, width int, f
 	}
 	output.WriteByte('\n')
 	output.WriteString(wrapANSI(hint+footer, width, ""))
+	return output.String()
+}
+
+// formatQuestionReview lists every question with its collected answer before
+// the questionnaire is submitted, making a revisiting round easy to verify.
+func formatQuestionReview(items []question.Question, answers []string, width int, footer string) string {
+	var output strings.Builder
+	fmt.Fprintf(&output, "Review your answers (%d/%d):\n", len(items), len(items))
+	for i, item := range items {
+		questionText := strings.Join(strings.Fields(strings.TrimSpace(item.Text)), " ")
+		answer := "(unanswered)"
+		if i < len(answers) && answers[i] != "" {
+			answer = answers[i]
+		}
+		fmt.Fprintln(&output, wrapANSIWithPrefix(fmt.Sprintf("  %d) ", i+1), sanitizeDiffLine(questionText, "<ESC>"), width))
+		fmt.Fprintln(&output, wrapANSIWithPrefix("     ", "Answer: "+sanitizeDiffLine(answer, "<ESC>"), width))
+	}
+	output.WriteByte('\n')
+	output.WriteString(wrapANSI("Enter submits, /back or /1-"+strconv.Itoa(len(items))+" revises a question. "+footer, width, ""))
 	return output.String()
 }
 

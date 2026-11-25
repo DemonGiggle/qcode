@@ -31,6 +31,16 @@ Commands:
   scope, behavior, edge cases, and validation are clear, so answer each round
   and request revisions if the plan still feels vague. Ctrl+C cancels the
   questionnaire.
+- A round with several questions has a sticky status area above the transcript:
+  it keeps the current question number, the answered count, and per-question
+  markers visible while you page through earlier output. Answers are not sent to
+  the agent until you submit the whole round, so you can revisit an earlier
+  question and change its answer. Use `/back` and `/next` (or Alt+Left and
+  Alt+Right) to move between questions, `/1`-`/8` to jump to one, and `/done`
+  or Enter on the review step to submit. A revisited question shows its current
+  answer; type a replacement or press Enter to keep it. `/done` with unanswered
+  questions takes you to the first one instead of submitting. Esc/tab deferral
+  keeps every collected answer and the current question.
 - A custom reply can ask for clarification about the question or its choices.
   The agent answers it in text first so you can read it before deciding, then
   asks again for any unresolved decision, continuing the same planning request

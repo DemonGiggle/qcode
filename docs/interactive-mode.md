@@ -28,7 +28,10 @@ global learning automatically; `/learn` retains its review and approval flow.
 While answering, the question is shown in the output and the view follows to it.
 Use PgUp/PgDn to review earlier output while answering. Your answer stays in the
 input field while scrolling. After answering, cancelling, or deferring, the
-previous history position is restored.
+previous history position is restored. Plan and Skill Plan questionnaires can
+contain several questions; they keep a sticky progress area above the transcript
+and let you move back and forth with `/back`, `/next`, `/1`-`/8`, or Alt+Left/
+Alt+Right to re-answer a question before submitting the round.
 
 If a question arrives while you are typing, qcode saves your unfinished prompt
 and restores it after the answer. Questions for other tabs wait there; switching

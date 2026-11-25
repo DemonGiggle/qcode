@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -345,7 +346,7 @@ func startQuestionnaire(t *testing.T, u *UI, questions []question.Question) (<-c
 	frames := make(chan string, 16)
 	u.terminal.RenderInput = func(prompt, line string, pos int) {
 		u.renderInput(prompt, line, pos)
-		if strings.HasPrefix(prompt, "Answer ") {
+		if strings.HasPrefix(prompt, "Answer ") || strings.HasPrefix(prompt, "Submit ") {
 			select {
 			case frames <- questionnaireFrame(u):
 			default:
@@ -565,5 +566,213 @@ func TestInlineQuestionRedactsBeforeWrappingAndKeepsOriginalAnswer(t *testing.T)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("questionnaire did not accept answer")
+	}
+}
+
+func navigationQuestions() []question.Question {
+	return []question.Question{
+		{Text: "Which database?", Options: []string{"SQLite", "Postgres"}, AllowCustom: true},
+		{Text: "Why that one?", AllowCustom: true},
+		{Text: "Which cache?", Options: []string{"None", "Redis"}, AllowCustom: true},
+	}
+}
+
+func TestQuestionnaireRevisitsAndReanswersPreviousQuestion(t *testing.T) {
+	u, _ := layoutFixture(t)
+	questions := navigationQuestions()
+	result, frames := startQuestionnaire(t, u, questions)
+	waitQuestionnaireFrame(t, frames, "Answer 1/3>")
+	u.input.route([]byte("1\r"))
+	waitQuestionnaireFrame(t, frames, "Answer 2/3>")
+	u.input.route([]byte("small footprint\r"))
+	waitQuestionnaireFrame(t, frames, "Answer 3/3>")
+	u.input.route([]byte("2\r"))
+	waitQuestionnaireFrame(t, frames, "Submit 3/3>")
+
+	// Jump back to the first question, see the old answer, and replace it.
+	u.input.route([]byte("/1\r"))
+	frame := waitQuestionnaireFrame(t, frames, "Answer 1/3>")
+	if !strings.Contains(frame, "Current answer: SQLite") {
+		t.Fatalf("previous answer not shown when revisiting:\n%s", frame)
+	}
+	u.input.route([]byte("2\r"))
+	waitQuestionnaireFrame(t, frames, "Submit 3/3>")
+	u.input.route([]byte("\r"))
+	select {
+	case got := <-result:
+		want := []string{"Postgres", "small footprint", "Redis"}
+		if got.err != nil || !reflect.DeepEqual(got.answers, want) {
+			t.Fatalf("answers = %+v, want %+v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("re-answered questionnaire did not submit")
+	}
+}
+
+func TestQuestionnaireStickyPanelStaysVisibleWhilePaging(t *testing.T) {
+	u, _ := layoutFixture(t)
+	for i := 0; i < 60; i++ {
+		u.display.AddLine("earlier conversation")
+	}
+	result, frames := startQuestionnaire(t, u, navigationQuestions())
+	waitQuestionnaireFrame(t, frames, "Answer 1/3>")
+	u.input.route([]byte("1\r"))
+	waitQuestionnaireFrame(t, frames, "Answer 2/3>")
+	for i := 0; i < 4; i++ {
+		u.input.route([]byte(pageUpSequence))
+	}
+	frame := questionnaireFrame(u)
+	for _, want := range []string{"Question 2/3 | 1/3 answered", "Answers 1+ 2* 3o", "/back /next"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("sticky area missing %q while history is paged:\n%s", want, frame)
+		}
+	}
+	u.input.route([]byte("fast\r"))
+	waitQuestionnaireFrame(t, frames, "Answer 3/3>")
+	u.input.route([]byte("1\r"))
+	waitQuestionnaireFrame(t, frames, "Submit 3/3>")
+	u.input.route([]byte("\r"))
+	select {
+	case got := <-result:
+		if got.err != nil || len(got.answers) != 3 {
+			t.Fatalf("answers = %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("paging prevented submitting the questionnaire")
+	}
+}
+
+func TestQuestionnaireDoneRequiresEveryAnswer(t *testing.T) {
+	u, _ := layoutFixture(t)
+	result, frames := startQuestionnaire(t, u, navigationQuestions())
+	waitQuestionnaireFrame(t, frames, "Answer 1/3>")
+	u.input.route([]byte("1\r"))
+	waitQuestionnaireFrame(t, frames, "Answer 2/3>")
+	u.input.route([]byte("/done\r"))
+	waitQuestionnaireFrame(t, frames, "Question 2 still needs an answer")
+	u.input.route([]byte("fast\r"))
+	waitQuestionnaireFrame(t, frames, "Answer 3/3>")
+	u.input.route([]byte("1\r"))
+	waitQuestionnaireFrame(t, frames, "Submit 3/3>")
+	u.input.route([]byte("\r"))
+	select {
+	case got := <-result:
+		if got.err != nil || len(got.answers) != 3 || got.answers[1] != "fast" {
+			t.Fatalf("answers = %+v, want the answer typed after /done", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("questionnaire did not submit")
+	}
+}
+
+func TestQuestionnaireAltArrowsMoveBetweenQuestions(t *testing.T) {
+	u, _ := layoutFixture(t)
+	result, frames := startQuestionnaire(t, u, navigationQuestions())
+	waitQuestionnaireFrame(t, frames, "Answer 1/3>")
+	u.input.route([]byte("1\r"))
+	waitQuestionnaireFrame(t, frames, "Answer 2/3>")
+	u.input.route([]byte("\x1bb")) // Alt+Left: back to question 1.
+	waitQuestionnaireFrame(t, frames, "Answer 1/3>")
+	u.input.route([]byte("fast\r"))
+	waitQuestionnaireFrame(t, frames, "Answer 2/3>")
+	u.input.route([]byte("\x1bf")) // Alt+Right: forward to question 3.
+	waitQuestionnaireFrame(t, frames, "Answer 3/3>")
+	u.input.route([]byte("1\r"))
+	waitQuestionnaireFrame(t, frames, "Answer 2/3>")
+	u.input.route([]byte("reliable\r"))
+	waitQuestionnaireFrame(t, frames, "Submit 3/3>")
+	u.input.route([]byte("\r"))
+	select {
+	case got := <-result:
+		if got.err != nil || len(got.answers) != 3 || got.answers[0] != "fast" || got.answers[1] == "" {
+			t.Fatalf("answers = %+v, want revised first answer", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("keyboard navigation did not finish the questionnaire")
+	}
+}
+
+func TestQuestionnaireDeferralKeepsRevisitableAnswers(t *testing.T) {
+	u, _ := layoutFixture(t)
+	questions := navigationQuestions()
+	result, frames := startQuestionnaire(t, u, questions)
+	waitQuestionnaireFrame(t, frames, "Answer 1/3>")
+	u.input.route([]byte("1\r"))
+	waitQuestionnaireFrame(t, frames, "Answer 2/3>")
+	u.input.route([]byte("fast\r"))
+	waitQuestionnaireFrame(t, frames, "Answer 3/3>")
+	u.input.route([]byte{29}) // Esc defers the question.
+	var deferred questionResult
+	select {
+	case deferred = <-result:
+	case <-time.After(time.Second):
+		t.Fatal("questionnaire did not defer")
+	}
+	if !errors.Is(deferred.err, errQuestionDeferred) {
+		t.Fatalf("deferral = %v", deferred.err)
+	}
+	if len(deferred.answers) != 3 || deferred.answers[0] != "SQLite" || deferred.answers[1] != "fast" || deferred.answers[2] != "" {
+		t.Fatalf("deferred answers = %+v", deferred)
+	}
+
+	resumed := make(chan questionResult, 1)
+	go func() {
+		answers, _, err := u.runQuestionnaireProgress(context.Background(), questions, 2, deferred.answers, "Ctrl+C cancels this request.", true)
+		resumed <- questionResult{answers: answers, err: err}
+	}()
+	waitQuestionnaireFrame(t, frames, "Answer 3/3>")
+	u.input.route([]byte("1\r"))
+	waitQuestionnaireFrame(t, frames, "Submit 3/3>")
+	u.input.route([]byte("/1\r"))
+	waitQuestionnaireFrame(t, frames, "Answer 1/3>")
+	u.input.route([]byte("2\r"))
+	waitQuestionnaireFrame(t, frames, "Submit 3/3>")
+	u.input.route([]byte("\r"))
+	select {
+	case got := <-resumed:
+		want := []string{"Postgres", "fast", "None"}
+		if got.err != nil || !reflect.DeepEqual(got.answers, want) {
+			t.Fatalf("resumed answers = %+v, want %+v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("resumed questionnaire did not submit")
+	}
+}
+
+func TestQuestionnaireNavigationRedactsDisplayedAnswers(t *testing.T) {
+	u, _ := layoutFixture(t)
+	policy, err := redaction.New(redaction.Config{}, []string{tuiTestSecret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.redaction = policy
+	questions := []question.Question{
+		{Text: "Which store?", AllowCustom: true},
+		{Text: "Which cache?", AllowCustom: true},
+	}
+	result, frames := startQuestionnaire(t, u, questions)
+	waitQuestionnaireFrame(t, frames, "Answer 1/2>")
+	u.input.route([]byte(tuiTestSecret + "\r"))
+	waitQuestionnaireFrame(t, frames, "Answer 2/2>")
+	u.input.route([]byte("/1\r"))
+	frame := waitQuestionnaireFrame(t, frames, "Answers 1* 2o")
+	if strings.Contains(frame, tuiTestSecret) || !strings.Contains(frame, redaction.Marker) {
+		t.Fatalf("sticky area leaked a secret:\n%s", frame)
+	}
+	u.input.route([]byte("\r"))
+	waitQuestionnaireFrame(t, frames, "Answer 2/2>")
+	u.input.route([]byte("safe\r"))
+	frame = waitQuestionnaireFrame(t, frames, "Review your answers")
+	if strings.Contains(frame, tuiTestSecret) {
+		t.Fatalf("review summary leaked a secret:\n%s", frame)
+	}
+	u.input.route([]byte("\r"))
+	select {
+	case got := <-result:
+		if got.err != nil || len(got.answers) != 2 || got.answers[0] != tuiTestSecret || got.answers[1] != "safe" {
+			t.Fatalf("display filtering changed answers: %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("questionnaire did not submit")
 	}
 }

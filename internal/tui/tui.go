@@ -308,7 +308,9 @@ type UI struct {
 	approvals            map[string][]*approvalRequest
 	questionMu           sync.Mutex
 	questions            []*questionRequest
-	questionnaireActive  bool // Guarded by screenMu; blocks queue while answering inline.
+	questionnaireActive  bool           // Guarded by screenMu; blocks queue while answering inline.
+	questionPanel        *questionPanel // Guarded by screenMu; sticky multi-question status.
+	questionNav          int            // Guarded by screenMu; pending Alt+Left/Right direction.
 	modeDecisionMu       sync.Mutex
 	modeDecisions        []*modeDecisionRequest
 	tabMu                sync.Mutex

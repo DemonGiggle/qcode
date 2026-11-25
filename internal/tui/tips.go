@@ -36,6 +36,7 @@ var tipTexts = []string{
 	"Run `/history` to search completed prompts newest-first; Enter views one response, Esc returns to the live view.",
 	"`write` and `edit` show 10-line diff previews; run `/diff` or `/diff N` to expand the full stored diff.",
 	"Run `/plan` for read-only Plan mode, `/plan show` to review, `/plan act` to implement, `/plan off` to leave.",
+	"In a multi-question Plan round, use `/back`, `/next`, `/1`-`/8`, or Alt+Left/Right to revisit and re-answer a question before submitting.",
 	"Run `/skillplan <idea>` for guided skill design; refine the draft, then approve it with `/skillplan create`.",
 	"Run `/clear` to clear the visible conversation and redraw the header.",
 	"Run `/bash <cmd>` to execute a shell command from the workspace in the active agent's environment.",

@@ -284,7 +284,13 @@ func (u *UI) paintFixedLocked(direction int) {
 	footer := min(1+statusN, max(0, u.height-2))
 	// The pin yields space to the composer, its separator, and two transcript
 	// rows on short screens. Its height does not move a paused history anchor.
-	latest := u.latestPromptRegionRowsLocked(u.height - footer - 5)
+	// A multi-question questionnaire adds a sticky area after the pin so its
+	// progress stays visible while the transcript is paged. On short screens
+	// the pin shrinks first and the sticky area disappears before output does.
+	sticky := u.questionPanelRowsLocked(min(3, max(0, u.height-footer-8)))
+	available := max(0, u.height-footer-5-len(sticky))
+	latest := u.latestPromptRowsLocked(min(3, available))
+	latest = append(latest, sticky...)
 	// Keep a cursor-centered window for drafts taller than the terminal.
 	inputLimit := u.height - 5 - statusN - len(latest)
 	if len(queued) > 0 {

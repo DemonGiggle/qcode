@@ -1178,4 +1178,8 @@ const (
 	KeyDown   = keyDown
 	KeyDelete = keyDelete
 	KeyEscape = keyEscape
+	// Word-movement keys are exposed so consumers can temporarily give them
+	// another meaning, such as moving between questionnaire questions.
+	KeyAltLeft  = keyAltLeft
+	KeyAltRight = keyAltRight
 )

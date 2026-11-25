@@ -1037,6 +1037,7 @@ def build_pdf(images: dict[str, Path]):
         [
             "Plan mode only advertises inspection tools (read, list, search, view_image, skills, and explicitly enabled web tools). Mutation, shell execution, extra directory grants, and sub-agent delegation are rejected at the tool boundary. Asking beats guessing: the agent inspects what is cheap to find, then asks in rounds with 2-6 concrete choices where alternatives exist.",
             "Earlier plan revisions stay in the conversation, but only the latest submitted plan is used for the /plan act handoff.",
+            "A multi-question round keeps a sticky progress area above the transcript and waits for a review step before submitting. Use /back and /next (or Alt+Left/Alt+Right), /1-/8, and /done or Enter to revisit and re-answer earlier questions; the current answer is shown and Enter keeps it. Esc/tab deferral preserves collected answers.",
         ],
     )
     tip(pdf, "`/new` clears the saved plan. Plan commands need an idle agent with no running or queued work. Answer each question round; a vague answer earns a focused follow-up before qcode submits the plan.")
