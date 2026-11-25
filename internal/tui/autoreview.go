@@ -401,7 +401,8 @@ func (u *UI) autoreviewHasGit() bool {
 }
 
 // maybeTriggerAutoreview starts a review when main becomes fully idle with an
-// empty queue. It is called from handleAgentEvent. Normal user tasks and
+// empty queue, a finished todo checklist, and no delegated workers still
+// running. It is called from handleAgentEvent. Normal user tasks and
 // delegated-work callbacks start the first review (round 0->1) only when the
 // agent actually changed files, including delegated edits now attributed to
 // main's callback summary; read-only answers (e.g. "is this issue fixed" with
@@ -481,6 +482,16 @@ func (u *UI) maybeTriggerAutoreview(event session.Event) {
 		}
 		return
 	}
+	// Defer new reviews while main's todo checklist is still unfinished or a
+	// delegated worker is still running. Main looks idle here (empty queue, no
+	// active task) after delegate_task ends its turn, but the todo stays
+	// half-done (one item doing) until the delegation callback resumes it.
+	// Reviewing now would judge partial changes and interleave the reviewer
+	// callback with todo continuation. The next main completion after the
+	// todo finishes and workers go idle retriggers the review.
+	if u.autoreviewTodoIncomplete() || u.autoreviewHasBusyWorkers(reviewerID) {
+		return
+	}
 	switch {
 	case round == autoreviewRoundIdle:
 		// Covers both fresh user work and delegated-work callbacks
@@ -498,6 +509,58 @@ func (u *UI) maybeTriggerAutoreview(event session.Event) {
 	default:
 		// Unreachable; kept to avoid review storms on future rounds.
 	}
+}
+
+// autoreviewTodoIncomplete reports whether main still owns an unfinished
+// execution checklist. An empty or fully-done list (or unknown runner)
+// allows review; any todo/doing item defers it until the todo finishes and
+// produces its own completion event.
+func (u *UI) autoreviewTodoIncomplete() bool {
+	if u.manager == nil {
+		return false
+	}
+	value, ok := u.manager.Runner("main")
+	if !ok || value == nil {
+		return false
+	}
+	snapshotter, ok := value.(todoSnapshotController)
+	if !ok || snapshotter == nil {
+		return false
+	}
+	_, _, statuses, _, ok := snapshotter.TodoSnapshot()
+	if !ok || len(statuses) == 0 {
+		return false
+	}
+	for _, status := range statuses {
+		if status != "done" {
+			return true
+		}
+	}
+	return false
+}
+
+// autoreviewHasBusyWorkers reports whether any delegated worker (any agent
+// except main and the reusable reviewer) is still running or waiting for
+// approval. Main looks idle after delegate_task ends its turn, so without
+// this check a review would start on partial changes before the worker
+// callback merges its edits.
+func (u *UI) autoreviewHasBusyWorkers(reviewerID string) bool {
+	if u.manager == nil {
+		return false
+	}
+	for _, summary := range u.manager.List() {
+		if summary.ID == "" || summary.ID == "main" {
+			continue
+		}
+		if reviewerID != "" && summary.ID == reviewerID {
+			continue
+		}
+		switch summary.Status {
+		case session.StatusRunning, session.StatusWaitingForApproval, session.StatusClosing:
+			return true
+		}
+	}
+	return false
 }
 
 // autoreviewIsReviewerCallback reports whether a main completion is the

@@ -146,7 +146,28 @@ type autoreviewFakeManager struct {
 	summaries map[string]session.Summary
 	submitted []session.PromptSubmission
 	created   int
+	runner    any
 }
+
+type autoreviewTodoStub struct {
+	statuses []string
+}
+
+func (r autoreviewTodoStub) TodoSnapshot() (ids, titles, statuses []string, version uint64, ok bool) {
+	if r.statuses == nil {
+		return nil, nil, nil, 0, false
+	}
+	ids = make([]string, len(r.statuses))
+	titles = make([]string, len(r.statuses))
+	for i, st := range r.statuses {
+		ids[i] = "item"
+		titles[i] = "task"
+		_ = st
+	}
+	return ids, titles, append([]string(nil), r.statuses...), 1, true
+}
+
+func (r autoreviewTodoStub) LatestTodoText() (string, bool) { return "todo", true }
 
 func (m *autoreviewFakeManager) Events() <-chan session.Event { return nil }
 func (m *autoreviewFakeManager) List() []session.Summary {
@@ -156,7 +177,12 @@ func (m *autoreviewFakeManager) List() []session.Summary {
 	}
 	return out
 }
-func (m *autoreviewFakeManager) Runner(id string) (any, bool) { return nil, false }
+func (m *autoreviewFakeManager) Runner(id string) (any, bool) {
+	if id == "main" && m.runner != nil {
+		return m.runner, true
+	}
+	return nil, false
+}
 
 func (m *autoreviewFakeManager) Summary(id string) (session.Summary, error) {
 	if s, ok := m.summaries[id]; ok {
@@ -381,5 +407,67 @@ func TestAutoreviewAgentSkippedMarkers(t *testing.T) {
 		if autoreviewAgentSkipped(outcome) {
 			t.Fatalf("should not skip: %q", outcome)
 		}
+	}
+}
+
+func TestMaybeTriggerAutoreviewDefersWhileTodoIncomplete(t *testing.T) {
+	var output bytes.Buffer
+	fake := &autoreviewFakeManager{
+		summaries: map[string]session.Summary{
+			"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "do work", LastOutcome: "did work", ChangedFiles: []string{"a.go"}},
+		},
+		runner: autoreviewTodoStub{statuses: []string{"done", "doing", "todo"}},
+	}
+	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
+	u.SetAutoreview(true, "ollama", "review-model")
+	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "do work"}})
+	if len(fake.submitted) != 0 {
+		t.Fatalf("half-done todo must defer review, submitted=%d", len(fake.submitted))
+	}
+	// Finished checklist allows the same completion to trigger.
+	fake.runner = autoreviewTodoStub{statuses: []string{"done", "done"}}
+	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "do work"}})
+	if len(fake.submitted) != 1 {
+		t.Fatalf("finished todo should trigger review, submitted=%d", len(fake.submitted))
+	}
+}
+
+func TestMaybeTriggerAutoreviewDefersWhileWorkerBusy(t *testing.T) {
+	var output bytes.Buffer
+	fake := &autoreviewFakeManager{summaries: map[string]session.Summary{
+		"main":    {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "do work", LastOutcome: "did work", ChangedFiles: []string{"a.go"}},
+		"agent-2": {ID: "agent-2", Status: session.StatusRunning, CurrentTask: "delegated work"},
+	}}
+	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
+	u.SetAutoreview(true, "ollama", "review-model")
+	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "do work"}})
+	if len(fake.submitted) != 0 {
+		t.Fatalf("busy worker must defer review, submitted=%d", len(fake.submitted))
+	}
+	// Reviewer itself never blocks; other idle workers allow review.
+	fake.summaries["agent-2"] = session.Summary{ID: "agent-2", Status: session.StatusCompleted}
+	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "do work"}})
+	if len(fake.submitted) != 1 {
+		t.Fatalf("idle workers should trigger review, submitted=%d", len(fake.submitted))
+	}
+}
+
+func TestMaybeTriggerAutoreviewReviewerCallbackBypassesTodoGuard(t *testing.T) {
+	var output bytes.Buffer
+	fake := &autoreviewFakeManager{
+		summaries: map[string]session.Summary{
+			"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-9"},
+		},
+		runner: autoreviewTodoStub{statuses: []string{"doing"}},
+	}
+	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
+	u.SetAutoreview(true, "ollama", "review-model")
+	u.screenMu.Lock()
+	u.autoreviewRound = autoreviewRoundFirst
+	u.autoreviewReviewerID = "agent-9"
+	u.screenMu.Unlock()
+	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-9"}})
+	if len(fake.submitted) != 1 {
+		t.Fatalf("reviewer callback must still advance the loop, submitted=%d", len(fake.submitted))
 	}
 }
