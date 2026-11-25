@@ -1046,7 +1046,7 @@ def build_pdf(images: dict[str, Path]):
     bullets(
         pdf,
         [
-            "A live `Todo done/total` panel sits above the steer/queue area while work is incomplete ([ ] todo, half-circle doing, [x] done). Collapsed it shows up to three rows, shrinking to the header row alone when the terminal is too short; Alt+T expands all rows and Esc collapses.",
+            "A live `Todo done/total` panel sits above the steer/queue area while work is incomplete ([ ] todo, half-circle doing, [x] done). Collapsed it shows up to three items, preferring unfinished ones in creation order (the most recently finished backfill the remaining slots with their [x] marker); it shrinks to the header row alone when the terminal is too short. Alt+T expands all rows in creation order and Esc collapses.",
             "Use `/todo show` to open the latest checklist in a scrollable view at any time. A finished list is archived once to the transcript and cleared when the next request starts.",
             "Titles are one line (20 items max); the model should only call todo tools when the list changes, not every turn. Todo tools are unavailable in Plan and Skill Plan modes.",
         ],

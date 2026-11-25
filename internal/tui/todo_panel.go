@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"qcode/internal/lineedit"
@@ -9,7 +10,8 @@ import (
 )
 
 // todoPreviewRows caps the collapsed todo panel so the fixed window keeps
-// room for the transcript, steer/queue section, and composer.
+// room for the transcript, steer/queue section, and composer. The collapsed
+// preview shows up to this many items, preferring unfinished ones.
 const todoPreviewRows = 3
 
 // todoPanel belongs to screenMu, alongside the active tab's history viewport
@@ -116,6 +118,43 @@ func todoStatusMarker(status string, unicodeEnabled bool) string {
 	default:
 		return "[ ] "
 	}
+}
+
+// todoPreviewItems picks the items shown by the collapsed panel. Unfinished
+// items win their creation-order slots up to limit; when fewer than limit
+// unfinished items remain (typically near the tail of the list), the most
+// recently finished items backfill the remaining slots so the preview keeps
+// up to limit rows, and they render with their [x] marker. The result keeps
+// creation order. The expanded panel ignores this selection and shows every
+// item.
+func todoPreviewItems(items []todoItem, limit int) []todoItem {
+	if limit <= 0 || len(items) == 0 {
+		return nil
+	}
+	selected := make([]int, 0, limit)
+	doneIdx := make([]int, 0, len(items))
+	for i, item := range items {
+		if item.status == "done" {
+			doneIdx = append(doneIdx, i)
+			continue
+		}
+		if len(selected) < limit {
+			selected = append(selected, i)
+		}
+	}
+	if need := limit - len(selected); need > 0 && len(doneIdx) > 0 {
+		tail := doneIdx
+		if len(tail) > need {
+			tail = tail[len(tail)-need:]
+		}
+		selected = append(selected, tail...)
+	}
+	sort.Ints(selected)
+	preview := make([]todoItem, 0, len(selected))
+	for _, i := range selected {
+		preview = append(preview, items[i])
+	}
+	return preview
 }
 
 // todoDisplayRows wraps checklist items into terminal rows, remembering

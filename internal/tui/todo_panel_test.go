@@ -63,13 +63,95 @@ func TestTodoPanelCollapsedShowsThreeRowsAndCount(t *testing.T) {
 	if !strings.Contains(got, "Todo 1/5 | Alt+T expand") {
 		t.Fatalf("missing todo header with count: %q", got)
 	}
-	for _, want := range []string{"First task", "Second task", "Third task"} {
+	for _, want := range []string{"Second task", "Third task", "Fourth task"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing preview row %q: %q", want, got)
 		}
 	}
-	if strings.Contains(got, "Fourth task") || strings.Contains(got, "Fifth task") {
-		t.Fatalf("collapsed panel shows more than three rows: %q", got)
+	if strings.Contains(got, "First task") {
+		t.Fatalf("collapsed panel shows finished row: %q", got)
+	}
+	if strings.Contains(got, "Fifth task") {
+		t.Fatalf("collapsed panel shows more than three items: %q", got)
+	}
+}
+
+func TestTodoPreviewItemsPreferUnfinishedInCreationOrder(t *testing.T) {
+	items := []todoItem{
+		{id: "a", title: "A", status: "done"},
+		{id: "b", title: "B", status: "todo"},
+		{id: "c", title: "C", status: "done"},
+		{id: "d", title: "D", status: "doing"},
+		{id: "e", title: "E", status: "todo"},
+		{id: "f", title: "F", status: "todo"},
+	}
+	got := todoPreviewItems(items, 3)
+	gotIDs := make([]string, 0, len(got))
+	for _, item := range got {
+		gotIDs = append(gotIDs, item.id)
+	}
+	want := []string{"b", "d", "e"}
+	if strings.Join(gotIDs, ",") != strings.Join(want, ",") {
+		t.Fatalf("preview = %v, want %v", gotIDs, want)
+	}
+}
+
+func TestTodoPreviewItemsBackfillsFinishedRowsAtTail(t *testing.T) {
+	items := []todoItem{
+		{id: "a", title: "A", status: "done"},
+		{id: "b", title: "B", status: "done"},
+		{id: "c", title: "C", status: "done"},
+		{id: "d", title: "D", status: "done"},
+		{id: "e", title: "E", status: "todo"},
+	}
+	got := todoPreviewItems(items, 3)
+	gotIDs := make([]string, 0, len(got))
+	for _, item := range got {
+		gotIDs = append(gotIDs, item.id)
+	}
+	// Only one unfinished item remains, so the two most recently finished
+	// items backfill the preview; creation order is kept.
+	want := []string{"c", "d", "e"}
+	if strings.Join(gotIDs, ",") != strings.Join(want, ",") {
+		t.Fatalf("preview = %v, want %v", gotIDs, want)
+	}
+}
+
+func TestTodoPreviewItemsKeepsFinishedRowsOfSmallLists(t *testing.T) {
+	items := []todoItem{
+		{id: "a", title: "A", status: "done"},
+		{id: "b", title: "B", status: "todo"},
+	}
+	got := todoPreviewItems(items, 3)
+	if len(got) != 2 || got[0].id != "a" || got[1].id != "b" {
+		t.Fatalf("preview = %+v, want both items in creation order", got)
+	}
+}
+
+func TestTodoPanelCollapsedBackfillsFinishedRowsNearEnd(t *testing.T) {
+	runner := &todoPanelRunner{
+		ids:      []string{"one", "two", "three", "four"},
+		titles:   []string{"First task", "Second task", "Third task", "Fourth task"},
+		statuses: []string{"done", "done", "doing", "todo"},
+		version:  7,
+		text:     "# Todo (2/4 done)",
+		hasText:  true,
+	}
+	u, frame := todoPanelFixture(t, runner)
+	u.renderInput(inputPrompt, "", 0)
+	got := frame()
+	if !strings.Contains(got, "Todo 2/4 | Alt+T expand") {
+		t.Fatalf("missing todo header with count: %q", got)
+	}
+	// The last three slots are shown: the most recent finished row stays
+	// visible with its [x] marker next to the two unfinished rows.
+	for _, want := range []string{"Second task", "Third task", "Fourth task"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing preview row %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "First task") {
+		t.Fatalf("collapsed panel should backfill the most recent finished rows only: %q", got)
 	}
 }
 
@@ -123,7 +205,7 @@ func TestTodoPanelSitsAboveQueue(t *testing.T) {
 		if strings.Contains(line, "Todo 1/5") {
 			idxTodo = i
 		}
-		if strings.Contains(line, "Third task") {
+		if strings.Contains(line, "Fourth task") {
 			idxLastTodo = i
 		}
 		if strings.Contains(line, "Queued | Alt+Q expand") {

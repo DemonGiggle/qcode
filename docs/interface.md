@@ -108,7 +108,7 @@ Todo 1/3 | Alt+T expand
 [x] run focused tests
 ```
 
-`[ ]` is todo, `◐` (`[-]` in ASCII mode) is doing, and `[x]` is done. The collapsed panel shows up to three rows; `Alt+T` (or `Alt+Shift+T`) expands it to scroll all rows, and `Esc` collapses an expanded panel. The header shows `Todo done/total` plus the expand/close hint, or `Todo n/m Alt+T` on very narrow terminals. The panel hides when the list is empty or every item is done; a finished list is archived once to the transcript as a checklist group. Use `/todo show` to review the latest checklist in a scrollable view at any time.
+`[ ]` is todo, `◐` (`[-]` in ASCII mode) is doing, and `[x]` is done. The collapsed panel shows up to three items, preferring unfinished items in creation order; when fewer than three unfinished items remain, the most recently finished items backfill the remaining slots (with their `[x]` marker). `Alt+T` (or `Alt+Shift+T`) expands it to scroll all rows in creation order, and `Esc` collapses an expanded panel. The header shows `Todo done/total` plus the expand/close hint, or `Todo n/m Alt+T` on very narrow terminals. The panel hides when the list is empty or every item is done; a finished list is archived once to the transcript as a checklist group. Use `/todo show` to review the latest checklist in a scrollable view at any time.
 
 ## Activity events
 

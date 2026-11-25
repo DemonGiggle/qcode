@@ -271,8 +271,10 @@ func (u *UI) paintFixedLocked(direction int) {
 		todo.expanded, todo.anchor = false, 0
 	}
 	var todoRows []todoDisplayRow
+	var todoPreview []todoDisplayRow
 	if todoLive {
 		todoRows = todoDisplayRows(todoItems, u.width, u.unicode)
+		todoPreview = todoDisplayRows(todoPreviewItems(todoItems, todoPreviewRows), u.width, u.unicode)
 	}
 	bar := u.statusBar()
 	statusN := statusBarLineCount(bar)
@@ -457,8 +459,10 @@ func (u *UI) paintFixedLocked(direction int) {
 	}
 	// Carve the todo block out of the transcript area, above the suggestions
 	// and queue blocks. The collapsed preview is the header plus up to three
-	// rows; an expanded panel pages through every row. Transcript minimums
-	// win on cramped screens, hiding the panel until there is room.
+	// rows of the unfinished items (in creation order); done items only fill
+	// in when fewer than three unfinished items remain. An expanded panel
+	// pages through every row. Transcript minimums win on cramped screens,
+	// hiding the panel until there is room.
 	todoHeight := 0
 	sepT := 0
 	sepTodoFollowup := 0
@@ -467,7 +471,7 @@ func (u *UI) paintFixedLocked(direction int) {
 		if todo.expanded {
 			todoDesired = 1 + len(todoRows)
 		} else {
-			todoDesired = 1 + min(todoPreviewRows, len(todoRows))
+			todoDesired = 1 + min(todoPreviewRows, len(todoPreview))
 		}
 	}
 	if todoDesired > 0 && outputHeight > minOutput {
@@ -587,8 +591,11 @@ func (u *UI) paintFixedLocked(direction int) {
 			if start < len(todoRows) {
 				visible = todoRows[start:min(len(todoRows), start+size)]
 			}
-		} else if len(visible) > max(0, todoHeight-1) {
-			visible = visible[:max(0, todoHeight-1)]
+		} else {
+			visible = todoPreview
+			if len(visible) > max(0, todoHeight-1) {
+				visible = visible[:max(0, todoHeight-1)]
+			}
 		}
 		color := ColorEnabled(u.out)
 		for i, row := range visible {
