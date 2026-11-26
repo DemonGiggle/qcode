@@ -7,9 +7,9 @@
 </p>
 
 <p align="center">
-  [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://go.dev/)
-  [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-  [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&amp;logo=go" alt="Go Version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
+  <img src="https://img.shields.io/badge/build-passing-brightgreen" alt="Build Status">
 </p>
 
 > Your terminal's second brain — fast, private, and everywhere you are.
