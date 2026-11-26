@@ -1,4 +1,10 @@
-# qcode
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/qcode-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/qcode-light.png">
+    <img alt="qcode" src="docs/assets/qcode-light.png" width="480">
+  </picture>
+</p>
 
 [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
