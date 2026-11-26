@@ -349,12 +349,12 @@ func fakeResponse(status int, body string) *http.Response {
 }
 
 func TestValidateDownloadURL(t *testing.T) {
-	if err := validateDownloadURL("https://github.com/DemonGiggle/qcode/releases/download/v1.2.3/qcode_linux_amd64"); err != nil {
+	if err := validateDownloadURL("https://github.com/demongiggle/qcode/releases/download/v1.2.3/qcode_linux_amd64"); err != nil {
 		t.Fatal(err)
 	}
 	for _, raw := range []string{
-		"http://github.com/DemonGiggle/qcode/releases/download/v1.2.3/qcode_linux_amd64",
-		"https://example.com/DemonGiggle/qcode/releases/download/v1.2.3/qcode_linux_amd64",
+		"http://github.com/demongiggle/qcode/releases/download/v1.2.3/qcode_linux_amd64",
+		"https://example.com/demongiggle/qcode/releases/download/v1.2.3/qcode_linux_amd64",
 		"https://github.com/other/repo/releases/download/v1.2.3/qcode_linux_amd64",
 	} {
 		if err := validateDownloadURL(raw); err == nil {
