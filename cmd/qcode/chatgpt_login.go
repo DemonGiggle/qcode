@@ -22,6 +22,10 @@ var loginExchange = chatgptoauth.Exchange
 // tests can stub network verification.
 var loginVerify = chatgptoauth.VerifyIDTokenWithFetch
 
+// loginOpenBrowser launches the authorization URL in the user's browser.
+// Variable so tests don't open a real browser on the ChatGPT login page.
+var loginOpenBrowser = tryBrowser
+
 // chatGPTLoginFlow performs dynamic registration (or reauthorization when a
 // registration already exists), exchanges the code, validates the ID token and
 // plan scope, and saves the doc-shaped credential record.
@@ -88,7 +92,7 @@ func chatGPTLoginFlow(oauthPath string, stdin io.Reader, stdout io.Writer, doer 
 		fmt.Fprintf(stdout, "2. Waiting for the callback on %s ...\n", redirectURI)
 		fmt.Fprintln(stdout, "   If your browser is on another machine, paste the full callback URL below.")
 		fmt.Fprintln(stdout, "")
-		tryBrowser(authURL)
+		loginOpenBrowser(authURL)
 		fmt.Fprint(stdout, "Callback URL> ")
 
 		cb, err := awaitCallback(ln, stdin, state)

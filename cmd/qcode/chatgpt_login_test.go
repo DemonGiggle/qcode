@@ -51,7 +51,29 @@ func (d loginStubDoer) Do(*http.Request) (*http.Response, error) {
 
 func chatgptoauthStubDoer(t *testing.T) chatgptoauth.Doer { return loginStubDoer{t: t} }
 
+// stubBrowser records authorization URLs instead of launching a real browser,
+// so tests never pop the ChatGPT login page.
+func stubBrowser(t *testing.T) *[]string {
+	t.Helper()
+	var opened []string
+	prev := loginOpenBrowser
+	loginOpenBrowser = func(target string) { opened = append(opened, target) }
+	t.Cleanup(func() { loginOpenBrowser = prev })
+	return &opened
+}
+
+func assertAuthorizeURLOpened(t *testing.T, opened []string) {
+	t.Helper()
+	if len(opened) != 1 {
+		t.Fatalf("browser opened %d times, want 1 (%v)", len(opened), opened)
+	}
+	if !strings.Contains(opened[0], "auth.openai.com/api/accounts/authorize") {
+		t.Fatalf("browser opened %q, want authorize URL", opened[0])
+	}
+}
+
 func TestChatGPTLoginFlowSavesTokens(t *testing.T) {
+	opened := stubBrowser(t)
 	oldExchange := loginExchange
 	oldVerify := loginVerify
 	defer func() { loginExchange = oldExchange; loginVerify = oldVerify }()
@@ -90,6 +112,7 @@ func TestChatGPTLoginFlowSavesTokens(t *testing.T) {
 	if err := chatGPTLoginFlow(path, stdin, &stdout, chatgptoauthStubDoer(t)); err != nil {
 		t.Fatal(err)
 	}
+	assertAuthorizeURLOpened(t, *opened)
 	out := stdout.String()
 	if !strings.Contains(out, "auth.openai.com/api/accounts/authorize") || !strings.Contains(out, "Saved") {
 		t.Fatalf("output = %q", out)
@@ -113,6 +136,7 @@ func TestChatGPTLoginFlowSavesTokens(t *testing.T) {
 }
 
 func TestChatGPTLoginFlowRejectsDeniedCallback(t *testing.T) {
+	opened := stubBrowser(t)
 	called := false
 	oldExchange := loginExchange
 	defer func() { loginExchange = oldExchange }()
@@ -129,9 +153,11 @@ func TestChatGPTLoginFlowRejectsDeniedCallback(t *testing.T) {
 	if called {
 		t.Fatal("exchange must not run after denied callback")
 	}
+	assertAuthorizeURLOpened(t, *opened)
 }
 
 func TestChatGPTLoginFlowRejectsMismatchedClient(t *testing.T) {
+	opened := stubBrowser(t)
 	oldExchange := loginExchange
 	oldVerify := loginVerify
 	defer func() { loginExchange = oldExchange; loginVerify = oldVerify }()
@@ -162,4 +188,5 @@ func TestChatGPTLoginFlowRejectsMismatchedClient(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("err = %v, want client mismatch", err)
 	}
+	assertAuthorizeURLOpened(t, *opened)
 }
