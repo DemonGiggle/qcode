@@ -116,6 +116,7 @@ func NewWithOptions(root string, options Options) (*Registry, error) {
 	}, "path", "content")}, r.write)
 	r.add(llm.Tool{Name: "edit", Description: prompt.EditTool, Parameters: objectSchema(map[string]any{
 		"path": stringProperty(prompt.PathParameter), "old_text": stringProperty(prompt.OldTextParameter), "new_text": stringProperty(prompt.NewTextParameter),
+		"replace_all": booleanProperty(prompt.ReplaceAllParameter),
 	}, "path", "old_text", "new_text")}, r.edit)
 	r.add(llm.Tool{Name: "list", Description: prompt.ListTool, Parameters: objectSchema(map[string]any{
 		"path": stringProperty(prompt.DirectoryParameter),
@@ -347,6 +348,10 @@ func stringProperty(description string) map[string]any {
 }
 func integerProperty(description string) map[string]any {
 	return map[string]any{"type": "integer", "description": description}
+}
+
+func booleanProperty(description string) map[string]any {
+	return map[string]any{"type": "boolean", "description": description}
 }
 
 func decode(arguments json.RawMessage, target any) error {
@@ -752,9 +757,10 @@ func (r *Registry) edit(ctx context.Context, arguments json.RawMessage) (string,
 
 func (r *Registry) editDetailed(ctx context.Context, arguments json.RawMessage) (ExecutionResult, error) {
 	var args struct {
-		Path    string `json:"path"`
-		OldText string `json:"old_text"`
-		NewText string `json:"new_text"`
+		Path       string `json:"path"`
+		OldText    string `json:"old_text"`
+		NewText    string `json:"new_text"`
+		ReplaceAll bool   `json:"replace_all"`
 	}
 	if err := decode(arguments, &args); err != nil {
 		return ExecutionResult{}, err
@@ -773,11 +779,23 @@ func (r *Registry) editDetailed(ctx context.Context, arguments json.RawMessage) 
 	if err != nil {
 		return ExecutionResult{}, err
 	}
-	count := bytes.Count(data, []byte(args.OldText))
-	if count != 1 {
-		return ExecutionResult{}, fmt.Errorf("old_text must occur exactly once; found %d occurrences", count)
+	matches, tolerance, note := locateEditMatches(data, args.OldText)
+	if len(matches) == 0 {
+		return ExecutionResult{}, missingOldTextError(data, args.OldText)
 	}
-	updated := bytes.Replace(data, []byte(args.OldText), []byte(args.NewText), 1)
+	if len(matches) > 1 && !args.ReplaceAll {
+		return ExecutionResult{}, fmt.Errorf("old_text must occur exactly once; found %d occurrences; include more surrounding lines to select one, or set replace_all=true", len(matches))
+	}
+	replacement := args.NewText
+	if tolerance == editReadGutter {
+		replacement = stripGutters(replacement)
+	}
+	if tolerance != editExact {
+		// A tolerated mismatch means the model could not see the file's real
+		// line endings, so keep new_text consistent with the file.
+		replacement = string(withLineEnding(replacement, lineEndingAt(data, matches[0].start)))
+	}
+	updated := spliceMatches(data, matches, []byte(replacement))
 	info, err := os.Stat(path)
 	if err != nil {
 		return ExecutionResult{}, err
@@ -788,7 +806,16 @@ func (r *Registry) editDetailed(ctx context.Context, arguments json.RawMessage) 
 	if err := r.writeFile(path, updated, info.Mode().Perm()); err != nil {
 		return ExecutionResult{}, err
 	}
-	return ExecutionResult{Output: fmt.Sprintf("edited %s", args.Path), Diff: unifiedDiff(args.Path, data, updated, true), ChangedFiles: []string{r.changedFilePath(path)}}, nil
+	return ExecutionResult{Output: fmt.Sprintf("edited %s%s", args.Path, editNoteSuffix(note)), Diff: unifiedDiff(args.Path, data, updated, true), ChangedFiles: []string{r.changedFilePath(path)}}, nil
+}
+
+// editNoteSuffix reports a tolerated old_text mismatch so a fallback is never
+// silent.
+func editNoteSuffix(note string) string {
+	if note == "" {
+		return ""
+	}
+	return " (" + note + ")"
 }
 
 func (r *Registry) list(ctx context.Context, arguments json.RawMessage) (string, error) {

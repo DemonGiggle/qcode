@@ -1,0 +1,251 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"qcode/internal/llm"
+)
+
+func editRegistry(t *testing.T) (*Registry, string) {
+	t.Helper()
+	root := t.TempDir()
+	registry, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return registry, root
+}
+
+func writeFile(t *testing.T, root, name, content string) {
+	t.Helper()
+	path := filepath.Join(root, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readFile(t *testing.T, root, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func editDetailed(t *testing.T, registry *Registry, args map[string]any) (llm.ToolResult, error) {
+	t.Helper()
+	data, err := json.Marshal(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return registry.ExecuteDetailed(context.Background(), llm.ToolCall{Name: "edit", Arguments: data})
+}
+
+// TestEditExactMatchStaysByteExact guards the original behavior: an exact
+// match replaces once and reports no tolerated difference.
+func TestEditExactMatchStaysByteExact(t *testing.T) {
+	registry, root := editRegistry(t)
+	writeFile(t, root, "a.txt", "alpha\r\nbeta\r\ngamma\r\n")
+
+	result, err := editDetailed(t, registry, map[string]any{"path": "a.txt", "old_text": "beta\r\n", "new_text": "BETA\r\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "edited a.txt" {
+		t.Fatalf("output = %q, want no tolerated-difference note", result.Output)
+	}
+	if got := readFile(t, root, "a.txt"); got != "alpha\r\nBETA\r\ngamma\r\n" {
+		t.Fatalf("file = %q", got)
+	}
+}
+
+// TestEditToleratesReadGutter covers the copy-paste trap created by read's
+// "     1\t" line decoration.
+func TestEditToleratesReadGutter(t *testing.T) {
+	registry, root := editRegistry(t)
+	writeFile(t, root, "a.txt", "one\ntwo\nthree\n")
+
+	// Read the file the way a model does, then edit with the gutter intact.
+	readOut, err := call(t, registry, "read", map[string]any{"path": "a.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snippet := strings.TrimSuffix(readOut, "\n") // "     1\tone\n     2\ttwo\n     3\tthree"
+
+	result, err := editDetailed(t, registry, map[string]any{"path": "a.txt", "old_text": snippet, "new_text": "     1\tone\n     2\tTWO\n     3\tthree"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Output, "gutter") {
+		t.Fatalf("output = %q, want a gutter note", result.Output)
+	}
+	if got := readFile(t, root, "a.txt"); got != "one\nTWO\nthree\n" {
+		t.Fatalf("file = %q", got)
+	}
+}
+
+// TestEditToleratesCRLF covers the hidden-EOL trap: read strips "\r", so a
+// multi-line snippet arrives with LF only.
+func TestEditToleratesCRLF(t *testing.T) {
+	registry, root := editRegistry(t)
+	writeFile(t, root, "a.txt", "one\r\ntwo\r\nthree\r\n")
+
+	result, err := editDetailed(t, registry, map[string]any{"path": "a.txt", "old_text": "one\ntwo", "new_text": "one\n2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Output, "line-ending") {
+		t.Fatalf("output = %q, want a line-ending note", result.Output)
+	}
+	// Untouched lines keep CRLF and the replacement adopts the file's ending.
+	if got := readFile(t, root, "a.txt"); got != "one\r\n2\r\nthree\r\n" {
+		t.Fatalf("file = %q", got)
+	}
+	if result.Diff == "" {
+		t.Fatal("expected a diff for a successful edit")
+	}
+}
+
+// TestEditCRLFKeepsUntouchedMixedEOL ensures the tolerant path never rewrites
+// line endings outside the replaced span.
+func TestEditCRLFKeepsUntouchedMixedEOL(t *testing.T) {
+	registry, root := editRegistry(t)
+	writeFile(t, root, "a.txt", "a\r\nb\nc\r\n")
+
+	if _, err := editDetailed(t, registry, map[string]any{"path": "a.txt", "old_text": "b\nc", "new_text": "b\nC"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, root, "a.txt"); got != "a\r\nb\nC\r\n" {
+		t.Fatalf("file = %q", got)
+	}
+}
+
+// TestEditReplaceAll covers the explicit multi-occurrence path.
+func TestEditReplaceAll(t *testing.T) {
+	registry, root := editRegistry(t)
+	writeFile(t, root, "a.txt", "x\ny\nx\n")
+
+	if _, err := editDetailed(t, registry, map[string]any{"path": "a.txt", "old_text": "x", "new_text": "1", "replace_all": true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, root, "a.txt"); got != "1\ny\n1\n" {
+		t.Fatalf("file = %q", got)
+	}
+}
+
+// TestEditAmbiguousOccurrences verifies the default stays exactly-once and the
+// error names the recovery options.
+func TestEditAmbiguousOccurrences(t *testing.T) {
+	registry, root := editRegistry(t)
+	writeFile(t, root, "a.txt", "x\nx\n")
+
+	_, err := editDetailed(t, registry, map[string]any{"path": "a.txt", "old_text": "x", "new_text": "1"})
+	if err == nil {
+		t.Fatal("expected an ambiguity error")
+	}
+	for _, want := range []string{"found 2 occurrences", "replace_all"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want %q", err, want)
+		}
+	}
+	if got := readFile(t, root, "a.txt"); got != "x\nx\n" {
+		t.Fatalf("file = %q, want unchanged", got)
+	}
+}
+
+// TestEditMissReportsWhitespaceHint covers the near-miss hint for a tab/space
+// mismatch, which the tool must not silently rewrite.
+func TestEditMissReportsWhitespaceHint(t *testing.T) {
+	registry, root := editRegistry(t)
+	writeFile(t, root, "a.go", "package a\n\nfunc main() {\n\treturn\n}\n")
+
+	_, err := editDetailed(t, registry, map[string]any{"path": "a.go", "old_text": "    return", "new_text": "\treturn nil"})
+	if err == nil {
+		t.Fatal("expected a mismatch error")
+	}
+	for _, want := range []string{"found 0 occurrences", "line 4", "surrounding whitespace"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want %q", err, want)
+		}
+	}
+	if got := readFile(t, root, "a.go"); got != "package a\n\nfunc main() {\n\treturn\n}\n" {
+		t.Fatalf("file = %q, want unchanged", got)
+	}
+}
+
+// TestEditMissMentionsRawBytes makes the gutter/line-ending contract visible in
+// every zero-match error.
+func TestEditMissMentionsRawBytes(t *testing.T) {
+	registry, root := editRegistry(t)
+	writeFile(t, root, "a.txt", "alpha\n")
+
+	_, err := editDetailed(t, registry, map[string]any{"path": "a.txt", "old_text": "not-there", "new_text": "x"})
+	if err == nil {
+		t.Fatal("expected a mismatch error")
+	}
+	for _, want := range []string{"raw file text", "line-number gutter", "line endings"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want %q", err, want)
+		}
+	}
+}
+
+// TestEditMissReportsMultiLineHint distinguishes a stale multi-line snippet
+// from a completely absent one.
+func TestEditMissReportsMultiLineHint(t *testing.T) {
+	registry, root := editRegistry(t)
+	writeFile(t, root, "a.txt", "first\nsecond\nthird\n")
+
+	_, err := editDetailed(t, registry, map[string]any{"path": "a.txt", "old_text": "first\nstale", "new_text": "x"})
+	if err == nil {
+		t.Fatal("expected a mismatch error")
+	}
+	if !strings.Contains(err.Error(), "line 1 matches the first old_text line") {
+		t.Fatalf("error = %q", err)
+	}
+}
+
+// TestEditSchemaExposesReplaceAll keeps the schema, decoder, and prompt in sync.
+func TestEditSchemaExposesReplaceAll(t *testing.T) {
+	registry, _ := editRegistry(t)
+	var found bool
+	for _, schema := range registry.Schemas() {
+		if schema.Name != "edit" {
+			continue
+		}
+		found = true
+		properties, ok := schema.Parameters["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("edit schema properties = %T", schema.Parameters["properties"])
+		}
+		property, ok := properties["replace_all"].(map[string]any)
+		if !ok {
+			t.Fatalf("replace_all property = %T", properties["replace_all"])
+		}
+		if property["type"] != "boolean" {
+			t.Fatalf("replace_all type = %v", property["type"])
+		}
+		if required, ok := schema.Parameters["required"].([]string); ok {
+			for _, name := range required {
+				if name == "replace_all" {
+					t.Fatal("replace_all must stay optional")
+				}
+			}
+		}
+		if !strings.Contains(schema.Description, "gutter") {
+			t.Fatalf("description = %q, want the copy-paste contract", schema.Description)
+		}
+	}
+	if !found {
+		t.Fatal("edit schema not found")
+	}
+}
