@@ -38,7 +38,7 @@ Ollama for local inference, [Ollama Cloud](docs/providers.md#ollama-cloud) witho
 Opt-in Linux sandbox (bubblewrap): fresh namespace per command, no network by default, hidden home, read-only root, approved directories only. Keys and configs stay outside the sandbox. Details: [Trust Model](docs/trust-model.md).
 
 ### ✅ Ships with a second pair of eyes
-`/autoreview` watches `main` and only speaks up when files actually changed — then reviews, fixes, and re-checks in a dedicated `review` tab (`AR` badge). Read-only answers never trigger it; `[skip review]` opts out. Details: [Interface](docs/interface.md).
+`/autoreview` watches `main` and only speaks up when files actually changed — then reviews, fixes, and re-checks in a dedicated `review` tab (`AR` badge). Read-only answers never trigger it; `[skip review]` opts out; `/autoreview runs <n>` caps the passes per change (default 3). Details: [Interface](docs/interface.md).
 
 ### And the rest just fades into the background
 - **Up to 20 tabs** — one `main`, many helpers, zero context-switching pain.

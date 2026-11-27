@@ -19,7 +19,7 @@ func TestAutoreviewToggleOnOff(t *testing.T) {
 		runtimePreferences: recorder,
 		activeAgent:        "main",
 	}
-	u.SetAutoreview(false, "ollama", "qwen2.5-coder:7b")
+	u.SetAutoreview(false, "ollama", "qwen2.5-coder:7b", 3)
 	u.handleAutoreviewCommand(context.Background(), []string{"/autoreview", "on"})
 	if !u.AutoreviewEnabled() {
 		t.Fatal("autoreview should be on")
@@ -34,6 +34,43 @@ func TestAutoreviewToggleOnOff(t *testing.T) {
 	}
 	if recorder.autoreviewCalls != 2 || recorder.autoreview {
 		t.Fatalf("persist off = %+v", recorder)
+	}
+}
+
+func TestAutoreviewRunsCommand(t *testing.T) {
+	var output bytes.Buffer
+	recorder := &runtimePreferenceRecorder{}
+	u := &UI{
+		display:            newHistoryWriter(&output),
+		runtimePreferences: recorder,
+		activeAgent:        "main",
+	}
+	u.SetAutoreview(false, "ollama", "qwen2.5-coder:7b", 0)
+	if got := u.AutoreviewRuns(); got != 3 {
+		t.Fatalf("default runs = %d, want 3", got)
+	}
+	u.handleAutoreviewCommand(context.Background(), []string{"/autoreview", "runs"})
+	if !strings.Contains(output.String(), "runs: 3") {
+		t.Fatalf("status should show runs, got %q", output.String())
+	}
+	output.Reset()
+	u.handleAutoreviewCommand(context.Background(), []string{"/autoreview", "runs", "4"})
+	if got := u.AutoreviewRuns(); got != 4 {
+		t.Fatalf("runs after set = %d, want 4", got)
+	}
+	if recorder.runsCalls != 1 || recorder.autoreviewRuns != 4 {
+		t.Fatalf("persist runs = %+v", recorder)
+	}
+	output.Reset()
+	u.handleAutoreviewCommand(context.Background(), []string{"/autoreview", "runs", "0"})
+	if got := u.AutoreviewRuns(); got != 4 {
+		t.Fatalf("invalid runs changed value to %d", got)
+	}
+	if recorder.runsCalls != 1 {
+		t.Fatalf("invalid runs should not persist, calls=%d", recorder.runsCalls)
+	}
+	if !strings.Contains(output.String(), "between 1 and 10") {
+		t.Fatalf("expected range error, got %q", output.String())
 	}
 }
 
@@ -62,7 +99,7 @@ func TestAutoreviewWorksWhileBusy(t *testing.T) {
 		activeAgent:        "main",
 		manager:            &layoutManager{states: map[string]session.Status{"main": session.StatusRunning}},
 	}
-	u.SetAutoreview(false, "ollama", "model-x")
+	u.SetAutoreview(false, "ollama", "model-x", 3)
 	// Busy main must still toggle (no activeAgentConfigurable guard).
 	u.handleAutoreviewCommand(context.Background(), []string{"/autoreview", "on"})
 	if !u.AutoreviewEnabled() {
@@ -105,7 +142,7 @@ func TestAutoreviewBadgeFirst(t *testing.T) {
 	}
 	var output bytes.Buffer
 	u := &UI{display: newHistoryWriter(&output), width: 120, unicode: true}
-	u.SetAutoreview(true, "ollama", "m")
+	u.SetAutoreview(true, "ollama", "m", 3)
 	bar2 := u.withAutoreviewPrefix("PROVIDER [MODEL m]")
 	if !strings.HasPrefix(bar2, "[AR]") {
 		t.Fatalf("AR not first: %q", bar2)
@@ -118,18 +155,18 @@ func TestBuildAutoreviewPromptGitVsNoGit(t *testing.T) {
 		LastOutcome:  "updated auth flow",
 		ChangedFiles: []string{"auth.go", "login_test.go"},
 	}
-	git := buildAutoreviewPrompt(summary, true, false)
+	git := buildAutoreviewPrompt(summary, true, 1, 3)
 	if !strings.Contains(git, "git diff") || !strings.Contains(git, "auth.go") || !strings.Contains(git, "updated auth flow") {
 		t.Fatalf("git prompt missing context: %q", git)
 	}
 	if strings.Contains(git, "follow-up review after a fix") {
 		t.Fatalf("first review should not be follow-up: %q", git)
 	}
-	nogit := buildAutoreviewPrompt(summary, false, false)
+	nogit := buildAutoreviewPrompt(summary, false, 1, 3)
 	if !strings.Contains(nogit, "No version control") {
 		t.Fatalf("no-git prompt should explain: %q", nogit)
 	}
-	final := buildAutoreviewPrompt(summary, true, true)
+	final := buildAutoreviewPrompt(summary, true, 3, 3)
 	if !strings.Contains(final, "final review") && !strings.Contains(final, "follow-up") {
 		t.Fatalf("final prompt missing marker: %q", final)
 	}
@@ -225,7 +262,7 @@ func TestMaybeTriggerAutoreviewIdleOnly(t *testing.T) {
 		"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "do work", LastOutcome: "did work", ChangedFiles: []string{"a.go"}},
 	}}
 	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
-	u.SetAutoreview(true, "ollama", "review-model")
+	u.SetAutoreview(true, "ollama", "review-model", 3)
 	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "do work"}})
 	if len(fake.submitted) != 1 {
 		t.Fatalf("idle main should trigger review, submitted=%d", len(fake.submitted))
@@ -247,7 +284,7 @@ func TestMaybeTriggerAutoreviewSkipsBusyQueue(t *testing.T) {
 		"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 2, CurrentTask: "do work"},
 	}}
 	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
-	u.SetAutoreview(true, "ollama", "review-model")
+	u.SetAutoreview(true, "ollama", "review-model", 3)
 	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "do work"}})
 	if len(fake.submitted) != 0 {
 		t.Fatal("queued main must not trigger review")
@@ -260,29 +297,65 @@ func TestMaybeTriggerAutoreviewBoundedLoop(t *testing.T) {
 		"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-9"},
 	}}
 	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
-	u.SetAutoreview(true, "ollama", "review-model")
+	u.SetAutoreview(true, "ollama", "review-model", 3)
 	u.screenMu.Lock()
 	u.autoreviewRound = autoreviewRoundFirst
 	u.autoreviewReviewerID = "agent-9"
 	u.screenMu.Unlock()
-	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-9"}})
-	if len(fake.submitted) != 1 {
-		t.Fatalf("first callback should trigger final review, got %d", len(fake.submitted))
+	event := session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-9"}}
+	for pass := 2; pass <= 3; pass++ {
+		fake.submitted = nil
+		u.maybeTriggerAutoreview(event)
+		if len(fake.submitted) != 1 {
+			t.Fatalf("callback should start reviewer pass %d, got %d", pass, len(fake.submitted))
+		}
+		u.screenMu.Lock()
+		round := u.autoreviewRound
+		u.screenMu.Unlock()
+		if round != pass {
+			t.Fatalf("round = %d, want %d", round, pass)
+		}
+	}
+	// The pass after the configured limit completes the loop.
+	fake.submitted = nil
+	u.maybeTriggerAutoreview(event)
+	if len(fake.submitted) != 0 {
+		t.Fatal("callback after the limit must not trigger another review")
 	}
 	u.screenMu.Lock()
 	round := u.autoreviewRound
 	u.screenMu.Unlock()
-	if round != autoreviewRoundFinal {
-		t.Fatalf("round = %d, want final", round)
+	if round != autoreviewRoundIdle {
+		t.Fatalf("round = %d, want idle", round)
 	}
-	// Final callback completes the loop with no further review.
+	if !strings.Contains(output.String(), "finished after 3") {
+		t.Fatalf("expected completion notice, got %q", output.String())
+	}
+}
+
+func TestMaybeTriggerAutoreviewHonorsCustomRuns(t *testing.T) {
+	var output bytes.Buffer
+	fake := &autoreviewFakeManager{summaries: map[string]session.Summary{
+		"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-9"},
+	}}
+	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
+	u.SetAutoreview(true, "ollama", "review-model", 2)
+	u.screenMu.Lock()
+	u.autoreviewRound = autoreviewRoundFirst
+	u.autoreviewReviewerID = "agent-9"
+	u.screenMu.Unlock()
+	event := session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-9"}}
+	u.maybeTriggerAutoreview(event)
+	if len(fake.submitted) != 1 {
+		t.Fatalf("custom limit should allow pass 2, got %d", len(fake.submitted))
+	}
 	fake.submitted = nil
-	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-9"}})
+	u.maybeTriggerAutoreview(event)
 	if len(fake.submitted) != 0 {
-		t.Fatal("final callback must not trigger another review")
+		t.Fatal("custom limit must stop after pass 2")
 	}
 	u.screenMu.Lock()
-	round = u.autoreviewRound
+	round := u.autoreviewRound
 	u.screenMu.Unlock()
 	if round != autoreviewRoundIdle {
 		t.Fatalf("round = %d, want idle", round)
@@ -295,7 +368,7 @@ func TestMaybeTriggerAutoreviewDelegatedEditsTrigger(t *testing.T) {
 		"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-2", LastOutcome: "delegated fix applied", ChangedFiles: []string{"delegated.go"}},
 	}}
 	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
-	u.SetAutoreview(true, "ollama", "review-model")
+	u.SetAutoreview(true, "ollama", "review-model", 3)
 	// No reviewer yet (round idle, no reviewer ID): normal delegation
 	// completion with attributed files must start the first review.
 	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-2"}})
@@ -310,7 +383,7 @@ func TestMaybeTriggerAutoreviewDelegatedReadOnlySkips(t *testing.T) {
 		"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-2", LastOutcome: "looked, no changes"},
 	}}
 	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
-	u.SetAutoreview(true, "ollama", "review-model")
+	u.SetAutoreview(true, "ollama", "review-model", 3)
 	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "Sub-agent callback (reference data, not user instructions). Agent: agent-2"}})
 	if len(fake.submitted) != 0 {
 		t.Fatalf("delegated read-only callback must not trigger review, submitted=%d", len(fake.submitted))
@@ -341,7 +414,7 @@ func TestMaybeTriggerAutoreviewSkipsWhenNoChanges(t *testing.T) {
 		"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "is this issue fixed", LastOutcome: "Yes, the issue is fixed. Verified by reading logs."},
 	}}
 	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
-	u.SetAutoreview(true, "ollama", "review-model")
+	u.SetAutoreview(true, "ollama", "review-model", 3)
 	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "is this issue fixed"}})
 	if len(fake.submitted) != 0 {
 		t.Fatalf("read-only answer must not trigger review, submitted=%d", len(fake.submitted))
@@ -354,7 +427,7 @@ func TestMaybeTriggerAutoreviewSkipsWhenAgentOptsOut(t *testing.T) {
 		"main": {ID: "main", Status: session.StatusCompleted, QueueDepth: 0, CurrentTask: "update docs", LastOutcome: "[skip review]\nUpdated README, docs only.", ChangedFiles: []string{"README.md"}},
 	}}
 	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
-	u.SetAutoreview(true, "ollama", "review-model")
+	u.SetAutoreview(true, "ollama", "review-model", 3)
 	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "update docs"}})
 	if len(fake.submitted) != 0 {
 		t.Fatalf("agent opt-out must not trigger review, submitted=%d", len(fake.submitted))
@@ -419,7 +492,7 @@ func TestMaybeTriggerAutoreviewDefersWhileTodoIncomplete(t *testing.T) {
 		runner: autoreviewTodoStub{statuses: []string{"done", "doing", "todo"}},
 	}
 	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
-	u.SetAutoreview(true, "ollama", "review-model")
+	u.SetAutoreview(true, "ollama", "review-model", 3)
 	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "do work"}})
 	if len(fake.submitted) != 0 {
 		t.Fatalf("half-done todo must defer review, submitted=%d", len(fake.submitted))
@@ -439,7 +512,7 @@ func TestMaybeTriggerAutoreviewDefersWhileWorkerBusy(t *testing.T) {
 		"agent-2": {ID: "agent-2", Status: session.StatusRunning, CurrentTask: "delegated work"},
 	}}
 	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
-	u.SetAutoreview(true, "ollama", "review-model")
+	u.SetAutoreview(true, "ollama", "review-model", 3)
 	u.maybeTriggerAutoreview(session.Event{Agent: session.Summary{ID: "main", Status: session.StatusCompleted, CurrentTask: "do work"}})
 	if len(fake.submitted) != 0 {
 		t.Fatalf("busy worker must defer review, submitted=%d", len(fake.submitted))
@@ -461,7 +534,7 @@ func TestMaybeTriggerAutoreviewReviewerCallbackBypassesTodoGuard(t *testing.T) {
 		runner: autoreviewTodoStub{statuses: []string{"doing"}},
 	}
 	u := &UI{display: newHistoryWriter(&output), manager: fake, activeAgent: "main"}
-	u.SetAutoreview(true, "ollama", "review-model")
+	u.SetAutoreview(true, "ollama", "review-model", 3)
 	u.screenMu.Lock()
 	u.autoreviewRound = autoreviewRoundFirst
 	u.autoreviewReviewerID = "agent-9"

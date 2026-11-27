@@ -910,7 +910,7 @@ def build_pdf(images: dict[str, Path]):
             ("/compact [show]", "Summarize old context; show inspects the compacted context."),
             ("/export", "Export conversations or full transcript as HTML."),
             ("/provider [name]", "Switch the active idle tab without restarting (kinds and named instances); terminal-only."),
-            ("/autoreview ...", "Toggle automatic code review after main finishes; bare /autoreview picks the reviewer."),
+            ("/autoreview ...", "Toggle automatic code review, pick the reviewer, or set the run limit."),
             ("/todo show", "Review the live execution checklist; Alt+T expands it."),
             ("/agent ...", "Create, list, switch, rename, cancel, or close agent tabs."),
             ("/skill [...]", "Pick reusable skills; Space cycles off/lazy/always-load."),
@@ -939,13 +939,13 @@ def build_pdf(images: dict[str, Path]):
         ],
     )
     h2(pdf, "Automatic code review (/autoreview)")
-    body(pdf, "Run `/autoreview on` from the main tab to review file-changing work automatically; `/autoreview off` disables it and bare `/autoreview` opens the reviewer provider/model picker. The picker lists every configured provider and bypasses /agent allow-models. While on, an `AR` badge shows first on the status bar and the toggle plus reviewer persist like /interactive.")
+    body(pdf, "Run `/autoreview on` from the main tab to review file-changing work automatically; `/autoreview off` disables it and bare `/autoreview` opens the reviewer provider/model picker. `/autoreview runs [n]` shows or sets the maximum reviewer passes per change (1-10, default 3). The picker lists every configured provider and bypasses /agent allow-models. While on, an `AR` badge shows first on the status bar and the toggle, reviewer, and run limit persist like /interactive.")
     bullets(
         pdf,
         [
             "After main goes fully idle with an empty queue, a reusable `review` tab runs only when main actually changed files, including delegated edits attributed to main. Read-only answers never trigger a review.",
-            "The reviewer is read-only plus shell for diffs: it self-serves `git diff` when available, otherwise it uses main's summary plus the changed files. Main judges the free-form verdict, applies a fix, then one final review confirms it.",
-            "To skip one answer, start the final response with `[skip review]` (also `[no review]`, `no review needed`, `no review required`, or `no code review needed`). Configure defaults with `autoreview`, `autoreview_provider`, and `autoreview_model` in config.toml.",
+            "The reviewer is read-only plus shell for diffs: it self-serves `git diff` when available, otherwise it uses main's summary plus the changed files. Main judges the free-form verdict, applies a fix, then another review runs until the configured run limit (default 3) is reached.",
+            "To skip one answer, start the final response with `[skip review]` (also `[no review]`, `no review needed`, `no review required`, or `no code review needed`). Configure defaults with `autoreview`, `autoreview_provider`, `autoreview_model`, and `autoreview_runs` in config.toml.",
         ],
     )
 
@@ -1215,7 +1215,7 @@ def build_pdf(images: dict[str, Path]):
             "Command flags beat environment variables. Both beat config files. Config files beat built-ins. `--api-key` beats config and environment keys.",
             "Prefer `qcode setup` or environment variables for keys: QCODE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY/GOOGLE_API_KEY, or `[providers.<name>].api_key_path` (0600 file, one line, no quotes). Inline `api_key` and root `base_url`/`model`/`thinking` are deprecated; new defaults belong under `[providers.<name>]`.",
             "Extra tools via MCP servers: `[mcp_servers.local]` (command + args/env) or `[mcp_servers.remote]` (Streamable HTTP url); prefer `qcode setup` -> MCP servers. Servers are trusted without per-call approval and are disabled in sandbox/plan modes.",
-            "Common knobs: provider/model/thinking, agent_timeout like \"5m\", interactive true/false, autoreview plus autoreview_provider/autoreview_model, statusline_hidden, web_search backend, learning context_budget, skills paths, autoload_paths, selected/selected_always, [[agents.allow_models]] roster, [providers.<name>] profiles and named instances with `type`, [chatgpt] oauth_path, redaction sinks/patterns, context_window and auto_compact_threshold.",            "Restart after changing the web backend. /model, /maxsteps, /statusline, /skill, /agent allow-models, and /autoreview on main save automatically; worker-tab changes to these settings stay within the session.",
+            "Common knobs: provider/model/thinking, agent_timeout like \"5m\", interactive true/false, autoreview plus autoreview_provider/autoreview_model/autoreview_runs, statusline_hidden, web_search backend, learning context_budget, skills paths, autoload_paths, selected/selected_always, [[agents.allow_models]] roster, [providers.<name>] profiles and named instances with `type`, [chatgpt] oauth_path, redaction sinks/patterns, context_window and auto_compact_threshold.",            "Restart after changing the web backend. /model, /maxsteps, /statusline, /skill, /agent allow-models, and /autoreview (on/off, reviewer, and runs) on main save automatically; worker-tab changes to these settings stay within the session.",
         ],
     )
     h2(pdf, "Working directories under the sandbox")
@@ -1265,7 +1265,7 @@ def build_pdf(images: dict[str, Path]):
             ("/model [id] [thinking]", "Switch model by name only (+ thinking)."),
             ("/provider [name]", "Switch provider for this tab."),
             ("/agent ...", "Create, list, switch, rename, cancel, close."),
-            ("/autoreview ...", "Auto-review file changes (on/off/picker)."),
+            ("/autoreview ...", "Auto-review file changes and set the run limit (on/off/runs/picker)."),
             ("/plan ...", "Plan, show, act, off."),
             ("/skill", "Enable instruction bundles."),
             ("/skillplan ...", "Draft, show, create, or leave skill design."),

@@ -145,6 +145,7 @@ type RuntimePreferenceWriter interface {
 	PersistInteractive(enabled bool) error
 	PersistAutoreview(enabled bool) error
 	PersistAutoreviewModel(provider, model string) error
+	PersistAutoreviewRuns(runs int) error
 	PersistStatuslineHidden(hidden []string) error
 	PersistTheme(id string) error
 	PersistSelectedSkills(selected, always []string) error
@@ -335,7 +336,8 @@ type UI struct {
 	autoreviewProvider   string // Guarded by screenMu; reviewer backend.
 	autoreviewModel      string // Guarded by screenMu; reviewer model.
 	autoreviewReviewerID string // Guarded by screenMu; reusable reviewer tab.
-	autoreviewRound      int    // Guarded by screenMu; 0 idle, 1 first review, 2 fix, 3 final review.
+	autoreviewRuns       int    // Guarded by screenMu; max reviewer passes per change. Zero means use the default.
+	autoreviewRound      int    // Guarded by screenMu; 0 idle, N means reviewer pass N is in flight.
 	themeMu              sync.RWMutex
 	themePalette         qtheme.Palette
 	remoteService        RemoteService

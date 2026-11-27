@@ -70,9 +70,11 @@ are preserved. `/statusline` saves the hidden segment list as the top-level
 `statusline_hidden` setting. `/theme` is terminal-wide and saves its
 choice from any agent tab, including when the selection is Default (Auto).
 `/interactive on|off` also saves from any agent tab, setting `interactive` to
-`true` or `false` as the default for new sessions. `/autoreview on|off` and the
-reviewer picker save from the `main` tab only, setting `autoreview`,
-`autoreview_provider`, and `autoreview_model` as the defaults for new sessions.
+`true` or `false` as the default for new sessions. `/autoreview on|off`, the
+reviewer picker, and `/autoreview runs <n>` save from the `main` tab only,
+setting `autoreview`, `autoreview_provider`, `autoreview_model`, and
+`autoreview_runs` as the defaults for new sessions. `autoreview_runs` caps the
+reviewer passes per change (1-10, default 3).
 Worker-tab `/agent allow-models` edits apply to the live session only; only
 `main`-tab saves persist `[[agents.allow_models]]` to the user file.
 Other preference changes in worker tabs, demo mode, one-shot mode, and piped

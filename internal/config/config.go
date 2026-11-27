@@ -346,6 +346,14 @@ func mergeAllowedAgentModels(dst *Agents, incoming Agents) {
 	}
 }
 
+// Autoreview run limits. A run is one reviewer pass; the chain starts with the
+// first review and each reviewer callback can start another pass until the
+// configured limit stops the loop.
+const (
+	DefaultAutoReviewRuns = 3
+	MaxAutoReviewRuns     = 10
+)
+
 type Config struct {
 	MCPServers             map[string]mcpclient.ServerConfig `toml:"mcp_servers"`
 	Providers              map[string]ProviderProfile        `toml:"providers"`
@@ -371,6 +379,7 @@ type Config struct {
 	AutoReview           *bool             `toml:"autoreview"`
 	AutoReviewProvider   string            `toml:"autoreview_provider"`
 	AutoReviewModel      string            `toml:"autoreview_model"`
+	AutoReviewRuns       *int              `toml:"autoreview_runs"`
 	ContextWindow        *int              `toml:"context_window"`
 	AutoCompactThreshold *int              `toml:"auto_compact_threshold"`
 	DisableAutoCompact   *bool             `toml:"disable_auto_compact"`
@@ -609,6 +618,9 @@ func validateConfig(path string, cfg Config, partial bool) error {
 	if !utf8.ValidString(cfg.AutoReviewProvider) || !utf8.ValidString(cfg.AutoReviewModel) {
 		return fmt.Errorf("parse config %s: autoreview_provider/autoreview_model contains invalid UTF-8", path)
 	}
+	if cfg.AutoReviewRuns != nil && (*cfg.AutoReviewRuns < 1 || *cfg.AutoReviewRuns > MaxAutoReviewRuns) {
+		return fmt.Errorf("parse config %s: autoreview_runs must be between 1 and %d", path, MaxAutoReviewRuns)
+	}
 	if cfg.Learning.ContextBudget != nil && (*cfg.Learning.ContextBudget < 0 || *cfg.Learning.ContextBudget > 12000) {
 		return fmt.Errorf("parse config %s: learning.context_budget must be between 0 and 12000", path)
 	}
@@ -785,6 +797,9 @@ func merge(dst *Config, incoming Config) {
 	}
 	if strings.TrimSpace(incoming.AutoReviewModel) != "" {
 		dst.AutoReviewModel = strings.TrimSpace(incoming.AutoReviewModel)
+	}
+	if incoming.AutoReviewRuns != nil {
+		dst.AutoReviewRuns = incoming.AutoReviewRuns
 	}
 	if incoming.ContextWindow != nil {
 		dst.ContextWindow = incoming.ContextWindow

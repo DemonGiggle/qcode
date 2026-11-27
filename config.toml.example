@@ -15,6 +15,8 @@ max_steps = 32
 # autoreview = true
 # autoreview_provider = "ollama"
 # autoreview_model = "qwen2.5-coder:7b"
+# Maximum reviewer passes per change (1-10, default 3).
+# autoreview_runs = 3
 
 # Isolate model-triggered tools with bubblewrap on Linux (off by default).
 # Disables web tools and networking initially; /tool toggles web tools.

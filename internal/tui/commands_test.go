@@ -85,6 +85,9 @@ type runtimePreferenceRecorder struct {
 	reviewModel      string
 	reviewCalls      int
 	reviewErr        error
+	autoreviewRuns   int
+	runsCalls        int
+	runsErr          error
 	selected         []string
 	selectedAlways   []string
 	skillsCalls      int
@@ -140,6 +143,12 @@ func (r *runtimePreferenceRecorder) PersistAutoreviewModel(provider, model strin
 	r.reviewCalls++
 	r.reviewProvider, r.reviewModel = provider, model
 	return r.reviewErr
+}
+
+func (r *runtimePreferenceRecorder) PersistAutoreviewRuns(runs int) error {
+	r.runsCalls++
+	r.autoreviewRuns = runs
+	return r.runsErr
 }
 
 func (r *runtimePreferenceRecorder) PersistSelectedSkills(selected, always []string) error {
@@ -954,7 +963,7 @@ func TestMatchingSlashSubcommands(t *testing.T) {
 		t.Fatalf("/ag prefix-unique = %v, parent=%q, ok=%v", hintNames(hints), parent.name, ok)
 	}
 	hints, parent, ok = matchingSlashSubcommands("/autoreview")
-	if !ok || parent.name != "/autoreview" || join(hintNames(hints)) != "on,off" {
+	if !ok || parent.name != "/autoreview" || join(hintNames(hints)) != "on,off,runs" {
 		t.Fatalf("/autoreview hints = %v, parent=%q, ok=%v", hintNames(hints), parent.name, ok)
 	}
 	hints, _, ok = matchingSlashSubcommands("/autoreview o")

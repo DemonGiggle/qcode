@@ -15,6 +15,9 @@ func TestPersistAutoreviewRoundTrip(t *testing.T) {
 	if err := writer.PersistAutoreviewModel("ollama", "qwen2.5-coder:7b"); err != nil {
 		t.Fatal(err)
 	}
+	if err := writer.PersistAutoreviewRuns(4); err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -28,6 +31,9 @@ func TestPersistAutoreviewRoundTrip(t *testing.T) {
 	}
 	if parsed.AutoReviewProvider != "ollama" || parsed.AutoReviewModel != "qwen2.5-coder:7b" {
 		t.Fatalf("saved reviewer = %q/%q", parsed.AutoReviewProvider, parsed.AutoReviewModel)
+	}
+	if parsed.AutoReviewRuns == nil || *parsed.AutoReviewRuns != 4 {
+		t.Fatalf("saved runs = %v", parsed.AutoReviewRuns)
 	}
 	if err := writer.PersistAutoreview(false); err != nil {
 		t.Fatal(err)

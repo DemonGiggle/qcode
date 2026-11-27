@@ -30,11 +30,12 @@ type shellCommandRunner interface {
 
 var slashCommands = []slashCommand{
 	{
-		name: "/autoreview", usage: "/autoreview [on|off]", description: "Toggle automatic code review after main finishes",
+		name: "/autoreview", usage: "/autoreview [on|off|runs [n]]", description: "Toggle automatic code review after main finishes",
 		arguments: []helpArgument{
 			{name: "on|off", description: "Enable or disable autoreview; omit to open the reviewer provider/model picker."},
+			{name: "runs [n]", description: "Show or set the maximum reviewer passes per change (1-10, default 3)."},
 		},
-		examples: []string{"/autoreview", "/autoreview on", "/autoreview off"},
+		examples: []string{"/autoreview", "/autoreview on", "/autoreview off", "/autoreview runs 3"},
 	},
 	{
 		name: "/agent", usage: "/agent [new [model]|list|switch <id>|rename <id> <name>|cancel <id>|close <id> [--yes]|allow-models [list [provider]|clear [provider|--all]]]", description: "Create and manage extra agents",

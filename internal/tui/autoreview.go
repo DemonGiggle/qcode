@@ -5,20 +5,32 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"qcode/internal/config"
 	"qcode/internal/session"
 )
 
 // Autoreview state machine rounds.
-// 0 idle, 1 first review in flight (reviewer running or callback processing),
-// 2 final review in flight after fix.
+// 0 idle, N means reviewer pass N is in flight.
 const (
-	autoreviewRoundIdle = iota
-	autoreviewRoundFirst
-	autoreviewRoundFinal
+	autoreviewRoundIdle  = 0
+	autoreviewRoundFirst = 1
 )
+
+// normalizeAutoreviewRuns keeps persisted or UI values inside the supported
+// range. Zero (unset) falls back to the default.
+func normalizeAutoreviewRuns(runs int) int {
+	if runs <= 0 {
+		return config.DefaultAutoReviewRuns
+	}
+	if runs > config.MaxAutoReviewRuns {
+		return config.MaxAutoReviewRuns
+	}
+	return runs
+}
 
 // autoreviewDelegationSource mirrors agent delegationSource ("delegation").
 // Reviewer tasks submitted with this source cause the manager to queue an
@@ -53,13 +65,21 @@ func (u *UI) AutoreviewReviewer() (provider, model string) {
 	return u.autoreviewProvider, u.autoreviewModel
 }
 
+// AutoreviewRuns returns the configured maximum number of reviewer passes.
+func (u *UI) AutoreviewRuns() int {
+	u.screenMu.Lock()
+	defer u.screenMu.Unlock()
+	return normalizeAutoreviewRuns(u.autoreviewRuns)
+}
+
 // SetAutoreview installs persisted autoreview state at startup. Empty
-// provider/model clears the reviewer.
-func (u *UI) SetAutoreview(enabled bool, provider, model string) {
+// provider/model clears the reviewer; runs <= 0 uses the default limit.
+func (u *UI) SetAutoreview(enabled bool, provider, model string, runs int) {
 	u.screenMu.Lock()
 	u.autoreviewEnabled = enabled
 	u.autoreviewProvider = strings.TrimSpace(provider)
 	u.autoreviewModel = strings.TrimSpace(model)
+	u.autoreviewRuns = normalizeAutoreviewRuns(runs)
 	if !enabled {
 		u.autoreviewRound = autoreviewRoundIdle
 	}
@@ -138,6 +158,16 @@ func (u *UI) persistAutoreviewModel(provider, model string) {
 	}
 }
 
+func (u *UI) persistAutoreviewRuns(runs int) {
+	writer, main := u.runtimePreferenceTarget()
+	if writer == nil || !main {
+		return
+	}
+	if err := writer.PersistAutoreviewRuns(runs); err != nil {
+		u.printSystemMessage(yellow + "Warning: unable to persist autoreview runs: " + sanitizeDiffLine(err.Error(), "<ESC>") + reset)
+	}
+}
+
 // handleAutoreviewCommand implements /autoreview [on|off]. Bare /autoreview
 // opens the reviewer provider/model picker. It is main-tab only but
 // intentionally works while main is busy: the toggle applies immediately and
@@ -151,6 +181,10 @@ func (u *UI) handleAutoreviewCommand(ctx context.Context, fields []string) {
 			u.printSystemMessage(yellow + "Autoreview is configured from the main tab." + reset)
 			return
 		}
+	}
+	if len(fields) >= 2 && fields[1] == "runs" {
+		u.handleAutoreviewRunsCommand(fields[2:])
+		return
 	}
 	if len(fields) == 2 && (fields[1] == "on" || fields[1] == "off") {
 		enabled := fields[1] == "on"
@@ -174,8 +208,6 @@ func (u *UI) handleAutoreviewCommand(ctx context.Context, fields []string) {
 		u.autoreviewEnabled = enabled
 		if !enabled {
 			u.autoreviewRound = autoreviewRoundIdle
-		} else if u.autoreviewRound != autoreviewRoundFirst && u.autoreviewRound != autoreviewRoundFinal {
-			u.autoreviewRound = autoreviewRoundIdle
 		}
 		provider, model := u.autoreviewProvider, u.autoreviewModel
 		u.screenMu.Unlock()
@@ -187,6 +219,7 @@ func (u *UI) handleAutoreviewCommand(ctx context.Context, fields []string) {
 			if provider != "" && model != "" {
 				msg += " Reviewer: " + provider + "/" + model + "."
 			}
+			msg += fmt.Sprintf(" Max reviews: %d.", u.AutoreviewRuns())
 			u.printSystemMessage(green + msg + reset)
 		} else {
 			u.printSystemMessage(green + "Autoreview off." + reset)
@@ -206,7 +239,7 @@ func (u *UI) handleAutoreviewCommand(ctx context.Context, fields []string) {
 			if strings.TrimSpace(provider) != "" && strings.TrimSpace(model) != "" {
 				reviewer = provider + "/" + model
 			}
-			u.printSystemMessage("Autoreview: " + state + "; reviewer: " + reviewer)
+			u.printSystemMessage("Autoreview: " + state + "; reviewer: " + reviewer + fmt.Sprintf("; runs: %d", u.AutoreviewRuns()))
 			return
 		}
 		// Picker sets the reviewer and enables autoreview.
@@ -220,7 +253,31 @@ func (u *UI) handleAutoreviewCommand(ctx context.Context, fields []string) {
 		}
 		return
 	}
-	u.printSystemMessage(yellow + "Usage: /autoreview [on|off]" + reset)
+	u.printSystemMessage(yellow + "Usage: /autoreview [on|off|runs [n]]" + reset)
+}
+
+// handleAutoreviewRunsCommand shows or sets the maximum number of reviewer
+// passes per change. Values are validated and persisted to config.toml from
+// main so the limit survives restarts.
+func (u *UI) handleAutoreviewRunsCommand(args []string) {
+	if len(args) == 0 {
+		u.printSystemMessage(fmt.Sprintf("Autoreview runs: %d (max %d).", u.AutoreviewRuns(), config.MaxAutoReviewRuns))
+		return
+	}
+	if len(args) != 1 {
+		u.printSystemMessage(yellow + fmt.Sprintf("Usage: /autoreview runs [1-%d]", config.MaxAutoReviewRuns) + reset)
+		return
+	}
+	runs, err := strconv.Atoi(args[0])
+	if err != nil || runs < 1 || runs > config.MaxAutoReviewRuns {
+		u.printSystemMessage(yellow + fmt.Sprintf("Autoreview runs must be between 1 and %d.", config.MaxAutoReviewRuns) + reset)
+		return
+	}
+	u.screenMu.Lock()
+	u.autoreviewRuns = runs
+	u.screenMu.Unlock()
+	u.persistAutoreviewRuns(runs)
+	u.printSystemMessage(green + fmt.Sprintf("Autoreview will run at most %d review(s) per change.", runs) + reset)
 }
 
 // pickAutoreviewReviewer opens provider then model selectors for any
@@ -320,9 +377,6 @@ func (u *UI) pickAutoreviewReviewer(ctx context.Context) bool {
 	u.autoreviewProvider = provider
 	u.autoreviewModel = strings.TrimSpace(selectedModel)
 	u.autoreviewEnabled = true
-	if u.autoreviewRound != autoreviewRoundFirst && u.autoreviewRound != autoreviewRoundFinal {
-		u.autoreviewRound = autoreviewRoundIdle
-	}
 	u.screenMu.Unlock()
 	u.syncAutoreviewToMain()
 	u.persistAutoreviewModel(provider, strings.TrimSpace(selectedModel))
@@ -331,12 +385,21 @@ func (u *UI) pickAutoreviewReviewer(ctx context.Context) bool {
 	return true
 }
 
-// buildAutoreviewPrompt composes the reviewer task. When the workspace has
+// buildAutoreviewPrompt composes the reviewer task. attempt is the 1-based
+// reviewer pass and total is the configured maximum. When the workspace has
 // version control the reviewer self-serves the diff; otherwise main sends its
 // summary plus changed files and the reviewer reads those files.
-func buildAutoreviewPrompt(summary session.Summary, hasGit, isFinal bool) string {
+func buildAutoreviewPrompt(summary session.Summary, hasGit bool, attempt, total int) string {
+	if total < 1 {
+		total = 1
+	}
+	if attempt < 1 {
+		attempt = 1
+	}
+	followUp := attempt > 1
+	final := total > 1 && attempt >= total
 	var b strings.Builder
-	if isFinal {
+	if followUp {
 		b.WriteString("You are a code reviewer doing a follow-up review after a fix. You cannot edit files (write/edit are disabled). Use shell only for searching and diffs (git diff, git log, grep); use read/list/search to inspect code.\n")
 	} else {
 		b.WriteString("You are a code reviewer. You cannot edit files (write/edit are disabled). Use shell only for searching and diffs (git diff, git log, grep); use read/list/search to inspect code.\n")
@@ -358,10 +421,13 @@ func buildAutoreviewPrompt(summary session.Summary, hasGit, isFinal bool) string
 	} else {
 		b.WriteString("No version control was detected. Review the changed files listed above (read them directly) along with main's summary; main cannot provide a git diff.\n")
 	}
-	if isFinal {
-		b.WriteString("This is the final review after a fix. Focus on whether previously reported issues were addressed and whether the fix introduced new problems.\n")
+	if followUp {
+		b.WriteString(fmt.Sprintf("This is reviewer pass %d of %d after a fix. Focus on whether previously reported issues were addressed and whether the fix introduced new problems.\n", attempt, total))
 	}
-	b.WriteString("Return a free-form verdict with findings (what is good, what must be fixed, file/line references). Main will judge your intent and apply a fix if you report issues, then may request one final review. Be concise and specific.")
+	if final {
+		b.WriteString("This is the final review; no further reviewer pass will run after this one. Report remaining issues clearly.\n")
+	}
+	b.WriteString("Return a free-form verdict with findings (what is good, what must be fixed, file/line references). Main will judge your intent and apply a fix if you report issues, then may request another review within the configured limit. Be concise and specific.")
 	return b.String()
 }
 
@@ -408,8 +474,8 @@ func (u *UI) autoreviewHasGit() bool {
 // main's callback summary; read-only answers (e.g. "is this issue fixed" with
 // no edits) and tasks where the agent explicitly opts out never trigger a
 // review. The agent decides via its actions and via an explicit skip marker
-// in its final response (see AutoreviewSuffix). Reviewer callbacks advance
-// the bounded loop (round 1->final, round 2->idle).
+// in its final response (see AutoreviewSuffix). Reviewer callbacks advance the
+// bounded loop until autoreviewRuns passes have run.
 func (u *UI) maybeTriggerAutoreview(event session.Event) {
 	if u.manager == nil {
 		return
@@ -427,6 +493,7 @@ func (u *UI) maybeTriggerAutoreview(event session.Event) {
 	enabled := u.autoreviewEnabled
 	provider := strings.TrimSpace(u.autoreviewProvider)
 	model := strings.TrimSpace(u.autoreviewModel)
+	runs := normalizeAutoreviewRuns(u.autoreviewRuns)
 	round := u.autoreviewRound
 	reviewerID := strings.TrimSpace(u.autoreviewReviewerID)
 	u.screenMu.Unlock()
@@ -449,13 +516,13 @@ func (u *UI) maybeTriggerAutoreview(event session.Event) {
 		// checks: the review was already deemed necessary when it started,
 		// and the reviewer itself is read-only.
 		switch {
-		case round == autoreviewRoundFirst:
-			u.startAutoreview(summary, true)
-		case round == autoreviewRoundFinal:
+		case round > 0 && round < runs:
+			u.startAutoreview(summary, round+1)
+		case round > 0:
 			u.screenMu.Lock()
 			u.autoreviewRound = autoreviewRoundIdle
 			u.screenMu.Unlock()
-			u.printSystemMessage(dim + "Autoreview final verdict processed." + reset)
+			u.printSystemMessage(dim + fmt.Sprintf("Autoreview finished after %d review(s).", round) + reset)
 			u.drawStatusBar()
 		default:
 			// Unexpected reviewer callback while idle; ignore.
@@ -497,7 +564,7 @@ func (u *UI) maybeTriggerAutoreview(event session.Event) {
 		// Covers both fresh user work and delegated-work callbacks
 		// (isCallback) whose files were attributed to main. Starts the
 		// first review once.
-		u.startAutoreview(summary, false)
+		u.startAutoreview(summary, autoreviewRoundFirst)
 	case round != autoreviewRoundIdle:
 		// New work (user task or delegated completion) landed while a
 		// review chain was in flight; restart the chain for the latest
@@ -505,7 +572,7 @@ func (u *UI) maybeTriggerAutoreview(event session.Event) {
 		u.screenMu.Lock()
 		u.autoreviewRound = autoreviewRoundIdle
 		u.screenMu.Unlock()
-		u.startAutoreview(summary, false)
+		u.startAutoreview(summary, autoreviewRoundFirst)
 	default:
 		// Unreachable; kept to avoid review storms on future rounds.
 	}
@@ -577,7 +644,7 @@ func autoreviewIsReviewerCallback(currentTask, reviewerID string, round int) boo
 	}
 	// Fallback for tests and pre-ID state: treat in-flight callbacks as
 	// reviewer callbacks to preserve the bounded loop.
-	return round == autoreviewRoundFirst || round == autoreviewRoundFinal
+	return round > autoreviewRoundIdle
 }
 
 // autoreview skip reasons for maybeTriggerAutoreview.
@@ -632,14 +699,24 @@ func autoreviewAgentSkipped(outcome string) bool {
 	return false
 }
 
-// startAutoreview ensures the reusable reviewer tab and submits the review
-// task with delegation source so completion enqueues a callback to main.
-func (u *UI) startAutoreview(mainSummary session.Summary, isFinal bool) {
+// startAutoreview ensures the reusable reviewer tab and submits reviewer pass
+// attempt with delegation source so completion enqueues a callback to main.
+// The loop is capped by the configured autoreview runs.
+func (u *UI) startAutoreview(mainSummary session.Summary, attempt int) {
+	u.screenMu.Lock()
+	total := normalizeAutoreviewRuns(u.autoreviewRuns)
+	u.screenMu.Unlock()
+	if attempt < 1 {
+		attempt = 1
+	}
+	if attempt > total {
+		attempt = total
+	}
 	reviewerID, ok := u.ensureAutoreviewReviewer()
 	if !ok {
 		return
 	}
-	prompt := buildAutoreviewPrompt(mainSummary, u.autoreviewHasGit(), isFinal)
+	prompt := buildAutoreviewPrompt(mainSummary, u.autoreviewHasGit(), attempt, total)
 	submitted := false
 	if prompter, ok := u.manager.(interface {
 		SubmitPrompt(session.PromptSubmission) (session.Submission, error)
@@ -665,17 +742,13 @@ func (u *UI) startAutoreview(mainSummary session.Summary, isFinal bool) {
 			return
 		}
 	}
-	next := autoreviewRoundFirst
-	if isFinal {
-		next = autoreviewRoundFinal
-	}
 	u.screenMu.Lock()
-	u.autoreviewRound = next
+	u.autoreviewRound = attempt
 	u.autoreviewReviewerID = reviewerID
 	u.screenMu.Unlock()
-	label := "Autoreview started"
-	if isFinal {
-		label = "Autoreview final review started"
+	label := fmt.Sprintf("Autoreview review %d/%d started", attempt, total)
+	if attempt >= total && total > 1 {
+		label = fmt.Sprintf("Autoreview final review %d/%d started", attempt, total)
 	}
 	u.printSystemMessage(dim + label + " with " + reviewerID + "." + reset)
 	u.drawStatusBar()
