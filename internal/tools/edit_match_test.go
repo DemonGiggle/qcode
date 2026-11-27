@@ -177,10 +177,51 @@ func TestEditGutterReplaceAllUsesPerMatchLineEnding(t *testing.T) {
 
 // TestSpliceMatchesUsesPerMatchReplacement pins the splice contract directly.
 func TestSpliceMatchesUsesPerMatchReplacement(t *testing.T) {
-	got := spliceMatches([]byte("aXbXc"), []editMatch{{start: 1, end: 2}, {start: 3, end: 4}}, [][]byte{[]byte("1"), []byte("2")})
+	got, err := spliceMatches([]byte("aXbXc"), []editMatch{{start: 1, end: 2}, {start: 3, end: 4}}, [][]byte{[]byte("1"), []byte("2")})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(got) != "a1b2c" {
 		t.Fatalf("spliced = %q", got)
 	}
+}
+
+// TestSpliceMatchesRejectsReplacementCountMismatch keeps a caller bug loud
+// instead of silently deleting matched bytes.
+func TestSpliceMatchesRejectsReplacementCountMismatch(t *testing.T) {
+	if _, err := spliceMatches([]byte("aXb"), []editMatch{{start: 1, end: 2}}, nil); err == nil {
+		t.Fatal("expected an internal error for a missing replacement")
+	}
+}
+
+// TestEditMixedEOLFirstLevelWins pins the deliberate first-level-wins rule: an
+// exact LF occurrence is edited alone, and the CRLF twin is left for the model
+// to re-read rather than silently rewritten.
+func TestEditMixedEOLFirstLevelWins(t *testing.T) {
+	t.Run("replace_all edits only the exact subset", func(t *testing.T) {
+		registry, root := editRegistry(t)
+		writeFile(t, root, "a.txt", "a\nbX\na\r\nb\n")
+		result, err := editDetailed(t, registry, map[string]any{"path": "a.txt", "old_text": "a\nb", "new_text": "y\nz", "replace_all": true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Output != "edited a.txt" {
+			t.Fatalf("output = %q, want no tolerated-difference note", result.Output)
+		}
+		if got := readFile(t, root, "a.txt"); got != "y\nzX\na\r\nb\n" {
+			t.Fatalf("file = %q", got)
+		}
+	})
+	t.Run("exactly-once ignores the CRLF twin", func(t *testing.T) {
+		registry, root := editRegistry(t)
+		writeFile(t, root, "a.txt", "a\nbX\na\r\nb\n")
+		if _, err := editDetailed(t, registry, map[string]any{"path": "a.txt", "old_text": "a\nb", "new_text": "y\nz"}); err != nil {
+			t.Fatalf("exact subset should be unambiguous, got %v", err)
+		}
+		if got := readFile(t, root, "a.txt"); got != "y\nzX\na\r\nb\n" {
+			t.Fatalf("file = %q", got)
+		}
+	})
 }
 
 // TestEditReplaceAll covers the explicit multi-occurrence path.

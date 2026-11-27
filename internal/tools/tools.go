@@ -801,7 +801,10 @@ func (r *Registry) editDetailed(ctx context.Context, arguments json.RawMessage) 
 		}
 		replacements = append(replacements, replacement)
 	}
-	updated := spliceMatches(data, matches, replacements)
+	updated, err := spliceMatches(data, matches, replacements)
+	if err != nil {
+		return ExecutionResult{}, err
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return ExecutionResult{}, err

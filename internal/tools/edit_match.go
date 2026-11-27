@@ -46,7 +46,12 @@ func (t editTolerance) note() string {
 //     "\r" that a CRLF file contains and cannot reproduce it.
 //
 // The traps are tried separately and then together, because a snippet copied
-// from a read result of a CRLF file carries both at once.
+// from a read result of a CRLF file carries both at once. The least tolerant
+// level that matches anything wins, so the first level decides which bytes are
+// edited: on a mixed-EOL file an old_text that occurs verbatim in an LF region
+// is replaced there only, and replace_all will not also reach a CRLF twin. That
+// is deliberate — an exact match is evidence the model saw those bytes — but it
+// means the occurrence count is always relative to the accepted level.
 func locateEditMatches(data []byte, oldText string) ([]editMatch, editTolerance) {
 	if spans := allIndexes(data, []byte(oldText)); len(spans) > 0 {
 		return spans, 0
@@ -198,20 +203,22 @@ func normalizeCRLF(data []byte) ([]byte, []int) {
 
 // spliceMatches replaces each match with its own replacement bytes, so a
 // replace_all over a mixed-EOL file can align each span with its own line
-// terminator.
-func spliceMatches(data []byte, matches []editMatch, replacements [][]byte) []byte {
+// terminator. Callers must supply one replacement per match; a mismatch is an
+// internal error rather than silently dropped bytes.
+func spliceMatches(data []byte, matches []editMatch, replacements [][]byte) ([]byte, error) {
+	if len(replacements) != len(matches) {
+		return nil, fmt.Errorf("internal error: %d matches but %d replacements", len(matches), len(replacements))
+	}
 	var out bytes.Buffer
 	out.Grow(len(data))
 	last := 0
 	for index, match := range matches {
 		out.Write(data[last:match.start])
-		if index < len(replacements) {
-			out.Write(replacements[index])
-		}
+		out.Write(replacements[index])
 		last = match.end
 	}
 	out.Write(data[last:])
-	return out.Bytes()
+	return out.Bytes(), nil
 }
 
 // lineEndingAt reports the line terminator in effect at raw offset pos: the
