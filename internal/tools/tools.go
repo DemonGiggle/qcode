@@ -779,23 +779,29 @@ func (r *Registry) editDetailed(ctx context.Context, arguments json.RawMessage) 
 	if err != nil {
 		return ExecutionResult{}, err
 	}
-	matches, tolerance, note := locateEditMatches(data, args.OldText)
+	matches, tolerance := locateEditMatches(data, args.OldText)
 	if len(matches) == 0 {
 		return ExecutionResult{}, missingOldTextError(data, args.OldText)
 	}
 	if len(matches) > 1 && !args.ReplaceAll {
 		return ExecutionResult{}, fmt.Errorf("old_text must occur exactly once; found %d occurrences; include more surrounding lines to select one, or set replace_all=true", len(matches))
 	}
-	replacement := args.NewText
-	if tolerance == editReadGutter {
-		replacement = stripGutters(replacement)
+	base := args.NewText
+	if tolerance&editTolerateGutter != 0 {
+		base = stripGutters(base)
 	}
-	if tolerance != editExact {
-		// A tolerated mismatch means the model could not see the file's real
-		// line endings, so keep new_text consistent with the file.
-		replacement = string(withLineEnding(replacement, lineEndingAt(data, matches[0].start)))
+	replacements := make([][]byte, 0, len(matches))
+	for _, match := range matches {
+		replacement := []byte(base)
+		if tolerance != 0 {
+			// A tolerated mismatch means the model could not see the file's
+			// real line endings, so align new_text with each matched span
+			// rather than with the first one.
+			replacement = withLineEnding(base, lineEndingAt(data, match.start))
+		}
+		replacements = append(replacements, replacement)
 	}
-	updated := spliceMatches(data, matches, []byte(replacement))
+	updated := spliceMatches(data, matches, replacements)
 	info, err := os.Stat(path)
 	if err != nil {
 		return ExecutionResult{}, err
@@ -806,7 +812,7 @@ func (r *Registry) editDetailed(ctx context.Context, arguments json.RawMessage) 
 	if err := r.writeFile(path, updated, info.Mode().Perm()); err != nil {
 		return ExecutionResult{}, err
 	}
-	return ExecutionResult{Output: fmt.Sprintf("edited %s%s", args.Path, editNoteSuffix(note)), Diff: unifiedDiff(args.Path, data, updated, true), ChangedFiles: []string{r.changedFilePath(path)}}, nil
+	return ExecutionResult{Output: fmt.Sprintf("edited %s%s", args.Path, editNoteSuffix(tolerance.note())), Diff: unifiedDiff(args.Path, data, updated, true), ChangedFiles: []string{r.changedFilePath(path)}}, nil
 }
 
 // editNoteSuffix reports a tolerated old_text mismatch so a fallback is never

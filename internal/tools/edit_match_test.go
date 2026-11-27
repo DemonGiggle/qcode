@@ -129,6 +129,60 @@ func TestEditCRLFKeepsUntouchedMixedEOL(t *testing.T) {
 	}
 }
 
+// TestEditToleratesGutterAndCRLF covers the most common real copy: a read
+// result from a CRLF file carries both the gutter and LF-only endings, so
+// neither single-trap fallback alone can match it.
+func TestEditToleratesGutterAndCRLF(t *testing.T) {
+	registry, root := editRegistry(t)
+	writeFile(t, root, "a.txt", "one\r\ntwo\r\nthree\r\n")
+
+	readOut, err := call(t, registry, "read", map[string]any{"path": "a.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snippet := strings.TrimSuffix(readOut, "\n")
+	if strings.Contains(snippet, "\r") {
+		t.Fatalf("read output = %q, want no CRLF", snippet)
+	}
+
+	result, err := editDetailed(t, registry, map[string]any{"path": "a.txt", "old_text": snippet, "new_text": "     1\tone\n     2\tTWO\n     3\tthree"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"gutter", "line-ending"} {
+		if !strings.Contains(result.Output, want) {
+			t.Fatalf("output = %q, want %q", result.Output, want)
+		}
+	}
+	// Gutter gone, CRLF preserved.
+	if got := readFile(t, root, "a.txt"); got != "one\r\nTWO\r\nthree\r\n" {
+		t.Fatalf("file = %q", got)
+	}
+}
+
+// TestEditGutterReplaceAllUsesPerMatchLineEnding keeps a gutter-tolerated
+// replace_all from stamping the first span's terminator onto later spans in a
+// mixed-EOL file: each span follows the line ending that its own match sees.
+func TestEditGutterReplaceAllUsesPerMatchLineEnding(t *testing.T) {
+	registry, root := editRegistry(t)
+	writeFile(t, root, "a.txt", "X\r\nY\nX\n")
+
+	if _, err := editDetailed(t, registry, map[string]any{"path": "a.txt", "old_text": "     1\tX", "new_text": "a\nb", "replace_all": true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, root, "a.txt"); got != "a\r\nb\r\nY\na\nb\n" {
+		t.Fatalf("file = %q", got)
+	}
+}
+
+// TestSpliceMatchesUsesPerMatchReplacement pins the splice contract directly.
+func TestSpliceMatchesUsesPerMatchReplacement(t *testing.T) {
+	got := spliceMatches([]byte("aXbXc"), []editMatch{{start: 1, end: 2}, {start: 3, end: 4}}, [][]byte{[]byte("1"), []byte("2")})
+	if string(got) != "a1b2c" {
+		t.Fatalf("spliced = %q", got)
+	}
+}
+
 // TestEditReplaceAll covers the explicit multi-occurrence path.
 func TestEditReplaceAll(t *testing.T) {
 	registry, root := editRegistry(t)

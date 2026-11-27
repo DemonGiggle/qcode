@@ -12,14 +12,28 @@ type editMatch struct {
 	end   int
 }
 
-// editTolerance names the copy-paste difference a match had to tolerate.
-type editTolerance int
+// editTolerance records which copy-paste differences a match had to tolerate.
+// The zero value means old_text matched raw bytes exactly.
+type editTolerance uint8
 
 const (
-	editExact editTolerance = iota
-	editReadGutter
-	editLineEndings
+	editTolerateGutter editTolerance = 1 << iota
+	editTolerateLineEndings
 )
+
+// note describes a tolerated difference for the tool output.
+func (t editTolerance) note() string {
+	switch t {
+	case 0:
+		return ""
+	case editTolerateGutter:
+		return "matched after removing the line-number gutter that read adds"
+	case editTolerateLineEndings:
+		return "matched ignoring CRLF/LF line-ending differences"
+	default:
+		return "matched after removing the line-number gutter that read adds and ignoring CRLF/LF line-ending differences"
+	}
+}
 
 // locateEditMatches finds every span of data that old_text should replace.
 // Exact matches always win. Only when there are none, two copy-paste traps are
@@ -31,22 +45,27 @@ const (
 //   - read strips CRLF terminators (bufio.ScanLines), so a model cannot see the
 //     "\r" that a CRLF file contains and cannot reproduce it.
 //
-// The returned note names the difference that was tolerated, and is empty for
-// an exact match. A non-exact tolerance also means new_text must be adapted
-// before writing.
-func locateEditMatches(data []byte, oldText string) ([]editMatch, editTolerance, string) {
+// The traps are tried separately and then together, because a snippet copied
+// from a read result of a CRLF file carries both at once.
+func locateEditMatches(data []byte, oldText string) ([]editMatch, editTolerance) {
 	if spans := allIndexes(data, []byte(oldText)); len(spans) > 0 {
-		return spans, editExact, ""
+		return spans, 0
 	}
-	if stripped, ok := stripReadGutter(oldText); ok {
+	stripped, hasGutter := stripReadGutter(oldText)
+	if hasGutter {
 		if spans := allIndexes(data, []byte(stripped)); len(spans) > 0 {
-			return spans, editReadGutter, "matched after removing the line-number gutter that read adds"
+			return spans, editTolerateGutter
 		}
 	}
 	if spans, ok := crlfMatches(data, oldText); ok {
-		return spans, editLineEndings, "matched ignoring CRLF/LF line-ending differences"
+		return spans, editTolerateLineEndings
 	}
-	return nil, editExact, ""
+	if hasGutter {
+		if spans, ok := crlfMatches(data, stripped); ok {
+			return spans, editTolerateGutter | editTolerateLineEndings
+		}
+	}
+	return nil, 0
 }
 
 // allIndexes returns non-overlapping occurrences of sub in data. Overlaps are
@@ -177,14 +196,18 @@ func normalizeCRLF(data []byte) ([]byte, []int) {
 	return normalized, offsets
 }
 
-// spliceMatches replaces every match in data with the same replacement bytes.
-func spliceMatches(data []byte, matches []editMatch, replacement []byte) []byte {
+// spliceMatches replaces each match with its own replacement bytes, so a
+// replace_all over a mixed-EOL file can align each span with its own line
+// terminator.
+func spliceMatches(data []byte, matches []editMatch, replacements [][]byte) []byte {
 	var out bytes.Buffer
 	out.Grow(len(data))
 	last := 0
-	for _, match := range matches {
+	for index, match := range matches {
 		out.Write(data[last:match.start])
-		out.Write(replacement)
+		if index < len(replacements) {
+			out.Write(replacements[index])
+		}
 		last = match.end
 	}
 	out.Write(data[last:])
